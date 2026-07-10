@@ -22,4 +22,21 @@ bindings:
     tables: [COPTC, COPTD]
     status: draft
     watermark: 待核对(单据修改 / 审核日期)
+  - source: digiwin_e10
+    tables: [SALES_ORDER, CURRENCY]
+    status: draft
+    key_map: { order_no: SALES_ORDER.DOC_NO }
+    field_map:
+      order_no: SALES_ORDER.DOC_NO
+      customer: CUSTOMER.CUSTOMER_CODE (join SALES_ORDER.CUSTOMER_ID)
+      order_date: SALES_ORDER.DOC_DATE
+      currency: CURRENCY.CURRENCY_CODE (join SALES_ORDER.CURRENCY_ID)
+      total_amount: SALES_ORDER.TOTAL_AMOUNT
+      trade_term: SALES_ORDER.TRADE_TERM
+      promised_ship_date: SALES_ORDER.PROMISED_SHIP_DATE
+    watermark: SALES_ORDER.LAST_MODIFIED_DATE
+    notes: >-
+      展厅模拟表形;业务状态由 APPROVE_DATE / CLOSE_STATE / INVALID_STATE 推导
+      (Y 作废→已作废;未审核→草稿不映射;N→已接单;P→部分出货;F→完全出货;C→已结案;
+      已接单与生产中的区分需关联工单,首批对象未覆盖,暂合并为已接单)
 knowledge_refs: [出口贸易条款口径, 船期与钓季档期常识]

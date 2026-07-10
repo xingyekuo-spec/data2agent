@@ -16,4 +16,17 @@ bindings:
     tables: [INVMB]
     status: draft
     watermark: 待核对(品号修改日期字段)
+  - source: digiwin_e10
+    tables: [ITEM]
+    status: draft
+    key_map: { item_code: ITEM.ITEM_CODE }
+    field_map:
+      item_code: ITEM.ITEM_CODE
+      name: ITEM.ITEM_NAME
+      spec: ITEM.ITEM_SPECIFICATION
+      category: ITEM.CATEGORY_CODE
+      unit: ITEM.UNIT_CODE
+      standard_cost: ITEM.STANDARD_COST
+    watermark: ITEM.LAST_MODIFIED_DATE
+    notes: 展厅模拟表形;真实 E10 大类 / 单位为基础档外键,展厅简化为编码列
 knowledge_refs: [物料优选与归一化规则]

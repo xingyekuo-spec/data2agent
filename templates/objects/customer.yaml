@@ -16,4 +16,17 @@ bindings:
     tables: [COPMA]
     status: draft
     notes: 易飞客户主档参考表名,以现场数据字典核对为准
+  - source: digiwin_e10
+    tables: [CUSTOMER, CURRENCY]
+    status: draft
+    key_map: { customer_code: CUSTOMER.CUSTOMER_CODE }
+    field_map:
+      customer_code: CUSTOMER.CUSTOMER_CODE
+      name: CUSTOMER.CUSTOMER_NAME
+      region: CUSTOMER.COUNTRY_REGION
+      currency: CURRENCY.CURRENCY_CODE (join CUSTOMER.CURRENCY_ID)
+      payment_days: CUSTOMER.PAYMENT_TERM_DAYS
+      contact: CUSTOMER.CONTACT_EMAIL
+    watermark: CUSTOMER.LAST_MODIFIED_DATE
+    notes: 展厅模拟表形(docs/dict/digiwin_e10.md);E10 币别为 ID 关联需 join 取码;真实环境以现场字典核对为准
 knowledge_refs: [客户信用与账期政策]

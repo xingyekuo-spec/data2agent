@@ -14,19 +14,24 @@
 `data2agent` 提供一条经过真实工厂验证的路,把这些数据安全地接给任何 AI Agent:
 
 - **抽取框架**:只读直连 / API 轮询适配器、ELT(原样落地 → 声明式映射)、水位 + 回看 + 分段 checksum 增量、隔离区;
-- **国产 ERP 连接器**:鼎捷易飞参考映射 + 表结构字典(持续积累于 [docs/dict](docs/dict/));
-- **制造业本体模板 + 元模型**:18 个业务对象的声明式模板(YAML),`validate` 一键校验;
-- **MCP Server(lite)**:`query_objects` / `query_metrics` 两个只读工具,任何支持 MCP 的 Agent 五分钟接入;
-- **数字厂长展厅**(规划中):模拟工厂数据 + 一条可运行的多 Agent 接单评审演示链。
+- **国产 ERP 连接器**:鼎捷 E10 / 易飞参考映射 + 表结构字典(持续积累于 [docs/dict](docs/dict/));
+- **制造业本体模板 + 元模型**:业务对象的声明式模板(YAML,首批 5 个 / 规划 18 个),`validate` 一键校验;
+- **MCP Server(lite)**:`query_objects` / `query_metrics` 两个只读工具(默认脱敏、口径警示内建),任何支持 MCP 的 Agent 五分钟接入;
+- **数字厂长展厅**:模拟工厂数据已就绪(渔具外销厂,E10 参考表形,一条命令生成);多 Agent 接单评审演示链规划中。
 
 **安全承诺**:装进你内网、碰你数据库的每一行代码都在这个仓库里 —— 只读账号、白名单表、限时限流、错峰窗口,全部可审计。这也是我们开源它的首要原因。
 
 ## 快速开始
 
 ```bash
-pip install -e ".[dev]"
-pytest tests -q                                   # 4 passed
+pip install -e ".[dev,mcp]"
+pytest tests -q                                   # 35 passed
 python -m data2agent.metamodel.validate templates # 模板校验
+python -m data2agent.showroom.seed                # 生成展厅模拟库 showroom/e10.sqlite(E10 参考表形)
+python -m data2agent.mcp_server                   # MCP Server(stdio,只读 + 默认脱敏)
+
+# 接入 Claude Code 试玩:
+#   claude mcp add d2a-factory -- .venv/bin/python -m data2agent.mcp_server
 # docker compose up   ← 展厅版本提供:模拟工厂 + MCP + 演示链(规划中)
 ```
 

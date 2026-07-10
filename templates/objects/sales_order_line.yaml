@@ -14,3 +14,17 @@ bindings:
   - source: digiwin_yifei
     tables: [COPTD]
     status: draft
+  - source: digiwin_e10
+    tables: [SALES_ORDER_D, SALES_ORDER]
+    status: draft
+    key_map:
+      order_no: SALES_ORDER.DOC_NO (join SALES_ORDER_D.SALES_ORDER_ID)
+      line_no: SALES_ORDER_D.SEQUENCE_NUMBER
+    field_map:
+      order_no: SALES_ORDER.DOC_NO (join SALES_ORDER_D.SALES_ORDER_ID)
+      line_no: SALES_ORDER_D.SEQUENCE_NUMBER
+      material: ITEM.ITEM_CODE (join SALES_ORDER_D.ITEM_ID)
+      quantity: SALES_ORDER_D.QUANTITY
+      unit_price: SALES_ORDER_D.UNIT_PRICE
+    watermark: SALES_ORDER_D.LAST_MODIFIED_DATE
+    notes: 展厅模拟表形;E10 单身通过 SALES_ORDER_ID 关联单头取单号

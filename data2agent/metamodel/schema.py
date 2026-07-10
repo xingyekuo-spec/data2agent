@@ -53,7 +53,12 @@ class Action(BaseModel):
 
 
 class SourceBinding(BaseModel):
-    """源系统映射;status=verified 表示已经现场数据字典核对固化。"""
+    """源系统映射;status=verified 表示已经现场数据字典核对固化。
+
+    约定:tables[0] 为锚表(对象一行 = 锚表一行);key_map / field_map 的值
+    遵循映射表达式文法(解析器见 data2agent/mapping.py):
+    "表.字段"、"表.字段 (join 锚表.外键)"、"表.字段 (map 源值→对象值 / ...)"。
+    """
 
     source: str                        # digiwin_yifei / digiwin_e10 / excel_* ...
     tables: list[str] = []
