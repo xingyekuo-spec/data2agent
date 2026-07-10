@@ -16,7 +16,7 @@
 - **抽取框架**:只读直连 / API 轮询适配器、ELT(原样落地 → 声明式映射)、水位 + 回看 + 分段 checksum 增量、隔离区;
 - **国产 ERP 连接器**:鼎捷 E10 / 易飞参考映射 + 表结构字典(持续积累于 [docs/dict](docs/dict/));
 - **制造业本体模板 + 元模型**:业务对象的声明式模板(YAML,首批 5 个 / 规划 18 个),`validate` 一键校验;
-- **MCP Server(lite)**:`query_objects` / `query_metrics` 两个只读工具(默认脱敏、口径警示内建),任何支持 MCP 的 Agent 五分钟接入;
+- **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:数字必须溯源到真实查询,默认脱敏、口径警示内建),任何支持 MCP 的 Agent 五分钟接入;
 - **数字厂长展厅**:模拟工厂数据已就绪(渔具外销厂,E10 参考表形,一条命令生成);多 Agent 接单评审演示链规划中。
 
 **安全承诺**:装进你内网、碰你数据库的每一行代码都在这个仓库里 —— 只读账号、白名单表、限时限流、错峰窗口,全部可审计。这也是我们开源它的首要原因。
@@ -31,6 +31,7 @@ python -m data2agent.showroom.seed                # 生成展厅模拟库 showro
 python -m data2agent.connect sync --sqlite showroom/e10.sqlite   # 抽取:水位增量 → 落地库(只读/白名单/审计)
 python -m data2agent.connect apply                # 映射:raw_* → 物化对象层 obj_*(隔离区 + 熔断)
 python -m data2agent.mcp_server                   # MCP Server 读对象层(stdio,只读 + 默认脱敏)
+python -m data2agent.showroom.review_demo         # 接单评审演示链:终端直出建议卡(离线)
 
 # 接入 Claude Code 试玩:
 #   claude mcp add d2a-factory -- .venv/bin/python -m data2agent.mcp_server

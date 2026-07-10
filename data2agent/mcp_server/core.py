@@ -1,7 +1,13 @@
-"""只读查询服务:读落地库物化对象层(obj_*),默认脱敏,传输无关。
+"""只读查询服务 + "说"档建议卡,传输无关。
 
 E4 起网关消费完整管道的产物:源系统 → sync(raw_*)→ apply(obj_*)→ 本服务。
 枚举值 / 编码翻译在映射应用阶段已完成,网关只做属性校验、脱敏与口径警示。
+
+治理档位(看/说/做,docs/design/03 §3):
+- 看:query_objects / query_metrics,只读;
+- 说:propose_action 生成结构化建议卡 —— 不落任何写操作,卡内每条依据
+  必须引用本会话某次查询的 meta.query_id(数字可溯源);
+- 做:审批后的写回,不在开源网关范围;max_tier 为部署级档位上限。
 
 安全边界(lite):
 - 落地库以只读模式(mode=ro)打开;
@@ -12,6 +18,8 @@ E4 起网关消费完整管道的产物:源系统 → sync(raw_*)→ apply(obj_*
 from __future__ import annotations
 
 import sqlite3
+from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 
 from ..metamodel.loader import load_pack
@@ -19,15 +27,35 @@ from ..metamodel.schema import ObjectTemplate
 from .metrics_impl import registry
 
 MASK = "***"
+TIER_ORDER = {"看": 0, "说": 1, "做": 2}
+_QUERY_LOG_CAP = 500
 
 
 class QueryService:
     def __init__(self, db_path: str | Path, templates_root: str | Path = "templates",
-                 source: str = "digiwin_e10"):
+                 source: str = "digiwin_e10", max_tier: str = "说"):
         self.db_path = str(db_path)
         self.source = source
         self.pack = load_pack(templates_root)
         self.metrics = registry(source)
+        if max_tier not in TIER_ORDER:
+            raise ValueError(f"max_tier 须为 {sorted(TIER_ORDER)},got '{max_tier}'")
+        self.max_tier = max_tier
+        self._query_log: OrderedDict[str, dict] = OrderedDict()
+        self._query_seq = 0
+        self._proposal_seq = 0
+
+    def _log_query(self, tool: str, target: str, detail: str, warnings: list[str]) -> str:
+        self._query_seq += 1
+        qid = f"q{self._query_seq}"
+        self._query_log[qid] = {
+            "query_id": qid, "tool": tool, "target": target, "detail": detail,
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "warnings": [w for w in warnings if w],
+        }
+        while len(self._query_log) > _QUERY_LOG_CAP:
+            self._query_log.popitem(last=False)
+        return qid
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
@@ -68,18 +96,22 @@ class QueryService:
             for prop in sensitive:
                 if row.get(prop) is not None:
                     row[prop] = MASK
+        note = ("binding 为 draft:字段映射按参考表形构造,口径未经现场校准"
+                if binding.status == "draft" else "")
+        qid = self._log_query("query_objects", object,
+                              f"filters={filters or {}} rows={len(rows)}", [note])
         return {
             "object": object,
             "display_name": tpl.display_name,
             "rows": rows,
             "meta": {
+                "query_id": qid,
                 "source": binding.source,
                 "binding_status": binding.status,
                 "masked_fields": sorted(sensitive),
                 "row_count": len(rows),
                 "quarantined": quarantined,
-                "note": "binding 为 draft:字段映射按参考表形构造,口径未经现场校准"
-                        if binding.status == "draft" else "",
+                "note": note,
             },
         }
 
@@ -139,6 +171,58 @@ class QueryService:
                      "usage": "带 object 参数查询数据;filters 为 属性→值 等值筛选"},
         }
 
+    # ---- propose_action("说"档)----
+
+    def propose_action(self, object: str, action: str, conclusion: str,
+                       evidence: list[dict]) -> dict:
+        """生成结构化建议卡。不落任何写操作;每条依据必须引用 meta.query_id。"""
+        tpl = next((o for o in self.pack.objects if o.object == object), None)
+        if tpl is None:
+            raise ValueError(f"未知对象 '{object}',可用:{sorted(self.pack.object_names())}")
+        act = next((a for a in tpl.actions if a.name == action), None)
+        if act is None:
+            available = [f"{a.name}(档位:{a.tier})" for a in tpl.actions]
+            raise ValueError(f"{object} 未声明动作 '{action}',可用:{available or '(无)'}")
+        if TIER_ORDER[act.tier] > TIER_ORDER[self.max_tier]:
+            raise ValueError(
+                f"动作 '{action}' 档位为「{act.tier}」,超出本网关档位上限「{self.max_tier}」;"
+                "「做」档需审批流治理,不在开源网关范围")
+        if not conclusion or not conclusion.strip():
+            raise ValueError("conclusion 不能为空:建议卡必须有明确结论")
+        if not evidence:
+            raise ValueError(
+                "evidence 不能为空:先调用 query_objects / query_metrics 取数,"
+                "再以 [{claim, query_id}] 引用其 meta.query_id")
+
+        cited, caveats = [], []
+        for i, item in enumerate(evidence):
+            claim, qid = item.get("claim", ""), item.get("query_id", "")
+            if not claim or not qid:
+                raise ValueError(f"evidence[{i}] 须同时含 claim 与 query_id")
+            logged = self._query_log.get(qid)
+            if logged is None:
+                raise ValueError(
+                    f"evidence[{i}] 的 query_id '{qid}' 无法溯源:不是本会话的查询;"
+                    "请先实际调用 query_* 工具,引用其返回的 meta.query_id")
+            cited.append({"claim": claim,
+                          "query": {k: logged[k] for k in ("query_id", "tool", "target", "at")}})
+            caveats.extend(logged["warnings"])
+
+        self._proposal_seq += 1
+        return {
+            "proposal_id": f"p{self._proposal_seq}",
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "object": object,
+            "action": act.name,
+            "action_desc": act.desc,
+            "tier": act.tier,
+            "conclusion": conclusion.strip(),
+            "evidence": cited,
+            "caveats": sorted({c for c in caveats if c}),
+            "governance": "「说」档建议卡:未执行任何写操作;落地执行(做档)需审批流,"
+                          "属商业版治理范围",
+        }
+
     # ---- query_metrics ----
 
     def query_metrics(self, metric: str | None = None, group_by: str | None = None,
@@ -178,10 +262,12 @@ class QueryService:
         finally:
             con.close()
         warning = "口径为 draft(未经校准),数值仅供演示环境参考" if mdef.status != "certified" else ""
+        qid = self._log_query("query_metrics", metric,
+                              f"group_by={dim} rows={len(rows)}", [warning, mdef.caveats])
         return {
             **definition, "implemented": True, "unit": impl.unit,
             "group_by": dim, "rows": rows,
-            "meta": {"row_count": len(rows), "warning": warning},
+            "meta": {"query_id": qid, "row_count": len(rows), "warning": warning},
         }
 
     def _metric_catalog(self) -> dict:

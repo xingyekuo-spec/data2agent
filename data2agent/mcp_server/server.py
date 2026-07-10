@@ -9,17 +9,19 @@ from mcp.server.fastmcp import FastMCP
 from .core import QueryService
 
 INSTRUCTIONS = """\
-data2agent 只读数据网关(lite):把制造业 ERP 数据按业务对象模型提供给 Agent。
+data2agent 数据网关(lite):把制造业 ERP 数据按业务对象模型提供给 Agent。
 - query_objects:按对象查业务数据(客户 / 品号 / 报价单 / 销售订单 / 订单明细);
-- query_metrics:按口径定义查经营指标(毛利率 / 报价响应时长等)。
-两个工具均为只读;敏感字段(联系方式、标准成本)默认脱敏;
+- query_metrics:按口径定义查经营指标(毛利率 / 报价响应时长等);
+- propose_action:生成结构化建议卡(「说」档)—— 不执行任何写操作,
+  每条依据必须引用前序查询的 meta.query_id,数字可溯源。
+查询均为只读;敏感字段(联系方式、标准成本)默认脱敏;
 binding_status=draft 表示字段映射未经现场数据字典校准,结论请注明口径来源。
 """
 
 
 def create_server(db: str | Path, templates: str | Path = "templates",
-                  source: str = "digiwin_e10") -> FastMCP:
-    svc = QueryService(db, templates, source)
+                  source: str = "digiwin_e10", max_tier: str = "说") -> FastMCP:
+    svc = QueryService(db, templates, source, max_tier=max_tier)
     server = FastMCP("data2agent", instructions=INSTRUCTIONS)
 
     @server.tool()
@@ -46,5 +48,18 @@ def create_server(db: str | Path, templates: str | Path = "templates",
         指标 status=draft 表示口径未经校准,引用数值时请附带说明。
         """
         return svc.query_metrics(metric, group_by, limit)
+
+    @server.tool()
+    def propose_action(object: str, action: str, conclusion: str,
+                       evidence: list[dict[str, str]]) -> dict:
+        """生成结构化建议卡(「说」档,不执行任何写操作)。
+
+        action 须为对象模板声明的动作(见 query_objects 目录);
+        conclusion 为明确结论(如:谨慎接,建议还价至 30 USD);
+        evidence 为依据列表 [{claim: 人话陈述, query_id: 前序查询的 meta.query_id}],
+        引用不到真实查询会被拒绝 —— 建议卡里的每个数字都必须可溯源。
+        返回卡片含档位、聚合口径警示与治理声明。
+        """
+        return svc.propose_action(object, action, conclusion, evidence)
 
     return server

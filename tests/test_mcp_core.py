@@ -105,6 +105,58 @@ def test_unimplemented_metric_explains(svc):
     assert res["implemented"] is False and "应收" in res["reason"]
 
 
+def test_query_ids_are_traceable(svc):
+    a = svc.query_objects("Customer", limit=1)["meta"]["query_id"]
+    b = svc.query_metrics("gross_margin_rate")["meta"]["query_id"]
+    assert a != b and a.startswith("q") and b.startswith("q")
+
+
+def test_propose_action_card(svc):
+    cust = svc.query_objects("Customer", filters={"customer_code": "C002"})
+    margin = svc.query_metrics("gross_margin_rate", group_by="客户")
+    card = svc.propose_action(
+        "Quotation", "quote_review", "谨慎接 —— 演示结论",
+        [{"claim": "C002 账期 90 天", "query_id": cust["meta"]["query_id"]},
+         {"claim": "历史毛利约 29.6%", "query_id": margin["meta"]["query_id"]}])
+    assert card["tier"] == "说" and card["proposal_id"].startswith("p")
+    assert len(card["evidence"]) == 2
+    assert card["evidence"][0]["query"]["tool"] == "query_objects"
+    assert any("draft" in c for c in card["caveats"]), "口径警示应从被引用查询聚合而来"
+    assert "未执行任何写操作" in card["governance"]
+
+
+def test_propose_action_rejects_untraceable_evidence(svc):
+    with pytest.raises(ValueError, match="无法溯源"):
+        svc.propose_action("Quotation", "quote_review", "结论",
+                           [{"claim": "编造的数字", "query_id": "q99999"}])
+    with pytest.raises(ValueError, match="不能为空"):
+        svc.propose_action("Quotation", "quote_review", "结论", [])
+
+
+def test_propose_action_unknown_action_lists_available(svc):
+    with pytest.raises(ValueError, match="quote_review"):
+        svc.propose_action("Quotation", "nope", "结论", [{"claim": "x", "query_id": "q1"}])
+
+
+def test_tier_ceiling_enforced(svc):
+    view_only = QueryService(svc.db_path, ROOT / "templates", max_tier="看")
+    q = view_only.query_objects("Customer", limit=1)
+    with pytest.raises(ValueError, match="档位上限"):
+        view_only.propose_action("Quotation", "quote_review", "结论",
+                                 [{"claim": "x", "query_id": q["meta"]["query_id"]}])
+
+
+def test_review_demo_chain(svc):
+    from data2agent.showroom.review_demo import build_review, render_card
+
+    card = build_review(svc, "C002", "矶钓竿", 2000, 28.0)
+    assert card["action"] == "quote_review" and card["tier"] == "说"
+    assert card["conclusion"].split(" ")[0] in {"接", "谨慎接", "不接"}
+    assert len(card["evidence"]) == 3, "客户档案 / 历史成交 / 毛利基线三条依据"
+    text = render_card(card, "C002 · 矶钓竿 · 2000 支 · 目标价 28")
+    assert "接单评审建议卡" in text and "口径警示" in text
+
+
 def test_object_layer_not_materialized_guides_user(tmp_path):
     empty = LandingStore(tmp_path / "empty.sqlite")  # 只有系统表,无 obj_*
     svc = QueryService(tmp_path / "empty.sqlite", ROOT / "templates")
@@ -122,4 +174,4 @@ def test_mcp_tool_wiring(svc):
 
     server = create_server(svc.db_path, ROOT / "templates")
     tools = asyncio.run(server.list_tools())
-    assert {t.name for t in tools} == {"query_objects", "query_metrics"}
+    assert {t.name for t in tools} == {"query_objects", "query_metrics", "propose_action"}
