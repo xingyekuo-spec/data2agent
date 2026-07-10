@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+from typing import Callable, Optional
 
 from ..mapping import parse_field_expr
 from ..metamodel.schema import TemplatePack
@@ -52,11 +53,17 @@ def subtract_lookback(high_water: str, days: float) -> str:
 
 def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                      watermarks: dict[str, str] | None = None,
-                     lookback_days: float = DEFAULT_LOOKBACK_DAYS) -> SyncReport:
+                     lookback_days: float = DEFAULT_LOOKBACK_DAYS,
+                     should_continue: Optional[Callable[[], bool]] = None) -> SyncReport:
+    """should_continue:批次边界的优雅暂停钩子(错峰窗口越界时返回 False)。
+    暂停时进行中的表不推进水位(已落批次幂等),下窗口自然续跑。"""
     watermarks = watermarks or {}
     report = SyncReport(source=source, run_id=landing.start_run(source))
     try:
         for info in adapter.tables():
+            if should_continue and not should_continue():
+                report.paused = True
+                break
             landing.ensure_raw_table(source, info)
             batch_id = uuid.uuid4().hex[:12]
             wm_col = watermarks.get(info.name)
@@ -72,7 +79,11 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
 
             rows = batches = 0
             max_wm = high_water
+            interrupted = False
             for batch in adapter.read_increment(info, since=since, watermark_col=wm_col):
+                if should_continue and not should_continue():
+                    interrupted = True
+                    break
                 rows += landing.upsert_rows(source, info, batch, batch_id)
                 batches += 1
                 if wm_col:
@@ -80,6 +91,9 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                                default=None)
                     if seen is not None and (max_wm is None or seen > max_wm):
                         max_wm = seen
+            if interrupted:
+                report.paused = True  # 本表水位不前进,下轮从旧水位重来(upsert 幂等)
+                break
             if wm_col:  # 全部批次提交后才前进水位
                 landing.set_high_water(source, info.name, wm_col, max_wm, batch_id)
             report.tables.append(TableReport(info.name, rows, batches, batch_id,
@@ -88,5 +102,7 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
         landing.finish_run(report.run_id, tables=len(report.tables),
                            rows=report.total_rows, status="failed", detail=str(e))
         raise
-    landing.finish_run(report.run_id, tables=len(report.tables), rows=report.total_rows)
+    landing.finish_run(report.run_id, tables=len(report.tables), rows=report.total_rows,
+                       status="paused" if report.paused else "ok",
+                       detail="窗口越界,批次边界暂停" if report.paused else "")
     return report

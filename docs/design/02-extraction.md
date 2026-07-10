@@ -113,20 +113,23 @@ since = high_water - lookback          # 回看窗口,默认 3 天,吸收迟到�
 ## 9. 配置(connect.yaml)
 
 ```yaml
+templates: templates
+landing: landing/factory.sqlite     # 生产 PostgreSQL 支持属后续切片
 sources:
   digiwin_e10:
-    adapter: mssql_readonly
+    adapter: mssql_readonly         # 开发 / 展厅:sqlite_readonly + path
     dsn_env: D2A_E10_DSN            # 凭据只从环境变量读,绝不落配置文件/仓库
     whitelist_from_bindings: true
     extra_whitelist: []
     windows: ["22:00-06:30"]
     rate: { batch_size: 5000, rows_per_second: 2000 }
     lookback: 3d
-    tables:
-      CURRENCY: { strategy: full_refresh }
-landing:
-  dsn_env: D2A_LANDING_DSN          # 或 sqlite: landing/factory.sqlite
+    sync_every: 30m                 # 窗口内的同步节奏
+    reconcile_at: "05:30"           # 每日 L1 对账
+    apply_after_sync: true          # 同步后自动物化对象层
 ```
+
+每表策略无需配置:有 `binding.watermark` 声明 → 水位增量;没有 → full_refresh(自动推导,元模型仍是唯一事实来源)。示例见仓库根 `connect.example.yaml`。
 
 ## 10. 安全承诺 → 机制对照(README 承诺的逐条落地)
 

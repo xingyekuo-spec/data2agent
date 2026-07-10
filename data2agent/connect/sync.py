@@ -35,6 +35,7 @@ class SyncReport:
     source: str
     run_id: int
     tables: list[TableReport] = field(default_factory=list)
+    paused: bool = False        # 错峰窗口越界,批次边界优雅暂停
 
     @property
     def total_rows(self) -> int:

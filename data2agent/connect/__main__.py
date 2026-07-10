@@ -1,9 +1,12 @@
-"""抽取 CLI:python -m data2agent.connect {sync|reconcile|apply}
+"""抽取 CLI:python -m data2agent.connect {sync|reconcile|apply|backfill|serve|status|quarantine}
 
-sync      默认水位增量(binding.watermark 推导,无水位表 full_refresh),--full 强制全量
-reconcile 分段对账 L1(--deep 全段 L2 修复);抓物理删除与不动水位的原地改动
-apply     映射应用:raw_* → 物化对象表 obj_*(隔离区 + 熔断),纯落地库操作
-完整调度(窗口 / 限流常驻)与 connect.yaml 配置属 E5 切片。
+sync       默认水位增量(binding.watermark 推导,无水位表 full_refresh),--full 强制全量
+reconcile  分段对账 L1(--deep 全段 L2 修复);抓物理删除与不动水位的原地改动
+apply      映射应用:raw_* → 物化对象表 obj_*(隔离区 + 熔断),纯落地库操作
+backfill   指定表的水位区间重抽(upsert 幂等,不动水位)
+serve      按 connect.yaml 调度常驻(错峰窗口硬约束;--once 立即各跑一轮)
+status     水位 / 最近运行 / 隔离区概览
+quarantine list 查看隔离明细;retry 修复后重新映射对象
 """
 
 from __future__ import annotations
@@ -73,7 +76,40 @@ def main() -> int:
     mp.add_argument("--threshold", type=float, default=DEFAULT_BREAKER_THRESHOLD,
                     help=f"熔断阈值(隔离率,默认 {DEFAULT_BREAKER_THRESHOLD:.0%})")
 
+    bp = sub.add_parser("backfill", help="指定表的水位区间重抽(不动水位)")
+    _add_common(bp)
+    bp.add_argument("--table", required=True, help="源表名(须有水位声明)")
+    bp.add_argument("--from", dest="wm_from", required=True, help="水位起(含)")
+    bp.add_argument("--to", dest="wm_to", required=True, help="水位止(不含)")
+
+    vp = sub.add_parser("serve", help="按 connect.yaml 调度常驻(窗口硬约束)")
+    vp.add_argument("--config", default="connect.yaml", help="配置文件路径")
+    vp.add_argument("--once", action="store_true", help="立即各跑一轮后退出(仍尊重窗口)")
+
+    tp = sub.add_parser("status", help="水位 / 最近运行 / 隔离区概览")
+    tp.add_argument("--landing", default="landing/factory.sqlite")
+    tp.add_argument("--source", default="digiwin_e10")
+
+    qp = sub.add_parser("quarantine", help="隔离区查看与重试")
+    qp.add_argument("action", choices=["list", "retry"])
+    qp.add_argument("--object", help="对象名(retry 必填;list 可选过滤)")
+    qp.add_argument("--source", default="digiwin_e10")
+    qp.add_argument("--landing", default="landing/factory.sqlite")
+    qp.add_argument("--templates", default="templates")
+
     args = ap.parse_args()
+
+    if args.cmd == "serve":
+        from .config import load_config
+        from .scheduler import serve
+        serve(load_config(args.config), once=args.once)
+        return 0
+
+    if args.cmd == "status":
+        return _status(args)
+
+    if args.cmd == "quarantine":
+        return _quarantine(args, ap)
 
     if args.cmd == "apply":
         pack = load_pack(args.templates)
@@ -90,6 +126,21 @@ def main() -> int:
         return 0
 
     pack, adapter, landing = _build(args, ap)
+
+    if args.cmd == "backfill":
+        wm_col = watermarks_from_pack(pack, args.source).get(args.table)
+        if wm_col is None:
+            ap.error(f"表 {args.table} 没有水位声明,无法按区间回补(可用 sync --full)")
+        info = adapter.table_info(args.table)
+        landing.ensure_raw_table(args.source, info)
+        import uuid
+        batch_id = uuid.uuid4().hex[:12]
+        rows = sum(
+            landing.upsert_rows(args.source, info, batch, batch_id)
+            for batch in adapter.read_segment(info, wm_col, args.wm_from, args.wm_to))
+        print(f"回补完成:{args.table} [{args.wm_from}, {args.wm_to}) 共 {rows} 行"
+              "(水位未变动;如需刷新对象层请再跑 apply)")
+        return 0
 
     if args.cmd == "sync":
         watermarks = {} if args.full else watermarks_from_pack(pack, args.source)
@@ -113,6 +164,67 @@ def main() -> int:
             print(f"  - {s.table:<16} {s.segment}  源 {s.src_count} {mark} 落地 {s.dst_count}"
                   f"  重抽 {s.repaired_rows} 行, 软删 {s.soft_deleted} 行")
     return 0
+
+
+def _status(args) -> int:
+    landing = LandingStore(args.landing)
+    print(f"== 水位状态(source={args.source})==")
+    rows = landing.con.execute(
+        "SELECT table_name, watermark_col, high_water, last_run_at FROM d2a_sync_state "
+        "WHERE source = ? ORDER BY table_name", (args.source,)).fetchall()
+    for r in rows or []:
+        print(f"  {r['table_name']:<16} {r['watermark_col']} → {r['high_water']}"
+              f"  (最近 {r['last_run_at']})")
+    if not rows:
+        print("  (尚无水位状态,先跑 sync)")
+    print("== 最近运行 ==")
+    for r in landing.con.execute(
+            "SELECT id, started_at, finished_at, status, tables, rows, detail "
+            "FROM d2a_sync_run WHERE source = ? ORDER BY id DESC LIMIT 5", (args.source,)):
+        print(f"  #{r['id']} {r['started_at']} → {r['finished_at']} [{r['status']}]"
+              f" tables={r['tables']} rows={r['rows']} {r['detail'] or ''}")
+    print("== 隔离区(未处理)==")
+    q = landing.con.execute(
+        "SELECT object, COUNT(*) n FROM d2a_quarantine "
+        "WHERE source = ? AND resolved_at IS NULL GROUP BY object", (args.source,)).fetchall()
+    for r in q:
+        print(f"  {r['object']}: {r['n']} 行")
+    if not q:
+        print("  (空)")
+    return 0
+
+
+def _quarantine(args, ap) -> int:
+    landing = LandingStore(args.landing)
+    if args.action == "list":
+        where, params = "source = ? AND resolved_at IS NULL", [args.source]
+        if args.object:
+            where += " AND object = ?"
+            params.append(args.object)
+        rows = landing.con.execute(
+            f"SELECT id, object, keys_json, reason, created_at FROM d2a_quarantine "
+            f"WHERE {where} ORDER BY id", params).fetchall()
+        for r in rows:
+            print(f"  #{r['id']} [{r['object']}] {r['keys_json']}  {r['reason']}"
+                  f"  ({r['created_at']})")
+        print(f"共 {len(rows)} 行未处理")
+        return 0
+    # retry:修好源数据 / binding 后,对该对象重新映射(成功则旧记录自动标记取代)
+    if not args.object:
+        ap.error("quarantine retry 需要 --object")
+    from ..metamodel.loader import load_pack as _load
+    from .mapping_apply import MappingCircuitBreaker, apply_object
+    pack = _load(args.templates)
+    tpl = next((o for o in pack.objects if o.object == args.object), None)
+    if tpl is None:
+        ap.error(f"未知对象 {args.object}")
+    try:
+        result = apply_object(landing, tpl, args.source)
+    except MappingCircuitBreaker as e:
+        print(f"重试失败(熔断):{e}")
+        return 1
+    print(f"重试完成:{result.object} 映射 {result.mapped} 行, 仍隔离 {result.quarantined} 行")
+    return 0 if result.quarantined == 0 else 1
 
 
 if __name__ == "__main__":
