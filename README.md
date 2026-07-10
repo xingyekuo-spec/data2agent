@@ -17,7 +17,7 @@
 - **国产 ERP 连接器**:鼎捷 E10 / 易飞参考映射 + 表结构字典(持续积累于 [docs/dict](docs/dict/));
 - **制造业本体模板 + 元模型**:业务对象的声明式模板(YAML,首批 5 个 / 规划 18 个),`validate` 一键校验;
 - **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:数字必须溯源到真实查询,默认脱敏、口径警示内建),任何支持 MCP 的 Agent 五分钟接入;
-- **数字厂长展厅**:模拟工厂数据已就绪(渔具外销厂,E10 参考表形,一条命令生成);多 Agent 接单评审演示链规划中。
+- **数字厂长展厅**:`docker compose up` 一键起 SQL Server 模拟工厂(渔具外销厂,E10 参考表形)+ 抽取常驻 + MCP(HTTP);接单评审演示链脚本版 / Agent 版双就绪。
 
 **安全承诺**:装进你内网、碰你数据库的每一行代码都在这个仓库里 —— 只读账号、白名单表、限时限流、错峰窗口,全部可审计。这也是我们开源它的首要原因。
 
@@ -33,9 +33,10 @@ python -m data2agent.connect apply                # 映射:raw_* → 物化对�
 python -m data2agent.mcp_server                   # MCP Server 读对象层(stdio,只读 + 默认脱敏)
 python -m data2agent.showroom.review_demo         # 接单评审演示链:终端直出建议卡(离线)
 
-# 接入 Claude Code 试玩:
+docker compose up --build   # 展厅一键版:SQL Server 模拟工厂 + 抽取常驻 + MCP(HTTP :8848)
+# 演示:docker compose exec connector python -m data2agent.showroom.review_demo --db /data/factory.sqlite
+# 接入 Claude Code 试玩(本机版):
 #   claude mcp add d2a-factory -- .venv/bin/python -m data2agent.mcp_server
-# docker compose up   ← 展厅版本提供:模拟工厂 + MCP + 演示链(规划中)
 ```
 
 ## 设计文档

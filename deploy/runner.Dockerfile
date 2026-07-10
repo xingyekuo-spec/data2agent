@@ -1,4 +1,4 @@
-# 集成测试 runner:python + msodbcsql18 + 本仓库(dev,connect)
+# 通用 runner:python + msodbcsql18 + 本仓库全依赖(展厅 compose 与集成测试共用)
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg2 \
@@ -12,4 +12,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg2 \
 
 WORKDIR /app
 COPY . .
-RUN pip install --no-cache-dir -e ".[dev,connect]"
+RUN pip install --no-cache-dir -e ".[dev,connect,mcp]"

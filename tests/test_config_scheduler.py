@@ -119,13 +119,17 @@ def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
     from data2agent.connect import scheduler as sched
     from data2agent.connect.config import SourceConfig
 
+    from datetime import datetime, timedelta
+
     src, landing = env
+    # 取"从现在起 2~3 小时后"的窗口:任何时刻跑测试都必然在窗口外(含跨零点)
+    t2, t3 = datetime.now() + timedelta(hours=2), datetime.now() + timedelta(hours=3)
     scfg = SourceConfig(adapter="sqlite_readonly", path=str(src),
-                        windows=["00:00-00:01"])  # 几乎永远在窗口外
-    assert sched.run_sync_cycle(SOURCE, scfg, pack, landing) is False, "窗口外不发起"
+                        windows=[f"{t2:%H:%M}-{t3:%H:%M}"])
+    assert sched.run_sync_cycle(SOURCE, scfg, pack, landing.db_path) is False, "窗口外不发起"
 
     scfg_open = SourceConfig(adapter="sqlite_readonly", path=str(src))
-    assert sched.run_sync_cycle(SOURCE, scfg_open, pack, landing) is True
+    assert sched.run_sync_cycle(SOURCE, scfg_open, pack, landing.db_path) is True
     assert landing.count(SOURCE, "SALES_ORDER") == 97
     (n,) = landing.con.execute('SELECT COUNT(*) FROM "obj_SalesOrder"').fetchone()
     assert n > 0, "apply_after_sync 应自动物化对象层"

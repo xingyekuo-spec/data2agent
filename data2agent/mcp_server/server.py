@@ -20,9 +20,10 @@ binding_status=draft 表示字段映射未经现场数据字典校准,结论请�
 
 
 def create_server(db: str | Path, templates: str | Path = "templates",
-                  source: str = "digiwin_e10", max_tier: str = "说") -> FastMCP:
+                  source: str = "digiwin_e10", max_tier: str = "说",
+                  host: str = "127.0.0.1", port: int = 8848) -> FastMCP:
     svc = QueryService(db, templates, source, max_tier=max_tier)
-    server = FastMCP("data2agent", instructions=INSTRUCTIONS)
+    server = FastMCP("data2agent", instructions=INSTRUCTIONS, host=host, port=port)
 
     @server.tool()
     def query_objects(object: str | None = None,

@@ -1,0 +1,16 @@
+# 展厅 compose 用的抽取配置:走只读账号 d2a_reader 连模拟 SQL Server。
+# 展厅不设错峰窗口(演示要即时看到数据);生产示例见 connect.example.yaml。
+templates: templates
+landing: /data/factory.sqlite
+
+sources:
+  digiwin_e10:
+    adapter: mssql_readonly
+    dsn_env: D2A_E10_DSN
+    whitelist_from_bindings: true
+    windows: []
+    rate: { batch_size: 5000, rows_per_second: 2000 }
+    lookback: 3d
+    sync_every: 2m
+    reconcile_at: "05:30"
+    apply_after_sync: true

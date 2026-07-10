@@ -46,11 +46,16 @@ def build_adapter(name: str, scfg: SourceConfig, pack: TemplatePack,
 
 
 def run_sync_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
-                   landing: LandingStore) -> bool:
-    """一轮 sync(+apply)。返回是否实际执行(窗口外为 False)。"""
+                   landing_path: str) -> bool:
+    """一轮 sync(+apply)。返回是否实际执行(窗口外为 False)。
+
+    每轮自建 LandingStore:apscheduler 任务跑在工作线程,
+    sqlite 连接不可跨线程复用。
+    """
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip source=%s reason=窗口外 windows=%s", name, scfg.windows)
         return False
+    landing = LandingStore(landing_path)
     adapter = build_adapter(name, scfg, pack, landing)
     report = incremental_sync(
         adapter, landing, name, watermarks_from_pack(pack, name),
@@ -68,10 +73,11 @@ def run_sync_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
 
 
 def run_reconcile_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
-                        landing: LandingStore) -> bool:
+                        landing_path: str) -> bool:
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip reconcile source=%s reason=窗口外", name)
         return False
+    landing = LandingStore(landing_path)
     adapter = build_adapter(name, scfg, pack, landing)
     report = reconcile(adapter, landing, name, watermarks_from_pack(pack, name))
     log.info("reconcile source=%s run=%s segments=%s mismatched=%s soft_deleted=%s",
@@ -84,13 +90,12 @@ def serve(cfg: ConnectConfig, once: bool = False) -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     pack = load_pack(cfg.templates)
-    landing = LandingStore(cfg.landing)
 
     if once:
         for name, scfg in cfg.sources.items():
-            run_sync_cycle(name, scfg, pack, landing)
+            run_sync_cycle(name, scfg, pack, cfg.landing)
             if scfg.reconcile_at is not None:
-                run_reconcile_cycle(name, scfg, pack, landing)
+                run_reconcile_cycle(name, scfg, pack, cfg.landing)
         return
 
     from apscheduler.schedulers.blocking import BlockingScheduler
@@ -101,13 +106,14 @@ def serve(cfg: ConnectConfig, once: bool = False) -> None:
     for name, scfg in cfg.sources.items():
         scheduler.add_job(
             run_sync_cycle, IntervalTrigger(seconds=scfg.sync_every_seconds()),
-            args=(name, scfg, pack, landing), id=f"sync:{name}",
-            max_instances=1, coalesce=True)
+            args=(name, scfg, pack, cfg.landing), id=f"sync:{name}",
+            max_instances=1, coalesce=True,
+            next_run_time=datetime.now())  # 启动即跑首轮(仍受窗口约束)
         if scfg.reconcile_at:
             hh, mm = scfg.reconcile_at.split(":")
             scheduler.add_job(
                 run_reconcile_cycle, CronTrigger(hour=int(hh), minute=int(mm)),
-                args=(name, scfg, pack, landing), id=f"reconcile:{name}",
+                args=(name, scfg, pack, cfg.landing), id=f"reconcile:{name}",
                 max_instances=1, coalesce=True)
         log.info("scheduled source=%s sync_every=%s reconcile_at=%s windows=%s",
                  name, scfg.sync_every, scfg.reconcile_at, scfg.windows or "不限")

@@ -12,6 +12,10 @@ def main() -> int:
                     help="落地库路径(完整管道:seed → connect sync → connect apply)")
     ap.add_argument("--templates", default="templates", help="模板包目录")
     ap.add_argument("--source", default="digiwin_e10", help="binding 数据源名")
+    ap.add_argument("--transport", choices=["stdio", "http"], default="stdio",
+                    help="stdio(本机 Agent)/ http(streamable-http,内网 / 展厅 compose)")
+    ap.add_argument("--host", default="127.0.0.1", help="http 模式监听地址")
+    ap.add_argument("--port", type=int, default=8848, help="http 模式端口")
     args = ap.parse_args()
 
     if not Path(args.db).exists():
@@ -20,7 +24,9 @@ def main() -> int:
                  "python -m data2agent.connect apply")
 
     from .server import create_server
-    create_server(args.db, args.templates, args.source).run()
+    server = create_server(args.db, args.templates, args.source,
+                           host=args.host, port=args.port)
+    server.run(transport="streamable-http" if args.transport == "http" else "stdio")
     return 0
 
 

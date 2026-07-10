@@ -41,9 +41,8 @@ demo          接单评审演示链(脚本或 Agent 编排)
   完全相同的链路(query_objects ×2 → query_metrics → propose_action),终端输出建议卡;
 - **真 Agent 版**:任意 MCP 客户端按 `docs/demo/quote-review.md` 的提示词驱动,主角客户 C002。
 
-## 5. 待决事项(compose 组装前决定)
+## 5. 决议记录
 
-- mssql-sim 用 SQL Server 官方镜像(licensing:Developer Edition 仅限非生产,展厅符合)还是 Azure SQL Edge(arm64 友好);
-- seed 数据是否加"每日自动演进"(模拟工厂持续下单,让增量抽取有活干)。
-
-已决:演示链编排载体 = 脚本版(入库,离线可跑)+ 真 Agent 版(MCP 提示词)并存,见 §4。
+- compose 已落地(仓库根 `docker-compose.yml`):mssql(SQL Server 2022,`MSSQL_IMAGE`/`MSSQL_PLATFORM` 可切 Azure SQL Edge)→ seed(灌数 + 建只读账号 d2a_reader)→ connector(serve 常驻,走只读账号)→ 共享卷 → mcp(streamable-http :8848);
+- 演示链编排载体 = 脚本版(入库,离线可跑)+ 真 Agent 版(MCP 提示词)并存,见 §4;
+- 待议:seed 数据"每日自动演进"(模拟工厂持续下单,让增量抽取有活干)—— 留给使用反馈拉动。
