@@ -45,7 +45,7 @@ class SourceAdapter(Protocol):
 | `mssql_readonly` | 鼎捷 E10 / 易飞(底层均为 SQL Server) | pyodbc;首个生产适配器 |
 | `sqlite_readonly` | 开发 / 展厅 / 测试 | 与 mssql 行为等价,mode=ro |
 | `api_poll` | 有 API 的源(SRM 等) | 仅定义接口,按需实现 |
-| `excel_import` | 报价历史 Excel(MVP) | 一次性导入进落地层,同一下游 |
+| `excel_import` | 报价历史 Excel/CSV(MVP,已实现) | 三步工作流:`excel-suggest` 启发式建议列映射(YAML)→ 人工确认一次 → `excel-import` 快照落地(raw 表结构由 binding 契约决定,文件缺列落 NULL、缺业务键跳过并逐行报告、重导入按业务键幂等)→ 标准 apply 物化,校验 / 隔离 / 熔断原样生效;值翻译写 binding 的 (map ...) |
 
 **安全强制(适配器层内实现,不可绕过)**:
 

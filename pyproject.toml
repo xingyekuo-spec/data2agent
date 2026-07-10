@@ -14,6 +14,7 @@ dependencies = [
 connect = ["pyodbc>=5.1", "apscheduler>=3.10", "psycopg[binary]>=3.1"]
 mcp = ["mcp>=1.0"]
 console = ["fastapi>=0.110", "uvicorn>=0.29"]
+excel = ["openpyxl>=3.1"]
 dev = ["pytest>=8.0"]
 
 [project.urls]

@@ -7,6 +7,8 @@ backfill   指定表的水位区间重抽(upsert 幂等,不动水位)
 serve      按 connect.yaml 调度常驻(错峰窗口硬约束;--once 立即各跑一轮)
 status     水位 / 最近运行 / 隔离区概览
 quarantine list 查看隔离明细;retry 修复后重新映射对象
+excel-suggest 读 Excel/CSV 表头,生成 列→属性 映射建议(人工确认一次)
+excel-import  按映射文件导入报价历史到落地库(之后 apply 物化)
 """
 
 from __future__ import annotations
@@ -97,7 +99,57 @@ def main() -> int:
     qp.add_argument("--landing", default="landing/factory.sqlite")
     qp.add_argument("--templates", default="templates")
 
+    xs = sub.add_parser("excel-suggest", help="生成 Excel/CSV 列映射建议(YAML)")
+    xs.add_argument("--file", required=True, help="Excel(.xlsx)或 CSV 文件")
+    xs.add_argument("--object", required=True, help="目标对象(如 Quotation)")
+    xs.add_argument("--sheet", help="工作表名(默认第一个)")
+    xs.add_argument("--header-row", type=int, default=1)
+    xs.add_argument("--templates", default="templates")
+    xs.add_argument("--out", help="写入路径(缺省打印到终端)")
+
+    xi = sub.add_parser("excel-import", help="按映射文件导入到落地库")
+    xi.add_argument("--file", required=True)
+    xi.add_argument("--map", dest="map_file", required=True, help="确认后的映射 YAML")
+    xi.add_argument("--source", default="excel_quotation", help="binding 数据源名")
+    xi.add_argument("--landing", default="landing/factory.sqlite")
+    xi.add_argument("--templates", default="templates")
+
     args = ap.parse_args()
+
+    if args.cmd == "excel-suggest":
+        from .excel_import import read_tabular, render_mapping_yaml, suggest_mapping
+        pack = load_pack(args.templates)
+        tpl = next((o for o in pack.objects if o.object == args.object), None)
+        if tpl is None:
+            ap.error(f"未知对象 {args.object},可用:{sorted(pack.object_names())}")
+        headers, rows = read_tabular(args.file, args.sheet, args.header_row)
+        text = render_mapping_yaml(tpl, suggest_mapping(headers, tpl),
+                                   args.sheet, args.header_row)
+        if args.out:
+            from pathlib import Path
+            Path(args.out).write_text(text, encoding="utf-8")
+            print(f"映射建议已写入 {args.out}(共 {len(rows)} 行数据;请人工确认后 excel-import)")
+        else:
+            print(text)
+        return 0
+
+    if args.cmd == "excel-import":
+        from .excel_import import import_tabular, load_mapping
+        pack = load_pack(args.templates)
+        mapping = load_mapping(args.map_file)
+        tpl = next((o for o in pack.objects if o.object == mapping["object"]), None)
+        if tpl is None:
+            ap.error(f"映射文件的对象 {mapping['object']} 不在模板中")
+        report = import_tabular(
+            LandingStore(args.landing), tpl, args.source, args.file,
+            mapping["columns"], mapping.get("sheet"), mapping.get("header_row", 1))
+        print(f"导入完成:{report.file} → raw_{report.source}__{report.table}"
+              f"({report.imported}/{report.total} 行,batch {report.batch_id})")
+        for row_no, reason in report.skipped:
+            print(f"  - 跳过第 {row_no} 行:{reason}")
+        print(f"下一步:python -m data2agent.connect apply --source {args.source}"
+              "(校验 / 隔离 / 熔断在该步生效)")
+        return 0
 
     if args.cmd == "serve":
         from .config import load_config

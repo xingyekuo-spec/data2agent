@@ -21,9 +21,25 @@ actions:
   - { name: quote_review, desc: 发起接单评审链生成评审卡, tier: 说 }
 bindings:
   - source: excel_quotation
-    tables: []
+    tables: [QUOTATION]
     status: draft
-    notes: Excel 报价历史最小导入(MVP);列映射经 AI 建议 + 人工确认一次后记住
+    key_map: { quote_no: QUOTATION.quote_no }
+    field_map:
+      quote_no: QUOTATION.quote_no
+      customer: QUOTATION.customer
+      quote_date: QUOTATION.quote_date
+      inquiry_at: QUOTATION.inquiry_at
+      submitted_at: QUOTATION.submitted_at
+      spec_summary: QUOTATION.spec_summary
+      target_price: QUOTATION.target_price
+      quoted_price: QUOTATION.quoted_price
+      currency: QUOTATION.currency
+      fx_assumption: QUOTATION.fx_assumption
+      result: QUOTATION.result
+    notes: >-
+      Excel 报价历史导入:excel-suggest 建议列映射 → 人工确认映射文件(一次)
+      → excel-import 落地(列名 = 对象属性,值原样)→ apply 物化;
+      工厂取值与对象模型不同时(如 中标→成交)在此加 (map 源值→对象值)
   - source: digiwin_e10
     tables: [QUOTATION, CURRENCY]
     status: draft
