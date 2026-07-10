@@ -73,6 +73,23 @@ def test_incremental_picks_up_change(pack, landing):
                "WHERE Id = 3")  # 留给后续轮次,不影响幂等
 
 
+def test_reconcile_catches_physical_delete(pack, landing):
+    import pyodbc
+
+    from data2agent.connect.reconcile import reconcile
+
+    _sync(pack, landing)
+    sa = pyodbc.connect(SA_DSN + ";DATABASE=d2a_e10")
+    sa.autocommit = True
+    sa.execute("DELETE FROM SALES_ORDER_D WHERE Id = 7")
+    report = reconcile(_adapter(pack), landing, SOURCE, watermarks_from_pack(pack, SOURCE))
+    assert report.total_soft_deleted == 1
+    row = landing.con.execute(
+        f'SELECT _d2a_deleted_at FROM "{raw_table_name(SOURCE, "SALES_ORDER_D")}" WHERE Id = 7'
+    ).fetchone()
+    assert row["_d2a_deleted_at"] is not None
+
+
 def test_readonly_account_and_guard(pack):
     import pyodbc
 

@@ -62,12 +62,17 @@ class SourceAdapter(ABC):
         """按主键排序的分页 SELECT(全量路径)。"""
 
     @abstractmethod
+    def _quote(self, ident: str) -> str:
+        """标识符引用(sqlite: "x" / mssql: [x])。"""
+
+    @abstractmethod
     def _increment_sql(self, table: TableInfo, watermark_col: str,
-                       *, resume: bool, filtered: bool) -> str:
+                       *, resume: bool, filtered: bool, bounded: bool = False) -> str:
         """水位增量 SELECT(keyset,单列主键),占位符按 qmark:
         resume=False, filtered=False → 无 WHERE(首轮建立水位)
         resume=False, filtered=True  → WHERE wm >= ?
-        resume=True                  → WHERE wm > ? OR (wm = ? AND pk > ?)
+        resume=True                  → WHERE (wm > ? OR (wm = ? AND pk > ?))
+        bounded=True 追加 AND wm < ?(段上界,对账 L2 重抽用)
         均须 ORDER BY wm, pk 且限定 batch_size 行。"""
 
     # ---- 安全强制 ----
@@ -117,19 +122,47 @@ class SourceAdapter(ABC):
         if watermark_col is None:
             yield from self._read_full(table)
             return
+        yield from self._keyset_read(table, watermark_col, since, None)
+
+    def read_segment(self, table: TableInfo, watermark_col: str,
+                     start, end) -> Iterator[list[dict]]:
+        """有界段读取 [start, end),对账 L2 重抽用。"""
+        self._check_table(table.name)
+        yield from self._keyset_read(table, watermark_col, start, end)
+
+    def segment_stats(self, table: TableInfo, watermark_col: str, start, end) -> dict:
+        """L1 对账:段内 COUNT + MAX(水位)。任何源都便宜且语义一致。"""
+        self._check_table(table.name)
+        wm = self._quote(watermark_col)
+        sql = (f"SELECT COUNT(*) AS c, MAX({wm}) AS m "
+               f"FROM {self._quote(table.name)} WHERE {wm} >= ? AND {wm} < ?")
+        (row,) = self._audited_fetch(sql, (start, end), action="reconcile")
+        return {"count": row["c"], "max": row["m"]}
+
+    def table_count(self, table: TableInfo) -> int:
+        """整表行数(无水位表的 L1 对账)。"""
+        self._check_table(table.name)
+        sql = f"SELECT COUNT(*) AS c FROM {self._quote(table.name)}"
+        (row,) = self._audited_fetch(sql, action="reconcile")
+        return row["c"]
+
+    def _keyset_read(self, table: TableInfo, watermark_col: str,
+                     since, until) -> Iterator[list[dict]]:
         if len(table.pk) != 1:
             raise NotImplementedError(
                 f"{table.name}: keyset 增量暂只支持单列主键,got {table.pk}")
         pk = table.pk[0]
+        bounded = until is not None
         cursor: tuple | None = None
         while True:
             if cursor is None:
-                sql = self._increment_sql(table, watermark_col,
-                                          resume=False, filtered=since is not None)
-                params = (since,) if since is not None else ()
+                sql = self._increment_sql(table, watermark_col, resume=False,
+                                          filtered=since is not None, bounded=bounded)
+                params = tuple(p for p in (since, until) if p is not None)
             else:
-                sql = self._increment_sql(table, watermark_col, resume=True, filtered=False)
-                params = (cursor[0], cursor[0], cursor[1])
+                sql = self._increment_sql(table, watermark_col, resume=True,
+                                          filtered=False, bounded=bounded)
+                params = (cursor[0], cursor[0], cursor[1]) + ((until,) if bounded else ())
             rows = self._audited_fetch(sql, params)
             if not rows:
                 return

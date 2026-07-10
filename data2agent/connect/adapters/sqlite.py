@@ -45,15 +45,20 @@ class SqliteReadOnlyAdapter(SourceAdapter):
         order = ", ".join(f'"{k}"' for k in table.pk) or "1"
         return f'SELECT {cols} FROM "{table.name}" ORDER BY {order} LIMIT {limit} OFFSET {offset}'
 
+    def _quote(self, ident: str) -> str:
+        return f'"{ident}"'
+
     def _increment_sql(self, table: TableInfo, watermark_col: str,
-                       *, resume: bool, filtered: bool) -> str:
+                       *, resume: bool, filtered: bool, bounded: bool = False) -> str:
         cols = ", ".join(f'"{c}"' for c, _ in table.columns)
         wm, pk = f'"{watermark_col}"', f'"{table.pk[0]}"'
+        conds = []
         if resume:
-            where = f" WHERE {wm} > ? OR ({wm} = ? AND {pk} > ?)"
+            conds.append(f"({wm} > ? OR ({wm} = ? AND {pk} > ?))")
         elif filtered:
-            where = f" WHERE {wm} >= ?"
-        else:
-            where = ""
+            conds.append(f"{wm} >= ?")
+        if bounded:
+            conds.append(f"{wm} < ?")
+        where = f" WHERE {' AND '.join(conds)}" if conds else ""
         return (f'SELECT {cols} FROM "{table.name}"{where} '
                 f"ORDER BY {wm}, {pk} LIMIT {self.batch_size}")

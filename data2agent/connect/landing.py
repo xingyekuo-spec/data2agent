@@ -116,10 +116,51 @@ class LandingStore:
         self.con.commit()
         return len(rows)
 
-    def count(self, source: str, table: str) -> int:
+    def count(self, source: str, table: str, active_only: bool = False) -> int:
+        where = " WHERE _d2a_deleted_at IS NULL" if active_only else ""
         (n,) = self.con.execute(
-            f'SELECT COUNT(*) FROM "{raw_table_name(source, table)}"').fetchone()
+            f'SELECT COUNT(*) FROM "{raw_table_name(source, table)}"{where}').fetchone()
         return n
+
+    # ---- 对账支撑(E3)----
+
+    def segment_stats(self, source: str, table: str, wm_col: str, start, end) -> dict:
+        """与适配器 segment_stats 同口径:活跃行的 COUNT + MAX(水位)。"""
+        row = self.con.execute(
+            f'SELECT COUNT(*) AS c, MAX("{wm_col}") AS m '
+            f'FROM "{raw_table_name(source, table)}" '
+            f'WHERE "{wm_col}" >= ? AND "{wm_col}" < ? AND _d2a_deleted_at IS NULL',
+            (start, end)).fetchone()
+        return {"count": row["c"], "max": row["m"]}
+
+    def active_pks(self, source: str, table: str, pk_col: str,
+                   wm_col: str | None = None, start=None, end=None) -> set:
+        sql = f'SELECT "{pk_col}" FROM "{raw_table_name(source, table)}" WHERE _d2a_deleted_at IS NULL'
+        params: tuple = ()
+        if wm_col is not None:
+            sql += f' AND "{wm_col}" >= ? AND "{wm_col}" < ?'
+            params = (start, end)
+        return {r[0] for r in self.con.execute(sql, params)}
+
+    def mark_deleted(self, source: str, table: str, pk_col: str, pks: set) -> int:
+        """软删打标:源侧消失的行,永不物理删。"""
+        if not pks:
+            return 0
+        now, table_sql = _now(), raw_table_name(source, table)
+        pk_list = sorted(pks)
+        for i in range(0, len(pk_list), 500):  # SQLite 参数上限内分块
+            chunk = pk_list[i:i + 500]
+            self.con.execute(
+                f'UPDATE "{table_sql}" SET _d2a_deleted_at = ? '
+                f'WHERE "{pk_col}" IN ({", ".join("?" * len(chunk))})',
+                (now, *chunk))
+        self.con.commit()
+        return len(pks)
+
+    def min_watermark(self, source: str, table: str, wm_col: str) -> str | None:
+        (m,) = self.con.execute(
+            f'SELECT MIN("{wm_col}") FROM "{raw_table_name(source, table)}"').fetchone()
+        return m
 
     # ---- 水位状态 ----
 
