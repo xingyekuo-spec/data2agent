@@ -1,0 +1,26 @@
+[project]
+name = "data2agent"
+version = "0.1.0"
+description = "Data to Agent, for factories — 把工厂数据接给 AI Agent:抽取框架 + 国产 ERP 连接器 + 制造业本体模板 + MCP Server"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+connect = ["pyodbc>=5.1", "apscheduler>=3.10", "psycopg[binary]>=3.1"]
+mcp = ["mcp>=1.0"]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/data2agent/data2agent"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["data2agent*"]
