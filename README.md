@@ -35,6 +35,10 @@ python -m data2agent.mcp_server                   # MCP Server(stdio,只读 + �
 # docker compose up   ← 展厅版本提供:模拟工厂 + MCP + 演示链(规划中)
 ```
 
+## 设计文档
+
+产品定位、架构、各组件详设见 [docs/design](docs/design/00-overview.md)(00 总览 → 01 元模型 → 02 抽取框架 → 03 MCP 网关 → 04 展厅)。
+
 ## 边界(诚实声明)
 
 本仓库解决"数据如何安全地到达 Agent"。生产环境的**口径校准、数据对账、主数据对齐、审批治理、行业知识包**不在开源范围 —— 那是让 Agent 在真实工厂可靠干活的部分,属于商业版 BizMind。

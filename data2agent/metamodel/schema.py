@@ -1,7 +1,7 @@
 """模板元模型(薄版):定义"什么是一个合法的对象模板 / 指标定义"。
 
 单一事实来源:连接器映射、对账工具、query_objects 参数、网关档位校验
-全部消费本模块定义的结构。设计依据见 docs/03 §3.1。
+全部消费本模块定义的结构。设计文档见 docs/design/01-metamodel.md。
 """
 
 from __future__ import annotations
