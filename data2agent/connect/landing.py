@@ -9,7 +9,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from .adapters.base import TableInfo
@@ -34,6 +35,12 @@ CREATE TABLE IF NOT EXISTS d2a_sync_run (
     source TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
     tables INTEGER, rows INTEGER, status TEXT, detail TEXT
 );
+CREATE TABLE IF NOT EXISTS d2a_sync_state (
+    source TEXT NOT NULL, table_name TEXT NOT NULL,
+    watermark_col TEXT NOT NULL, high_water TEXT,
+    last_run_at TEXT, last_batch_id TEXT,
+    PRIMARY KEY (source, table_name)
+);
 """
 
 
@@ -41,8 +48,17 @@ def raw_table_name(source: str, table: str) -> str:
     return f"raw_{source}__{table}"
 
 
+def normalize_value(v):
+    """源侧驱动返回的对象类型收敛为可移植类型(设计 §4:int/real/text/blob)。"""
+    if isinstance(v, (datetime, date)):
+        return str(v)
+    if isinstance(v, Decimal):
+        return float(v)
+    return v
+
+
 def row_hash(row: dict) -> str:
-    """行内容指纹(不含元数据列),对账 L2 的比对依据。"""
+    """行内容指纹(不含元数据列,基于归一化后的值),对账 L2 的比对依据。"""
     canonical = json.dumps(row, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.md5(canonical.encode("utf-8")).hexdigest()
 
@@ -81,11 +97,11 @@ class LandingStore:
         table = raw_table_name(source, info.name)
         cols = [c for c, _ in info.columns]
         extracted_at = _now()
+        normalized = [{c: normalize_value(r.get(c)) for c in cols} for r in rows]
         payload = [
-            {**{c: r.get(c) for c in cols},
-             "_d2a_batch_id": batch_id, "_d2a_extracted_at": extracted_at,
-             "_d2a_row_hash": row_hash({c: r.get(c) for c in cols})}
-            for r in rows
+            {**n, "_d2a_batch_id": batch_id, "_d2a_extracted_at": extracted_at,
+             "_d2a_row_hash": row_hash(n)}
+            for n in normalized
         ]
         all_cols = cols + ["_d2a_batch_id", "_d2a_extracted_at", "_d2a_row_hash"]
         col_sql = ", ".join(f'"{c}"' for c in all_cols)
@@ -104,6 +120,30 @@ class LandingStore:
         (n,) = self.con.execute(
             f'SELECT COUNT(*) FROM "{raw_table_name(source, table)}"').fetchone()
         return n
+
+    # ---- 水位状态 ----
+
+    def get_high_water(self, source: str, table: str) -> str | None:
+        row = self.con.execute(
+            "SELECT high_water FROM d2a_sync_state WHERE source = ? AND table_name = ?",
+            (source, table)).fetchone()
+        return row["high_water"] if row else None
+
+    def set_high_water(self, source: str, table: str, watermark_col: str,
+                       high_water: str | None, batch_id: str) -> None:
+        """水位只前进不后退(字符串比较,ISO 时间格式下与时间序一致)。"""
+        old = self.get_high_water(source, table)
+        if high_water is None or (old is not None and high_water < old):
+            high_water = old
+        self.con.execute(
+            "INSERT INTO d2a_sync_state "
+            "(source, table_name, watermark_col, high_water, last_run_at, last_batch_id) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (source, table_name) DO UPDATE SET "
+            "watermark_col = excluded.watermark_col, high_water = excluded.high_water, "
+            "last_run_at = excluded.last_run_at, last_batch_id = excluded.last_batch_id",
+            (source, table, watermark_col, high_water, _now(), batch_id))
+        self.con.commit()
 
     # ---- 审计与运行汇总 ----
 

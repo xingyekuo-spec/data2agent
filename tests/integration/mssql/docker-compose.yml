@@ -1,0 +1,25 @@
+# MSSQL 适配器集成环境:SQL Server 容器 + 带 msodbc 驱动的测试 runner。
+# 运行:docker compose -f tests/integration/mssql/docker-compose.yml up \
+#         --build --abort-on-container-exit --exit-code-from runner
+# Apple silicon 依赖 Rosetta 仿真(Docker Desktop 默认开启);
+# arm64 原生备选:MSSQL_IMAGE=mcr.microsoft.com/azure-sql-edge MSSQL_PLATFORM=linux/arm64
+services:
+  mssql:
+    image: ${MSSQL_IMAGE:-mcr.microsoft.com/mssql/server:2022-latest}
+    platform: ${MSSQL_PLATFORM:-linux/amd64}
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "D2a!Integration1"
+
+  runner:
+    build:
+      context: ../../..
+      dockerfile: tests/integration/mssql/Dockerfile.runner
+    depends_on: [mssql]     # 就绪等待由 seed 脚本重试完成(镜像无关)
+    environment:
+      D2A_IT_MSSQL_SA_DSN: "DRIVER={ODBC Driver 18 for SQL Server};SERVER=mssql,1433;UID=sa;PWD=D2a!Integration1;TrustServerCertificate=yes"
+      # 适配器走专门的只读账号,而不是 sa —— 只读账号故事的真实预演
+      D2A_IT_MSSQL_DSN: "DRIVER={ODBC Driver 18 for SQL Server};SERVER=mssql,1433;UID=d2a_reader;PWD=D2a!Reader1;DATABASE=d2a_e10;TrustServerCertificate=yes"
+    command: >
+      bash -lc "python tests/integration/mssql/seed_mssql.py &&
+                pytest tests/integration/mssql -q"

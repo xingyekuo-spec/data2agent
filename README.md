@@ -28,6 +28,7 @@ pip install -e ".[dev,mcp]"
 pytest tests -q                                   # 35 passed
 python -m data2agent.metamodel.validate templates # 模板校验
 python -m data2agent.showroom.seed                # 生成展厅模拟库 showroom/e10.sqlite(E10 参考表形)
+python -m data2agent.connect sync --sqlite showroom/e10.sqlite   # 抽取:水位增量 → 落地库(只读/白名单/审计)
 python -m data2agent.mcp_server                   # MCP Server(stdio,只读 + 默认脱敏)
 
 # 接入 Claude Code 试玩:

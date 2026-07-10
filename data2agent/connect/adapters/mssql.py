@@ -56,3 +56,16 @@ class MssqlReadOnlyAdapter(SourceAdapter):
         order = ", ".join(f"[{k}]" for k in table.pk) or "(SELECT NULL)"
         return (f"SELECT {cols} FROM [{table.name}] ORDER BY {order} "
                 f"OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY")
+
+    def _increment_sql(self, table: TableInfo, watermark_col: str,
+                       *, resume: bool, filtered: bool) -> str:
+        cols = ", ".join(f"[{c}]" for c, _ in table.columns)
+        wm, pk = f"[{watermark_col}]", f"[{table.pk[0]}]"
+        if resume:
+            where = f" WHERE {wm} > ? OR ({wm} = ? AND {pk} > ?)"
+        elif filtered:
+            where = f" WHERE {wm} >= ?"
+        else:
+            where = ""
+        return (f"SELECT TOP {self.batch_size} {cols} FROM [{table.name}]{where} "
+                f"ORDER BY {wm}, {pk}")

@@ -35,7 +35,7 @@ MCP 网关改读对象视图(现直读展厅库,属过渡形态)
 ```python
 class SourceAdapter(Protocol):
     def tables(self) -> list[TableInfo]                  # 仅白名单内
-    def read_increment(self, table, since, lookback, batch_size) -> Iterator[RowBatch]
+    def read_increment(self, table, since, watermark_col) -> Iterator[RowBatch]  # since 由增量引擎算好(已含回看)
     def segment_stats(self, table, segment) -> SegmentStat   # L1 对账:COUNT + MAX(水位)
 ```
 

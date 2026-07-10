@@ -1,8 +1,7 @@
-"""同步编排(E1:全量):白名单推导 → 逐表分批落地 → 运行汇总。"""
+"""同步报告结构与全量入口;增量编排见 increment.py。"""
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
 
 from ..metamodel.schema import TemplatePack
@@ -27,6 +26,8 @@ class TableReport:
     rows: int
     batches: int
     batch_id: str
+    strategy: str = "full_refresh"
+    high_water: str | None = None
 
 
 @dataclass
@@ -41,19 +42,7 @@ class SyncReport:
 
 
 def full_sync(adapter: SourceAdapter, landing: LandingStore, source: str) -> SyncReport:
-    report = SyncReport(source=source, run_id=landing.start_run(source))
-    try:
-        for info in adapter.tables():
-            landing.ensure_raw_table(source, info)
-            batch_id = uuid.uuid4().hex[:12]
-            rows = batches = 0
-            for batch in adapter.read_increment(info):
-                rows += landing.upsert_rows(source, info, batch, batch_id)
-                batches += 1
-            report.tables.append(TableReport(info.name, rows, batches, batch_id))
-    except Exception as e:
-        landing.finish_run(report.run_id, tables=len(report.tables),
-                           rows=report.total_rows, status="failed", detail=str(e))
-        raise
-    landing.finish_run(report.run_id, tables=len(report.tables), rows=report.total_rows)
-    return report
+    """全量同步 = 所有表按 full_refresh 策略的增量编排(不建立水位)。"""
+    from .increment import incremental_sync
+
+    return incremental_sync(adapter, landing, source, watermarks={})

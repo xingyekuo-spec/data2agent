@@ -59,7 +59,16 @@ class SourceAdapter(ABC):
 
     @abstractmethod
     def _page_sql(self, table: TableInfo, limit: int, offset: int) -> str:
-        """按主键排序的分页 SELECT。"""
+        """按主键排序的分页 SELECT(全量路径)。"""
+
+    @abstractmethod
+    def _increment_sql(self, table: TableInfo, watermark_col: str,
+                       *, resume: bool, filtered: bool) -> str:
+        """水位增量 SELECT(keyset,单列主键),占位符按 qmark:
+        resume=False, filtered=False → 无 WHERE(首轮建立水位)
+        resume=False, filtered=True  → WHERE wm >= ?
+        resume=True                  → WHERE wm > ? OR (wm = ? AND pk > ?)
+        均须 ORDER BY wm, pk 且限定 batch_size 行。"""
 
     # ---- 安全强制 ----
 
@@ -95,12 +104,41 @@ class SourceAdapter(ABC):
     def tables(self) -> list[TableInfo]:
         return [self.table_info(t) for t in sorted(self.whitelist)]
 
-    def read_increment(self, table: TableInfo, since=None, lookback=None,
+    def read_increment(self, table: TableInfo, since=None,
                        watermark_col: Optional[str] = None) -> Iterator[list[dict]]:
-        """分批读取。since=None 为全量;增量语义(水位/回看)属 E2 切片。"""
+        """分批读取。watermark_col=None 为全量(主键分页);
+        指定水位列则按 (水位, 主键) keyset 分页,since 为回看后的起点
+        (由增量引擎计算,含边界;upsert 幂等所以重叠安全)。
+
+        已知边界:水位列为 NULL 的行只有全量 / 首轮能带回,增量抓不到,
+        兜底靠分段对账(E3)。
+        """
         self._check_table(table.name)
-        if since is not None:
-            raise NotImplementedError("水位增量为 E2 切片,见 docs/design/02-extraction.md §5")
+        if watermark_col is None:
+            yield from self._read_full(table)
+            return
+        if len(table.pk) != 1:
+            raise NotImplementedError(
+                f"{table.name}: keyset 增量暂只支持单列主键,got {table.pk}")
+        pk = table.pk[0]
+        cursor: tuple | None = None
+        while True:
+            if cursor is None:
+                sql = self._increment_sql(table, watermark_col,
+                                          resume=False, filtered=since is not None)
+                params = (since,) if since is not None else ()
+            else:
+                sql = self._increment_sql(table, watermark_col, resume=True, filtered=False)
+                params = (cursor[0], cursor[0], cursor[1])
+            rows = self._audited_fetch(sql, params)
+            if not rows:
+                return
+            yield rows
+            if len(rows) < self.batch_size:
+                return
+            cursor = (rows[-1][watermark_col], rows[-1][pk])
+
+    def _read_full(self, table: TableInfo) -> Iterator[list[dict]]:
         offset = 0
         while True:
             rows = self._audited_fetch(self._page_sql(table, self.batch_size, offset))
