@@ -1,6 +1,7 @@
 # 数字厂长展厅:docker compose up --build
 # 拓扑(docs/design/04):mssql(模拟工厂)→ seed(灌数+建只读账号)
-#   → connector(serve 常驻:sync+apply+每日对账)→ /data 卷 → mcp(HTTP :8848)
+#   → connector(serve 常驻:sync+apply+每日对账)→ /data 卷
+#   → mcp(HTTP :8848)+ console(运维控制台 :8849)
 # 演示:docker compose exec connector \
 #         python -m data2agent.showroom.review_demo --db /data/factory.sqlite
 # Apple silicon 依赖 Rosetta 仿真;arm64 原生备选:
@@ -42,6 +43,22 @@ services:
         until [ -f /data/factory.sqlite ]; do echo '等待首轮抽取…'; sleep 3; done;
         exec python -m data2agent.mcp_server --db /data/factory.sqlite
         --transport http --host 0.0.0.0 --port 8848
+
+  console:
+    build: { context: ., dockerfile: deploy/runner.Dockerfile }
+    depends_on: [connector]
+    environment:
+      D2A_E10_DSN: "DRIVER={ODBC Driver 18 for SQL Server};SERVER=mssql,1433;UID=d2a_reader;PWD=D2a!Reader1;DATABASE=d2a_e10;TrustServerCertificate=yes"
+      # 展厅不启用认证;真实部署请设置 D2A_CONSOLE_TOKEN
+    volumes: [d2a-data:/data]
+    ports: ["8849:8849"]
+    command:
+      - bash
+      - -lc
+      - >-
+        until [ -f /data/factory.sqlite ]; do sleep 3; done;
+        exec python -m data2agent.console --config deploy/showroom-connect.yaml
+        --host 0.0.0.0 --port 8849
 
 volumes:
   d2a-data:

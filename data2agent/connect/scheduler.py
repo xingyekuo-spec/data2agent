@@ -73,13 +73,13 @@ def run_sync_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
 
 
 def run_reconcile_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
-                        landing_path: str) -> bool:
+                        landing_path: str, deep: bool = False) -> bool:
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip reconcile source=%s reason=窗口外", name)
         return False
     landing = LandingStore(landing_path)
     adapter = build_adapter(name, scfg, pack, landing)
-    report = reconcile(adapter, landing, name, watermarks_from_pack(pack, name))
+    report = reconcile(adapter, landing, name, watermarks_from_pack(pack, name), deep=deep)
     log.info("reconcile source=%s run=%s segments=%s mismatched=%s soft_deleted=%s",
              name, report.run_id, len(report.segments),
              len(report.mismatched), report.total_soft_deleted)

@@ -12,4 +12,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg2 \
 
 WORKDIR /app
 COPY . .
-RUN pip install --no-cache-dir -e ".[dev,connect,mcp]"
+RUN pip install --no-cache-dir -e ".[dev,connect,mcp,console]"
