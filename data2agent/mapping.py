@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import Callable, Optional
 
 from .metamodel.schema import ObjectTemplate, SourceBinding
 
@@ -58,9 +59,16 @@ def build_select(
     filters: dict | None = None,
     order_by: str | None = None,
     desc: bool = False,
-    limit: int = 20,
+    limit: Optional[int] = 20,
+    physical: Callable[[str], str] | None = None,   # 逻辑表名 → 物理表名(落地库 raw_*)
+    active_col: str | None = None,                  # 软删列:锚表过滤 + join 条件排除已删行
 ) -> tuple[str, list, dict[str, FieldExpr]]:
-    """按 binding 生成参数化 SELECT。返回 (sql, params, 属性->表达式)。"""
+    """按 binding 生成参数化 SELECT。返回 (sql, params, 属性->表达式)。
+
+    默认直读源表形(展厅/测试);映射应用传 physical + active_col
+    在落地库 raw_* 上物化对象层。limit=None 不限行(仅限内部消费者)。
+    """
+    physical = physical or (lambda t: t)
     if not binding.tables:
         raise ValueError(f"{template.object}: binding 未声明 tables,无法确定锚表")
     anchor = binding.tables[0]
@@ -102,11 +110,15 @@ def build_select(
             raise ValueError(f"未知排序字段 '{order_by}',可用:{sorted(exprs)}")
         order = f' ORDER BY {sql_col(exprs[order_by])} {"DESC" if desc else "ASC"}'
 
-    from_clause = f'"{anchor}" a' + "".join(
-        f' LEFT JOIN "{t}" {alias} ON {alias}."Id" = a."{fk}"'
+    if active_col:
+        where.append(f'a."{active_col}" IS NULL')
+    join_active = f' AND {{alias}}."{active_col}" IS NULL' if active_col else ""
+    from_clause = f'"{physical(anchor)}" a' + "".join(
+        f' LEFT JOIN "{physical(t)}" {alias} ON {alias}."Id" = a."{fk}"'
+        + join_active.format(alias=alias)
         for (t, fk), alias in joins.items()
     )
     where_clause = f" WHERE {' AND '.join(where)}" if where else ""
-    limit = max(1, min(int(limit), 200))
-    sql = f"SELECT {select} FROM {from_clause}{where_clause}{order} LIMIT {limit}"
+    limit_clause = "" if limit is None else f" LIMIT {max(1, min(int(limit), 200))}"
+    sql = f"SELECT {select} FROM {from_clause}{where_clause}{order}{limit_clause}"
     return sql, params, exprs

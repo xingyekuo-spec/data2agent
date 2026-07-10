@@ -1,85 +1,24 @@
-"""只读查询服务:消费元模型 binding 生成 SQL,默认脱敏,传输无关。
+"""只读查询服务:读落地库物化对象层(obj_*),默认脱敏,传输无关。
+
+E4 起网关消费完整管道的产物:源系统 → sync(raw_*)→ apply(obj_*)→ 本服务。
+枚举值 / 编码翻译在映射应用阶段已完成,网关只做属性校验、脱敏与口径警示。
 
 安全边界(lite):
-- SQLite 以只读模式(mode=ro)打开;
-- SQL 只由 binding 声明的表 / 字段生成,天然白名单;
+- 落地库以只读模式(mode=ro)打开;
+- SQL 只引用模板声明的属性列与 obj_ 表,天然白名单;
 - sensitive 属性一律脱敏为 "***",lite 不提供解敏开关(解敏属治理档位,商业版范围)。
-
-指标实现说明:query_metrics 的 SQL 目前绑定展厅 E10 表形,
-待抽取管道 / 语义层就位后改为面向对象层取数。
 """
 
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
 from pathlib import Path
 
-from ..mapping import build_select
 from ..metamodel.loader import load_pack
+from ..metamodel.schema import ObjectTemplate
+from .metrics_impl import registry
 
 MASK = "***"
-
-
-@dataclass(frozen=True)
-class MetricImpl:
-    dims: dict[str, str]      # 维度名 -> SQL 分组表达式
-    default_dim: str
-    unit: str
-    sql: str                  # 含 {dim} 占位;LIMIT 参数化
-
-
-_MARGIN_SQL = """
-SELECT {dim} AS "group",
-       ROUND(1.0 - SUM(i.STANDARD_COST * d.QUANTITY) / SUM(d.AMOUNT * h.EXCHANGE_RATE), 4) AS value,
-       ROUND(SUM(d.AMOUNT * h.EXCHANGE_RATE), 2) AS revenue_cny,
-       COUNT(DISTINCT h.Id) AS order_count
-FROM SALES_ORDER_D d
-JOIN SALES_ORDER h ON h.Id = d.SALES_ORDER_ID
-JOIN ITEM i ON i.Id = d.ITEM_ID
-JOIN CUSTOMER c ON c.Id = h.CUSTOMER_ID
-WHERE h.INVALID_STATE = 'N' AND h.APPROVE_DATE IS NOT NULL
-GROUP BY "group"
-ORDER BY {order}
-LIMIT ?
-"""
-
-_RESPONSE_SQL = """
-SELECT {dim} AS "group",
-       ROUND(AVG((JULIANDAY(q.SUBMIT_DATE) - JULIANDAY(q.INQUIRY_DATE)) * 24), 1) AS value,
-       COUNT(*) AS quote_count
-FROM QUOTATION q
-JOIN CUSTOMER c ON c.Id = q.CUSTOMER_ID
-WHERE q.SUBMIT_DATE IS NOT NULL
-GROUP BY "group"
-ORDER BY {order}
-LIMIT ?
-"""
-
-_METRICS: dict[str, MetricImpl | None] = {
-    "gross_margin_rate": MetricImpl(
-        dims={
-            "月": "SUBSTR(h.DOC_DATE, 1, 7)",
-            "客户": "c.CUSTOMER_CODE || ' ' || c.CUSTOMER_SHORT_NAME",
-            "品类": "i.CATEGORY_CODE",
-            "区域": "c.COUNTRY_REGION",
-        },
-        default_dim="月",
-        unit="比率(0-1,CNY 口径,收入按订单汇率折算)",
-        sql=_MARGIN_SQL,
-    ),
-    "quote_response_hours": MetricImpl(
-        dims={
-            "月": "SUBSTR(q.DOC_DATE, 1, 7)",
-            "客户": "c.CUSTOMER_CODE || ' ' || c.CUSTOMER_SHORT_NAME",
-        },
-        default_dim="月",
-        unit="小时(均值)",
-        sql=_RESPONSE_SQL,
-    ),
-    # 依赖应收 / 回款对象,不在首批 5 个对象内;口径定义保留于 templates/metrics
-    "overdue_receivable_amount": None,
-}
 
 
 class QueryService:
@@ -88,6 +27,7 @@ class QueryService:
         self.db_path = str(db_path)
         self.source = source
         self.pack = load_pack(templates_root)
+        self.metrics = registry(source)
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
@@ -108,19 +48,23 @@ class QueryService:
         if binding is None:
             raise ValueError(f"{object} 没有 source={self.source} 的 binding")
 
-        sql, params, exprs = build_select(
-            tpl, binding, filters=filters, order_by=order_by, desc=desc, limit=limit)
+        sql, params = self._object_sql(tpl, filters, order_by, desc, limit)
         con = self._connect()
         try:
-            rows = [dict(r) for r in con.execute(sql, params)]
+            try:
+                rows = [dict(r) for r in con.execute(sql, params)]
+            except sqlite3.OperationalError as e:
+                if "no such table" in str(e):
+                    raise ValueError(
+                        f"对象层尚未物化({object}):请先运行 "
+                        "python -m data2agent.connect sync 与 apply") from e
+                raise
+            quarantined = self._quarantine_count(con, object)
         finally:
             con.close()
 
         sensitive = {p.name for p in tpl.properties if p.sensitive}
         for row in rows:
-            for prop, e in exprs.items():
-                if e.value_map and row.get(prop) is not None:
-                    row[prop] = e.value_map.get(row[prop], row[prop])
             for prop in sensitive:
                 if row.get(prop) is not None:
                     row[prop] = MASK
@@ -131,12 +75,46 @@ class QueryService:
             "meta": {
                 "source": binding.source,
                 "binding_status": binding.status,
-                "masked_fields": sorted(sensitive & set(exprs)),
+                "masked_fields": sorted(sensitive),
                 "row_count": len(rows),
+                "quarantined": quarantined,
                 "note": "binding 为 draft:字段映射按参考表形构造,口径未经现场校准"
                         if binding.status == "draft" else "",
             },
         }
+
+    def _object_sql(self, tpl: ObjectTemplate, filters: dict | None,
+                    order_by: str | None, desc: bool, limit: int) -> tuple[str, list]:
+        props = {p.name: p for p in tpl.properties}
+        cols = ", ".join('"{}"'.format(n) for n in props)
+        where, params = [], []
+        for name, val in (filters or {}).items():
+            prop = props.get(name)
+            if prop is None:
+                raise ValueError(f"未知筛选字段 '{name}',可用:{sorted(props)}")
+            if prop.type == "enum" and val not in prop.enum_values:
+                raise ValueError(f"'{name}' 取值须为 {sorted(prop.enum_values)},got '{val}'")
+            where.append(f'"{name}" = ?')
+            params.append(val)
+        order = ""
+        if order_by:
+            if order_by not in props:
+                raise ValueError(f"未知排序字段 '{order_by}',可用:{sorted(props)}")
+            order = f' ORDER BY "{order_by}" {"DESC" if desc else "ASC"}'
+        where_sql = f" WHERE {' AND '.join(where)}" if where else ""
+        limit = max(1, min(int(limit), 200))
+        return (f'SELECT {cols} FROM "obj_{tpl.object}"{where_sql}{order} LIMIT {limit}',
+                params)
+
+    def _quarantine_count(self, con: sqlite3.Connection, object_name: str) -> int:
+        try:
+            (n,) = con.execute(
+                "SELECT COUNT(*) FROM d2a_quarantine "
+                "WHERE source = ? AND object = ? AND resolved_at IS NULL",
+                (self.source, object_name)).fetchone()
+            return n
+        except sqlite3.OperationalError:
+            return 0
 
     def _object_catalog(self) -> dict:
         return {
@@ -176,11 +154,11 @@ class QueryService:
             "formula": mdef.formula, "grain": mdef.grain, "caveats": mdef.caveats,
             "freshness_sla": mdef.freshness_sla,
         }
-        impl = _METRICS.get(metric)
+        impl = self.metrics.get(metric)
         if impl is None:
             return {
                 **definition, "implemented": False,
-                "reason": "依赖应收 / 回款对象,不在首批 5 个对象内;口径定义保留,待对象补齐后实现",
+                "reason": "依赖应收 / 回款对象,不在首批对象内;口径定义保留,待对象补齐后实现",
             }
 
         dim = group_by or impl.default_dim
@@ -192,6 +170,11 @@ class QueryService:
         try:
             rows = [dict(r) for r in
                     con.execute(impl.sql.format(dim=impl.dims[dim], order=order), (limit,))]
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e):
+                raise ValueError(
+                    "对象层尚未物化:请先运行 python -m data2agent.connect sync 与 apply") from e
+            raise
         finally:
             con.close()
         warning = "口径为 draft(未经校准),数值仅供演示环境参考" if mdef.status != "certified" else ""
@@ -207,9 +190,9 @@ class QueryService:
                 {
                     "metric": m.metric, "display_name": m.display_name, "status": m.status,
                     "formula": m.formula, "grain": m.grain, "caveats": m.caveats,
-                    "implemented": _METRICS.get(m.metric) is not None,
-                    **({"group_by_options": sorted(_METRICS[m.metric].dims)}
-                       if _METRICS.get(m.metric) else {}),
+                    "implemented": self.metrics.get(m.metric) is not None,
+                    **({"group_by_options": sorted(self.metrics[m.metric].dims)}
+                       if self.metrics.get(m.metric) else {}),
                 }
                 for m in self.pack.metrics
             ],

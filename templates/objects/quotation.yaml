@@ -8,6 +8,8 @@ properties:
   - { name: quote_no, type: string, desc: 报价单号 }
   - { name: customer, type: ref, ref: Customer, desc: 客户 }
   - { name: quote_date, type: date, desc: 报价日期 }
+  - { name: inquiry_at, type: datetime, desc: 询单接收时间(报价响应时长起点) }
+  - { name: submitted_at, type: datetime, desc: 报出时间(报价响应时长终点;草稿为空) }
   - { name: spec_summary, type: text, desc: 规格摘要(竿:长度/节数/调性;轮:齿比/轴承;饵:类型/颜色数) }
   - { name: target_price, type: money, desc: 客户目标价 }
   - { name: quoted_price, type: money, desc: 报价(阶梯明细放自定义字段) }
@@ -30,6 +32,8 @@ bindings:
       quote_no: QUOTATION.DOC_NO
       customer: CUSTOMER.CUSTOMER_CODE (join QUOTATION.CUSTOMER_ID)
       quote_date: QUOTATION.DOC_DATE
+      inquiry_at: QUOTATION.INQUIRY_DATE
+      submitted_at: QUOTATION.SUBMIT_DATE
       spec_summary: QUOTATION.SPEC_SUMMARY
       target_price: QUOTATION.TARGET_PRICE
       quoted_price: QUOTATION.QUOTE_PRICE

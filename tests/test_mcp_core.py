@@ -1,20 +1,39 @@
-"""QueryService(MCP 工具核心)测试:对象查询、脱敏、值映射、指标取数。"""
+"""QueryService(MCP 工具核心)测试:走完整管道(seed → sync → apply)后查对象层。"""
 
 from datetime import date
 from pathlib import Path
 
 import pytest
 
+from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.landing import LandingStore
+from data2agent.connect.mapping_apply import apply_objects
+from data2agent.connect.sync import whitelist_from_pack
 from data2agent.mcp_server.core import MASK, QueryService
+from data2agent.metamodel.loader import load_pack
 from data2agent.showroom.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
+SOURCE = "digiwin_e10"
+
+
+def _pipeline(dirpath: Path) -> Path:
+    """seed → sync → apply,返回落地库路径。"""
+    src = dirpath / "source.sqlite"
+    write_db(src, build(seed=42, asof=date(2026, 7, 10)))
+    pack = load_pack(ROOT / "templates")
+    landing = LandingStore(dirpath / "landing.sqlite")
+    adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE))
+    incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
+    report = apply_objects(landing, pack, SOURCE)
+    assert not report.aborted
+    return dirpath / "landing.sqlite"
 
 
 @pytest.fixture(scope="module")
 def svc(tmp_path_factory) -> QueryService:
-    db = tmp_path_factory.mktemp("showroom") / "e10.sqlite"
-    write_db(db, build(seed=42, asof=date(2026, 7, 10)))
+    db = _pipeline(tmp_path_factory.mktemp("pipeline"))
     return QueryService(db, ROOT / "templates")
 
 
@@ -86,15 +105,21 @@ def test_unimplemented_metric_explains(svc):
     assert res["implemented"] is False and "应收" in res["reason"]
 
 
-def test_mcp_tool_wiring(svc, tmp_path):
+def test_object_layer_not_materialized_guides_user(tmp_path):
+    empty = LandingStore(tmp_path / "empty.sqlite")  # 只有系统表,无 obj_*
+    svc = QueryService(tmp_path / "empty.sqlite", ROOT / "templates")
+    with pytest.raises(ValueError, match="尚未物化"):
+        svc.query_objects("SalesOrder")
+    assert empty  # fixture 保持连接存活
+
+
+def test_mcp_tool_wiring(svc):
     """FastMCP 装配冒烟:两个只读工具按名注册(无 mcp 包时跳过)。"""
     pytest.importorskip("mcp")
     import asyncio
 
     from data2agent.mcp_server.server import create_server
 
-    db = tmp_path / "e10.sqlite"
-    write_db(db, build(seed=42, asof=date(2026, 7, 10)))
-    server = create_server(db, ROOT / "templates")
+    server = create_server(svc.db_path, ROOT / "templates")
     tools = asyncio.run(server.list_tools())
     assert {t.name for t in tools} == {"query_objects", "query_metrics"}

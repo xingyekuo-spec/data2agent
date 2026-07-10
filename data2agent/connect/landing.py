@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS d2a_sync_state (
     last_run_at TEXT, last_batch_id TEXT,
     PRIMARY KEY (source, table_name)
 );
+CREATE TABLE IF NOT EXISTS d2a_quarantine (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL, object TEXT NOT NULL,
+    keys_json TEXT, reason TEXT NOT NULL, raw_json TEXT,
+    batch_id TEXT, created_at TEXT NOT NULL, resolved_at TEXT
+);
 """
 
 
@@ -185,6 +191,40 @@ class LandingStore:
             "last_run_at = excluded.last_run_at, last_batch_id = excluded.last_batch_id",
             (source, table, watermark_col, high_water, _now(), batch_id))
         self.con.commit()
+
+    # ---- 隔离区(E4)----
+
+    def quarantine_supersede(self, source: str, object_name: str) -> None:
+        """新一轮映射前,把该对象上一轮未处理的隔离记录标记为已被取代(历史保留)。"""
+        self.con.execute(
+            "UPDATE d2a_quarantine SET resolved_at = ? "
+            "WHERE source = ? AND object = ? AND resolved_at IS NULL",
+            (_now(), source, object_name))
+        self.con.commit()
+
+    def quarantine_add(self, source: str, object_name: str, records: list[dict],
+                       batch_id: str) -> None:
+        if not records:
+            return
+        now = _now()
+        self.con.executemany(
+            "INSERT INTO d2a_quarantine "
+            "(source, object, keys_json, reason, raw_json, batch_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [(source, object_name,
+              json.dumps(r["keys"], ensure_ascii=False, default=str),
+              r["reason"],
+              json.dumps(r["raw"], ensure_ascii=False, default=str),
+              batch_id, now)
+             for r in records])
+        self.con.commit()
+
+    def quarantine_count(self, source: str, object_name: str) -> int:
+        (n,) = self.con.execute(
+            "SELECT COUNT(*) FROM d2a_quarantine "
+            "WHERE source = ? AND object = ? AND resolved_at IS NULL",
+            (source, object_name)).fetchone()
+        return n
 
     # ---- 审计与运行汇总 ----
 

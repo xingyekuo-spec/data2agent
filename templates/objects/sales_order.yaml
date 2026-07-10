@@ -10,6 +10,7 @@ properties:
   - { name: order_date, type: date, desc: 订单日期 }
   - { name: currency, type: string, desc: 币别 }
   - { name: total_amount, type: money, desc: 订单总额 }
+  - { name: fx_rate, type: decimal, desc: 订单汇率(交易币别→CNY;CNY 口径指标的折算依据) }
   - { name: trade_term, type: string, desc: 贸易条款(FOB / EXW 等) }
   - { name: promised_ship_date, type: date, desc: 承诺船期 / 交期 }
 states: [已接单, 生产中, 部分出货, 完全出货, 已结案, 已作废]
@@ -32,6 +33,7 @@ bindings:
       order_date: SALES_ORDER.DOC_DATE
       currency: CURRENCY.CURRENCY_CODE (join SALES_ORDER.CURRENCY_ID)
       total_amount: SALES_ORDER.TOTAL_AMOUNT
+      fx_rate: SALES_ORDER.EXCHANGE_RATE
       trade_term: SALES_ORDER.TRADE_TERM
       promised_ship_date: SALES_ORDER.PROMISED_SHIP_DATE
     watermark: SALES_ORDER.LAST_MODIFIED_DATE

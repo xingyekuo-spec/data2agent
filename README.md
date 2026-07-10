@@ -29,7 +29,8 @@ pytest tests -q                                   # 35 passed
 python -m data2agent.metamodel.validate templates # 模板校验
 python -m data2agent.showroom.seed                # 生成展厅模拟库 showroom/e10.sqlite(E10 参考表形)
 python -m data2agent.connect sync --sqlite showroom/e10.sqlite   # 抽取:水位增量 → 落地库(只读/白名单/审计)
-python -m data2agent.mcp_server                   # MCP Server(stdio,只读 + 默认脱敏)
+python -m data2agent.connect apply                # 映射:raw_* → 物化对象层 obj_*(隔离区 + 熔断)
+python -m data2agent.mcp_server                   # MCP Server 读对象层(stdio,只读 + 默认脱敏)
 
 # 接入 Claude Code 试玩:
 #   claude mcp add d2a-factory -- .venv/bin/python -m data2agent.mcp_server

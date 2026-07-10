@@ -18,7 +18,7 @@ mcp           MCP 网关(HTTP/SSE 模式)
 demo          接单评审演示链(脚本或 Agent 编排)
 ```
 
-当前形态(阶段①产物)是**短路版**:seed 直接生成 SQLite,MCP 直读 —— 保留为"5 分钟快速试玩"模式;compose 版是"完整链路"模式,两者并存。
+当前形态(E4 后)已是**全链路的 SQLite 快速版**:seed → connect sync → connect apply → MCP 读对象层,与生产链路同构,只是源库 / 落地库都是本地 SQLite;compose 版把源库换成真 SQL Server 并常驻调度,是同一条管道的容器化。
 
 ## 3. 已实现
 

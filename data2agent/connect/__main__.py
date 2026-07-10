@@ -1,7 +1,8 @@
-"""抽取 CLI:python -m data2agent.connect {sync|reconcile} --sqlite 源库 | --mssql-dsn-env 环境变量
+"""抽取 CLI:python -m data2agent.connect {sync|reconcile|apply}
 
 sync      默认水位增量(binding.watermark 推导,无水位表 full_refresh),--full 强制全量
 reconcile 分段对账 L1(--deep 全段 L2 修复);抓物理删除与不动水位的原地改动
+apply     映射应用:raw_* → 物化对象表 obj_*(隔离区 + 熔断),纯落地库操作
 完整调度(窗口 / 限流常驻)与 connect.yaml 配置属 E5 切片。
 """
 
@@ -13,6 +14,7 @@ import os
 from ..metamodel.loader import load_pack
 from .increment import DEFAULT_LOOKBACK_DAYS, incremental_sync, watermarks_from_pack
 from .landing import LandingStore
+from .mapping_apply import DEFAULT_BREAKER_THRESHOLD, apply_objects
 from .reconcile import reconcile
 from .sync import whitelist_from_pack
 
@@ -64,7 +66,29 @@ def main() -> int:
     rp.add_argument("--deep", action="store_true",
                     help="全段 L2 修复(兜底不动水位的原地改动)")
 
+    mp = sub.add_parser("apply", help="映射应用:raw_* → obj_*(隔离区 + 熔断)")
+    mp.add_argument("--source", default="digiwin_e10", help="binding 数据源名")
+    mp.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径")
+    mp.add_argument("--templates", default="templates", help="模板包目录")
+    mp.add_argument("--threshold", type=float, default=DEFAULT_BREAKER_THRESHOLD,
+                    help=f"熔断阈值(隔离率,默认 {DEFAULT_BREAKER_THRESHOLD:.0%})")
+
     args = ap.parse_args()
+
+    if args.cmd == "apply":
+        pack = load_pack(args.templates)
+        report = apply_objects(LandingStore(args.landing), pack, args.source,
+                               threshold=args.threshold)
+        for r in report.results:
+            mark = "⚠ 熔断" if r.status == "aborted" else "ok"
+            print(f"  - {r.object:<16} 映射 {r.mapped:>5} 行, 隔离 {r.quarantined} 行  [{mark}]")
+        if report.aborted:
+            print(f"映射中止对象:{[r.object for r in report.aborted]}(旧对象表保留,"
+                  "明细见 d2a_quarantine)")
+            return 1
+        print(f"映射应用完成:{len(report.results)} 个对象 → {args.landing}")
+        return 0
+
     pack, adapter, landing = _build(args, ap)
 
     if args.cmd == "sync":
