@@ -2,9 +2,14 @@
 
 > **Data to Agent, for factories —— 把工厂数据接给 AI Agent。**
 
-<!-- 老板测试留位(public 前必须完成):
-     首屏放一张"接单评审卡"截图 + Agent 生成过程 GIF,
-     让非技术人 30 秒看到 Agent 的工作成果,而不是架构图。 -->
+![接单评审建议卡:Agent 基于历史成交、毛利基线与账期给出可溯源的评审结论](docs/assets/review-card.svg)
+
+一句询单,Agent 查历史成交 / 毛利基线 / 账期后给出**每个数字可溯源**的接单评审建议 ——
+上图由真实演示链生成(`python deploy/render_hero_svg.py` 可再生),不是手绘示意。
+
+<!-- 演示 GIF(公开前补):brew install vhs && vhs deploy/demo.tape
+     产出 docs/assets/demo.gif 后,在此嵌入:
+     ![全链路演示:seed → 抽取 → 物化 → 评审卡](docs/assets/demo.gif) -->
 
 > ⚠️ 当前处于 pre-release 私有开发阶段,首个工厂验证完成后公开。
 
