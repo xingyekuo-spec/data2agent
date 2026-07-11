@@ -21,8 +21,12 @@ binding_status=draft 表示字段映射未经现场数据字典校准,结论请�
 
 def create_server(db: str | Path, templates: str | Path = "templates",
                   source: str = "digiwin_e10", max_tier: str = "说",
-                  host: str = "127.0.0.1", port: int = 8848) -> FastMCP:
-    svc = QueryService(db, templates, source, max_tier=max_tier)
+                  host: str = "127.0.0.1", port: int = 8848,
+                  rate_per_minute: int = 0, audit_sink=None) -> FastMCP:
+    from .http import RateLimiter
+
+    svc = QueryService(db, templates, source, max_tier=max_tier, audit_sink=audit_sink)
+    limiter = RateLimiter(rate_per_minute)
     server = FastMCP("data2agent", instructions=INSTRUCTIONS, host=host, port=port)
 
     @server.tool()
@@ -37,6 +41,7 @@ def create_server(db: str | Path, templates: str | Path = "templates",
         (枚举属性用对象模型取值,如 result=成交),order_by / desc 排序,
         limit 默认 20、上限 200。
         """
+        limiter.check("query_objects")
         return svc.query_objects(object, filters, order_by, desc, limit)
 
     @server.tool()
@@ -48,6 +53,7 @@ def create_server(db: str | Path, templates: str | Path = "templates",
         带 metric 参数返回分组取数结果,group_by 缺省为该指标默认维度。
         指标 status=draft 表示口径未经校准,引用数值时请附带说明。
         """
+        limiter.check("query_metrics")
         return svc.query_metrics(metric, group_by, limit)
 
     @server.tool()
@@ -61,6 +67,7 @@ def create_server(db: str | Path, templates: str | Path = "templates",
         引用不到真实查询会被拒绝 —— 建议卡里的每个数字都必须可溯源。
         返回卡片含档位、聚合口径警示与治理声明。
         """
+        limiter.check("propose_action")
         return svc.propose_action(object, action, conclusion, evidence)
 
     return server

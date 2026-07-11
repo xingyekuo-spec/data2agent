@@ -42,8 +42,18 @@ Agent 侧唯一的数据入口。承诺:**任何支持 MCP 的 Agent 五分钟�
 
 指标 SQL 注册表位于独立模块 `metrics_impl.py`,按 MetricDef.metric 路由,**面向对象层(obj_*)取数**,与源系统表形解耦(E4 前直读展厅表形的过渡债务已清偿)。残留一处显式 raw 穿透:毛利率的订单有效性过滤(INVALID_STATE / APPROVE_DATE)—— 对象层尚无派生状态属性(状态推导属映射层扩展,见 docs 01 §3.1),补齐后删除。
 
-## 5. 演进(按需拉动,不提前建)
+## 5. HTTP 部署安全件(已实现)
 
-- **传输**:当前 stdio(单机);内网部署改 HTTP/SSE 时补:API key 认证、每工具限流、查询审计日志(与抽取侧 d2a_audit_log 对称);
+stdio(本机进程)不需要;暴露 HTTP(streamable-http)即三件齐上(`mcp_server/http.py`):
+
+| 件 | 行为 |
+| --- | --- |
+| Bearer 认证 | **默认强制**:无 Token 拒绝启动,`--allow-anonymous` 仅限展厅;只认 Authorization 头,不接受 URL 参数(避免 Token 进访问日志) |
+| 每工具限流 | 滑动窗口,默认 120 次/分钟,`--rate-per-minute` 可调(0 关闭) |
+| 查询审计 | JSONL 追加(默认写落地库旁 `gateway_audit.jsonl`),每次工具调用一条,与抽取侧 d2a_audit_log 对称 |
+
+## 6. 演进(按需拉动,不提前建)
+
 - **查询能力**:分页游标、范围筛选(日期区间)、对象级聚合 —— 由演示链和真实 Agent 的使用反馈拉动;
-- **多源**:`--source` 已支持切换;同对象多源并读(易飞+E10 并存客户)暂不做。
+- **多源**:`--source` 已支持切换;同对象多源并读(易飞+E10 并存客户)暂不做;
+- **认证升级**:多 Token / 按 Token 记审计主体(who),真实多租户需求出现时做。

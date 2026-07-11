@@ -39,10 +39,11 @@ services:
     command:
       - bash
       - -lc
+      # --allow-anonymous 仅限展厅演示;内网部署删掉它并设置 D2A_MCP_TOKEN
       - >-
         until [ -f /data/factory.sqlite ]; do echo '等待首轮抽取…'; sleep 3; done;
         exec python -m data2agent.mcp_server --db /data/factory.sqlite
-        --transport http --host 0.0.0.0 --port 8848
+        --transport http --host 0.0.0.0 --port 8848 --allow-anonymous
 
   console:
     build: { context: ., dockerfile: deploy/runner.Dockerfile }

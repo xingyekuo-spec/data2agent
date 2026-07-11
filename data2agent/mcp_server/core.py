@@ -33,7 +33,10 @@ _QUERY_LOG_CAP = 500
 
 class QueryService:
     def __init__(self, db_path: str | Path, templates_root: str | Path = "templates",
-                 source: str = "digiwin_e10", max_tier: str = "说"):
+                 source: str = "digiwin_e10", max_tier: str = "说",
+                 audit_sink=None):
+        """audit_sink:可选的持久审计回调(dict → None),每次工具调用一条;
+        与抽取侧 d2a_audit_log 对称,HTTP 部署默认写 JSONL(见 __main__)。"""
         self.db_path = str(db_path)
         self.source = source
         self.pack = load_pack(templates_root)
@@ -41,20 +44,27 @@ class QueryService:
         if max_tier not in TIER_ORDER:
             raise ValueError(f"max_tier 须为 {sorted(TIER_ORDER)},got '{max_tier}'")
         self.max_tier = max_tier
+        self.audit_sink = audit_sink
         self._query_log: OrderedDict[str, dict] = OrderedDict()
         self._query_seq = 0
         self._proposal_seq = 0
 
+    def _audit(self, record: dict) -> None:
+        if self.audit_sink:
+            self.audit_sink(record)
+
     def _log_query(self, tool: str, target: str, detail: str, warnings: list[str]) -> str:
         self._query_seq += 1
         qid = f"q{self._query_seq}"
-        self._query_log[qid] = {
+        entry = {
             "query_id": qid, "tool": tool, "target": target, "detail": detail,
             "at": datetime.now().isoformat(timespec="seconds"),
             "warnings": [w for w in warnings if w],
         }
+        self._query_log[qid] = entry
         while len(self._query_log) > _QUERY_LOG_CAP:
             self._query_log.popitem(last=False)
+        self._audit({k: entry[k] for k in ("query_id", "tool", "target", "detail", "at")})
         return qid
 
     def _connect(self) -> sqlite3.Connection:
@@ -209,6 +219,11 @@ class QueryService:
             caveats.extend(logged["warnings"])
 
         self._proposal_seq += 1
+        self._audit({
+            "tool": "propose_action", "proposal_id": f"p{self._proposal_seq}",
+            "target": f"{object}.{action}", "detail": f"evidence={len(cited)}",
+            "at": datetime.now().isoformat(timespec="seconds"),
+        })
         return {
             "proposal_id": f"p{self._proposal_seq}",
             "at": datetime.now().isoformat(timespec="seconds"),
