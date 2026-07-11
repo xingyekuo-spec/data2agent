@@ -40,7 +40,7 @@ Agent 侧唯一的数据入口。承诺:**任何支持 MCP 的 Agent 五分钟�
 
 ## 4. 指标实现(E4 后)
 
-指标 SQL 注册表位于独立模块 `metrics_impl.py`,按 MetricDef.metric 路由,**面向对象层(obj_*)取数**,与源系统表形解耦(E4 前直读展厅表形的过渡债务已清偿)。残留一处显式 raw 穿透:毛利率的订单有效性过滤(INVALID_STATE / APPROVE_DATE)—— 对象层尚无派生状态属性(状态推导属映射层扩展,见 docs 01 §3.1),补齐后删除。
+指标 SQL 注册表位于独立模块 `metrics_impl.py`,按 MetricDef.metric 路由,**只面向对象层(obj_*)取数**,与源系统表形彻底解耦(E4 清偿直读展厅表形的债务;原毛利率订单有效性过滤的最后一处 raw 穿透,已随派生状态 SalesOrder.state 决策表落地而清除,等价性由回归锚点锁定)。
 
 ## 5. HTTP 部署安全件(已实现)
 

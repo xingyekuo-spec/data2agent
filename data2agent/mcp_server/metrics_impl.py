@@ -1,16 +1,13 @@
-"""指标实现注册表:按 MetricDef.metric 路由,SQL 面向对象层(obj_*)取数。
+"""指标实现注册表:按 MetricDef.metric 路由,SQL 只面向对象层(obj_*)取数。
 
-自 core.py 迁出(docs/design/03-mcp-gateway.md §4 记录的过渡债务,已清偿)。
-唯一保留的 raw 穿透:毛利率的订单有效性过滤(INVALID_STATE / APPROVE_DATE)——
-对象层尚无派生状态属性(状态推导属映射层扩展,见 docs/design/01 §3.1),
-补齐后删除此穿透。
+自 core.py 迁出(docs/design/03 §4);原毛利率的订单有效性过滤是唯一的
+raw 穿透,派生状态(SalesOrder.state 决策表)落地后已清除 ——
+指标层与源系统表形彻底解耦。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from ..connect.landing import raw_table_name
 
 
 @dataclass(frozen=True)
@@ -31,8 +28,7 @@ FROM "obj_SalesOrderLine" l
 JOIN "obj_SalesOrder" o ON o.order_no = l.order_no
 JOIN "obj_Material" m ON m.item_code = l.material
 JOIN "obj_Customer" c ON c.customer_code = o.customer
-JOIN "{raw_sales_order}" so ON so.DOC_NO = o.order_no
-WHERE so.INVALID_STATE = 'N' AND so.APPROVE_DATE IS NOT NULL
+WHERE o.state NOT IN ('草稿', '已作废')
 GROUP BY "group"
 ORDER BY {order}
 LIMIT ?
@@ -52,7 +48,8 @@ LIMIT ?
 
 
 def registry(source: str) -> dict[str, MetricImpl | None]:
-    """指标 id -> 实现;None 表示口径已定义但依赖对象未覆盖。"""
+    """指标 id -> 实现;None 表示口径已定义但依赖对象未覆盖。
+    (source 暂未使用 —— 指标只读对象层;保留参数供多源差异化时用。)"""
     return {
         "gross_margin_rate": MetricImpl(
             dims={
@@ -63,8 +60,7 @@ def registry(source: str) -> dict[str, MetricImpl | None]:
             },
             default_dim="月",
             unit="比率(0-1,CNY 口径,收入按订单汇率折算)",
-            sql=_MARGIN_SQL.replace("{raw_sales_order}",
-                                    raw_table_name(source, "SALES_ORDER")),
+            sql=_MARGIN_SQL,
         ),
         "quote_response_hours": MetricImpl(
             dims={

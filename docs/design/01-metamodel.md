@@ -54,7 +54,26 @@
 表.字段 (map 源值→对象值 / 源值→对象值)     编码翻译:筛选时自动反向映射,源码值不出网
 ```
 
-join 与 map 可组合,顺序固定为先 join 后 map。**文法故意窄**:等值 join(仅 Id 主键)、等值 map,不支持表达式计算 —— 复杂推导(如订单状态)写进 `notes` 留给映射层扩展,避免 YAML 里长出一门临时查询语言。文法扩展须同步:解析器、`build_select`、本节、binding 一致性测试(`tests/test_showroom.py::test_e10_bindings_match_schema`)。
+join 与 map 可组合,顺序固定为先 join 后 map。**文法故意窄**:等值 join(仅 Id 主键)、等值 map,不支持表达式计算 —— 避免 YAML 里长出一门临时查询语言。文法扩展须同步:解析器、`build_select`、本节、binding 一致性测试(`tests/test_showroom.py::test_e10_bindings_match_schema`)。
+
+### 3.1.1 派生决策表(derived)
+
+跨列推导(如订单业务状态)不进表达式文法,用 binding 的 `derived` 声明式决策表:
+
+```yaml
+derived:
+  state:
+    rules:  # 有序,首个匹配生效;when 内多条件 AND,null = IS NULL
+      - { when: { INVALID_STATE: "Y" }, value: 已作废 }
+      - { when: { APPROVE_DATE: null }, value: 草稿 }
+      - { when: { CLOSE_STATE: "C" }, value: 已结案 }
+    default: null   # 可选;无匹配且无 default → 隔离区(契约不完整不静默)
+```
+
+约束(元模型在模板校验时强制):目标必须是已声明属性;枚举属性的全部派生值
+必须在 enum_values 内;决策表只支持 等值 / 判空 —— 这是决策表,不是表达式语言。
+执行在映射应用阶段(`mapping_apply._apply_derived`),条件列由 binding 一致性
+测试对照源表形校验。
 
 ### 3.2 draft → verified 流程
 

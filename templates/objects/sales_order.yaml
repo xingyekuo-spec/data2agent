@@ -13,7 +13,11 @@ properties:
   - { name: fx_rate, type: decimal, desc: 订单汇率(交易币别→CNY;CNY 口径指标的折算依据) }
   - { name: trade_term, type: string, desc: 贸易条款(FOB / EXW 等) }
   - { name: promised_ship_date, type: date, desc: 承诺船期 / 交期 }
-states: [已接单, 生产中, 部分出货, 完全出货, 已结案, 已作废]
+  - name: state
+    type: enum
+    enum_values: [草稿, 已接单, 生产中, 部分出货, 完全出货, 已结案, 已作废]
+    desc: 业务状态(源系统无现成状态列,由 binding derived 决策表派生)
+states: [草稿, 已接单, 生产中, 部分出货, 完全出货, 已结案, 已作废]
 relations:
   - { name: lines, target: SalesOrderLine, cardinality: "1..n", desc: 订单明细 }
 actions:
@@ -36,9 +40,17 @@ bindings:
       fx_rate: SALES_ORDER.EXCHANGE_RATE
       trade_term: SALES_ORDER.TRADE_TERM
       promised_ship_date: SALES_ORDER.PROMISED_SHIP_DATE
+    derived:
+      state:
+        rules:  # 有序,首个匹配生效;无匹配 → 隔离区
+          - { when: { INVALID_STATE: "Y" }, value: 已作废 }
+          - { when: { APPROVE_DATE: null }, value: 草稿 }
+          - { when: { CLOSE_STATE: "C" }, value: 已结案 }
+          - { when: { CLOSE_STATE: "F" }, value: 完全出货 }
+          - { when: { CLOSE_STATE: "P" }, value: 部分出货 }
+          - { when: { CLOSE_STATE: "N" }, value: 已接单 }
     watermark: SALES_ORDER.LAST_MODIFIED_DATE
     notes: >-
-      展厅模拟表形;业务状态由 APPROVE_DATE / CLOSE_STATE / INVALID_STATE 推导
-      (Y 作废→已作废;未审核→草稿不映射;N→已接单;P→部分出货;F→完全出货;C→已结案;
-      已接单与生产中的区分需关联工单,首批对象未覆盖,暂合并为已接单)
+      展厅模拟表形;已接单与生产中的区分需关联工单(首批对象未覆盖),
+      暂合并为已接单,工单对象就位后在决策表细分
 knowledge_refs: [出口贸易条款口径, 船期与钓季档期常识]

@@ -52,12 +52,31 @@ class Action(BaseModel):
     tier: Tier
 
 
+class DeriveRule(BaseModel):
+    """派生规则:when 内多条件为 AND;值为 None 表示该列 IS NULL。"""
+
+    when: dict[str, Optional[str]]     # 锚表列 -> 期望值(None = IS NULL)
+    value: str
+
+
+class DerivedField(BaseModel):
+    """声明式决策表:规则有序、首个匹配生效;无匹配且无 default → 隔离区。
+
+    刻意只支持 等值 / 判空 两种测试 —— 这是决策表,不是表达式语言;
+    更复杂的推导等真实需求出现再议(见 docs/design/01 §3.1)。
+    """
+
+    rules: list[DeriveRule]
+    default: Optional[str] = None
+
+
 class SourceBinding(BaseModel):
     """源系统映射;status=verified 表示已经现场数据字典核对固化。
 
     约定:tables[0] 为锚表(对象一行 = 锚表一行);key_map / field_map 的值
     遵循映射表达式文法(解析器见 data2agent/mapping.py):
     "表.字段"、"表.字段 (join 锚表.外键)"、"表.字段 (map 源值→对象值 / ...)"。
+    derived 为派生属性的决策表(如订单业务状态),映射应用阶段执行。
     """
 
     source: str                        # digiwin_yifei / digiwin_e10 / excel_* ...
@@ -65,6 +84,7 @@ class SourceBinding(BaseModel):
     status: Literal["draft", "verified"] = "draft"
     key_map: dict[str, str] = {}       # 对象 key -> 源字段
     field_map: dict[str, str] = {}     # 属性 -> 源字段/表达式
+    derived: dict[str, DerivedField] = {}  # 属性 -> 决策表(锚表列驱动)
     watermark: Optional[str] = None    # 增量水位字段
     notes: str = ""
 
@@ -93,6 +113,22 @@ class ObjectTemplate(BaseModel):
         for k in self.keys:
             if k not in prop_names:
                 raise ValueError(f"{self.object}: key '{k}' 不在属性列表中")
+        props = {p.name: p for p in self.properties}
+        for b in self.bindings:
+            for prop_name, spec in b.derived.items():
+                prop = props.get(prop_name)
+                if prop is None:
+                    raise ValueError(
+                        f"{self.object}: derived 属性 '{prop_name}' 不在属性列表中")
+                if prop.type == "enum":
+                    values = [r.value for r in spec.rules]
+                    if spec.default is not None:
+                        values.append(spec.default)
+                    bad = [v for v in values if v not in prop.enum_values]
+                    if bad:
+                        raise ValueError(
+                            f"{self.object}.{prop_name}: 派生值 {bad} 不在枚举 "
+                            f"{prop.enum_values} 内(binding {b.source})")
         return self
 
 

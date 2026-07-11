@@ -79,10 +79,13 @@ def apply_object(landing: LandingStore, tpl: ObjectTemplate, source: str,
     if binding is None or not binding.field_map:
         return ObjectApplyResult(tpl.object, 0, 0, 0, status="skipped(无可用 binding)")
 
+    derive_cols = sorted({col for spec in binding.derived.values()
+                          for rule in spec.rules for col in rule.when})
     sql, params, exprs = build_select(
         tpl, binding, limit=None,
         physical=lambda t: raw_table_name(source, t),
-        active_col="_d2a_deleted_at")
+        active_col="_d2a_deleted_at",
+        extra_anchor_cols=derive_cols)
     raw_rows = [dict(r) for r in landing.con.execute(sql, params)]
 
     props = {p.name: p for p in tpl.properties}
@@ -112,6 +115,8 @@ def apply_object(landing: LandingStore, tpl: ObjectTemplate, source: str,
                 break
             row[name] = v
         if reason is None:
+            reason = _apply_derived(binding, props, row)
+        if reason is None:
             key = tuple(row.get(k) for k in tpl.keys)
             if any(v is None for v in key):
                 reason = f"业务键缺失:{dict(zip(tpl.keys, key))}"
@@ -136,6 +141,33 @@ def apply_object(landing: LandingStore, tpl: ObjectTemplate, source: str,
 
     _rebuild_obj_table(landing, tpl, good, batch_id)
     return ObjectApplyResult(tpl.object, total, len(good), len(quarantined))
+
+
+def _apply_derived(binding, props: dict, row: dict) -> str | None:
+    """执行派生决策表(规则有序,首个匹配生效)。返回隔离原因或 None。
+
+    条件值与落地原样值做等值比较(None = IS NULL);无匹配且无 default
+    视为契约不完整 → 隔离,而不是静默给空值。
+    """
+    for prop_name, spec in binding.derived.items():
+        value = None
+        matched = False
+        for rule in spec.rules:
+            if all(row.get(f"__{col}") == expect for col, expect in rule.when.items()):
+                value, matched = rule.value, True
+                break
+        if not matched and spec.default is not None:
+            value, matched = spec.default, True
+        if not matched:
+            seen = {col: row.get(f"__{col}")
+                    for s in binding.derived.values()
+                    for r in s.rules for col in r.when}
+            return f"{prop_name}: 派生规则无匹配(源值 {seen})"
+        prop = props.get(prop_name)
+        if prop is not None and prop.type == "enum" and value not in prop.enum_values:
+            return f"{prop_name}: 派生值 {value!r} 不在枚举 {prop.enum_values} 内"
+        row[prop_name] = value
+    return None
 
 
 def _rebuild_obj_table(landing: LandingStore, tpl: ObjectTemplate,

@@ -127,6 +127,12 @@ def test_e10_bindings_match_schema():
                 for table, col in matches:
                     assert table in columns, f"{obj.object}: '{ref}' 引用了未知表 {table}"
                     assert col in columns[table], f"{obj.object}: '{ref}' 引用了 {table} 不存在的字段 {col}"
+            anchor = b.tables[0]
+            for prop, spec in b.derived.items():
+                for rule in spec.rules:
+                    for col in rule.when:
+                        assert col in columns[anchor], \
+                            f"{obj.object}.{prop}: 派生条件引用了锚表 {anchor} 不存在的列 {col}"
     assert checked == 5, "五个首批对象都应有 digiwin_e10 binding"
 
 

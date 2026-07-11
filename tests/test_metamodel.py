@@ -42,3 +42,24 @@ def test_bindings_start_as_draft():
     pack = load_pack(ROOT / "templates")
     order = next(o for o in pack.objects if o.object == "SalesOrder")
     assert order.bindings and order.bindings[0].status == "draft"
+
+
+def _tpl_with_derived(derived):
+    return ObjectTemplate(
+        object="D", display_name="派生", domain="销售", keys=["a"],
+        properties=[{"name": "a", "type": "string"},
+                    {"name": "st", "type": "enum", "enum_values": ["开", "关"]}],
+        bindings=[{"source": "s", "tables": ["T"], "derived": derived}],
+    )
+
+
+def test_derived_must_target_declared_property():
+    with pytest.raises(Exception, match="不在属性列表中"):
+        _tpl_with_derived({"nope": {"rules": [{"when": {"C": "1"}, "value": "开"}]}})
+
+
+def test_derived_enum_values_validated_at_template_level():
+    with pytest.raises(Exception, match="不在枚举"):
+        _tpl_with_derived({"st": {"rules": [{"when": {"C": "1"}, "value": "半开"}]}})
+    _tpl_with_derived({"st": {"rules": [{"when": {"C": "1"}, "value": "开"}],
+                              "default": "关"}})  # 合法决策表通过

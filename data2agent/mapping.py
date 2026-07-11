@@ -62,6 +62,7 @@ def build_select(
     limit: Optional[int] = 20,
     physical: Callable[[str], str] | None = None,   # 逻辑表名 → 物理表名(落地库 raw_*)
     active_col: str | None = None,                  # 软删列:锚表过滤 + join 条件排除已删行
+    extra_anchor_cols: list[str] | None = None,     # 额外锚表列(派生决策表用),别名 __列名
 ) -> tuple[str, list, dict[str, FieldExpr]]:
     """按 binding 生成参数化 SELECT。返回 (sql, params, 属性->表达式)。
 
@@ -90,6 +91,8 @@ def build_select(
         return f'a."{e.column}"'
 
     select = ", ".join(f'{sql_col(e)} AS "{p}"' for p, e in exprs.items())
+    for col in extra_anchor_cols or []:
+        select += f', a."{col}" AS "__{col}"'
 
     where, params = [], []
     for prop, val in (filters or {}).items():

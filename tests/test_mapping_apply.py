@@ -121,6 +121,44 @@ def test_circuit_breaker_preserves_old_table(landing, pack):
     assert {r.object for r in report.results} > {"Quotation"}, "单对象熔断不应阻塞其他对象"
 
 
+def test_derived_state_matches_source(landing, pack):
+    apply_objects(landing, pack, SOURCE)
+    raw = raw_table_name(SOURCE, "SALES_ORDER")
+    expected = {}
+    for state, cond in {
+        "已作废": "INVALID_STATE = 'Y'",
+        "草稿": "INVALID_STATE = 'N' AND APPROVE_DATE IS NULL",
+        "已结案": "INVALID_STATE = 'N' AND APPROVE_DATE IS NOT NULL AND CLOSE_STATE = 'C'",
+        "完全出货": "INVALID_STATE = 'N' AND APPROVE_DATE IS NOT NULL AND CLOSE_STATE = 'F'",
+        "部分出货": "INVALID_STATE = 'N' AND APPROVE_DATE IS NOT NULL AND CLOSE_STATE = 'P'",
+        "已接单": "INVALID_STATE = 'N' AND APPROVE_DATE IS NOT NULL AND CLOSE_STATE = 'N'",
+    }.items():
+        (n,) = landing.con.execute(f'SELECT COUNT(*) FROM "{raw}" WHERE {cond}').fetchone()
+        if n:
+            expected[state] = n
+    actual = dict(landing.con.execute(
+        'SELECT state, COUNT(*) FROM "obj_SalesOrder" GROUP BY state'))
+    assert actual == expected, "派生状态分布必须与源数据逐条一致"
+    assert sum(actual.values()) == 97, "全部订单都应有状态(含草稿/已作废)"
+
+
+def test_derived_no_match_quarantined(landing, pack):
+    raw = raw_table_name(SOURCE, "SALES_ORDER")
+    # 挑有效且已审核的单(否则先命中 已作废/草稿 规则,走不到 CLOSE_STATE)
+    (oid,) = landing.con.execute(
+        f'SELECT Id FROM "{raw}" WHERE INVALID_STATE = \'N\' '
+        "AND APPROVE_DATE IS NOT NULL LIMIT 1").fetchone()
+    landing.con.execute(
+        f'UPDATE "{raw}" SET CLOSE_STATE = \'X\' WHERE Id = ?', (oid,))  # 决策表未覆盖的取值
+    landing.con.commit()
+    tpl = next(o for o in pack.objects if o.object == "SalesOrder")
+    result = apply_object(landing, tpl, SOURCE)
+    assert result.quarantined == 1
+    reason = landing.con.execute(
+        "SELECT reason FROM d2a_quarantine WHERE resolved_at IS NULL").fetchone()
+    assert "派生规则无匹配" in reason["reason"]
+
+
 def test_quarantine_superseded_after_fix(landing, pack):
     raw = raw_table_name(SOURCE, "QUOTATION")
     (doc_no,) = landing.con.execute(f'SELECT DOC_NO FROM "{raw}" WHERE Id = 5').fetchone()

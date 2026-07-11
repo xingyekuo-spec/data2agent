@@ -93,6 +93,20 @@ def test_gross_margin_by_month(svc):
         assert 0 < row["value"] < 1
 
 
+def test_gross_margin_equivalent_after_state_migration(svc):
+    """回归锚点:指标改用派生状态过滤后,数值须与 raw 穿透版完全一致。"""
+    res = svc.query_metrics("gross_margin_rate", group_by="客户", limit=200)
+    c015 = next(r for r in res["rows"] if str(r["group"]).startswith("C015"))
+    assert c015["value"] == 0.3085  # E2 起历次验证的基准值(seed=42)
+
+
+def test_state_filter_via_gateway(svc):
+    res = svc.query_objects("SalesOrder", filters={"state": "已作废"}, limit=200)
+    assert res["rows"] and all(r["state"] == "已作废" for r in res["rows"])
+    with pytest.raises(ValueError, match="取值须为"):
+        svc.query_objects("SalesOrder", filters={"state": "Y"})  # 源码值不出网
+
+
 def test_quote_response_by_customer(svc):
     res = svc.query_metrics("quote_response_hours", group_by="客户", limit=5)
     assert res["rows"] and all(r["value"] > 0 for r in res["rows"])
