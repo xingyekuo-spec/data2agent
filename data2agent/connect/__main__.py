@@ -76,7 +76,7 @@ def main() -> int:
     mp.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径")
     mp.add_argument("--templates", default="templates", help="模板包目录")
     mp.add_argument("--threshold", type=float, default=DEFAULT_BREAKER_THRESHOLD,
-                    help=f"熔断阈值(隔离率,默认 {DEFAULT_BREAKER_THRESHOLD:.0%})")
+                    help=f"熔断阈值(隔离率,默认 {DEFAULT_BREAKER_THRESHOLD * 100:.0f}%%)")
 
     bp = sub.add_parser("backfill", help="指定表的水位区间重抽(不动水位)")
     _add_common(bp)

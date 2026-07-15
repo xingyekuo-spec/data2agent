@@ -10,17 +10,33 @@
 (docs 02 v0.1 非目标),现改划开源 —— 开源版提供**完整**运维控制台;
 商业版聚焦审批治理(做档)、口径校准等**服务**,不再以"面板"为商业边界。
 
+**前端架构调整(2026-07-15,用户决策)**:v0 内嵌单页(`ui.py` 一个 HTML 字符串)
+在对象/源扩展时不可维护,改为独立前端项目(`console-ui/`),Vue 3 + Vite +
+TypeScript。后端 FastAPI 的 JSON API 协议保持不变,v0 `ui.py` 废弃。
+
 ## 2. 架构
 
-**API 优先,前端零构建**:
+**后端与前端分离,API 不变**:
 
-- 后端:FastAPI + uvicorn(`console` 依赖组),JSON API + 动作接口;
-- 前端:单个内嵌 HTML 页(`ui.py`)+ 原生 JS,CSS 内联,**无 npm / 无打包 /
-  无外部 CDN 资源**(工厂内网友好),5 秒轮询自刷新;
-- 前端只是 JSON API 的一个消费者 —— 将来升级 Vue/Vite 是纯前端替换,后端不动。
+- 后端:FastAPI + uvicorn(`console` 依赖组),JSON API + 动作接口,行为与约束
+  同 v0(动作复用 connect 引擎、窗口/白名单原样生效);
+- 前端:独立项目(仓库内 `console-ui/` 目录),Vue 3 + Vite + TypeScript,
+  **不依赖外部 CDN**(静态资源全部打进 dist,内网部署只需一份构建产物);
+  Docker 多阶段构建产最终镜像,仓库内不进 node 工具链;
+- 前端只是 JSON API 的一个消费者 —— v0 的内嵌 HTML 单页(`ui.py`)已由
+  独立前端项目取代,后端 API 协议保持兼容。
 
-演进触发(按需拉动):需要图表 → vendored ECharts;页面复杂化 → Vue3+Vite
-(构建进 Docker 多阶段,仓库不进 node 工具链);实时进度 → 轮询换 SSE。
+**与 v0 内嵌单页的关键差异**:
+
+| 维度 | v0 (已废弃) | v1 |
+|------|------------|-----|
+| 代码位置 | `console/ui.py` 一个 HTML 字符串 | `console-ui/` 独立项目 |
+| 框架 | 原生 JS + 内联 CSS | Vue 3 + Vite + TypeScript |
+| 构建 | 零构建 | `npm run build` → 静态 dist |
+| 部署 | FastAPI 直接 serve 字符串 | FastAPI mount 静态目录,或独立 nginx |
+| 轮询 | 5 秒全量轮询 | 保留轮询为 fallback,主路径按需升级 SSE |
+| 图表 | 无 | ECharts(vendored,非 CDN) |
+| 页面结构 | 单页 6 section 垂直堆叠 | 多视图导航:仪表盘 / 抽取 / 对象 / 隔离 / 审计 |
 
 ## 3. 视图与动作
 

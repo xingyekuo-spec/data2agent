@@ -80,6 +80,6 @@ MCP 网关:query_objects / query_metrics,看/说/做 治理档位     → docs 0
 - [02 抽取框架](02-extraction.md) —— ★ 详设,指导下一阶段编码
 - [03 MCP 网关](03-mcp-gateway.md) —— lite 现状 + 治理档位演进
 - [04 数字厂长展厅](04-showroom.md) —— 拓扑与演示链(粗颗粒)
-- [05 运维控制台](05-console.md) —— 开源运维界面(2026-07-11 边界调整新增)
+- [05 运维控制台](05-console.md) —— 开源运维界面(2026-07-11 边界调整;2026-07-15 前端独立项目)
 - [E10 参考表字典](../dict/digiwin_e10.md) —— 生成文件,勿手改
 - [接单评审演示脚本](../demo/quote-review.md)
