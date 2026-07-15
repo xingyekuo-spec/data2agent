@@ -21,14 +21,14 @@
 | `relations` | 对象间引用(target 必须已定义) | 跨对象校验兜底 |
 | `actions` | 动作 + 治理档位 `tier: 看/说/做` | 网关硬校验的依据,见 docs 03 |
 | `bindings` | 源系统映射,见 §3 | |
-| `knowledge_refs` | 行业知识包引用(仅名字) | 知识包本体属商业版,开源只留挂点 |
+| `knowledge_refs` | 行业知识包引用(仅名字) | 知识包本体为后续能力,模板只留挂点 |
 | `custom_field_slots` | 默认 20 | 客户个性化字段进槽位,**模板永不分叉** |
 
 ### 2.1 属性(Property)
 
 类型集:`string / text / int / decimal / money / date / datetime / bool / ref / enum`。约束:`ref` 必须声明目标对象;`enum` 必须声明取值。
 
-`sensitive: true` 是**出网前置脱敏的依据**:被标记的属性,在任何离开数据层的通道(MCP 响应、导出、日志)默认脱敏。lite 阶段不提供解敏开关(解敏属"做"档治理,商业版范围)。
+`sensitive: true` 是**出网前置脱敏的依据**:被标记的属性,在任何离开数据层的通道(MCP 响应、导出、日志)默认脱敏。当前不提供解敏开关(解敏属"做"档治理,后续按权限模型提供)。
 
 ## 3. 源系统映射(SourceBinding)
 
@@ -85,7 +85,7 @@ derived:
 
 `metric`(snake_case,全局唯一)、`display_name`、`status: certified/draft/deprecated`、`formula`(人话口径)、`grain`、`dimensions`、`caveats`、`freshness_sla`。
 
-要点:**formula 是口径声明,不是可执行表达式**。可执行实现位于消费方(当前:MCP 网关的指标 SQL 注册表,见 docs 03 §4),实现与定义分离 —— 口径校准(draft→certified)是商业版服务,开源侧只保证"未校准的口径必须带警示出现"。
+要点:**formula 是口径声明,不是可执行表达式**。可执行实现位于消费方(当前:MCP 网关的指标 SQL 注册表,见 docs 03 §4),实现与定义分离 —— 口径校准(draft→certified)是后续能力,当前保证"未校准的口径必须带警示出现"。
 
 ## 5. 校验体系(三层)
 

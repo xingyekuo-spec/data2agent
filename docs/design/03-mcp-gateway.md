@@ -34,7 +34,7 @@ Agent 侧唯一的数据入口。承诺:**任何支持 MCP 的 Agent 五分钟�
 | --- | --- | --- | --- |
 | 看 | 只读查询 | query_objects / query_metrics | ✅ |
 | 说 | 生成建议,不落任何写操作 | `propose_action(object, action, conclusion, evidence)` → 建议卡 | ✅ |
-| 做 | 经审批的写回 | 审批流 + 回执 | 商业版(BizMind)范围 |
+| 做 | 经审批的写回 | 审批流 + 回执 | 路线(需审批治理) |
 
 "说"档的实现兑现了设计约束:每次查询的响应带 `meta.query_id`(网关持会话内查询日志);建议卡的每条依据必须引用真实 query_id,引用不到即拒绝 —— **Agent 无法在卡里塞入没有出处的数字**。卡片聚合被引用查询的全部口径警示(draft binding / draft 指标 / caveats),附治理声明。部署以 `max_tier` 设档位上限(默认 说),超档动作被硬拒绝并说明治理边界。
 

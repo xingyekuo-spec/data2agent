@@ -12,7 +12,7 @@ E4 起网关消费完整管道的产物:源系统 → sync(raw_*)→ apply(obj_*
 安全边界(lite):
 - 落地库以只读模式(mode=ro)打开;
 - SQL 只引用模板声明的属性列与 obj_ 表,天然白名单;
-- sensitive 属性一律脱敏为 "***",lite 不提供解敏开关(解敏属治理档位,商业版范围)。
+- sensitive 属性一律脱敏为 "***",当前不提供解敏开关(解敏属"做"档治理,后续按权限模型提供)。
 """
 
 from __future__ import annotations
@@ -234,8 +234,7 @@ class QueryService:
             "conclusion": conclusion.strip(),
             "evidence": cited,
             "caveats": sorted({c for c in caveats if c}),
-            "governance": "「说」档建议卡:未执行任何写操作;落地执行(做档)需审批流,"
-                          "属商业版治理范围",
+            "governance": "「说」档建议卡:未执行任何写操作;落地执行(做档)需审批治理",
         }
 
     # ---- query_metrics ----
