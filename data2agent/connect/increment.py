@@ -17,6 +17,7 @@ from ..mapping import parse_field_expr
 from ..metamodel.schema import TemplatePack
 from .adapters.base import SourceAdapter
 from .landing import LandingStore
+from .sink import LocalSink, Sink
 from .sync import SyncReport, TableReport
 
 DEFAULT_LOOKBACK_DAYS = 3
@@ -54,17 +55,21 @@ def subtract_lookback(high_water: str, days: float) -> str:
 def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                      watermarks: dict[str, str] | None = None,
                      lookback_days: float = DEFAULT_LOOKBACK_DAYS,
-                     should_continue: Optional[Callable[[], bool]] = None) -> SyncReport:
-    """should_continue:批次边界的优雅暂停钩子(错峰窗口越界时返回 False)。
+                     should_continue: Optional[Callable[[], bool]] = None,
+                     sink: Optional[Sink] = None) -> SyncReport:
+    """sink:raw 落地出口(§12.3)。默认 LocalSink(landing)=写本地库(同机 / 开发);
+    Pattern A 传 HttpPushSink,raw 推给平台、landing 只留水位 / 审计 / 运行状态。
+    should_continue:批次边界的优雅暂停钩子(错峰窗口越界时返回 False)。
     暂停时进行中的表不推进水位(已落批次幂等),下窗口自然续跑。"""
     watermarks = watermarks or {}
+    sink = sink or LocalSink(landing)
     report = SyncReport(source=source, run_id=landing.start_run(source))
     try:
         for info in adapter.tables():
             if should_continue and not should_continue():
                 report.paused = True
                 break
-            landing.ensure_raw_table(source, info)
+            sink.ensure_table(source, info)
             batch_id = uuid.uuid4().hex[:12]
             wm_col = watermarks.get(info.name)
 
@@ -84,7 +89,7 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                 if should_continue and not should_continue():
                     interrupted = True
                     break
-                rows += landing.upsert_rows(source, info, batch, batch_id)
+                rows += sink.write(source, info, batch, batch_id)
                 batches += 1
                 if wm_col:
                     seen = max((str(r[wm_col]) for r in batch if r[wm_col] is not None),

@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from datetime import time as dtime
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, field_validator
@@ -54,6 +55,14 @@ class RateConfig(BaseModel):
     rows_per_second: int = 2000
 
 
+class SinkConfig(BaseModel):
+    """raw 落地出口(§12.3):local=写本地库(同机);http=推给平台(Pattern A 中间服务器)。"""
+
+    type: Literal["local", "http"] = "local"
+    url: str | None = None                # http:平台接收端点(如 https://平台:8850)
+    token_env: str | None = None          # http:Token 所在环境变量(凭据不落配置)
+
+
 class SourceConfig(BaseModel):
     adapter: str                          # sqlite_readonly / mssql_readonly
     dsn_env: str | None = None            # mssql:连接串所在环境变量
@@ -65,7 +74,8 @@ class SourceConfig(BaseModel):
     lookback: str = "3d"
     sync_every: str = "30m"
     reconcile_at: str | None = None       # "HH:MM",每日 L1 对账;None 不排
-    apply_after_sync: bool = True
+    apply_after_sync: bool = True         # sink=http 时忽略(映射在平台侧)
+    sink: SinkConfig = SinkConfig()
 
     @field_validator("adapter")
     @classmethod
@@ -102,4 +112,6 @@ def load_config(path: str | Path) -> ConnectConfig:
             raise ValueError(f"源 {name}: mssql_readonly 必须配 dsn_env(凭据不落配置文件)")
         if s.adapter == "sqlite_readonly" and not (s.path or s.dsn_env):
             raise ValueError(f"源 {name}: sqlite_readonly 须配 path 或 dsn_env")
+        if s.sink.type == "http" and not s.sink.url:
+            raise ValueError(f"源 {name}: sink.type=http 必须配 sink.url(平台接收端点)")
     return cfg

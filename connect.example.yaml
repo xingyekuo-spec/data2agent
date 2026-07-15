@@ -15,4 +15,7 @@ sources:
     lookback: 3d                    # 增量回看窗口
     sync_every: 30m                 # 同步节奏(窗口内)
     reconcile_at: "05:30"           # 每日 L1 对账;删除本行则不排
-    apply_after_sync: true          # 同步后自动物化对象层
+    apply_after_sync: true          # 同步后自动物化对象层(sink=http 时忽略)
+    # 落地出口(§12.3):默认 local=写本地库(同机)。
+    # Pattern A 中间服务器改为推给平台(平台跑 python -m data2agent.ingest):
+    # sink: { type: http, url: "https://平台:8850", token_env: D2A_INGEST_TOKEN }

@@ -45,6 +45,18 @@ def build_adapter(name: str, scfg: SourceConfig, pack: TemplatePack,
     return MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
 
 
+def build_sink(scfg: SourceConfig, landing: LandingStore):
+    """按 sink 配置构建落地出口:local=本地库;http=推给平台(§12.3)。"""
+    if scfg.sink.type == "http":
+        import os
+
+        from .sink import HttpPushSink
+        token = os.environ.get(scfg.sink.token_env or "", "") or None
+        return HttpPushSink(scfg.sink.url, token)
+    from .sink import LocalSink
+    return LocalSink(landing)
+
+
 def run_sync_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
                    landing_path: str) -> bool:
     """一轮 sync(+apply)。返回是否实际执行(窗口外为 False)。
@@ -57,13 +69,16 @@ def run_sync_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
         return False
     landing = LandingStore(landing_path)
     adapter = build_adapter(name, scfg, pack, landing)
+    sink = build_sink(scfg, landing)
     report = incremental_sync(
         adapter, landing, name, watermarks_from_pack(pack, name),
-        lookback_days=scfg.lookback_days(),
+        lookback_days=scfg.lookback_days(), sink=sink,
         should_continue=lambda: in_window(datetime.now().time(), scfg.windows))
-    log.info("sync source=%s run=%s rows=%s tables=%s paused=%s",
-             name, report.run_id, report.total_rows, len(report.tables), report.paused)
-    if scfg.apply_after_sync and not report.paused:
+    log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
+             name, report.run_id, report.total_rows, len(report.tables),
+             report.paused, scfg.sink.type)
+    # sink=http:raw 已推给平台,映射在平台侧跑,不在中间 apply
+    if scfg.apply_after_sync and not report.paused and scfg.sink.type == "local":
         apply_report = apply_objects(landing, pack, name)
         log.info("apply source=%s objects=%s quarantined=%s aborted=%s",
                  name, len(apply_report.results),
