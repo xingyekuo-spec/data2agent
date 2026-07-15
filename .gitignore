@@ -8,3 +8,5 @@ dist/
 /showroom/
 /landing/
 /connect.yaml
+.playwright-mcp/
+.superpowers/
