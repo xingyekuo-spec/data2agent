@@ -12,7 +12,8 @@
 
 **前端架构调整(2026-07-15,用户决策)**:v0 内嵌单页(`ui.py` 一个 HTML 字符串)
 在对象/源扩展时不可维护,改为独立前端项目(`console-ui/`),Vue 3 + Vite +
-TypeScript。后端 FastAPI 的 JSON API 协议保持不变,v0 `ui.py` 废弃。
+TypeScript。后端 FastAPI 的 JSON API 协议保持不变;v0 `ui.py` **降级保留**
+(本机 pip 场景的简版页,dist 可分发后再评估移除 —— 评审修订 v1.1)。
 
 ## 2. 架构
 
@@ -23,12 +24,12 @@ TypeScript。后端 FastAPI 的 JSON API 协议保持不变,v0 `ui.py` 废弃。
 - 前端:独立项目(仓库内 `console-ui/` 目录),Vue 3 + Vite + TypeScript,
   **不依赖外部 CDN**(静态资源全部打进 dist,内网部署只需一份构建产物);
   Docker 多阶段构建产最终镜像,仓库内不进 node 工具链;
-- 前端只是 JSON API 的一个消费者 —— v0 的内嵌 HTML 单页(`ui.py`)已由
-  独立前端项目取代,后端 API 协议保持兼容。
+- 前端只是 JSON API 的一个消费者 —— v0 内嵌单页(`ui.py`)降级保留为本机
+  简版页(dist 存在时优先 mount 完整版),后端 API 协议保持兼容。
 
 **与 v0 内嵌单页的关键差异**:
 
-| 维度 | v0 (已废弃) | v1 |
+| 维度 | v0 (降级保留为简版) | v1 |
 |------|------------|-----|
 | 代码位置 | `console/ui.py` 一个 HTML 字符串 | `console-ui/` 独立项目 |
 | 框架 | 原生 JS + 内联 CSS | Vue 3 + Vite + TypeScript |
