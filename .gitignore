@@ -10,3 +10,4 @@ dist/
 /connect.yaml
 .playwright-mcp/
 .superpowers/
+.DS_Store
