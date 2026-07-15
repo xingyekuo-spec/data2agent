@@ -388,19 +388,17 @@ FastAPI 的 /openapi.json 默认已暴露,无需改动。
 ## 10. Element Plus 主题覆盖
 
 Element Plus 默认主题为亮蓝色 (`#409EFF`)，需覆盖为项目配色。
-注意:`$--el-color-primary` 是 Element UI(Vue2 时代)的旧语法,
-Element Plus 2.x 用 SCSS `@forward ... with`:
+**CSS 变量运行时覆盖**(与 wangjia-sh admin-web 同款做法,v1.1 评审后统一;
+只覆盖四个色值,无需引入 sass 依赖与编译期注入):
 
-```scss
-// styles/element-theme.scss(vite.config.ts 的 scss additionalData 注入)
-@forward "element-plus/theme-chalk/src/common/var.scss" with (
-  $colors: (
-    "primary": ("base": #1677FF),
-    "success": ("base": #52c41a),
-    "warning": ("base": #faad14),
-    "danger":  ("base": #cf1322),
-  )
-);
+```css
+/* src/styles.css —— Element Plus 2.x 全部色值走 CSS 变量,直接覆盖即可 */
+:root {
+  --el-color-primary: #1677FF;
+  --el-color-success: #52c41a;
+  --el-color-warning: #faad14;
+  --el-color-danger:  #cf1322;
+}
 ```
 
 ## 11. 测试与 CI(v1.1 新增)
