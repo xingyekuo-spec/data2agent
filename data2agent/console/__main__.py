@@ -8,6 +8,16 @@ from __future__ import annotations
 
 import argparse
 import os
+from pathlib import Path
+
+
+def _default_log_dir(landing: str, config_path: str | None) -> Path:
+    if env := os.environ.get("D2A_LOG_DIR"):
+        return Path(env)
+    if config_path:
+        from ..connect.config import load_config
+        return Path(load_config(config_path).landing).parent / "logs"
+    return Path(landing).parent / "logs"
 
 
 def main() -> int:
@@ -17,6 +27,8 @@ def main() -> int:
     ap.add_argument("--templates", default="templates", help="模板包目录(只读模式用)")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8849)
+    ap.add_argument("--log-dir", default=None,
+                    help="日志目录(默认 landing 同级 logs;文档部署常用 C:\\d2a\\data\\logs)")
     ap.add_argument("--token", default=os.environ.get("D2A_CONSOLE_TOKEN", ""),
                     help="控制台 Token(默认取环境变量 D2A_CONSOLE_TOKEN;空 = 不认证)")
     args = ap.parse_args()
@@ -26,10 +38,14 @@ def main() -> int:
         from ..connect.config import load_config
         config = load_config(args.config)
 
+    log_dir = Path(args.log_dir) if args.log_dir else _default_log_dir(args.landing, args.config)
+
     import uvicorn
 
     from .app import create_app
-    app = create_app(args.landing, args.templates, config, token=args.token or None)
+    app = create_app(
+        args.landing, args.templates, config, token=args.token or None,
+        config_path=args.config, log_dir=log_dir)
     print(f"运维控制台:http://{args.host}:{args.port}"
           f"({'完整模式' if config else '只读模式'};"
           f"{'Token 认证已启用' if args.token else '未启用认证,内网部署建议配 D2A_CONSOLE_TOKEN'})")

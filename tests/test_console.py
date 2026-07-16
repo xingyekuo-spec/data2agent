@@ -117,3 +117,26 @@ def test_token_auth(env):
     assert client.get("/api/overview").status_code == 401
     ok = client.get("/api/overview", headers={"Authorization": "Bearer s3cret"})
     assert ok.status_code == 200
+
+
+def test_console_config_whitelist(env):
+    landing, cfg_file = env
+    cfg = load_config(cfg_file)
+    client = TestClient(create_app(
+        cfg.landing, cfg.templates, cfg, token="t",
+        config_path=cfg_file, log_dir=Path(".")))
+    h = {"Authorization": "Bearer t"}
+    r = client.get("/api/config", headers=h)
+    assert r.status_code == 200
+    r2 = client.post("/api/config", headers=h, json={
+        "landing": str(landing.db_path),
+        "templates": str(ROOT / "templates"),
+    })
+    assert r2.json()["ok"] is True
+
+
+def test_v0_still_embedded(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    assert client.get("/v0").status_code == 200
+    assert "运维控制台" in client.get("/v0").text
