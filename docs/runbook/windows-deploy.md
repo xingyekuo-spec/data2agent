@@ -31,7 +31,8 @@ C:\d2a\data\           # 落地库、日志
 - 升级/回滚只是切换 venv 目录或重新 `pip install`,不影响系统;
 - NSSM 服务直接指向 `C:\d2a\venv\Scripts\python.exe`,不依赖 PATH,权限最小化(服务账号不需要改系统环境变量)。
 
-建立 venv(两台机各自执行,前提已装 Python 3.12 官方安装包):
+建立 venv(两台机各自执行,前提已装 **Python 3.14** 官方 64 位安装包;两台机版本必须一致 ——
+离线编译 wheel 绑定 Python 版本,版本不符会报 "No matching distribution"):
 
 ```powershell
 python -m venv C:\d2a\venv
@@ -44,7 +45,7 @@ C:\d2a\venv\Scripts\python.exe -m pip install --upgrade pip
 
 打包由 GitHub Actions 自动完成(`.github/workflows/release.yml`):打 tag(如 `v0.1.0`)后,
 CI 测试通过即产出两台机各自的**离线运行包**并附到 Release。运行包内已含 `data2agent/` +
-`templates/` + 配置样例 + **Windows(py3.12/win_amd64)离线依赖 wheel** + `INSTALL-*.txt`,
+`templates/` + 配置样例 + **Windows(py3.14/win_amd64)离线依赖 wheel** + `INSTALL-*.txt`,
 无需在生产机联网、也无需手工 `pip download`。
 
 > 私有仓库:Release 附件仅有仓库权限者可下载。工厂内网**不需要**能访问 GitHub —— 在一台
@@ -88,10 +89,10 @@ C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e
 若暂不走 CI,可在一台联网机手工产出等价目录(下 Windows wheel):
 ```powershell
 git clone <repo> d2a-src; cd d2a-src
-pip download -d wheels --platform win_amd64 --python-version 3.12 --implementation cp --only-binary=:all: `
-  "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10"                          # 中间机
-pip download -d wheels-full --platform win_amd64 --python-version 3.12 --implementation cp --only-binary=:all: `
-  "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10" "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29"   # 平台机
+pip download -d wheels --platform win_amd64 --python-version 3.14 --implementation cp --only-binary=:all: `
+  "setuptools>=68" wheel "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10"                          # 中间机
+pip download -d wheels-full --platform win_amd64 --python-version 3.14 --implementation cp --only-binary=:all: `
+  "setuptools>=68" wheel "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10" "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29"   # 平台机
 ```
 把 `d2a-src`(含 `templates/`)+ 对应 `wheels*` 拷到目标机,安装命令同 §2.2。
 

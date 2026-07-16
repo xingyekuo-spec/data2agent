@@ -10,12 +10,18 @@ on:
         description: "打包的分支或 tag(手动触发时用;默认当前分支)"
         required: false
         default: ""
+      py_version:
+        description: "目标 Python 版本(须与生产机一致;编译 wheel 绑定此版本)"
+        required: false
+        default: "3.14"
 
 permissions:
   contents: write        # 创建 Release、上传附件需要
 
 env:
-  PY_VERSION: "3.12"     # 与 CI 和生产机一致
+  # 生产机 Python 版本 —— 离线编译 wheel(pyodbc/pyyaml/pydantic-core)按此版本下载,两台机须一致。
+  # 手动触发可用 inputs.py_version 覆盖;tag 触发用此默认值。
+  PY_VERSION: ${{ github.event.inputs.py_version || '3.14' }}
   WIN_PLATFORM: "win_amd64"
 
 jobs:
@@ -90,7 +96,7 @@ jobs:
           cd d2a-runtime-connect-${{ steps.ver.outputs.version }}
           # 安装说明随包附带
           cat > INSTALL-connect.txt <<'EOF'
-          中间服务器离线安装(Windows PowerShell,Python 3.12 已装):
+          中间服务器离线安装(Windows PowerShell,Python 3.14 64 位 已装):
             python -m venv C:\d2a\venv
             C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[connect]
           另需装 ODBC Driver 18 for SQL Server(连 E10)。
@@ -121,7 +127,7 @@ jobs:
           cp -r stage d2a-runtime-platform-${{ steps.ver.outputs.version }}
           cd d2a-runtime-platform-${{ steps.ver.outputs.version }}
           cat > INSTALL-platform.txt <<'EOF'
-          数据平台离线安装(Windows PowerShell,Python 3.12 已装):
+          数据平台离线安装(Windows PowerShell,Python 3.14 64 位 已装):
             python -m venv C:\d2a\venv
             C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[ingest,connect,mcp,console]
           平台机不连 ERP,无需 ODBC 驱动。
@@ -163,5 +169,6 @@ jobs:
             | `d2a-runtime-connect-*.zip` | 中间服务器(抽取 + 推送) | `.[connect]` |
             | `d2a-runtime-platform-*.zip` | 数据平台(接收 + apply + MCP + 控制台) | `.[ingest,connect,mcp,console]` |
 
-            每个 zip 内含 `data2agent/` + `templates/` + 配置样例 + Windows(py3.12/win_amd64)离线依赖 wheel + `INSTALL-*.txt`。
+            每个 zip 内含 `data2agent/` + `templates/` + 配置样例 + Windows(py3.14/win_amd64)离线依赖 wheel + `INSTALL-*.txt`。
+            **生产机须装 Python 3.14 64 位**(编译 wheel 绑定该版本)。
             完整部署步骤见 `docs/runbook/windows-deploy.md`。

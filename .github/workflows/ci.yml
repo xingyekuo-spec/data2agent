@@ -9,7 +9,7 @@ jobs:
           fetch-depth: 0   # gitleaks 需要完整历史
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - run: pip install -e ".[dev,mcp,console,ingest,excel]"
       - run: pytest tests -q
       - run: python -m data2agent.metamodel.validate templates
