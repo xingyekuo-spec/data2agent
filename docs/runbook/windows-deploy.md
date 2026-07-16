@@ -111,6 +111,14 @@ pip download -d wheels-full --platform win_amd64 --python-version 3.14 --impleme
 
 ### 4.1 中间机 `C:\d2a\config\connect.yaml`
 
+> **推荐:用脚本生成,免手工填连接串**。运行包内含 `setup-middle.ps1`(在 `C:\d2a\app\setup-middle.ps1`)。
+> 以**管理员身份**打开 PowerShell 执行(密码/token 安全提示输入,不落文件、不进历史):
+> ```powershell
+> C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer <ERP主机> -ErpDatabase <E10库> -ErpUser d2a_reader
+> ```
+> 脚本会:生成 `C:\d2a\config\connect.yaml`(已存在则备份)、设置机器级环境变量 `D2A_E10_DSN`/`D2A_INGEST_TOKEN`、并调 `load_config` 自检。
+> 完成后**新开窗口**再跑服务。下面的手工模板仅供参考/排错。
+
 ```yaml
 templates: C:\d2a\app\templates
 landing: C:\d2a\data\middle.sqlite     # 只存水位/审计,不落 raw
