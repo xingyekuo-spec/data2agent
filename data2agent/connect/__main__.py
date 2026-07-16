@@ -2,7 +2,8 @@
 
 sync       默认水位增量(binding.watermark 推导,无水位表 full_refresh),--full 强制全量
 reconcile  分段对账 L1(--deep 全段 L2 修复);抓物理删除与不动水位的原地改动
-apply      映射应用:raw_* → 物化对象表 obj_*(隔离区 + 熔断),纯落地库操作
+apply      映射应用:raw_* → 物化对象表 obj_*(隔离区 + 熔断),纯落地库操作;
+           --every N 秒常驻循环(拆机部署平台侧:ingest 只收 raw,需要它周期物化)
 backfill   指定表的水位区间重抽(upsert 幂等,不动水位)
 serve      按 connect.yaml 调度常驻(错峰窗口硬约束;--once 立即各跑一轮)
 status     水位 / 最近运行 / 隔离区概览
@@ -77,6 +78,9 @@ def main() -> int:
     mp.add_argument("--templates", default="templates", help="模板包目录")
     mp.add_argument("--threshold", type=float, default=DEFAULT_BREAKER_THRESHOLD,
                     help=f"熔断阈值(隔离率,默认 {DEFAULT_BREAKER_THRESHOLD * 100:.0f}%%)")
+    mp.add_argument("--every", type=float, default=None,
+                    help="常驻循环:每隔 N 秒重跑一次(拆机部署平台侧用,"
+                         "配合 Windows 服务 / systemd 常驻;不填 = 跑一次退出")
 
     bp = sub.add_parser("backfill", help="指定表的水位区间重抽(不动水位)")
     _add_common(bp)
@@ -164,18 +168,7 @@ def main() -> int:
         return _quarantine(args, ap)
 
     if args.cmd == "apply":
-        pack = load_pack(args.templates)
-        report = apply_objects(LandingStore(args.landing), pack, args.source,
-                               threshold=args.threshold)
-        for r in report.results:
-            mark = "⚠ 熔断" if r.status == "aborted" else "ok"
-            print(f"  - {r.object:<16} 映射 {r.mapped:>5} 行, 隔离 {r.quarantined} 行  [{mark}]")
-        if report.aborted:
-            print(f"映射中止对象:{[r.object for r in report.aborted]}(旧对象表保留,"
-                  "明细见 d2a_quarantine)")
-            return 1
-        print(f"映射应用完成:{len(report.results)} 个对象 → {args.landing}")
-        return 0
+        return _apply_loop(args)
 
     pack, adapter, landing = _build(args, ap)
 
@@ -216,6 +209,40 @@ def main() -> int:
             print(f"  - {s.table:<16} {s.segment}  源 {s.src_count} {mark} 落地 {s.dst_count}"
                   f"  重抽 {s.repaired_rows} 行, 软删 {s.soft_deleted} 行")
     return 0
+
+
+def _run_apply_once(args) -> bool:
+    """跑一轮 apply,打印结果。返回是否有对象熔断(供循环模式判断是否继续)。"""
+    pack = load_pack(args.templates)
+    report = apply_objects(LandingStore(args.landing), pack, args.source,
+                           threshold=args.threshold)
+    for r in report.results:
+        mark = "⚠ 熔断" if r.status == "aborted" else "ok"
+        print(f"  - {r.object:<16} 映射 {r.mapped:>5} 行, 隔离 {r.quarantined} 行  [{mark}]")
+    if report.aborted:
+        print(f"映射中止对象:{[r.object for r in report.aborted]}(旧对象表保留,"
+              "明细见 d2a_quarantine)")
+        return True
+    print(f"映射应用完成:{len(report.results)} 个对象 → {args.landing}")
+    return False
+
+
+def _apply_loop(args) -> int:
+    """拆机部署平台侧:ingest 只收 raw,没有进程会周期性 apply,故 --every 提供常驻循环。
+    单次模式(不传 --every)行为与此前一致,退出码沿用熔断即非零的约定。"""
+    if args.every is None:
+        return 1 if _run_apply_once(args) else 0
+
+    import time
+    from datetime import datetime
+    print(f"apply 常驻循环:每 {args.every:.0f} 秒一轮(Ctrl+C 或服务停止退出)")
+    while True:
+        print(f"-- {datetime.now().isoformat(timespec='seconds')} --")
+        try:
+            _run_apply_once(args)
+        except Exception as e:  # noqa: BLE001 - 常驻循环:单轮异常不应打断服务,下一轮重试
+            print(f"本轮 apply 异常(将于下一轮重试):{e}")
+        time.sleep(args.every)
 
 
 def _status(args) -> int:

@@ -66,6 +66,18 @@ def test_config_rejects_mssql_without_dsn_env(tmp_path):
         load_config(cfg_file)
 
 
+def test_config_rejects_reconcile_at_in_push_mode(tmp_path):
+    """推送模式(sink=http)下配 reconcile_at 应被拒(E6b 未实现,本地对账会误判)。"""
+    cfg_file = tmp_path / "connect.yaml"
+    cfg_file.write_text(
+        "sources:\n  e10:\n    adapter: mssql_readonly\n    dsn_env: D2A_E10_DSN\n"
+        "    reconcile_at: \"05:30\"\n"
+        "    sink: { type: http, url: \"http://platform:8850\" }\n",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match="推送模式.*reconcile_at"):
+        load_config(cfg_file)
+
+
 def test_config_rejects_bad_window(tmp_path):
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(

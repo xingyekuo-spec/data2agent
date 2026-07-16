@@ -1,6 +1,7 @@
 """原样落地层:raw_{source}__{table},按源主键 upsert,幂等。
 
-E1 实现基于 SQLite(开发 / 展厅);生产 PostgreSQL 走同一 SQL 子集,后续切片补。
+落地库为 SQLite(开发 / 展厅 / 首个工厂现场验证);单写者 + 多只读者,
+初始化即开 WAL + busy_timeout。PostgreSQL 属后续切片(触发信号见设计 §4)。
 系统表:d2a_audit_log(逐条源 SQL)、d2a_sync_run(逐轮汇总)。
 """
 
@@ -80,6 +81,10 @@ class LandingStore:
         self.db_path = str(db_path)
         self.con = sqlite3.connect(db_path)
         self.con.row_factory = sqlite3.Row
+        # WAL:写批次不阻塞 MCP / 控制台的只读连接(单写者 + 多读者场景);
+        # busy_timeout:偶发写锁竞争时等待而非立即抛 "database is locked"。
+        self.con.execute("PRAGMA journal_mode=WAL")
+        self.con.execute("PRAGMA busy_timeout=5000")
         self.con.executescript(_SYSTEM_DDL)
 
     # ---- raw 表 ----

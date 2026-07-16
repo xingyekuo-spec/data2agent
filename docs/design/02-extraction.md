@@ -46,8 +46,8 @@ class SourceAdapter(Protocol):
 | --- | --- | --- |
 | `mssql_readonly` | 鼎捷 E10 / 易飞(底层均为 SQL Server) | pyodbc;首个生产适配器 |
 | `sqlite_readonly` | 开发 / 展厅 / 测试 | 与 mssql 行为等价,mode=ro |
-| `api_poll` | 有 API 的源(SRM 等) | 仅定义接口,按需实现 |
-| `excel_import` | 报价历史 Excel/CSV(MVP,已实现) | 三步工作流:`excel-suggest` 启发式建议列映射(YAML)→ 人工确认一次 → `excel-import` 快照落地(raw 表结构由 binding 契约决定,文件缺列落 NULL、缺业务键跳过并逐行报告、重导入按业务键幂等)→ 标准 apply 物化,校验 / 隔离 / 熔断原样生效;值翻译写 binding 的 (map ...) |
+| `api_poll`(规划) | 有 API 的源(SRM 等) | 尚未实现;按需拉动,待首个真实 API 源出现再定义接口 |
+| `excel_import`(非 SourceAdapter,CLI 导入流程,见 `connect/excel_import.py`) | 报价历史 Excel/CSV(MVP,已实现) | 三步工作流:`excel-suggest` 启发式建议列映射(YAML)→ 人工确认一次 → `excel-import` 快照落地(raw 表结构由 binding 契约决定,文件缺列落 NULL、缺业务键跳过并逐行报告、重导入按业务键幂等)→ 标准 apply 物化,校验 / 隔离 / 熔断原样生效;值翻译写 binding 的 (map ...) |
 
 **安全强制(适配器层内实现,不可绕过)**:
 
@@ -65,15 +65,17 @@ class SourceAdapter(Protocol):
 | --- | --- |
 | `_d2a_batch_id` | 写入批次(关联审计与隔离区) |
 | `_d2a_extracted_at` | 抽取时间 |
-| `_d2a_row_hash` | 行内容 md5(规范化序列化后),对账 L2 依据 |
+| `_d2a_row_hash` | 行内容 md5(规范化序列化后);落地时写入,当前对账未消费(预留:E6b 跨机对账时中间只推 hash、平台比对后仅回差异行) |
 | `_d2a_deleted_at` | 软删标记(对账发现源侧消失时打标,永不物理删) |
 
 - 写入语义:按源主键 **upsert**(E10 为 `Id`),幂等 —— 回看窗口和对账重抽天然安全;
-- 落地库:MVP 支持 SQLite(零依赖,开发/展厅)与 PostgreSQL(生产推荐,psycopg);统一走参数化 SQL 的薄封装,不引 ORM。
+- 落地库:当前实现为 **SQLite**(零依赖、单文件、零运维),覆盖开发 / 展厅 / 首个工厂现场验证。访问模式是单写者(connector 进程)+ 多只读者(MCP 网关 / 运维控制台),正是 SQLite 的舒适区;`LandingStore` 初始化即开 `journal_mode=WAL` + `busy_timeout`,写批次不阻塞只读连接。
+- 并发上界(需换库的信号):平台托管**多源 / 多工厂并发写同一落地库**、落地库需**跨机远程访问**、或 Agent 读并发大到单文件读锁成瓶颈 —— 任一出现再切 PostgreSQL(psycopg)。因落地库不是数据主体(ERP 才是),切库是一次性倒库 / `backfill` 重抽 + 一遍 `apply` 重建对象层,非持续迁移负担。
+- 迁移面控制:方言用法(`INSERT ... ON CONFLICT`、`PRAGMA`、`file:...?mode=ro`)集中在 `landing.py` 与各读取方的 `_connect`,统一参数化 SQL 薄封装、不引 ORM,把将来 PG 切片的改造面圈在可控范围。
 
 ## 5. 增量协议(increment.py)
 
-状态表 `d2a_sync_state(source, table, watermark_col, high_water, last_run_at, last_batch_id)`。
+状态表 `d2a_sync_state(source, table_name, watermark_col, high_water, last_run_at, last_batch_id)`。
 
 单表一轮增量:
 
@@ -86,7 +88,7 @@ since = high_water - lookback          # 回看窗口,默认 3 天,吸收迟到�
 规则:
 
 - 水位**只在落地事务提交后前进**,且只前进不后退;任何批次失败,水位停在原地,下轮重来(upsert 幂等);
-- 无可靠水位字段的表(小维表如 CURRENCY):全量刷新策略,配置 `strategy: full_refresh`;
+- 无可靠水位字段的表(小维表如 CURRENCY):走全量刷新 —— 由 binding 有无 `watermark` 声明**自动推导**,无独立配置项(元模型仍是唯一事实来源;不可靠水位应从 binding 移除 `watermark`,而非加配置覆盖);
 - 水位字段语义(是"修改时间"还是"审核时间")属现场核对项,binding `watermark` 为准。
 
 ## 6. 分段对账(reconcile.py)
@@ -94,15 +96,18 @@ since = high_water - lookback          # 回看窗口,默认 3 天,吸收迟到�
 水位增量抓不住两类漂移:源侧物理删除、不更新水位的原地改动。对账按水位分段(默认自然月)两档:
 
 - **L1(廉价,每日跑)**:源侧 `SELECT COUNT(*), MAX(wm)` per 段 vs 落地侧同口径。不一致 → 该段标记待修复;
-- **L2(修复,对不一致段)**:重抽该段(upsert 幂等),按 `_d2a_row_hash` 与源主键集合 diff:源侧消失的行打 `_d2a_deleted_at`。
+- **L2(修复,对不一致段或 `--deep` 全段)**:重抽该段并 upsert —— 原地改动被覆盖自然修正;再按**源侧主键全集与落地侧活跃主键集合 diff**,源侧消失的主键打 `_d2a_deleted_at` 软删。不逐行比 `_d2a_row_hash`:整段既已重抽 upsert,hash diff 结果等价却更复杂,本地 upsert 便宜不值得。
+
+已知盲区:原地改动若**不动水位**,L1 的 COUNT+MAX 察觉不到、不会标记该段,L2 无从触发 —— 只能靠 `--deep` 全段重抽兜底(用不用 hash 都一样)。
 
 刻意不用 MSSQL `CHECKSUM_AGG` 之类源侧哈希:各源实现不一致,无法与落地侧比对;L1 用 COUNT+MAX 这种任何源都便宜且语义一致的指标。
 
-## 7. 隔离区(quarantine.py)
+## 7. 隔离区(映射阶段,实现于 mapping_apply.py + landing.py)
 
 位置在**映射阶段**(落地是原样的,基本不会失败;映射才有类型/口径约束):
 
-- 触发:类型转换失败、业务键缺失/重复、`map` 遇到未声明的源码值、ref 解析失败;
+- 触发:类型转换失败、业务键缺失/重复、`map` 遇到未声明的源码值;
+- **ref 解析失败暂不隔离**:多对象有同步先后,子对象先于锚对象落地时外键短暂悬空是正常态,且"外键悬空"与"外键本身为空"在解码后无法区分 —— 强行隔离会大量误伤甚至误触熔断;兜底靠上游对账与下游指标口径警示;
 - 动作:整行(原样 JSON + 原因 + 批次号)进 `d2a_quarantine`,批次继续 —— 单行坏数据不阻塞管道;
 - **熔断**:单批次隔离率超过阈值(默认 5%)→ 中止本批并告警,防止系统性口径错误(比如源表结构变了)被静默吞掉;
 - 处理:`quarantine list / retry` CLI,或运维控制台(docs 05)的复核与一键重试。
@@ -110,14 +115,14 @@ since = high_water - lookback          # 回看窗口,默认 3 天,吸收迟到�
 ## 8. 调度与运行(scheduler.py + __main__.py)
 
 - apscheduler 按源调度;**错峰窗口**(如 `windows: ["22:00-06:30"]`)硬约束:窗口外不发起,运行中越界则在批次边界优雅暂停、下窗口续跑(水位机制天然支持断点);
-- CLI(`python -m data2agent.connect`):`sync --source X [--once]` / `backfill --table T --from --to` / `reconcile [--deep]` / `status` / `quarantine list|retry`;
+- CLI(`python -m data2agent.connect`):`sync`(`--source` / `--full` / `--lookback-days` + 源连接参数)/ `apply` / `backfill --table --from --to` / `reconcile [--deep]` / `serve [--once]`(常驻调度,`--once` 立即各跑一轮后退出,验证配置用)/ `status` / `quarantine list|retry` / `excel-suggest` / `excel-import`;
 - 每轮汇总进 `d2a_sync_run`(起止、行数、隔离数、对账结果),结构化日志输出。
 
 ## 9. 配置(connect.yaml)
 
 ```yaml
 templates: templates
-landing: landing/factory.sqlite     # 生产 PostgreSQL 支持属后续切片
+landing: landing/factory.sqlite     # 当前为 SQLite;PostgreSQL 属后续切片(见 §4 换库信号)
 sources:
   digiwin_e10:
     adapter: mssql_readonly         # 开发 / 展厅:sqlite_readonly + path
@@ -211,7 +216,10 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
 - connect.yaml 加 `sink: {type: http, url, token_env}`;**中间用 http sink 时本地只留
   水位/审计/运行状态、不落 raw**(水位是元数据非业务数据),且不在中间 apply(映射在平台侧);
 - 验证:中间/平台双进程集成测试 —— 推送落地与直连 sync 逐表逐行一致、中间零 raw 表
-  (`tests/test_sink_ingest.py`)。
+  (`tests/test_sink_ingest.py`);现场验证步骤见 [runbook/push-validation](../runbook/push-validation.md),
+  Windows 两台部署细节见 [runbook/windows-deploy](../runbook/windows-deploy.md);
+- **约束**:推送模式下 `reconcile_at` 必须留空(config 校验强制)—— 中间只有水位无 raw,
+  本地对账会误判整库不一致;跨机对账须待 E6b(中间驱动)。
 
 **E6b · 对账劈开(待建)**:纯出站推送下平台不能回调中间,故对账**中间驱动** ——
 中间算源侧段统计 POST `/ingest/reconcile` → 平台比对落地侧、响应回不一致段 →

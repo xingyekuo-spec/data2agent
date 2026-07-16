@@ -114,4 +114,9 @@ def load_config(path: str | Path) -> ConnectConfig:
             raise ValueError(f"源 {name}: sqlite_readonly 须配 path 或 dsn_env")
         if s.sink.type == "http" and not s.sink.url:
             raise ValueError(f"源 {name}: sink.type=http 必须配 sink.url(平台接收端点)")
+        if s.sink.type == "http" and s.reconcile_at is not None:
+            raise ValueError(
+                f"源 {name}: 推送模式(sink.type=http)下不能配 reconcile_at —— "
+                "跨机对账(E6b)尚未实现,中间机的 landing 只有水位、无 raw,"
+                "本地对账会误判整库不一致。请移除 reconcile_at;对账待 E6b 落地后由中间驱动。")
     return cfg

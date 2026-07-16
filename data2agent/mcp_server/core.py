@@ -70,6 +70,7 @@ class QueryService:
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
+        con.execute("PRAGMA busy_timeout=5000")  # WAL 检查点期间读锁竞争时等待而非报错
         return con
 
     # ---- query_objects ----

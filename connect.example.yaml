@@ -19,3 +19,5 @@ sources:
     # 落地出口(§12.3):默认 local=写本地库(同机)。
     # Pattern A 中间服务器改为推给平台(平台跑 python -m data2agent.ingest):
     # sink: { type: http, url: "https://平台:8850", token_env: D2A_INGEST_TOKEN }
+    # 注:推送模式下须移除上面的 reconcile_at —— 跨机对账(E6b)未实现,
+    #     中间机只有水位无 raw,本地对账会误判(config 校验会直接拒绝)。
