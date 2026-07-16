@@ -72,5 +72,7 @@
     ```
 
 11. 管理界面验收(浏览器,setup-middle 输出的 `D2A_MIDDLE_ADMIN_TOKEN` 登录):
-    - 打开 `http://<本机内网IP>:8851`
+    - **推荐**:双击 Release 附件 `d2a-middle-ui.exe`(可拷到桌面)。会启动管理服务并自动打开浏览器 `http://127.0.0.1:8851`
+    - 或手动打开 `http://<本机内网IP>:8851`(若已用 NSSM 常驻 `d2a-middle-admin`)
     - 状态页应显示 sync 配置;配置页可查看 connect.yaml 白名单字段
+    - 说明:exe 是**启动器**,不替代离线 zip 安装;须已存在 `C:\d2a\venv` 与 `C:\d2a\config\connect.yaml`

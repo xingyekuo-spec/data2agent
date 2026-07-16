@@ -103,6 +103,7 @@ jobs:
             python -m venv C:\d2a\venv
             C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[connect,middle_admin]
           另需装 ODBC Driver 18 for SQL Server(连 E10)。
+          安装完成后可双击 Release 中的 d2a-middle-ui.exe 打开管理界面(浏览器 http://127.0.0.1:8851 )。
           完整步骤见仓库 docs/runbook/windows-deploy.md。
           '@ | Set-Content -Path "$dir/INSTALL-connect.txt" -Encoding utf8
           Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip" -Force
@@ -128,9 +129,18 @@ jobs:
             python -m venv C:\d2a\venv
             C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[ingest,connect,mcp,console]
           平台机不连 ERP,无需 ODBC 驱动。
+          安装完成后可双击 d2a-platform-ui.exe 打开管理界面(浏览器 http://127.0.0.1:8849 )。
           完整步骤见仓库 docs/runbook/windows-deploy.md。
           '@ | Set-Content -Path "$dir/INSTALL-platform.txt" -Encoding utf8
           Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip" -Force
+
+      - name: 构建管理界面启动器 exe
+        run: |
+          .\deploy\build_ui_launchers.ps1 -OutDir dist/launchers
+          $v = "${{ steps.ver.outputs.version }}"
+          # 分别放进两台机运行包旁,便于单独下载;并拷进 zip 需重打则附独立附件即可
+          Copy-Item dist/launchers/d2a-middle-ui.exe "d2a-middle-ui-$v.exe"
+          Copy-Item dist/launchers/d2a-platform-ui.exe "d2a-platform-ui-$v.exe"
 
       # 手动触发也能拿到产物(不创建 Release)
       - name: 上传构建产物(workflow_dispatch)
@@ -141,6 +151,8 @@ jobs:
           path: |
             d2a-runtime-connect-${{ steps.ver.outputs.version }}.zip
             d2a-runtime-platform-${{ steps.ver.outputs.version }}.zip
+            d2a-middle-ui-${{ steps.ver.outputs.version }}.exe
+            d2a-platform-ui-${{ steps.ver.outputs.version }}.exe
             dist
 
       # 打 tag 时创建 Release 并附上运行包(私有仓库:仅有权限者可下载)
@@ -151,6 +163,8 @@ jobs:
           files: |
             d2a-runtime-connect-${{ steps.ver.outputs.version }}.zip
             d2a-runtime-platform-${{ steps.ver.outputs.version }}.zip
+            d2a-middle-ui-${{ steps.ver.outputs.version }}.exe
+            d2a-platform-ui-${{ steps.ver.outputs.version }}.exe
             dist/*.whl
             dist/*.tar.gz
           generate_release_notes: true
@@ -163,6 +177,8 @@ jobs:
             | --- | --- | --- |
             | `d2a-runtime-connect-*.zip` | 中间服务器(抽取 + 推送 + 管理界面) | `.[connect,middle_admin]` |
             | `d2a-runtime-platform-*.zip` | 数据平台(接收 + apply + MCP + 控制台) | `.[ingest,connect,mcp,console]` |
+            | `d2a-middle-ui-*.exe` | 中间机:双击启动管理 UI 并打开浏览器(:8851) | 需已安装 connect 包 |
+            | `d2a-platform-ui-*.exe` | 平台机:双击启动管理 UI 并打开浏览器(:8849) | 需已安装 platform 包 |
 
             每个 zip 解压后 `pyproject.toml`/`data2agent/`/`templates/`/`wheels/` 直接在根目录。
             **生产机须装 Python 3.14 64 位**(编译 wheel 绑定该版本)。

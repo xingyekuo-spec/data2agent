@@ -94,5 +94,7 @@
     ```
 
 12. 管理界面验收(浏览器,setup-platform 输出的 `D2A_CONSOLE_TOKEN` 登录):
-    - 打开 `http://<本机内网IP>:8849`
+    - **推荐**:双击 Release 附件 `d2a-platform-ui.exe`(可拷到桌面)。会启动管理服务并自动打开浏览器 `http://127.0.0.1:8849`
+    - 或手动打开 `http://<本机内网IP>:8849`(若已用 NSSM 常驻 `d2a-console`)
     - 仪表盘/配置/日志/调试页可用;旧版 JSON API 仍在 `/v0`
+    - 说明:exe 是**启动器**,不替代离线 zip 安装;须已存在 `C:\d2a\venv` 与 `C:\d2a\config\platform.yaml`
