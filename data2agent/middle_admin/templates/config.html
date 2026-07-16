@@ -1,0 +1,158 @@
+{% extends "layout.html" %}
+{% block title %}配置 — 中间机管理{% endblock %}
+{% block content %}
+<style>
+  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
+        box-shadow:0 1px 3px rgba(16,34,54,.08)}
+  .card h2{font-size:15px;margin:0 0 14px;color:#12314f}
+  .field{display:block;margin-bottom:12px}
+  .field-label{display:block;font-size:13px;color:#51606f;margin-bottom:4px}
+  .field input[type=text],.field input[type=number]{width:100%;max-width:520px;box-sizing:border-box;
+    padding:8px 10px;border:1px solid #d0d7de;border-radius:6px;font-size:14px}
+  .hint{font-size:12px;color:#6b7785;margin-top:4px}
+  .banner{background:#e8f4fd;border:1px solid #b6d9f5;color:#0b4a6f;border-radius:8px;
+          padding:12px 14px;margin-bottom:16px;font-size:13px}
+  .banner code{background:#fff;padding:2px 6px;border-radius:4px}
+  .errors{color:#b42318;font-size:13px;margin-top:8px}
+  .source-block{border-top:1px solid #e8edf2;padding-top:14px;margin-top:14px}
+</style>
+
+<div id="restart-banner" class="banner" style="display:none">
+  配置已保存。请重启连接器服务使变更生效:
+  <code>nssm restart d2a-connector</code>
+  （或通过 Windows 服务管理器重启 <strong>d2a-connector</strong>）
+</div>
+
+<form id="config-form" class="card">
+  <h2>全局</h2>
+  {% from "form_macros.html" import text_input, number_input %}
+  <label class="field">
+    <span class="field-label">templates 路径</span>
+    <input type="text" name="templates" id="cfg-templates">
+  </label>
+  <label class="field">
+    <span class="field-label">landing 路径</span>
+    <input type="text" name="landing" id="cfg-landing">
+  </label>
+
+  <div id="sources-container"></div>
+
+  <div id="config-errors" class="errors"></div>
+  <button type="submit" style="margin-top:8px">保存配置</button>
+</form>
+
+<script>
+(function () {
+  var sourcesEl = document.getElementById('sources-container');
+
+  function authHeaders(extra) {
+    var h = {'Content-Type': 'application/json'};
+    var token = sessionStorage.getItem('d2a_token');
+    if (token) h['Authorization'] = 'Bearer ' + token;
+    if (extra) Object.assign(h, extra);
+    return h;
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+  }
+
+  function renderSource(name, src) {
+    var w = (src.windows || []).join(', ');
+    var rate = src.rate || {};
+    var sink = src.sink || {};
+    var extra = (src.extra_whitelist || []).join(', ');
+    return '<div class="source-block" data-source="' + esc(name) + '">' +
+      '<h2>源 ' + esc(name) + '</h2>' +
+      '<label class="field"><span class="field-label">sync_every</span>' +
+      '<input type="text" data-key="sync_every" value="' + esc(src.sync_every || '') + '"></label>' +
+      '<label class="field"><span class="field-label">windows (逗号分隔)</span>' +
+      '<input type="text" data-key="windows" value="' + esc(w) + '"></label>' +
+      '<label class="field"><span class="field-label">lookback</span>' +
+      '<input type="text" data-key="lookback" value="' + esc(src.lookback || '') + '"></label>' +
+      '<label class="field"><span class="field-label">extra_whitelist (逗号分隔)</span>' +
+      '<input type="text" data-key="extra_whitelist" value="' + esc(extra) + '"></label>' +
+      '<label class="field"><span class="field-label">rate.batch_size</span>' +
+      '<input type="number" data-key="rate.batch_size" value="' + esc(rate.batch_size != null ? rate.batch_size : '') + '"></label>' +
+      '<label class="field"><span class="field-label">rate.rows_per_second</span>' +
+      '<input type="number" data-key="rate.rows_per_second" value="' + esc(rate.rows_per_second != null ? rate.rows_per_second : '') + '"></label>' +
+      '<label class="field"><span class="field-label">sink.url</span>' +
+      '<input type="text" data-key="sink.url" value="' + esc(sink.url || '') + '"></label>' +
+      '<p class="hint">dsn_env: ' + esc(src.dsn_env || '—') +
+      (src.dsn_env_set != null ? ' (' + (src.dsn_env_set ? '已设置' : '未设置') + ')' : '') +
+      ' · token_env: ' + esc(sink.token_env || '—') +
+      (sink.token_env_set != null ? ' (' + (sink.token_env_set ? '已设置' : '未设置') + ')' : '') +
+      '</p></div>';
+  }
+
+  function loadConfig() {
+    fetch('/api/config', {headers: authHeaders()})
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        document.getElementById('cfg-templates').value = data.templates || '';
+        document.getElementById('cfg-landing').value = data.landing || '';
+        var html = '';
+        Object.keys(data.sources || {}).forEach(function (name) {
+          html += renderSource(name, data.sources[name]);
+        });
+        sourcesEl.innerHTML = html;
+      });
+  }
+
+  function collectPatch() {
+    var patch = {
+      templates: document.getElementById('cfg-templates').value || null,
+      landing: document.getElementById('cfg-landing').value || null,
+      sources: {}
+    };
+    sourcesEl.querySelectorAll('[data-source]').forEach(function (block) {
+      var name = block.getAttribute('data-source');
+      var src = {};
+      block.querySelectorAll('[data-key]').forEach(function (input) {
+        var key = input.getAttribute('data-key');
+        var val = input.value.trim();
+        if (!val && input.type === 'number') return;
+        if (key === 'windows') {
+          src.windows = val ? val.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [];
+        } else if (key === 'extra_whitelist') {
+          src.extra_whitelist = val ? val.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [];
+        } else if (key.indexOf('rate.') === 0) {
+          src.rate = src.rate || {};
+          src.rate[key.slice(5)] = input.type === 'number' ? Number(val) : val;
+        } else if (key.indexOf('sink.') === 0) {
+          src.sink = src.sink || {};
+          src.sink[key.slice(5)] = val;
+        } else {
+          src[key] = val;
+        }
+      });
+      patch.sources[name] = src;
+    });
+    return patch;
+  }
+
+  document.getElementById('config-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var errEl = document.getElementById('config-errors');
+    errEl.textContent = '';
+    fetch('/api/config', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify(collectPatch())
+    }).then(function (r) { return r.json().then(function (body) { return {ok: r.ok, body: body}; }); })
+      .then(function (res) {
+        if (res.body.ok) {
+          document.getElementById('restart-banner').style.display = '';
+          errEl.textContent = '';
+        } else {
+          errEl.textContent = (res.body.errors || []).map(function (e) {
+            return (e.field || '') + ': ' + (e.message || '');
+          }).join('; ') || '保存失败';
+        }
+      });
+  });
+
+  loadConfig();
+})();
+</script>
+{% endblock %}

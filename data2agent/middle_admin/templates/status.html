@@ -1,0 +1,106 @@
+{% extends "layout.html" %}
+{% block title %}状态 — 中间机管理{% endblock %}
+{% block content %}
+<style>
+  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
+        box-shadow:0 1px 3px rgba(16,34,54,.08)}
+  .card h2{font-size:15px;margin:0 0 12px;color:#12314f}
+  .meta{font-size:13px;color:#51606f;line-height:1.6}
+  .actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
+  .warn{font-size:12px;color:#8a4b00;background:#fff8e6;border:1px solid #f0d89a;
+        border-radius:6px;padding:8px 10px;max-width:520px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e8edf2}
+  th{color:#51606f;font-weight:600}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+  .badge-ok{background:#e6f4ea;color:#1e7e34}
+  .badge-off{background:#fdecea;color:#b42318}
+  pre{background:#0f1720;color:#e2e8f0;padding:12px;border-radius:8px;overflow:auto;
+       font-size:12px;max-height:240px}
+</style>
+
+<div id="status-panel"
+     hx-get="/api/status"
+     hx-trigger="load, every 5s"
+     hx-swap="none">
+  <div class="card"><p class="meta">加载状态中…</p></div>
+</div>
+
+<div class="card">
+  <h2>操作</h2>
+  <div class="actions">
+    <button type="button" id="btn-trigger">立即触发同步</button>
+    <button type="button" id="btn-test">测试 ERP 连接</button>
+  </div>
+  <p class="warn" style="margin-top:12px">
+    手动触发可能与 NSSM 计划任务重叠；响应中的 <code>overlap_warning</code> 为 true 时请确认无并发同步。
+  </p>
+  <div id="trigger-result" class="meta" style="margin-top:10px"></div>
+  <div id="test-result" class="meta" style="margin-top:10px"></div>
+</div>
+
+<script>
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function authHeaders() {
+  var h = {'Content-Type': 'application/json'};
+  var token = sessionStorage.getItem('d2a_token');
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return h;
+}
+function renderStatus(data) {
+  var html = '';
+  (data.sources || []).forEach(function (src) {
+    var inWin = src.in_window;
+    html += '<div class="card"><h2>源 ' + esc(src.source) + '</h2>';
+    html += '<p class="meta">同步间隔: ' + esc(src.sync_every || '—') +
+            ' · 窗口: ' + esc((src.windows || []).join(', ') || '全天') + '</p>';
+    html += '<p class="meta">上次运行: ' + esc(src.last_run_at || '—') +
+            ' · 下次预估: ' + esc(src.next_sync_at || '—') + '</p>';
+    html += '<p><span class="badge ' + (inWin ? 'badge-ok' : 'badge-off') + '">' +
+            (inWin ? '窗口内' : '窗口外') + '</span></p>';
+    if (src.watermarks && src.watermarks.length) {
+      html += '<table><thead><tr><th>表</th><th>水位列</th><th>高水位</th><th>上次同步</th></tr></thead><tbody>';
+      src.watermarks.forEach(function (w) {
+        html += '<tr><td>' + esc(w.table_name) + '</td><td>' + esc(w.watermark_col) +
+                '</td><td>' + esc(w.high_water) + '</td><td>' + esc(w.last_run_at || '—') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+    html += '</div>';
+  });
+  return html || '<div class="card"><p class="meta">无源配置</p></div>';
+}
+document.body.addEventListener('htmx:afterOnLoad', function (e) {
+  if (e.detail.elt.id !== 'status-panel') return;
+  try {
+    document.getElementById('status-panel').innerHTML =
+      renderStatus(JSON.parse(e.detail.xhr.responseText));
+  } catch (err) { /* keep placeholder */ }
+});
+document.getElementById('btn-trigger').addEventListener('click', function () {
+  fetch('/api/actions/trigger', {
+    method: 'POST', headers: authHeaders(), body: JSON.stringify({action: 'sync'})
+  }).then(function (r) { return r.json(); })
+    .then(function (body) {
+      document.getElementById('trigger-result').innerHTML =
+        '<pre>' + esc(JSON.stringify(body, null, 2)) + '</pre>';
+    });
+});
+document.getElementById('btn-test').addEventListener('click', function () {
+  fetch('/api/test-connection', {
+    method: 'POST', headers: authHeaders(), body: '{}'
+  }).then(function (r) { return r.json(); })
+    .then(function (body) {
+      var el = document.getElementById('test-result');
+      if (body.ok) {
+        el.innerHTML = '连接成功 · ' + body.elapsed_ms + ' ms · 表: ' +
+          esc((body.tables || []).join(', '));
+      } else {
+        el.innerHTML = '连接失败: ' + esc(body.detail || body.error || '未知错误');
+      }
+    });
+});
+</script>
+{% endblock %}

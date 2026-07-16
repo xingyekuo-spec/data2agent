@@ -113,3 +113,13 @@ def test_trigger_rejects_reconcile(middle_env):
     r = client.post("/api/actions/trigger", headers={"Authorization": "Bearer secret"},
                     json={"action": "reconcile"})
     assert r.status_code == 400
+
+
+def test_html_pages(middle_env):
+    client, _ = middle_env
+    h = {"Authorization": "Bearer secret"}
+    for path in ("/status", "/config", "/logs"):
+        r = client.get(path, headers=h)
+        assert r.status_code == 200
+        body = r.content.lower()
+        assert b"htmx" in body or b"hx-" in body or b"nav" in body

@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
 from pydantic import BaseModel
 
 from ..admin_common.config_edit import MIDDLE_EDITABLE, merge_whitelist_and_save
@@ -24,7 +26,23 @@ from ..connect.scheduler import build_adapter, run_sync_cycle
 from ..metamodel.loader import load_pack
 from .status import build_status
 
-_ADMIN_STATIC = Path(__file__).resolve().parents[1] / "admin_templates" / "static"
+_PKG = Path(__file__).resolve().parent
+_ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
+_MIDDLE_TEMPLATES = _PKG / "templates"
+_ADMIN_STATIC = _ADMIN_TEMPLATES / "static"
+
+
+def _make_templates() -> Jinja2Templates:
+    """双搜索路径: middle_admin/templates + admin_templates; admin/ 前缀继承基 layout。"""
+    env = Environment(
+        loader=ChoiceLoader([
+            FileSystemLoader(str(_MIDDLE_TEMPLATES)),
+            FileSystemLoader(str(_ADMIN_TEMPLATES)),
+            PrefixLoader({"admin": FileSystemLoader(str(_ADMIN_TEMPLATES))}),
+        ]),
+        autoescape=select_autoescape(["html", "xml"]),
+    )
+    return Jinja2Templates(env=env)
 
 
 class ConfigPatch(BaseModel):
@@ -136,16 +154,26 @@ def create_app(config_path: str | Path, token: str | None = None,
 
     app = FastAPI(title="data2agent 中间机管理")
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
+    templates = _make_templates()
 
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return "<!DOCTYPE html><html><body><p>中间机管理(占位,Task 5 接 Jinja)</p></body></html>"
+    def page_ctx(request: Request) -> dict[str, Any]:
+        return {"static_url": "/static", "needs_token": bool(token)}
+
+    @app.get("/")
+    def index() -> RedirectResponse:
+        return RedirectResponse("/status", status_code=302)
 
     @app.get("/status", response_class=HTMLResponse)
+    def status_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "status.html", page_ctx(request))
+
     @app.get("/config", response_class=HTMLResponse)
+    def config_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "config.html", page_ctx(request))
+
     @app.get("/logs", response_class=HTMLResponse)
-    def html_placeholder() -> str:
-        return "<!DOCTYPE html><html><body><p>占位页面(Task 5)</p></body></html>"
+    def logs_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "logs.html", page_ctx(request))
 
     @api.get("/config")
     def get_config() -> dict:
