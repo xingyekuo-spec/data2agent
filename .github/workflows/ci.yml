@@ -12,6 +12,7 @@ jobs:
           python-version: "3.14"
       - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
       - run: pytest tests -q
+      - run: python scripts/smoke_admin_ui.py
       - run: python -m data2agent.metamodel.validate templates
       - name: gitleaks secret scan
         uses: gitleaks/gitleaks-action@v2
