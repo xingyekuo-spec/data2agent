@@ -1,6 +1,11 @@
 name: release
 # 打 tag(v*)或手动触发 → 测试通过后,打出两台 Windows 机各自的离线运行包,上传 GitHub Release。
 # 工厂内网无需访问 GitHub:在一台联网机下载 Release 附件,U 盘 / 内网共享拷到两台即可离线安装。
+#
+# 打包 job 跑在 windows-latest:pip download 直接在真实 Windows/py3.14 环境解析,
+# 环境标记(platform_system=="Windows")与 wheel 标签均原生匹配,自动带上 Windows
+# 专属条件依赖(如 tzlocal→tzdata、click→colorama)。切勿改回 Linux + --platform:
+# --platform 只影响 wheel 兼容标签,不会按目标平台评估 marker,会漏掉这些依赖。
 on:
   push:
     tags: ["v*"]
@@ -19,10 +24,8 @@ permissions:
   contents: write        # 创建 Release、上传附件需要
 
 env:
-  # 生产机 Python 版本 —— 离线编译 wheel(pyodbc/pyyaml/pydantic-core)按此版本下载,两台机须一致。
-  # 手动触发可用 inputs.py_version 覆盖;tag 触发用此默认值。
+  # 生产机 Python 版本 —— 打包机(windows runner)按此版本装 Python 并原生下载 wheel,两台机须一致。
   PY_VERSION: ${{ github.event.inputs.py_version || '3.14' }}
-  WIN_PLATFORM: "win_amd64"
 
 jobs:
   # 打包前先跑测试,坏版本不发布
@@ -41,7 +44,10 @@ jobs:
 
   package:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: windows-latest      # 原生 Windows:pip download 正确解析 win_amd64 wheel 与平台条件依赖
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,88 +60,74 @@ jobs:
       - name: 解析版本号
         id: ver
         run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=manual-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
-          fi
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            "version=$env:GITHUB_REF_NAME" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } else {
+            $sha = git rev-parse --short HEAD
+            "version=manual-$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
 
       - name: 构建 wheel + sdist
         run: |
           python -m pip install --upgrade pip build
-          python -m build            # 产出 dist/*.whl 与 dist/*.tar.gz
+          python -m build            # 产出 dist/*.whl 与 dist/*.tar.gz(纯 Python,跨平台通用)
 
       # 组装运行包骨架:代码 + 模板 + 配置样例(不含 tests/docs/deploy)
       - name: 组装运行包骨架
         run: |
-          set -eux
-          stage=stage
-          mkdir -p "$stage"
-          cp -r data2agent templates pyproject.toml README.md connect.example.yaml "$stage"/
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
+          Copy-Item -Recurse -Force data2agent stage/
+          Copy-Item -Recurse -Force templates stage/
+          Copy-Item -Force pyproject.toml,README.md,connect.example.yaml stage/
 
-      # 离线依赖:下 Windows 平台 wheel(生产机为 Windows,不能用默认 Linux wheel)
+      # 离线依赖:原生 Windows 下载(生产机为 Windows,不能用 Linux wheel)
       - name: 下载 Windows 离线依赖(中间机 / connect)
         run: |
-          set -eux
-          python -m pip download \
-            --dest stage/wheels \
-            --platform ${{ env.WIN_PLATFORM }} \
-            --python-version ${{ env.PY_VERSION }} \
-            --implementation cp \
-            --only-binary=:all: \
-            "setuptools>=68" "wheel" \
-            "pydantic>=2.7" "pyyaml>=6.0" \
+          python -m pip download --dest stage/wheels --only-binary=:all: `
+            "setuptools>=68" "wheel" `
+            "pydantic>=2.7" "pyyaml>=6.0" `
             "pyodbc>=5.1" "apscheduler>=3.10"
           # setuptools/wheel:-e 可编辑安装会触发 PEP517 构建,离线时需从本地 wheels 取构建依赖。
+          # apscheduler→tzlocal→tzdata(Windows)会被原生自动带上。
           # 注:PostgreSQL 驱动 psycopg 已拆到独立 postgres extra(当前 SQLite 落地不需要),故不打入。
 
       - name: 打中间机运行包
         run: |
-          set -eux
-          cp -r stage d2a-runtime-connect-${{ steps.ver.outputs.version }}
-          cd d2a-runtime-connect-${{ steps.ver.outputs.version }}
-          # 安装说明随包附带
-          cat > INSTALL-connect.txt <<'EOF'
+          $v = "${{ steps.ver.outputs.version }}"
+          $dir = "d2a-runtime-connect-$v"
+          Copy-Item -Recurse -Force stage $dir
+          @'
           中间服务器离线安装(Windows PowerShell,Python 3.14 64 位 已装):
             python -m venv C:\d2a\venv
             C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[connect]
           另需装 ODBC Driver 18 for SQL Server(连 E10)。
           完整步骤见仓库 docs/runbook/windows-deploy.md。
-          EOF
-          cd ..
-          zip -rq d2a-runtime-connect-${{ steps.ver.outputs.version }}.zip \
-            d2a-runtime-connect-${{ steps.ver.outputs.version }}
+          '@ | Set-Content -Path "$dir/INSTALL-connect.txt" -Encoding utf8
+          Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip" -Force
 
       - name: 下载 Windows 离线依赖(平台机 / 全套接收端)
         run: |
-          set -eux
-          rm -rf stage/wheels && mkdir -p stage/wheels
-          python -m pip download \
-            --dest stage/wheels \
-            --platform ${{ env.WIN_PLATFORM }} \
-            --python-version ${{ env.PY_VERSION }} \
-            --implementation cp \
-            --only-binary=:all: \
-            "setuptools>=68" "wheel" \
-            "pydantic>=2.7" "pyyaml>=6.0" \
-            "pyodbc>=5.1" "apscheduler>=3.10" \
+          Remove-Item -Recurse -Force stage/wheels
+          python -m pip download --dest stage/wheels --only-binary=:all: `
+            "setuptools>=68" "wheel" `
+            "pydantic>=2.7" "pyyaml>=6.0" `
+            "pyodbc>=5.1" "apscheduler>=3.10" `
             "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29"
+          # uvicorn→click→colorama(Windows)会被原生自动带上。
 
       - name: 打平台机运行包
         run: |
-          set -eux
-          cp -r stage d2a-runtime-platform-${{ steps.ver.outputs.version }}
-          cd d2a-runtime-platform-${{ steps.ver.outputs.version }}
-          cat > INSTALL-platform.txt <<'EOF'
+          $v = "${{ steps.ver.outputs.version }}"
+          $dir = "d2a-runtime-platform-$v"
+          Copy-Item -Recurse -Force stage $dir
+          @'
           数据平台离线安装(Windows PowerShell,Python 3.14 64 位 已装):
             python -m venv C:\d2a\venv
             C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[ingest,connect,mcp,console]
           平台机不连 ERP,无需 ODBC 驱动。
           完整步骤见仓库 docs/runbook/windows-deploy.md。
-          EOF
-          cd ..
-          zip -rq d2a-runtime-platform-${{ steps.ver.outputs.version }}.zip \
-            d2a-runtime-platform-${{ steps.ver.outputs.version }}
+          '@ | Set-Content -Path "$dir/INSTALL-platform.txt" -Encoding utf8
+          Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip" -Force
 
       # 手动触发也能拿到产物(不创建 Release)
       - name: 上传构建产物(workflow_dispatch)
@@ -169,6 +161,6 @@ jobs:
             | `d2a-runtime-connect-*.zip` | 中间服务器(抽取 + 推送) | `.[connect]` |
             | `d2a-runtime-platform-*.zip` | 数据平台(接收 + apply + MCP + 控制台) | `.[ingest,connect,mcp,console]` |
 
-            每个 zip 内含 `data2agent/` + `templates/` + 配置样例 + Windows(py3.14/win_amd64)离线依赖 wheel + `INSTALL-*.txt`。
+            每个 zip 解压后 `pyproject.toml`/`data2agent/`/`templates/`/`wheels/` 直接在根目录。
             **生产机须装 Python 3.14 64 位**(编译 wheel 绑定该版本)。
             完整部署步骤见 `docs/runbook/windows-deploy.md`。

@@ -246,6 +246,7 @@ Get-Service d2a-*
 | 现象 | 排查 |
 | --- | --- |
 | 安装报 `No matching distribution found for setuptools>=68` | `-e` 安装触发离线构建,需 `setuptools`/`wheel` wheel 在 `wheels\` 内(v0.1.0 运行包漏打;临时解法见下)。<br>临时解法:联网机 `pip download -d fix "setuptools>=68" wheel`(纯 Python,无需平台参数),把产出的 2 个 whl 拷进 `C:\d2a\app\wheels` 后重跑安装 |
+| 安装报 `No matching distribution found for tzdata`(来自 tzlocal)或 `colorama` | Windows 专属条件依赖漏打(v0.1.3 及更早在 Linux 上用 `--platform` 下载,不会评估 `platform_system=="Windows"` 标记)。v0.1.4 起改为在 windows runner 上原生打包修复。<br>临时解法:联网 **Windows** 机 `pip download -d fix tzdata colorama`,把产出 whl 拷进 `C:\d2a\app\wheels` 后重跑安装 |
 | NSSM 服务启动即退出 | 看 `AppStdout`/`AppStderr` 日志;多是环境变量未生效(机器级变量需重启服务进程) |
 | pyodbc 报 `IM002` 找不到驱动 | ODBC Driver 18 未装或架构不匹配(确认 64 位 Python 配 64 位驱动) |
 | 密码含特殊字符导致连接串解析错 | 连接串里 `;`/`=` 等符号需按 ODBC 连接串规则处理,必要时整串加引号 |
