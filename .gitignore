@@ -11,3 +11,4 @@ dist/
 .playwright-mcp/
 .superpowers/
 .DS_Store
+.worktrees/

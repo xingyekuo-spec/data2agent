@@ -20,9 +20,15 @@
    C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[ingest,connect,mcp,console]
    ```
 
-5. **管理员** PowerShell 生成配置并写入 token(按提示输入 ingest token;mcp/console token 自动生成并显示,请记下):
+5. **管理员** PowerShell 生成配置并写入 token(按提示输入 ingest token;mcp/console token 自动生成并显示,请记下)。
+   若报「在此系统上禁止运行脚本」,在同一管理员窗口先放行当前用户再执行:
    ```powershell
+   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
    C:\d2a\app\setup-platform.ps1
+   ```
+   或单次绕过(不改策略):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File C:\d2a\app\setup-platform.ps1
    ```
 
 6. **新开**普通 PowerShell 窗口(机器级环境变量对新进程生效)。

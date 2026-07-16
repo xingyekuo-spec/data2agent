@@ -25,7 +25,13 @@
    C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[connect]
    ```
 
-6. **管理员** PowerShell 生成配置并写入凭据(按提示输入 ERP 密码、与平台一致的 ingest token):
+6. **管理员** PowerShell 生成配置并写入凭据(按提示输入 ERP 密码、与平台一致的 ingest token)。
+   若报「在此系统上禁止运行脚本」,先执行 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`。
+   命名实例(如 `HOST\SQLEXPRESS`)请给 `-ErpServer` 加引号;脚本会自动省略端口:
+   ```powershell
+   C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer 'DESKTOP-X\SQLEXPRESS' -ErpDatabase <E10库> -ErpUser d2a_reader
+   ```
+   默认实例(带端口):
    ```powershell
    C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer <ERP主机> -ErpDatabase <E10库> -ErpUser d2a_reader
    ```
