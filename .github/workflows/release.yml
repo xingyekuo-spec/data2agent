@@ -77,8 +77,10 @@ jobs:
             --python-version ${{ env.PY_VERSION }} \
             --implementation cp \
             --only-binary=:all: \
+            "setuptools>=68" "wheel" \
             "pydantic>=2.7" "pyyaml>=6.0" \
             "pyodbc>=5.1" "apscheduler>=3.10"
+          # setuptools/wheel:-e 可编辑安装会触发 PEP517 构建,离线时需从本地 wheels 取构建依赖。
           # 注:connect 组含 psycopg[binary],生产 SQLite 落地不需要,故此处不打入以精简体积。
 
       - name: 打中间机运行包
@@ -108,6 +110,7 @@ jobs:
             --python-version ${{ env.PY_VERSION }} \
             --implementation cp \
             --only-binary=:all: \
+            "setuptools>=68" "wheel" \
             "pydantic>=2.7" "pyyaml>=6.0" \
             "pyodbc>=5.1" "apscheduler>=3.10" \
             "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29"
