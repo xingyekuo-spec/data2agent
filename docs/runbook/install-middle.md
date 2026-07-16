@@ -1,0 +1,54 @@
+# 中间服务器安装步骤
+
+> 仅本机操作。平台机须先装好并启动 ingest(8850)。两台机使用**同一 Release 版本**。
+> 详解见 [windows-deploy.md](windows-deploy.md)。
+
+1. 安装 **Python 3.14 官方 64 位**(勾选 Add to PATH)。
+
+2. 安装 [ODBC Driver 18 for SQL Server](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server)，确认:
+   ```powershell
+   Get-OdbcDriver -Name "ODBC Driver 18 for SQL Server"
+   ```
+
+3. 拿到 Release 附件 `d2a-runtime-connect-<版本>.zip`(与平台机同版本),拷到本机。
+
+4. 建目录与虚拟环境:
+   ```powershell
+   New-Item -ItemType Directory -Force C:\d2a\app, C:\d2a\data, C:\d2a\config | Out-Null
+   python -m venv C:\d2a\venv
+   C:\d2a\venv\Scripts\python.exe -m pip install --upgrade pip
+   ```
+
+5. 解压并离线安装:
+   ```powershell
+   Expand-Archive d2a-runtime-connect-<版本>.zip C:\d2a\app
+   C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[connect]
+   ```
+
+6. **管理员** PowerShell 生成配置并写入凭据(按提示输入 ERP 密码、与平台一致的 ingest token):
+   ```powershell
+   C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer <ERP主机> -ErpDatabase <E10库> -ErpUser d2a_reader
+   ```
+
+7. **新开**普通 PowerShell 窗口(机器级环境变量对新进程生效)。
+
+8. 确认平台机 ingest 已监听 8850 后,冒烟一次:
+   ```powershell
+   C:\d2a\venv\Scripts\python.exe -m data2agent.connect serve --config C:\d2a\config\connect.yaml --once
+   ```
+
+9. (可选)用 NSSM 装常驻服务:
+   ```powershell
+   C:\d2a\nssm\nssm.exe install d2a-connector C:\d2a\venv\Scripts\python.exe
+   C:\d2a\nssm\nssm.exe set d2a-connector AppParameters "-m data2agent.connect serve --config C:\d2a\config\connect.yaml"
+   C:\d2a\nssm\nssm.exe set d2a-connector AppDirectory C:\d2a\app
+   C:\d2a\nssm\nssm.exe set d2a-connector AppStdout C:\d2a\data\logs\d2a-connector.log
+   C:\d2a\nssm\nssm.exe set d2a-connector AppStderr C:\d2a\data\logs\d2a-connector.log
+   C:\d2a\nssm\nssm.exe set d2a-connector AppExit Default Restart
+   C:\d2a\nssm\nssm.exe start d2a-connector
+   ```
+
+10. 验收(本机应有水位、无 raw 表):
+    ```powershell
+    C:\d2a\venv\Scripts\python.exe -m data2agent.connect status --landing C:\d2a\data\middle.sqlite
+    ```

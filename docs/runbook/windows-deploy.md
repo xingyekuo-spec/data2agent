@@ -3,6 +3,7 @@
 > 适用:中间服务器 / 数据平台均为 Windows;E10 用 SQL Server 账号+密码认证
 > (不用集成认证)。原生 Windows 服务部署,不用 Docker,不拆包。
 > 前置概念与拓扑见 [push-validation.md](push-validation.md);本文档只讲 Windows 落地细节。
+> 只要操作清单:中间机 [install-middle.md](install-middle.md)·平台机 [install-platform.md](install-platform.md)。
 
 ---
 
@@ -20,9 +21,9 @@
 两台机器都按此约定,路径固定,便于 NSSM 服务和排障对齐:
 
 ```
-C:\d2a\app\            # 运行包(Release zip 解压:data2agent/ + templates/ + wheels/ + 配置样例)
+C:\d2a\app\            # 运行包(Release zip 解压:代码 + templates/ + wheels/ + 配置样例 + setup-*.ps1)
 C:\d2a\venv\           # 独立虚拟环境,不污染系统 Python
-C:\d2a\config\         # connect.yaml / platform.yaml
+C:\d2a\config\         # connect.yaml / platform.yaml(由 setup-*.ps1 生成,也可手工写)
 C:\d2a\data\           # 落地库、日志
 ```
 
@@ -43,10 +44,11 @@ C:\d2a\venv\Scripts\python.exe -m pip install --upgrade pip
 
 ## 2. 离线分发:从 GitHub Release 下载运行包(推荐)
 
-打包由 GitHub Actions 自动完成(`.github/workflows/release.yml`):打 tag(如 `v0.1.0`)后,
+打包由 GitHub Actions 自动完成(`.github/workflows/release.yml`):打 tag(如 `v0.1.6`)后,
 CI 测试通过即产出两台机各自的**离线运行包**并附到 Release。运行包内已含 `data2agent/` +
-`templates/` + 配置样例 + **Windows(py3.14/win_amd64)离线依赖 wheel** + `INSTALL-*.txt`,
-无需在生产机联网、也无需手工 `pip download`。
+`templates/` + 配置样例 + **Windows(py3.14)原生离线依赖 wheel** + `INSTALL-*.txt` +
+`setup-middle.ps1` / `setup-platform.ps1`(配置生成脚本),无需在生产机联网、也无需手工
+`pip download`。打包 job 跑在 windows runner 上,确保 Windows 专属条件依赖(如 `tzdata`)被带上。
 
 > 私有仓库:Release 附件仅有仓库权限者可下载。工厂内网**不需要**能访问 GitHub —— 在一台
 > 联网机(公司办公网即可)下载附件,U 盘 / 内网文件共享拷到两台生产机。
@@ -86,15 +88,21 @@ C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e
 
 ### 2.3 备选:本地手工打包(无 GitHub 时)
 
-若暂不走 CI,可在一台联网机手工产出等价目录(下 Windows wheel):
+若暂不走 CI,**必须在一台联网的 Windows + Python 3.14 64 位**机器上下载依赖
+(与 CI 一致)。不要在 Linux/macOS 上用 `--platform win_amd64` —— 那只会改 wheel 兼容标签,
+**不会**按目标平台评估环境标记,会漏掉 `tzdata`/`colorama` 等 Windows 专属条件依赖。
+
 ```powershell
 git clone <repo> d2a-src; cd d2a-src
-pip download -d wheels --platform win_amd64 --python-version 3.14 --implementation cp --only-binary=:all: `
-  "setuptools>=68" wheel "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10"                          # 中间机
-pip download -d wheels-full --platform win_amd64 --python-version 3.14 --implementation cp --only-binary=:all: `
-  "setuptools>=68" wheel "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10" "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29"   # 平台机
+# 中间机依赖(在本机 Windows 上原生 download,勿加 --platform)
+pip download -d wheels --only-binary=:all: `
+  "setuptools>=68" wheel "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10"
+# 平台机依赖
+pip download -d wheels-full --only-binary=:all: `
+  "setuptools>=68" wheel "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10" `
+  "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29"
 ```
-把 `d2a-src`(含 `templates/`)+ 对应 `wheels*` 拷到目标机,安装命令同 §2.2。
+把 `d2a-src`(含 `templates/`、`deploy/setup-*.ps1`)+ 对应 `wheels*` 拷到目标机,安装命令同 §2.2。
 
 ---
 
@@ -137,6 +145,9 @@ sources:
 
 ### 4.2 SQL 账号连接串(密码只放系统环境变量,不落文件)
 
+> **用了 §4.1 的 `setup-middle.ps1` 可跳过本节** —— 脚本已写入机器级 `D2A_E10_DSN` /
+> `D2A_INGEST_TOKEN`。本节仅供排错或手工回退。
+
 密码含在连接串里,因此**连接串本身**只能作为环境变量存在,`connect.yaml` 只存环境变量名(`dsn_env`)——这是代码强制的凭据纪律(`config.py` 校验 mssql 必须配 `dsn_env`)。
 
 用 PowerShell 设置**机器级**环境变量(重启后仍生效,服务账号可读):
@@ -151,6 +162,7 @@ sources:
 
 > `d2a_reader` 必须是 SQL Server 里专门建的**只读账号**(仅 SELECT 权限,限定到白名单表所在 schema)。
 > 密码定期轮换时,只需改这一处机器级环境变量 + 重启 NSSM 服务,不用碰代码或配置文件。
+> 也可用脚本重跑覆盖:`setup-middle.ps1 ...`(会备份旧 yaml 后重写)。
 
 ### 4.3 平台机 `C:\d2a\config\platform.yaml`
 
@@ -171,7 +183,7 @@ sources:
     dsn_env: D2A_E10_DSN_PLACEHOLDER   # 平台机不设该变量也无妨:apply 不建 adapter
 ```
 
-平台机环境变量:
+平台机环境变量(用了上面的 `setup-platform.ps1` 可跳过 —— 脚本已写入三个 token):
 ```powershell
 [Environment]::SetEnvironmentVariable("D2A_INGEST_TOKEN", "<与中间机同一串>", "Machine")
 [Environment]::SetEnvironmentVariable("D2A_MCP_TOKEN", "<随机长串>", "Machine")
