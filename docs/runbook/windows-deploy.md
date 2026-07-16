@@ -154,6 +154,14 @@ sources:
 
 ### 4.3 平台机 `C:\d2a\config\platform.yaml`
 
+> **推荐:用脚本生成**。运行包内含 `setup-platform.ps1`(`C:\d2a\app\setup-platform.ps1`)。
+> 以**管理员身份**执行(ingest token 提示输入、须与中间机一致;mcp/console token 自动生成并显示):
+> ```powershell
+> C:\d2a\app\setup-platform.ps1
+> ```
+> 脚本会生成 `platform.yaml`、设置三个 token 环境变量、自检配置,并打印四个服务的 `AppParameters`。
+> 下面的手工模板仅供参考/排错。
+
 ```yaml
 templates: C:\d2a\app\templates
 landing: C:\d2a\data\factory.sqlite    # 与 ingest 的 --landing 指向同一个文件

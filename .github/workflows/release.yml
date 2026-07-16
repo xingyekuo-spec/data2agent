@@ -79,7 +79,7 @@ jobs:
           Copy-Item -Recurse -Force data2agent stage/
           Copy-Item -Recurse -Force templates stage/
           Copy-Item -Force pyproject.toml,README.md,connect.example.yaml stage/
-          Copy-Item -Force deploy/setup-middle.ps1 stage/   # 中间机配置生成脚本(防手工误操作)
+          Copy-Item -Force deploy/setup-middle.ps1,deploy/setup-platform.ps1 stage/   # 配置生成脚本(防手工误操作)
 
       # 离线依赖:原生 Windows 下载(生产机为 Windows,不能用 Linux wheel)
       - name: 下载 Windows 离线依赖(中间机 / connect)
