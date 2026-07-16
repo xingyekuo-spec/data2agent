@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PY_VERSION }}
-      - run: pip install -e ".[dev,mcp,console,ingest,excel]"
+      - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
       - run: pytest tests -q
       - run: python -m data2agent.metamodel.validate templates
 

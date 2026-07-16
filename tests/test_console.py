@@ -138,6 +138,22 @@ def test_console_config_whitelist(env):
     assert r2.json()["ok"] is True
 
 
+def test_config_validate_without_save(env):
+    landing, cfg_file = env
+    cfg = load_config(cfg_file)
+    client = TestClient(create_app(
+        cfg.landing, cfg.templates, cfg, token="t",
+        config_path=cfg_file, log_dir=Path(".")))
+    h = {"Authorization": "Bearer t"}
+    before = cfg_file.read_text(encoding="utf-8")
+    r = client.post("/api/config/validate", headers=h, json={
+        "landing": str(landing.db_path),
+        "templates": str(ROOT / "templates"),
+    })
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert cfg_file.read_text(encoding="utf-8") == before
+
+
 def test_v0_still_embedded(env):
     landing, _ = env
     client = TestClient(create_app(landing.db_path, ROOT / "templates"))

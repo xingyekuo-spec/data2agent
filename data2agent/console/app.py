@@ -10,10 +10,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -141,6 +143,17 @@ def _actions_sync_reconcile(cfg: ConnectConfig | None) -> bool:
 
 def _platform_config_subset(cfg: ConnectConfig) -> dict[str, Any]:
     return {"templates": cfg.templates, "landing": cfg.landing}
+
+
+def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict[str, str]]]:
+    """在临时副本上合并并 load_config,不写原文件。"""
+    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    shutil.copy2(path, tmp_path)
+    try:
+        return merge_whitelist_and_save(tmp_path, PLATFORM_EDITABLE, patch, validate=load_config)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def create_app(landing: str, templates: str = "templates",
@@ -305,6 +318,12 @@ def create_app(landing: str, templates: str = "templates",
         patch = body.model_dump(exclude_none=True)
         ok, errors = merge_whitelist_and_save(
             path, PLATFORM_EDITABLE, patch, validate=load_config)
+        return {"ok": ok, "errors": errors}
+
+    @api.post("/config/validate")
+    def validate_config(body: ConfigPatch) -> dict:
+        path = require_config_path()
+        ok, errors = _validate_merged(path, body.model_dump(exclude_none=True))
         return {"ok": ok, "errors": errors}
 
     @api.get("/services")
