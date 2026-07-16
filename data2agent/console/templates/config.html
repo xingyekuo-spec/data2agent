@@ -1,0 +1,89 @@
+{% extends "layout.html" %}
+{% block title %}配置 — 运维控制台{% endblock %}
+{% block content %}
+<style>
+  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
+        box-shadow:0 1px 3px rgba(16,34,54,.08)}
+  .card h2{font-size:15px;margin:0 0 14px;color:#12314f}
+  .field{display:block;margin-bottom:12px}
+  .field-label{display:block;font-size:13px;color:#51606f;margin-bottom:4px}
+  .field input[type=text]{width:100%;max-width:520px;box-sizing:border-box;
+    padding:8px 10px;border:1px solid #d0d7de;border-radius:6px;font-size:14px}
+  .banner{background:#e8f4fd;border:1px solid #b6d9f5;color:#0b4a6f;border-radius:8px;
+          padding:12px 14px;margin-bottom:16px;font-size:13px}
+  .banner code{background:#fff;padding:2px 6px;border-radius:4px}
+  .errors{color:#b42318;font-size:13px;margin-top:8px}
+</style>
+
+<div id="restart-banner" class="banner" style="display:none">
+  配置已保存。请重启相关服务使变更生效:
+  <code>nssm restart d2a-ingest</code> ·
+  <code>nssm restart d2a-apply</code> ·
+  <code>nssm restart d2a-mcp</code>
+  （或通过 Windows 服务管理器重启对应服务）
+</div>
+
+<form id="config-form" class="card">
+  <h2>platform.yaml 可编辑字段</h2>
+  {% from "form_macros.html" import text_input %}
+  <label class="field">
+    <span class="field-label">templates 路径</span>
+    <input type="text" name="templates" id="cfg-templates">
+  </label>
+  <label class="field">
+    <span class="field-label">landing 路径</span>
+    <input type="text" name="landing" id="cfg-landing">
+  </label>
+  <div id="config-errors" class="errors"></div>
+  <button type="submit" style="margin-top:8px">保存配置</button>
+</form>
+
+<script>
+(function () {
+  function authHeaders() {
+    var h = {'Content-Type': 'application/json'};
+    var token = sessionStorage.getItem('d2a_token');
+    if (token) h['Authorization'] = 'Bearer ' + token;
+    return h;
+  }
+
+  function loadConfig() {
+    fetch('/api/config', {headers: authHeaders()})
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        document.getElementById('cfg-templates').value = data.templates || '';
+        document.getElementById('cfg-landing').value = data.landing || '';
+      })
+      .catch(function () {
+        document.getElementById('config-errors').textContent =
+          '无法加载配置(需要 --config 且已认证)';
+      });
+  }
+
+  document.getElementById('config-form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var errEl = document.getElementById('config-errors');
+    errEl.textContent = '';
+    var patch = {
+      templates: document.getElementById('cfg-templates').value || null,
+      landing: document.getElementById('cfg-landing').value || null
+    };
+    fetch('/api/config', {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify(patch)
+    }).then(function (r) { return r.json().then(function (body) { return {ok: r.ok, body: body}; }); })
+      .then(function (res) {
+        if (res.body.ok) {
+          document.getElementById('restart-banner').style.display = '';
+          errEl.textContent = '';
+        } else {
+          errEl.textContent = (res.body.errors || []).map(function (e) {
+            return (e.field || '') + ': ' + (e.message || '');
+          }).join('; ') || '保存失败';
+        }
+      });
+  });
+
+  loadConfig();
+})();
+</script>
+{% endblock %}

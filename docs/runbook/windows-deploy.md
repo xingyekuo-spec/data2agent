@@ -69,10 +69,10 @@ CI 测试通过即产出两台机各自的**离线运行包**并附到 Release�
 
 把对应 zip 解压到 `C:\d2a\app`,然后:
 
-**中间机**(只装 connect):
+**中间机**(connect + middle_admin 管理界面):
 ```powershell
 Expand-Archive d2a-runtime-connect-<版本>.zip C:\d2a\app
-C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[connect]
+C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[connect,middle_admin]
 ```
 
 **平台机**(装全套接收端):
@@ -96,11 +96,12 @@ C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e
 git clone <repo> d2a-src; cd d2a-src
 # 中间机依赖(在本机 Windows 上原生 download,勿加 --platform)
 pip download -d wheels --only-binary=:all: `
-  "setuptools>=68" wheel "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10"
+  "setuptools>=68" wheel "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10" `
+  "fastapi>=0.110" "uvicorn>=0.29" "jinja2>=3.0" "markupsafe"
 # 平台机依赖
 pip download -d wheels-full --only-binary=:all: `
   "setuptools>=68" wheel "pydantic>=2.7" "pyyaml>=6.0" "pyodbc>=5.1" "apscheduler>=3.10" `
-  "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29"
+  "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29" "jinja2>=3.0" "markupsafe"
 ```
 把 `d2a-src`(含 `templates/`、`deploy/setup-*.ps1`)+ 对应 `wheels*` 拷到目标机,安装命令同 §2.2。
 
@@ -124,7 +125,7 @@ pip download -d wheels-full --only-binary=:all: `
 > ```powershell
 > C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer <ERP主机> -ErpDatabase <E10库> -ErpUser d2a_reader
 > ```
-> 脚本会:生成 `C:\d2a\config\connect.yaml`(已存在则备份)、设置机器级环境变量 `D2A_E10_DSN`/`D2A_INGEST_TOKEN`、并调 `load_config` 自检。
+> 脚本会:生成 `C:\d2a\config\connect.yaml`(已存在则备份)、设置机器级环境变量 `D2A_E10_DSN`/`D2A_INGEST_TOKEN`/`D2A_MIDDLE_ADMIN_TOKEN`、并调 `load_config` 自检。
 > 完成后**新开窗口**再跑服务。下面的手工模板仅供参考/排错。
 
 ```yaml
@@ -158,6 +159,7 @@ sources:
   "Machine")
 
 [Environment]::SetEnvironmentVariable("D2A_INGEST_TOKEN", "<随机长串>", "Machine")
+[Environment]::SetEnvironmentVariable("D2A_MIDDLE_ADMIN_TOKEN", "<随机长串>", "Machine")
 ```
 
 > `d2a_reader` 必须是 SQL Server 里专门建的**只读账号**(仅 SELECT 权限,限定到白名单表所在 schema)。
@@ -208,11 +210,16 @@ C:\d2a\nssm\nssm.exe set <服务名> AppExit Default Restart   # 崩溃自动重
 C:\d2a\nssm\nssm.exe start <服务名>
 ```
 
-### 5.1 中间机:1 个服务
+### 5.1 中间机:2 个服务
 
 | 服务名 | AppParameters |
 | --- | --- |
 | `d2a-connector` | `-m data2agent.connect serve --config C:\d2a\config\connect.yaml` |
+| `d2a-middle-admin` | `-m data2agent.middle_admin --config C:\d2a\config\connect.yaml --host 0.0.0.0 --port 8851 --log-path C:\d2a\data\logs\d2a-connector.log` |
+
+> **Token 纪律:** `D2A_MIDDLE_ADMIN_TOKEN` 只设机器级环境变量,**不要**在 NSSM `AppParameters` 里写 `%D2A_MIDDLE_ADMIN_TOKEN%` 或 `--token ...` —— 服务进程继承 Machine env,`middle_admin` 自动读取。
+> 管理界面 `http://<中间机IP>:8851`,浏览器登录时用 setup 脚本输出的 Token。
+> 防火墙:内网放行入站 **8851**(仅运维网段,不对公网)。
 
 先手动验证一轮再装服务:
 ```powershell
@@ -226,7 +233,9 @@ C:\d2a\venv\Scripts\python.exe -m data2agent.connect serve --config C:\d2a\confi
 | `d2a-ingest` | `-m data2agent.ingest --landing C:\d2a\data\factory.sqlite --host 0.0.0.0 --port 8850` |
 | `d2a-apply`  | `-m data2agent.connect apply --config C:\d2a\config\platform.yaml --landing C:\d2a\data\factory.sqlite --every 1800` |
 | `d2a-mcp`    | `-m data2agent.mcp_server --db C:\d2a\data\factory.sqlite --transport http --host 0.0.0.0 --port 8848` |
-| `d2a-console`| `-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849` |
+| `d2a-console`| `-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849 --log-dir C:\d2a\data\logs` |
+
+> 平台管理界面 `http://<平台机IP>:8849`,登录 Token 为机器级 `D2A_CONSOLE_TOKEN`(setup-platform 生成并显示)。旧版 JSON API 仍在 `/v0`。
 
 `d2a-apply` 用的 `--every 1800` 是本次新加的常驻循环参数(每 30 分钟跑一轮 `raw_* → obj_*`)——
 拆机部署下 `ingest` 只负责接收落地,没有进程会周期性物化对象层,这个服务补上这个缺口。
@@ -241,7 +250,7 @@ C:\d2a\venv\Scripts\python.exe -m data2agent.connect apply --config C:\d2a\confi
 
 NSSM 服务默认用 `Local System` 运行即可读写 `C:\d2a\data`;若公司策略要求专用服务账号,
 在 `nssm set <服务名> ObjectName .\<域账号> <密码>` 指定,并确保该账号对 `C:\d2a` 有读写权限。
-Windows 防火墙需放行:平台机入站 8850(ingest,仅对中间机 IP)、8848/8849(按需对内网开放)。
+Windows 防火墙需放行:平台机入站 8850(ingest,仅对中间机 IP)、8848/8849(按需对内网开放);中间机入站 8851(管理界面,仅运维网段)。
 
 ---
 
@@ -275,6 +284,8 @@ Get-Service d2a-*
 | --- | --- |
 | 安装报 `No matching distribution found for setuptools>=68` | `-e` 安装触发离线构建,需 `setuptools`/`wheel` wheel 在 `wheels\` 内(v0.1.0 运行包漏打;临时解法见下)。<br>临时解法:联网机 `pip download -d fix "setuptools>=68" wheel`(纯 Python,无需平台参数),把产出的 2 个 whl 拷进 `C:\d2a\app\wheels` 后重跑安装 |
 | 安装报 `No matching distribution found for tzdata`(来自 tzlocal)或 `colorama` | Windows 专属条件依赖漏打(v0.1.3 及更早在 Linux 上用 `--platform` 下载,不会评估 `platform_system=="Windows"` 标记)。v0.1.4 起改为在 windows runner 上原生打包修复。<br>临时解法:联网 **Windows** 机 `pip download -d fix tzdata colorama`,把产出 whl 拷进 `C:\d2a\app\wheels` 后重跑安装 |
+| 运行 `setup-*.ps1` 报「在此系统上禁止运行脚本」 | 默认 ExecutionPolicy 禁脚本。管理员窗口执行 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`,或单次:`powershell -ExecutionPolicy Bypass -File C:\d2a\app\setup-middle.ps1 ...` |
+| 运行 `setup-*.ps1` 出现大量「意外的标记」/中文乱码 | 旧版脚本含 UTF-8 中文,Windows PowerShell 5.x 无 BOM 会误解析。换用仓库最新 ASCII 版脚本覆盖 `C:\d2a\app\setup-*.ps1` 后重跑 |
 | NSSM 服务启动即退出 | 看 `AppStdout`/`AppStderr` 日志;多是环境变量未生效(机器级变量需重启服务进程) |
 | pyodbc 报 `IM002` 找不到驱动 | ODBC Driver 18 未装或架构不匹配(确认 64 位 Python 配 64 位驱动) |
 | 密码含特殊字符导致连接串解析错 | 连接串里 `;`/`=` 等符号需按 ODBC 连接串规则处理,必要时整串加引号 |

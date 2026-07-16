@@ -1,5 +1,12 @@
 name: ci
 on: [push, pull_request, workflow_dispatch]
+
+# gitleaks-action 在 pull_request 上会调 GitHub API 列 PR commits,
+# 默认 GITHUB_TOKEN 无 pull-requests:read 时会 403 Resource not accessible。
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -10,8 +17,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      - run: pip install -e ".[dev,mcp,console,ingest,excel]"
+      - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
       - run: pytest tests -q
+      - run: python scripts/smoke_admin_ui.py
       - run: python -m data2agent.metamodel.validate templates
       - name: gitleaks secret scan
         uses: gitleaks/gitleaks-action@v2

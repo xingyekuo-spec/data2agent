@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PY_VERSION }}
-      - run: pip install -e ".[dev,mcp,console,ingest,excel]"
+      - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
       - run: pytest tests -q
       - run: python -m data2agent.metamodel.validate templates
 
@@ -87,10 +87,11 @@ jobs:
           python -m pip download --dest stage/wheels --only-binary=:all: `
             "setuptools>=68" "wheel" `
             "pydantic>=2.7" "pyyaml>=6.0" `
-            "pyodbc>=5.1" "apscheduler>=3.10"
+            "pyodbc>=5.1" "apscheduler>=3.10" `
+            "fastapi>=0.110" "uvicorn>=0.29" "jinja2>=3.0" "markupsafe"
           # setuptools/wheel:-e 可编辑安装会触发 PEP517 构建,离线时需从本地 wheels 取构建依赖。
           # apscheduler→tzlocal→tzdata(Windows)会被原生自动带上。
-          # 注:PostgreSQL 驱动 psycopg 已拆到独立 postgres extra(当前 SQLite 落地不需要),故不打入。
+          # middle_admin extra 需要 fastapi/uvicorn/jinja2;markupsafe 为 jinja2 运行时依赖,显式打入离线包。
 
       - name: 打中间机运行包
         run: |
@@ -100,7 +101,7 @@ jobs:
           @'
           中间服务器离线安装(Windows PowerShell,Python 3.14 64 位 已装):
             python -m venv C:\d2a\venv
-            C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[connect]
+            C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[connect,middle_admin]
           另需装 ODBC Driver 18 for SQL Server(连 E10)。
           完整步骤见仓库 docs/runbook/windows-deploy.md。
           '@ | Set-Content -Path "$dir/INSTALL-connect.txt" -Encoding utf8
@@ -113,8 +114,9 @@ jobs:
             "setuptools>=68" "wheel" `
             "pydantic>=2.7" "pyyaml>=6.0" `
             "pyodbc>=5.1" "apscheduler>=3.10" `
-            "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29"
+            "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29" "jinja2>=3.0" "markupsafe"
           # uvicorn→click→colorama(Windows)会被原生自动带上。
+          # console extra 需要 jinja2;markupsafe 显式打入以防离线解析遗漏。
 
       - name: 打平台机运行包
         run: |
@@ -159,7 +161,7 @@ jobs:
 
             | 附件 | 用途 | 安装 extras |
             | --- | --- | --- |
-            | `d2a-runtime-connect-*.zip` | 中间服务器(抽取 + 推送) | `.[connect]` |
+            | `d2a-runtime-connect-*.zip` | 中间服务器(抽取 + 推送 + 管理界面) | `.[connect,middle_admin]` |
             | `d2a-runtime-platform-*.zip` | 数据平台(接收 + apply + MCP + 控制台) | `.[ingest,connect,mcp,console]` |
 
             每个 zip 解压后 `pyproject.toml`/`data2agent/`/`templates/`/`wheels/` 直接在根目录。

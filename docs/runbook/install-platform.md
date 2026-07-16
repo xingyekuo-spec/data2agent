@@ -20,9 +20,15 @@
    C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[ingest,connect,mcp,console]
    ```
 
-5. **管理员** PowerShell 生成配置并写入 token(按提示输入 ingest token;mcp/console token 自动生成并显示,请记下):
+5. **管理员** PowerShell 生成配置并写入 token(按提示输入 ingest token;mcp/console token 自动生成并显示,请记下)。
+   若报「在此系统上禁止运行脚本」,在同一管理员窗口先放行当前用户再执行:
    ```powershell
+   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
    C:\d2a\app\setup-platform.ps1
+   ```
+   或单次绕过(不改策略):
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File C:\d2a\app\setup-platform.ps1
    ```
 
 6. **新开**普通 PowerShell 窗口(机器级环境变量对新进程生效)。
@@ -75,7 +81,7 @@
 
     # d2a-console
     C:\d2a\nssm\nssm.exe install d2a-console C:\d2a\venv\Scripts\python.exe
-    C:\d2a\nssm\nssm.exe set d2a-console AppParameters "-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849"
+    C:\d2a\nssm\nssm.exe set d2a-console AppParameters "-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849 --log-dir C:\d2a\data\logs"
     C:\d2a\nssm\nssm.exe set d2a-console AppDirectory C:\d2a\app
     C:\d2a\nssm\nssm.exe set d2a-console AppStdout C:\d2a\data\logs\d2a-console.log
     C:\d2a\nssm\nssm.exe set d2a-console AppStderr C:\d2a\data\logs\d2a-console.log
@@ -86,3 +92,7 @@
     C:\d2a\nssm\nssm.exe start d2a-mcp
     C:\d2a\nssm\nssm.exe start d2a-console
     ```
+
+12. 管理界面验收(浏览器,setup-platform 输出的 `D2A_CONSOLE_TOKEN` 登录):
+    - 打开 `http://<本机内网IP>:8849`
+    - 仪表盘/配置/日志/调试页可用;旧版 JSON API 仍在 `/v0`

@@ -22,10 +22,16 @@
 5. 解压并离线安装:
    ```powershell
    Expand-Archive d2a-runtime-connect-<版本>.zip C:\d2a\app
-   C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[connect]
+   C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[connect,middle_admin]
    ```
 
-6. **管理员** PowerShell 生成配置并写入凭据(按提示输入 ERP 密码、与平台一致的 ingest token):
+6. **管理员** PowerShell 生成配置并写入凭据(按提示输入 ERP 密码、与平台一致的 ingest token)。
+   若报「在此系统上禁止运行脚本」,先执行 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`。
+   命名实例(如 `HOST\SQLEXPRESS`)请给 `-ErpServer` 加引号;脚本会自动省略端口:
+   ```powershell
+   C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer 'DESKTOP-X\SQLEXPRESS' -ErpDatabase <E10库> -ErpUser d2a_reader
+   ```
+   默认实例(带端口):
    ```powershell
    C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer <ERP主机> -ErpDatabase <E10库> -ErpUser d2a_reader
    ```
@@ -37,18 +43,34 @@
    C:\d2a\venv\Scripts\python.exe -m data2agent.connect serve --config C:\d2a\config\connect.yaml --once
    ```
 
-9. (可选)用 NSSM 装常驻服务:
+9. (可选)用 NSSM 装常驻服务(connector + 管理界面):
    ```powershell
+   # d2a-connector (sync/push)
    C:\d2a\nssm\nssm.exe install d2a-connector C:\d2a\venv\Scripts\python.exe
    C:\d2a\nssm\nssm.exe set d2a-connector AppParameters "-m data2agent.connect serve --config C:\d2a\config\connect.yaml"
    C:\d2a\nssm\nssm.exe set d2a-connector AppDirectory C:\d2a\app
    C:\d2a\nssm\nssm.exe set d2a-connector AppStdout C:\d2a\data\logs\d2a-connector.log
    C:\d2a\nssm\nssm.exe set d2a-connector AppStderr C:\d2a\data\logs\d2a-connector.log
    C:\d2a\nssm\nssm.exe set d2a-connector AppExit Default Restart
+
+   # d2a-middle-admin (port 8851; Token 从机器级 D2A_MIDDLE_ADMIN_TOKEN 继承,勿在 AppParameters 写 %VAR%)
+   C:\d2a\nssm\nssm.exe install d2a-middle-admin C:\d2a\venv\Scripts\python.exe
+   C:\d2a\nssm\nssm.exe set d2a-middle-admin AppParameters "-m data2agent.middle_admin --config C:\d2a\config\connect.yaml --host 0.0.0.0 --port 8851 --log-path C:\d2a\data\logs\d2a-connector.log"
+   C:\d2a\nssm\nssm.exe set d2a-middle-admin AppDirectory C:\d2a\app
+   C:\d2a\nssm\nssm.exe set d2a-middle-admin AppStdout C:\d2a\data\logs\d2a-middle-admin.log
+   C:\d2a\nssm\nssm.exe set d2a-middle-admin AppStderr C:\d2a\data\logs\d2a-middle-admin.log
+   C:\d2a\nssm\nssm.exe set d2a-middle-admin AppExit Default Restart
+
    C:\d2a\nssm\nssm.exe start d2a-connector
+   C:\d2a\nssm\nssm.exe start d2a-middle-admin
    ```
+   防火墙:内网放行入站 **8851**(管理界面,仅对运维网段)。
 
 10. 验收(本机应有水位、无 raw 表):
     ```powershell
     C:\d2a\venv\Scripts\python.exe -m data2agent.connect status --landing C:\d2a\data\middle.sqlite
     ```
+
+11. 管理界面验收(浏览器,setup-middle 输出的 `D2A_MIDDLE_ADMIN_TOKEN` 登录):
+    - 打开 `http://<本机内网IP>:8851`
+    - 状态页应显示 sync 配置;配置页可查看 connect.yaml 白名单字段
