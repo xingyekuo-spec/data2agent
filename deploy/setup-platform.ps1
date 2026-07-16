@@ -127,10 +127,13 @@ Write-Step 'NSSM AppParameters (see windows-deploy.md section 5.2):'
 Write-Host "  d2a-ingest : -m data2agent.ingest --landing $landingPath --host 0.0.0.0 --port $IngestPort"
 Write-Host "  d2a-apply  : -m data2agent.connect apply --config $cfgPath --landing $landingPath --every $ApplyEvery"
 Write-Host "  d2a-mcp    : -m data2agent.mcp_server --db $landingPath --transport http --host 0.0.0.0 --port $McpPort"
-Write-Host "  d2a-console: -m data2agent.console --config $cfgPath --host 0.0.0.0 --port $ConsolePort"
+$logDir = Join-Path $DataDir 'logs'
+Write-Host "  d2a-console: -m data2agent.console --config $cfgPath --host 0.0.0.0 --port $ConsolePort --log-dir $logDir"
 
 Write-Host ''
 Write-Step 'Done. Next steps:'
 Write-Host '  1. Open a NEW PowerShell window before starting services.'
 Write-Host "  2. Start d2a-ingest first (port $IngestPort) so middle can push."
 Write-Host '  3. Then run middle serve --once; check raw_* tables on this machine.' -ForegroundColor Yellow
+Write-Host "  4. Platform admin UI: http://<this-host-ip>:$ConsolePort (login with D2A_CONSOLE_TOKEN)"
+Write-Host '     Legacy JSON API remains at /v0 on the same port.'

@@ -6,8 +6,9 @@
   1. Require Administrator (for Machine env vars).
   2. Prompt for ERP password and ingest token (no echo).
   3. Write ConfigDir\connect.yaml (backup if exists).
-  4. Set D2A_E10_DSN and D2A_INGEST_TOKEN at Machine scope.
+  4. Set D2A_E10_DSN, D2A_INGEST_TOKEN, and D2A_MIDDLE_ADMIN_TOKEN at Machine scope.
   5. Validate via load_config in the venv.
+  6. Print NSSM AppParameters for d2a-connector and d2a-middle-admin.
 
   NOTE: Script text is ASCII-only so Windows PowerShell 5.x (default encoding)
   does not mis-parse UTF-8 Chinese and fail with cascading syntax errors.
@@ -41,6 +42,9 @@ param(
     [string]$OdbcDriver   = 'ODBC Driver 18 for SQL Server',
     [string]$SyncEvery    = '30m',
     [string]$Lookback     = '3d',
+    [int]$AdminPort       = 8851,
+
+    [string]$MiddleAdminToken,
 
     [switch]$SkipValidate
 )
@@ -48,6 +52,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 function Write-Step([string]$msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
+function New-Token {
+    -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 44 | ForEach-Object { [char]$_ })
+}
 
 # --- 1. Admin check --------------------------------------------------------
 $isAdmin = ([Security.Principal.WindowsPrincipal] `
@@ -75,6 +82,12 @@ finally {
 
 if ([string]::IsNullOrWhiteSpace($erpPwd)) { throw 'ERP password must not be empty.' }
 if ([string]::IsNullOrWhiteSpace($token))  { throw 'Ingest token must not be empty.' }
+
+$adminTokenGenerated = $false
+if ([string]::IsNullOrWhiteSpace($MiddleAdminToken)) {
+    $MiddleAdminToken = New-Token
+    $adminTokenGenerated = $true
+}
 if ($erpPwd -match '[;{}]') {
     Write-Warning 'Password contains ; { } — ODBC DSN may break. Prefer a simpler password or verify D2A_E10_DSN.'
 }
@@ -83,6 +96,7 @@ if ($erpPwd -match '[;{}]') {
 Write-Step ("Writing config " + (Join-Path $ConfigDir 'connect.yaml'))
 New-Item -ItemType Directory -Force -Path $ConfigDir | Out-Null
 New-Item -ItemType Directory -Force -Path $DataDir   | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'logs') | Out-Null
 
 $cfgPath = Join-Path $ConfigDir 'connect.yaml'
 if (Test-Path $cfgPath) {
@@ -115,7 +129,7 @@ sources:
 Set-Content -Path $cfgPath -Value $yaml -Encoding utf8
 
 # --- 4. Machine env vars ---------------------------------------------------
-Write-Step 'Setting Machine env vars (D2A_E10_DSN / D2A_INGEST_TOKEN)'
+Write-Step 'Setting Machine env vars (D2A_E10_DSN / D2A_INGEST_TOKEN / D2A_MIDDLE_ADMIN_TOKEN)'
 
 # Named instance HOST\INSTANCE: do not append ,port (ODBC would mis-parse).
 if (($ErpServer -match '\\') -or ($ErpPort -le 0)) {
@@ -132,9 +146,11 @@ $dsn = 'DRIVER={' + $OdbcDriver + '};SERVER=' + $serverPart +
 
 [Environment]::SetEnvironmentVariable('D2A_E10_DSN', $dsn, 'Machine')
 [Environment]::SetEnvironmentVariable('D2A_INGEST_TOKEN', $token, 'Machine')
+[Environment]::SetEnvironmentVariable('D2A_MIDDLE_ADMIN_TOKEN', $MiddleAdminToken, 'Machine')
 $env:D2A_E10_DSN = $dsn
 $env:D2A_INGEST_TOKEN = $token
-Write-Host "  Set (password/token hidden). SERVER=$serverPart  DATABASE=$ErpDatabase  UID=$ErpUser  sink=$sinkUrl"
+$env:D2A_MIDDLE_ADMIN_TOKEN = $MiddleAdminToken
+Write-Host "  Set (password/tokens hidden). SERVER=$serverPart  DATABASE=$ErpDatabase  UID=$ErpUser  sink=$sinkUrl"
 
 # --- 5. Validate -----------------------------------------------------------
 if ($SkipValidate) {
@@ -149,9 +165,30 @@ else {
     Write-Warning "Python not found at $VenvPython; skipped validation."
 }
 
+$connectorLog = Join-Path $DataDir 'logs\d2a-connector.log'
+
+Write-Host ''
+Write-Step 'Generated tokens (save these; admin UI login needs them):'
+if ($adminTokenGenerated) {
+    Write-Host "  D2A_MIDDLE_ADMIN_TOKEN = $MiddleAdminToken" -ForegroundColor Yellow
+}
+else {
+    Write-Host '  D2A_MIDDLE_ADMIN_TOKEN = (provided)'
+}
+Write-Host '  D2A_INGEST_TOKEN          = (hidden; must match platform)'
+
+Write-Host ''
+Write-Step 'NSSM AppParameters (see windows-deploy.md section 5.1):'
+Write-Host "  d2a-connector   : -m data2agent.connect serve --config $cfgPath"
+Write-Host "  d2a-middle-admin: -m data2agent.middle_admin --config $cfgPath --host 0.0.0.0 --port $AdminPort --log-path $connectorLog"
+Write-Host '  NOTE: Do NOT put %D2A_MIDDLE_ADMIN_TOKEN% in AppParameters.'
+Write-Host '        NSSM inherits Machine env vars; middle_admin reads D2A_MIDDLE_ADMIN_TOKEN from the process environment.'
+
 Write-Host ''
 Write-Step 'Done. Next steps:'
 Write-Host '  1. Open a NEW PowerShell window (Machine env vars apply to new processes).'
 Write-Host "  2. Ensure platform ingest is listening at $sinkUrl"
 Write-Host '  3. Smoke test in the new window:'
 Write-Host "     $VenvPython -m data2agent.connect serve --config $cfgPath --once" -ForegroundColor Yellow
+Write-Host "  4. Admin UI: http://<this-host-ip>:$AdminPort (login with D2A_MIDDLE_ADMIN_TOKEN)"
+Write-Host "  5. Firewall: allow inbound TCP $AdminPort from internal admin subnets only (not public)."

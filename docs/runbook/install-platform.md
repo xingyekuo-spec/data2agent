@@ -81,7 +81,7 @@
 
     # d2a-console
     C:\d2a\nssm\nssm.exe install d2a-console C:\d2a\venv\Scripts\python.exe
-    C:\d2a\nssm\nssm.exe set d2a-console AppParameters "-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849"
+    C:\d2a\nssm\nssm.exe set d2a-console AppParameters "-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849 --log-dir C:\d2a\data\logs"
     C:\d2a\nssm\nssm.exe set d2a-console AppDirectory C:\d2a\app
     C:\d2a\nssm\nssm.exe set d2a-console AppStdout C:\d2a\data\logs\d2a-console.log
     C:\d2a\nssm\nssm.exe set d2a-console AppStderr C:\d2a\data\logs\d2a-console.log
@@ -92,3 +92,7 @@
     C:\d2a\nssm\nssm.exe start d2a-mcp
     C:\d2a\nssm\nssm.exe start d2a-console
     ```
+
+12. 管理界面验收(浏览器,setup-platform 输出的 `D2A_CONSOLE_TOKEN` 登录):
+    - 打开 `http://<本机内网IP>:8849`
+    - 仪表盘/配置/日志/调试页可用;旧版 JSON API 仍在 `/v0`
