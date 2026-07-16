@@ -1,0 +1,16 @@
+{% macro text_input(name, label, value='', readonly=false) %}
+<label class="field">
+  <span class="field-label">{{ label }}</span>
+  <input type="text" name="{{ name }}" value="{{ value }}"{% if readonly %} readonly{% endif %}>
+</label>
+{% endmacro %}
+
+{% macro number_input(name, label, value='', min=none, max=none, step=none) %}
+<label class="field">
+  <span class="field-label">{{ label }}</span>
+  <input type="number" name="{{ name }}" value="{{ value }}"
+    {%- if min is not none %} min="{{ min }}"{% endif -%}
+    {%- if max is not none %} max="{{ max }}"{% endif -%}
+    {%- if step is not none %} step="{{ step }}"{% endif -%}>
+</label>
+{% endmacro %}

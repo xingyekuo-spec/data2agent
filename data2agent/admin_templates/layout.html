@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}data2agent{% endblock %}</title>
+<style>
+  body{font-family:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+       margin:0;background:#f2f4f7;color:#1c2733}
+  header{background:#12314f;color:#fff;padding:12px 22px;display:flex;
+         justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+  header b{font-size:16px}
+  nav{display:flex;gap:14px;flex-wrap:wrap}
+  nav a{color:#fff;text-decoration:none;font-size:13px;opacity:.9}
+  nav a:hover{opacity:1;text-decoration:underline}
+  main{padding:16px 22px;max-width:1200px;margin:0 auto}
+  .login-panel{background:#fff;border-radius:10px;padding:24px;max-width:420px;margin:40px auto;
+               box-shadow:0 1px 3px rgba(16,34,54,.08)}
+  .login-panel h2{font-size:15px;margin:0 0 14px;color:#12314f}
+  .login-panel label{display:block;font-size:13px;color:#51606f;margin-bottom:6px}
+  .login-panel input[type=password]{width:100%;box-sizing:border-box;padding:8px 10px;
+    border:1px solid #d0d7de;border-radius:6px;font-size:14px;margin-bottom:14px}
+  button{background:#12314f;color:#fff;border:0;border-radius:6px;padding:8px 16px;
+         cursor:pointer;font-size:13px}
+  button:hover{background:#0f2840}
+</style>
+</head>
+<body>
+<header>
+  <b>data2agent</b>
+  <nav>{% block nav %}{% endblock %}</nav>
+</header>
+<main>
+{% if needs_token %}
+<div id="login-panel" class="login-panel" style="display:none">
+  <h2>需要 Token 认证</h2>
+  <form id="token-form">
+    <label for="d2a-token-input">访问 Token</label>
+    <input type="password" id="d2a-token-input" autocomplete="off" required>
+    <button type="submit">登录</button>
+  </form>
+</div>
+{% endif %}
+<div id="page-content">
+{% block content %}{% endblock %}
+</div>
+</main>
+<script src="{{ static_url }}/htmx.min.js"></script>
+<script>
+document.body.addEventListener('htmx:configRequest', function (e) {
+  var token = sessionStorage.getItem('d2a_token');
+  if (token) {
+    e.detail.headers['Authorization'] = 'Bearer ' + token;
+  }
+});
+{% if needs_token %}
+(function () {
+  var token = sessionStorage.getItem('d2a_token');
+  var panel = document.getElementById('login-panel');
+  var content = document.getElementById('page-content');
+  if (!token) {
+    panel.style.display = '';
+    content.style.display = 'none';
+    document.getElementById('token-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var t = document.getElementById('d2a-token-input').value.trim();
+      if (t) {
+        sessionStorage.setItem('d2a_token', t);
+        location.reload();
+      }
+    });
+  }
+})();
+{% endif %}
+</script>
+</body>
+</html>
