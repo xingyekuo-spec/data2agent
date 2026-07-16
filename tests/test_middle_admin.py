@@ -41,8 +41,7 @@ def middle_env(tmp_path):
         "  digiwin_e10:\n"
         "    adapter: sqlite_readonly\n"
         f"    path: {src}\n"
-        "    sync_every: 30m\n"
-        "    sink: {type: http, url: http://127.0.0.1:8850, token_env: D2A_INGEST_TOKEN}\n",
+        "    sync_every: 30m\n",
         encoding="utf-8")
     app = create_app(config_path=cfg, token="secret", log_path=tmp_path / "c.log")
     return TestClient(app), cfg
@@ -90,3 +89,27 @@ def test_status_has_schedule_source(middle_env):
     assert "in_window" in src
     assert "watermarks" in src
     assert "next_sync_at" in src
+
+
+def test_logs_missing_file(middle_env):
+    client, _ = middle_env
+    r = client.get("/api/logs?lines=50", headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 200
+    assert r.json()["ok"] is False
+
+
+def test_trigger_sync_warns_or_runs(middle_env):
+    client, _ = middle_env
+    r = client.post("/api/actions/trigger", headers={"Authorization": "Bearer secret"},
+                    json={"action": "sync"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body.get("action") == "sync"
+    assert body.get("overlap_warning") is True
+
+
+def test_trigger_rejects_reconcile(middle_env):
+    client, _ = middle_env
+    r = client.post("/api/actions/trigger", headers={"Authorization": "Bearer secret"},
+                    json={"action": "reconcile"})
+    assert r.status_code == 400

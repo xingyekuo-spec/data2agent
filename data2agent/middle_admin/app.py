@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +17,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..admin_common.config_edit import MIDDLE_EDITABLE, merge_whitelist_and_save
-from ..connect.config import ConnectConfig, load_config
+from ..admin_common.logs import tail_lines
+from ..connect.config import ConnectConfig, SourceConfig, load_config
+from ..connect.landing import LandingStore
+from ..connect.scheduler import build_adapter, run_sync_cycle
+from ..metamodel.loader import load_pack
 from .status import build_status
 
 _ADMIN_STATIC = Path(__file__).resolve().parents[1] / "admin_templates" / "static"
@@ -24,6 +31,22 @@ class ConfigPatch(BaseModel):
     templates: str | None = None
     landing: str | None = None
     sources: dict[str, Any] | None = None
+
+
+class TriggerBody(BaseModel):
+    action: str
+    source: str | None = None
+
+
+class TestConnectionBody(BaseModel):
+    source: str | None = None
+
+
+_DSN_PATTERN = re.compile(
+    r"(?i)(password\s*=|pwd\s*=|server\s*=|data\s+source\s*=|"
+    r"uid\s*=|user\s+id\s*=|integrated\s+security|"
+    r"file:[^\s?]+|\.sqlite\b|\.db\b)"
+)
 
 
 def _env_set(name: str | None) -> bool | None:
@@ -56,6 +79,32 @@ def _config_subset(cfg: ConnectConfig) -> dict:
 def _patch_to_dict(body: ConfigPatch) -> dict[str, Any]:
     data = body.model_dump(exclude_none=True)
     return data
+
+
+def _resolve_source(cfg: ConnectConfig, source: str | None) -> tuple[str, SourceConfig]:
+    if source is not None:
+        scfg = cfg.sources.get(source)
+        if scfg is None:
+            raise HTTPException(404, f"配置中没有源 '{source}',可用:{sorted(cfg.sources)}")
+        return source, scfg
+    name = next(iter(cfg.sources))
+    return name, cfg.sources[name]
+
+
+def _sanitize_detail(message: str) -> str:
+    if _DSN_PATTERN.search(message):
+        return "连接失败(响应中已省略凭据/连接串细节)"
+    return message[:500]
+
+
+def _probe_connection(name: str, scfg: SourceConfig, pack, landing_path: str) -> list[str]:
+    landing = LandingStore(landing_path)
+    adapter = build_adapter(name, scfg, pack, landing)
+    tables: list[str] = []
+    for tbl in sorted(adapter.whitelist):
+        adapter.table_info(tbl)
+        tables.append(tbl)
+    return tables
 
 
 def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict[str, str]]]:
@@ -117,6 +166,46 @@ def create_app(config_path: str | Path, token: str | None = None,
     @api.get("/status")
     def get_status() -> dict:
         return build_status(reload_config())
+
+    @api.get("/logs")
+    def get_logs(lines: int = 200, level: str | None = None) -> dict:
+        if _log_path is None:
+            return {"ok": False, "text": "未配置日志路径"}
+        capped = max(1, min(lines, 1000))
+        ok, text = tail_lines(_log_path, lines=capped, level=level)
+        return {"ok": ok, "text": text}
+
+    @api.post("/test-connection")
+    def test_connection(body: TestConnectionBody = TestConnectionBody()) -> dict:
+        cfg = reload_config()
+        pack = load_pack(cfg.templates)
+        name, scfg = _resolve_source(cfg, body.source)
+        started = time.perf_counter()
+        try:
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(_probe_connection, name, scfg, pack, cfg.landing)
+                tables = future.result(timeout=10.0)
+        except FuturesTimeoutError:
+            return {"ok": False, "error": "timeout", "detail": "连接测试超过 10 秒"}
+        except Exception as e:
+            return {"ok": False, "error": type(e).__name__,
+                    "detail": _sanitize_detail(str(e))}
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return {"ok": True, "elapsed_ms": elapsed_ms, "tables": tables}
+
+    @api.post("/actions/trigger")
+    def trigger_action(body: TriggerBody) -> dict:
+        if body.action == "reconcile":
+            raise HTTPException(400, "中间机管理 v1 不支持 reconcile")
+        if body.action != "sync":
+            raise HTTPException(400, f"不支持的动作 '{body.action}'")
+        cfg = reload_config()
+        pack = load_pack(cfg.templates)
+        name, scfg = _resolve_source(cfg, body.source)
+        executed = run_sync_cycle(name, scfg, pack, cfg.landing)
+        return {"action": "sync", "source": name, "executed": executed,
+                "overlap_warning": True,
+                "note": "" if executed else "错峰窗口外,未发起(窗口约束同样生效)"}
 
     app.include_router(api)
     if _ADMIN_STATIC.is_dir():
