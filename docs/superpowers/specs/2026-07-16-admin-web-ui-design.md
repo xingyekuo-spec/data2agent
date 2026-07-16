@@ -118,6 +118,8 @@ YAML 中涉及凭据的字段（如 `dsn_env`）仅作为**环境变量名**出�
 
 | 字段 | 类型 | 备注 |
 |------|------|------|
+| `templates` | 字符串 | 模板包目录路径 |
+| `landing` | 字符串 | 落地库路径（middle.sqlite） |
 | `sources.<name>.windows` | 字符串列表 | 错峰窗口 |
 | `sources.<name>.rate.batch_size` | 整数 | 批次大小 |
 | `sources.<name>.rate.rows_per_second` | 整数 | 限流 |
@@ -134,7 +136,8 @@ YAML 中涉及凭据的字段（如 `dsn_env`）仅作为**环境变量名**出�
 |------|------|------|
 | `templates` | 字符串 | 模板路径 |
 | `landing` | 字符串 | 落地库路径 |
-| `sources.<name>.reconcile_at` | 字符串 | 对账时间（仅 `sink.type=local` 时） |
+
+注：`reconcile_at` 不在白名单——Pattern A（拆机部署）平台侧只跑 ingest/apply，不对账。若为同机/local 拓扑，通过手动编辑 YAML 文件设置。
 
 因 `apply --every` 当前不经 YAML，UI 不提供编辑入口，仅显示当前 NSSM AppParameters。
 
@@ -146,10 +149,10 @@ YAML 中涉及凭据的字段（如 `dsn_env`）仅作为**环境变量名**出�
 |------|------|
 | 配置编辑 | 表单编辑 connect.yaml **白名单字段**，校验后写文件，提示重启 |
 | 连接测试 | 一键测试 ERP 连通性，显示耗时、可访问表列表、错误原因 |
-| 调度概览 | 当前调度状态、下次同步时间、窗口内外标记、最近运行记录 |
-| 水位一览 | 各表当前水位值、上次同步时间 |
-| 日志查看 | d2a-connector 最近 N 行日志文本（`?lines=200`），支持级别关键词过滤 |
-| 手动触发 | 立即同步（`--once` 等价，受窗口约束）。**不提供对账**（推送模式下跨机对账未实现 E6b） |
+| 调度概览 | 由 connect.yaml + 当前时间**推算**下次同步时间与窗口内外（不反射 APScheduler 进程内状态）。水位与最近运行记录来自 `middle.sqlite`（落地库） |
+| 水位一览 | 各表当前水位值、上次同步时间（来自 `middle.sqlite`） |
+| 日志查看 | d2a-connector 最近 N 行日志文本，默认路径 `C:\d2a\data\logs\d2a-connector.log`，通过 `--log-path` CLI 可覆盖（`?lines=200`，支持级别关键词过滤） |
+| 手动触发 | 立即同步（`--once` 等价，受窗口约束）。**不提供对账**（推送模式下跨机对账未实现 E6b）。注意：若 `d2a-connector` 正在常驻运行，手动触发可能与 APScheduler 重叠争用水位/ERP 连接——调试时建议先停 d2a-connector 服务，或接受可能重叠并在 UI 上显示警告 |
 
 ### API（HTML 页 + JSON API 统一规约）
 
@@ -187,7 +190,7 @@ JSON API（HTMX 调用，路径 `/api/*`）：
 |------|------|
 | 配置编辑 | 编辑 platform.yaml **白名单字段**，校验后写文件，提示重启 |
 | 服务状态 | ingest（8850 HTTP 健康检查）、mcp（8848 HTTP 健康检查）、console（自身）、apply（检查 NSSM 进程名/日志文件心跳时间戳是否存在，不作 HTTP 探测） |
-| 日志查看 | 按服务选择查看最近 N 行日志文本，按级别关键词过滤 |
+| 日志查看 | 按服务选择查看最近 N 行日志文本，按级别关键词过滤。默认日志目录 `C:\d2a\data\logs\`（ingest/apply/mcp/console 各有独立日志文件），可通过 `--log-dir` CLI 覆盖 |
 | 调试工具 | raw 表数据浏览器（只读 SELECT）、MCP 工具试调用（白名单限 `query_objects`/`query_metrics`，不打 `propose_action`）、ingest 健康检查 |
 
 ### 新增 API
@@ -209,7 +212,7 @@ JSON API（`/api/*`，管理界面和远期 Vue 前端共用）：
 | `POST` | `/api/config` | 校验并保存 platform.yaml |
 | `POST` | `/api/config/validate` | 仅校验不保存 |
 | `GET` | `/api/services` | 服务状态 JSON（ingest/mcp HTTP 探测，apply 进程/日志检测，console 自身） |
-| `GET` | `/api/logs` | 日志文本 `?service=ingest&lines=200&level=ERROR` |
+| `GET` | `/api/logs` | 日志文本 `?service=ingest&lines=200&level=ERROR`，默认从 `C:\d2a\data\logs\` 读取 |
 | `GET` | `/api/debug/raw-table` | 浏览 raw 表 `?table=xxx&offset=0&limit=50` |
 | `POST` | `/api/debug/mcp-call` | MCP 工具试调用（白名单：`query_objects`、`query_metrics`） |
 
@@ -231,7 +234,7 @@ JSON API（`/api/*`，管理界面和远期 Vue 前端共用）：
   - 二期可选：改造校验层返回结构化错误，实现真正的字段级定位
 - 连接测试超时 10 秒 → 返回 `{ok: false, error: "超时", detail: "..."}  `
 - 日志文件不存在/无权限 → 返回明确提示文本，不报 500
-- Token 错误 → 返回 401，HTML 页显示登录表单（弹出 Token 输入框）
+- Token 错误 → 返回 401，HTML 页显示登录表单（弹出 Token 输入框，输入后存入浏览器 `sessionStorage`；HTMX 通过每个请求自动带 `Authorization: Bearer <token>` 头；关闭标签页即清除，不持久化）
 
 ## 部署与打包
 
@@ -259,7 +262,7 @@ data2agent = ["admin_templates/*.html", "middle_admin/templates/*.html",
 
 `deploy/setup-middle.ps1`：
 - 新增设备提示：管理界面端口 8851、Token 环境变量 `D2A_MIDDLE_ADMIN_TOKEN`
-- NSSM AppParameters 示例：`python -m data2agent.middle_admin --config C:\d2a\config\connect.yaml --host 0.0.0.0 --port 8851`
+- NSSM AppParameters 示例：`python -m data2agent.middle_admin --config C:\d2a\config\connect.yaml --host 0.0.0.0 --port 8851 --token %D2A_MIDDLE_ADMIN_TOKEN% --log-path C:\d2a\data\logs\d2a-connector.log`
 - 防火墙规则提示 8851（仅内网）
 
 `deploy/setup-platform.ps1`：
