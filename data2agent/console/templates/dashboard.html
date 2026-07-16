@@ -1,0 +1,273 @@
+{% extends "layout.html" %}
+{% block title %}仪表盘 — 运维控制台{% endblock %}
+{% block content %}
+<style>
+  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
+        box-shadow:0 1px 3px rgba(16,34,54,.08)}
+  .card h2{font-size:15px;margin:0 0 12px;color:#12314f}
+  .meta{font-size:13px;color:#51606f;line-height:1.6}
+  .actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e8edf2}
+  th{color:#51606f;font-weight:600;white-space:nowrap}
+  td.wrap{white-space:normal;max-width:480px}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+  .badge-ok{background:#e6f4ea;color:#1e7e34}
+  .badge-failed{background:#fdecea;color:#b42318}
+  .badge-paused{background:#fff4d6;color:#946200}
+  .badge-running{background:#e5efff;color:#1b4f9c}
+  .empty{color:#9aa6b1;font-size:13px;padding:4px 0}
+  .svc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+  .svc-item{font-size:13px;padding:8px 10px;border-radius:8px;background:#f6f8fa}
+  .svc-ok{border-left:3px solid #1e7e34}
+  .svc-off{border-left:3px solid #b42318}
+  #msg{font-size:13px;color:#1b4f9c;margin-top:8px}
+</style>
+
+<div id="overview-meta" class="card"><p class="meta">加载中…</p></div>
+
+<div class="card">
+  <h2>服务状态</h2>
+  <div id="services-panel"
+       hx-get="/api/services"
+       hx-trigger="load, every 10s"
+       hx-swap="none">
+    <p class="meta">加载中…</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>动作(受错峰窗口 / 白名单约束)</h2>
+  <div id="actions-panel"><span class="empty">加载中…</span></div>
+  <span id="msg"></span>
+</div>
+
+<div class="card">
+  <h2>水位状态</h2>
+  <div id="state-panel"></div>
+</div>
+
+<div class="card">
+  <h2>对象层</h2>
+  <div id="objects-panel"></div>
+</div>
+
+<div class="card">
+  <h2>最近运行</h2>
+  <div id="runs-panel"
+       hx-get="/api/runs?limit=12"
+       hx-trigger="load, every 5s"
+       hx-swap="none">
+    <p class="meta">加载中…</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>隔离区(未处理)</h2>
+  <div id="quarantine-panel"
+       hx-get="/api/quarantine"
+       hx-trigger="load, every 5s"
+       hx-swap="none">
+    <p class="meta">加载中…</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>审计日志</h2>
+  <div id="audit-panel"
+       hx-get="/api/audit?limit=30"
+       hx-trigger="load, every 5s"
+       hx-swap="none">
+    <p class="meta">加载中…</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  var overview = null;
+  var msgTimer;
+
+  function esc(s) {
+    return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function authHeaders() {
+    var h = {'Content-Type': 'application/json'};
+    var token = sessionStorage.getItem('d2a_token');
+    if (token) h['Authorization'] = 'Bearer ' + token;
+    return h;
+  }
+  function td(v, cls) {
+    return '<td' + (cls ? ' class="' + cls + '"' : '') + '>' + v + '</td>';
+  }
+  function badge(s) {
+    return td('<span class="badge badge-' + esc(s) + '">' + esc(s) + '</span>');
+  }
+  function table(headers, rows) {
+    if (!rows.length) return '<div class="empty">(空)</div>';
+    return '<table><thead><tr>' + headers.map(function (h) {
+      return '<th>' + h + '</th>';
+    }).join('') + '</tr></thead><tbody>' + rows.map(function (r) {
+      return '<tr>' + r.join('') + '</tr>';
+    }).join('') + '</tbody></table>';
+  }
+  function msg(text) {
+    document.getElementById('msg').textContent = text;
+    clearTimeout(msgTimer);
+    msgTimer = setTimeout(function () { msg(''); }, 8000);
+  }
+
+  function renderOverview(o) {
+    overview = o;
+    document.getElementById('overview-meta').innerHTML =
+      '<p class="meta">' + esc(o.landing) + ' · ' +
+      (o.readonly ? '只读模式(未加载 --config,动作不可用)' : '完整模式') +
+      ' · ' + new Date().toLocaleTimeString() + '</p>';
+
+    var actionsEl = document.getElementById('actions-panel');
+    if (o.readonly) {
+      actionsEl.innerHTML = '<span class="empty">只读模式:以 --config connect.yaml 启动可启用动作</span>';
+    } else {
+      var html = '';
+      (o.sources || []).forEach(function (s) {
+        var src = esc(s.source);
+        if (o.actions_sync_reconcile) {
+          html += '<button type="button" data-act="sync" data-source="' + src + '">立即同步 ' + src + '</button>' +
+            '<button type="button" data-act="reconcile" data-source="' + src + '">对账 L1 ' + src + '</button>' +
+            '<button type="button" data-act="reconcile" data-source="' + src + '" data-deep="1">深度对账 ' + src + '</button>';
+        }
+        html += '<button type="button" class="secondary" data-act="apply" data-source="' + src + '">重新映射 ' + src + '</button>';
+      });
+      actionsEl.innerHTML = html || '<span class="empty">无源</span>';
+    }
+
+    var stateRows = [];
+    (o.sources || []).forEach(function (s) {
+      (s.state || []).forEach(function (t) {
+        stateRows.push([
+          td(esc(s.source)), td(esc(t.table_name)), td(esc(t.watermark_col)),
+          td(esc(t.high_water)), td(esc(t.last_run_at))
+        ]);
+      });
+    });
+    document.getElementById('state-panel').innerHTML =
+      table(['源', '表', '水位列', '高水位', '最近同步'], stateRows);
+
+    document.getElementById('objects-panel').innerHTML = table(
+      ['对象', '行数', '物化时间', '未处理隔离'],
+      (o.objects || []).map(function (x) {
+        return [
+          td(esc(x.object) + '(' + esc(x.display_name) + ')'),
+          td(x.rows != null ? x.rows : '未物化'),
+          td(esc(x.mapped_at)),
+          td(x.quarantined)
+        ];
+      })
+    );
+  }
+
+  function renderServices(data) {
+    var names = ['ingest', 'mcp', 'apply', 'console'];
+    var html = '<div class="svc-grid">';
+    names.forEach(function (name) {
+      var s = data[name] || {};
+      var ok = s.ok;
+      html += '<div class="svc-item ' + (ok ? 'svc-ok' : 'svc-off') + '">' +
+        '<strong>' + esc(name) + '</strong><br>' +
+        (ok ? '正常' : '异常') + ' · ' + esc(s.method || '—') + '</div>';
+    });
+    html += '</div>';
+    document.getElementById('services-panel').innerHTML = html;
+  }
+
+  function renderRuns(runs) {
+    document.getElementById('runs-panel').innerHTML = table(
+      ['#', '开始', '结束', '状态', '表', '行', '说明'],
+      (runs || []).map(function (r) {
+        return [
+          td(r.id), td(esc(r.started_at)), td(esc(r.finished_at)),
+          badge(r.status), td(r.tables), td(r.rows), td(esc(r.detail), 'wrap')
+        ];
+      })
+    );
+  }
+
+  function renderQuarantine(q) {
+    document.getElementById('quarantine-panel').innerHTML = table(
+      ['#', '对象', '业务键', '原因', '时间', '操作'],
+      (q || []).map(function (r) {
+        return [
+          td(r.id), td(esc(r.object)), td(esc(r.keys_json)),
+          td(esc(r.reason), 'wrap'), td(esc(r.created_at)),
+          td('<button type="button" data-act="retry" data-source="' + esc(r.source) +
+             '" data-object="' + esc(r.object) + '">修复后重试</button>')
+        ];
+      })
+    );
+  }
+
+  function renderAudit(audit) {
+    document.getElementById('audit-panel').innerHTML = table(
+      ['时间', '源', '动作', '行数', '耗时ms', 'SQL'],
+      (audit || []).map(function (r) {
+        return [
+          td(esc(r.ts)), td(esc(r.source)), td(esc(r.action)),
+          td(r.rows), td(r.duration_ms), td(esc(r.sql), 'wrap')
+        ];
+      })
+    );
+  }
+
+  function refreshOverview() {
+    fetch('/api/overview', {headers: authHeaders()})
+      .then(function (r) { return r.json(); })
+      .then(renderOverview)
+      .catch(function (e) {
+        document.getElementById('overview-meta').innerHTML =
+          '<p class="meta">加载失败: ' + esc(e.message) + '</p>';
+      });
+  }
+
+  document.body.addEventListener('htmx:afterOnLoad', function (e) {
+    var elt = e.detail.elt;
+    try {
+      var data = JSON.parse(e.detail.xhr.responseText);
+      if (elt.id === 'services-panel') renderServices(data);
+      else if (elt.id === 'runs-panel') renderRuns(data);
+      else if (elt.id === 'quarantine-panel') renderQuarantine(data);
+      else if (elt.id === 'audit-panel') renderAudit(data);
+    } catch (err) { /* keep placeholder */ }
+  });
+
+  document.getElementById('actions-panel').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    var act = btn.getAttribute('data-act');
+    var source = btn.getAttribute('data-source');
+    var body = {source: source};
+    if (btn.getAttribute('data-deep')) body.deep = true;
+    if (act === 'retry') body.object = btn.getAttribute('data-object');
+    var label = btn.textContent.trim();
+    msg(label + '…');
+    fetch('/api/actions/' + act, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify(body)
+    }).then(function (r) { return r.json().then(function (res) { return {ok: r.ok, res: res}; }); })
+      .then(function (out) {
+        if (!out.ok) {
+          msg(label + ' 失败: ' + (out.res.detail || 'HTTP 错误'));
+          return;
+        }
+        var res = out.res;
+        msg(label + (res.executed === false ? ': ' + (res.note || '未执行') : ' 完成') +
+            (res.aborted && res.aborted.length ? '; 熔断: ' + res.aborted.join(',') : ''));
+        refreshOverview();
+        htmx.trigger('#runs-panel', 'load');
+        htmx.trigger('#quarantine-panel', 'load');
+      })
+      .catch(function (err) { msg(label + ' 失败: ' + err.message); });
+  });
+
+  refreshOverview();
+  setInterval(refreshOverview, 5000);
+})();
+</script>
+{% endblock %}

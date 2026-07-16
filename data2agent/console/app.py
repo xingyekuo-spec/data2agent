@@ -23,6 +23,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
 from pydantic import BaseModel
 
 from ..admin_common.config_edit import PLATFORM_EDITABLE, merge_whitelist_and_save
@@ -33,6 +36,25 @@ from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_o
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..metamodel.loader import load_pack
 from .ui import UI_HTML
+
+_PKG = Path(__file__).resolve().parent
+_ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
+_CONSOLE_TEMPLATES = _PKG / "templates"
+_ADMIN_STATIC = _ADMIN_TEMPLATES / "static"
+
+
+def _make_templates() -> Jinja2Templates:
+    """双搜索路径: console/templates + admin_templates; admin/ 前缀继承基 layout。"""
+    env = Environment(
+        loader=ChoiceLoader([
+            FileSystemLoader(str(_CONSOLE_TEMPLATES)),
+            FileSystemLoader(str(_ADMIN_TEMPLATES)),
+            PrefixLoader({"admin": FileSystemLoader(str(_ADMIN_TEMPLATES))}),
+        ]),
+        autoescape=select_autoescape(["html", "xml"]),
+    )
+    return Jinja2Templates(env=env)
+
 
 _INGEST_HEALTH = "http://127.0.0.1:8850/ingest/health"
 _MCP_URL = "http://127.0.0.1:8848/mcp"
@@ -188,10 +210,26 @@ def create_app(landing: str, templates: str = "templates",
 
     app = FastAPI(title="data2agent 运维控制台")
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
+    templates = _make_templates()
+
+    def page_ctx(request: Request) -> dict[str, Any]:
+        return {"static_url": "/static", "needs_token": bool(token)}
 
     @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return UI_HTML
+    def index(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "dashboard.html", page_ctx(request))
+
+    @app.get("/config", response_class=HTMLResponse)
+    def config_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "config.html", page_ctx(request))
+
+    @app.get("/logs", response_class=HTMLResponse)
+    def logs_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "logs.html", page_ctx(request))
+
+    @app.get("/debug", response_class=HTMLResponse)
+    def debug_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "debug.html", page_ctx(request))
 
     @app.get("/v0", response_class=HTMLResponse)
     def v0() -> str:
@@ -368,4 +406,6 @@ def create_app(landing: str, templates: str = "templates",
         return {"executed": True, **asdict(result)}
 
     app.include_router(api)
+    if _ADMIN_STATIC.is_dir():
+        app.mount("/static", StaticFiles(directory=_ADMIN_STATIC), name="static")
     return app

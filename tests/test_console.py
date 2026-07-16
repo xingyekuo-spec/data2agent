@@ -49,7 +49,10 @@ def env(tmp_path):
 def test_readonly_mode_views_and_blocked_actions(env):
     landing, _ = env
     client = TestClient(create_app(landing.db_path, ROOT / "templates"))
-    assert "运维控制台" in client.get("/").text
+    r = client.get("/")
+    assert r.status_code == 200
+    body = r.content.lower()
+    assert b"htmx" in body or b"hx-" in body or b"nav" in body
 
     o = client.get("/api/overview").json()
     assert o["readonly"] is True
@@ -140,3 +143,13 @@ def test_v0_still_embedded(env):
     client = TestClient(create_app(landing.db_path, ROOT / "templates"))
     assert client.get("/v0").status_code == 200
     assert "运维控制台" in client.get("/v0").text
+
+
+def test_html_pages(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    for path in ("/", "/config", "/logs", "/debug"):
+        r = client.get(path)
+        assert r.status_code == 200
+        body = r.content.lower()
+        assert b"htmx" in body or b"hx-" in body or b"nav" in body
