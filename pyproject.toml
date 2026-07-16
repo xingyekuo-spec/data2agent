@@ -1,6 +1,6 @@
 [project]
 name = "data2agent"
-version = "0.1.2"
+version = "0.1.3"
 description = "Data to Agent, for factories — 把工厂数据接给 AI Agent:抽取框架 + 国产 ERP 连接器 + 制造业本体模板 + MCP Server"
 readme = "README.md"
 license = { text = "Apache-2.0" }
@@ -11,7 +11,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-connect = ["pyodbc>=5.1", "apscheduler>=3.10", "psycopg[binary]>=3.1"]
+connect = ["pyodbc>=5.1", "apscheduler>=3.10"]
+postgres = ["psycopg[binary]>=3.1"]            # 落地库改用 PostgreSQL 时(后续切片,当前 SQLite 不需要)
 mcp = ["mcp>=1.0"]
 console = ["fastapi>=0.110", "uvicorn>=0.29"]
 ingest = ["fastapi>=0.110", "uvicorn>=0.29"]   # 平台侧接收端(Pattern A)

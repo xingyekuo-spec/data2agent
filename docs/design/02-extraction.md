@@ -70,7 +70,7 @@ class SourceAdapter(Protocol):
 
 - 写入语义:按源主键 **upsert**(E10 为 `Id`),幂等 —— 回看窗口和对账重抽天然安全;
 - 落地库:当前实现为 **SQLite**(零依赖、单文件、零运维),覆盖开发 / 展厅 / 首个工厂现场验证。访问模式是单写者(connector 进程)+ 多只读者(MCP 网关 / 运维控制台),正是 SQLite 的舒适区;`LandingStore` 初始化即开 `journal_mode=WAL` + `busy_timeout`,写批次不阻塞只读连接。
-- 并发上界(需换库的信号):平台托管**多源 / 多工厂并发写同一落地库**、落地库需**跨机远程访问**、或 Agent 读并发大到单文件读锁成瓶颈 —— 任一出现再切 PostgreSQL(psycopg)。因落地库不是数据主体(ERP 才是),切库是一次性倒库 / `backfill` 重抽 + 一遍 `apply` 重建对象层,非持续迁移负担。
+- 并发上界(需换库的信号):平台托管**多源 / 多工厂并发写同一落地库**、落地库需**跨机远程访问**、或 Agent 读并发大到单文件读锁成瓶颈 —— 任一出现再切 PostgreSQL(装 `.[postgres]` extra 引入 psycopg;当前 `connect`/`ingest` 不含它)。因落地库不是数据主体(ERP 才是),切库是一次性倒库 / `backfill` 重抽 + 一遍 `apply` 重建对象层,非持续迁移负担。
 - 迁移面控制:方言用法(`INSERT ... ON CONFLICT`、`PRAGMA`、`file:...?mode=ro`)集中在 `landing.py` 与各读取方的 `_connect`,统一参数化 SQL 薄封装、不引 ORM,把将来 PG 切片的改造面圈在可控范围。
 
 ## 5. 增量协议(increment.py)
