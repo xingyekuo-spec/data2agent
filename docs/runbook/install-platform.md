@@ -54,8 +54,9 @@
 
 10. (可选)手工跑一轮物化:
     ```powershell
-    C:\d2a\venv\Scripts\python.exe -m data2agent.connect apply --config C:\d2a\config\platform.yaml --landing C:\d2a\data\factory.sqlite
+    C:\d2a\venv\Scripts\python.exe -m data2agent.connect apply --landing C:\d2a\data\factory.sqlite --templates C:\d2a\app\templates
     ```
+    > `connect apply` 不接受 `--config`(纯落地库操作),用 `--landing` / `--templates`。
 
 11. (可选)用 NSSM 装四个常驻服务(先停第 7 步前台进程):
     ```powershell
@@ -69,7 +70,7 @@
 
     # d2a-apply
     C:\d2a\nssm\nssm.exe install d2a-apply C:\d2a\venv\Scripts\python.exe
-    C:\d2a\nssm\nssm.exe set d2a-apply AppParameters "-m data2agent.connect apply --config C:\d2a\config\platform.yaml --landing C:\d2a\data\factory.sqlite --every 1800"
+    C:\d2a\nssm\nssm.exe set d2a-apply AppParameters "-m data2agent.connect apply --landing C:\d2a\data\factory.sqlite --templates C:\d2a\app\templates --every 1800"
     C:\d2a\nssm\nssm.exe set d2a-apply AppDirectory C:\d2a\app
     C:\d2a\nssm\nssm.exe set d2a-apply AppStdout C:\d2a\data\logs\d2a-apply.log
     C:\d2a\nssm\nssm.exe set d2a-apply AppStderr C:\d2a\data\logs\d2a-apply.log
@@ -77,7 +78,7 @@
 
     # d2a-mcp
     C:\d2a\nssm\nssm.exe install d2a-mcp C:\d2a\venv\Scripts\python.exe
-    C:\d2a\nssm\nssm.exe set d2a-mcp AppParameters "-m data2agent.mcp_server --db C:\d2a\data\factory.sqlite --transport http --host 0.0.0.0 --port 8848"
+    C:\d2a\nssm\nssm.exe set d2a-mcp AppParameters "-m data2agent.mcp_server --db C:\d2a\data\factory.sqlite --templates C:\d2a\app\templates --transport http --host 0.0.0.0 --port 8848"
     C:\d2a\nssm\nssm.exe set d2a-mcp AppDirectory C:\d2a\app
     C:\d2a\nssm\nssm.exe set d2a-mcp AppStdout C:\d2a\data\logs\d2a-mcp.log
     C:\d2a\nssm\nssm.exe set d2a-mcp AppStderr C:\d2a\data\logs\d2a-mcp.log

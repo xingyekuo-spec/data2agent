@@ -8,6 +8,11 @@
 >
 > 本文档讲协议层(拓扑/配置/验收);两台机若是 **Windows**,进程托管与离线分发
 > 的具体命令见 [windows-deploy.md](windows-deploy.md)。
+>
+> **推荐现场形态:[便携包解压即用](portable.md)** —— 两台机各双击 `data2agent.exe`,
+> 浏览器完成首次配置(平台填「接收口令」,中间机填 ERP 连接与平台地址),
+> 之后自动拉起后台进程(中间机 connector;平台 ingest + apply + mcp)。
+> 本文的手工命令是便携包内部等价流程,用于理解协议、验收与排障。
 
 ---
 
@@ -113,10 +118,13 @@ python -m data2agent.connect serve --config connect.yaml --once
 5. **增量幂等**:再跑一轮 `--once`,平台行数不变(回看窗口内只重推增量,upsert 幂等)。
 6. **只读守卫**:确认抽取账号无写权限(尝试写操作应被 ERP 拒绝)。
 
-平台侧要让数据到达 MCP 网关,另需在**平台**跑:
+平台侧要让数据到达 MCP 网关,另需在**平台**跑物化与网关(便携包 `data2agent.exe` 会自动拉起这两个):
 ```bash
-python -m data2agent.connect apply --config <平台侧配置,landing 指向 /data/factory.sqlite>
-python -m data2agent.mcp_server --db /data/factory.sqlite --transport http --host 0.0.0.0 --port 8848
+# apply 不接受 --config(纯落地库操作),须给 --landing / --templates:
+python -m data2agent.connect apply --landing /data/factory.sqlite --templates templates
+# mcp 启动要求落地库已存在;首个批次到达前 /data/factory.sqlite 可能还没生成:
+python -m data2agent.mcp_server --db /data/factory.sqlite --templates templates \
+  --transport http --host 0.0.0.0 --port 8848
 ```
 
 ---

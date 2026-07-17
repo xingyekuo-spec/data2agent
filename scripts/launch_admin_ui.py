@@ -148,13 +148,21 @@ def _creationflags() -> int:
     return CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
 
-def _spawn(cmd: list[str], *, home: Path, env: dict[str, str]) -> subprocess.Popen:
+def _spawn(cmd: list[str], *, home: Path, env: dict[str, str],
+           log_name: str | None = None) -> subprocess.Popen:
+    # 子进程输出落到 data/logs/<name>.log,现场可诊断(此前吞进 DEVNULL,
+    # 子进程崩溃无从排查 —— 便携包首个版本因此隐藏了两个致命 bug)。
+    out: int | object = subprocess.DEVNULL
+    if log_name:
+        logs = home / "data" / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        out = open(logs / f"{log_name}.log", "a", encoding="utf-8")  # noqa: SIM115
     proc = subprocess.Popen(
         cmd,
         cwd=str(home),
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=out,
+        stderr=subprocess.STDOUT if log_name else subprocess.DEVNULL,
         creationflags=_creationflags(),
         start_new_session=(sys.platform != "win32"),
     )
@@ -260,12 +268,39 @@ def worker_commands(role: str, home: Path, python: Path) -> list[tuple[str, int 
     return [
         ("ingest", 8850, [py, "-m", "data2agent.ingest",
                           "--landing", landing, "--host", "0.0.0.0", "--port", "8850"]),
+        # apply 是纯落地库操作:不接受 --config,须显式给 --templates(cwd 无 templates)
         ("apply", None, [py, "-m", "data2agent.connect", "apply",
-                         "--config", str(cfg), "--landing", landing, "--every", "1800"]),
+                         "--landing", landing, "--templates", templates,
+                         "--every", "1800"]),
         ("mcp", 8848, [py, "-m", "data2agent.mcp_server",
                        "--db", landing, "--templates", templates,
                        "--transport", "http", "--host", "0.0.0.0", "--port", "8848"]),
     ]
+
+
+def landing_db_path(role: str, home: Path) -> Path | None:
+    """平台侧落地库路径(mcp/apply 的前置依赖)。"""
+    if role != "platform":
+        return None
+    return home / "data" / "factory.sqlite"
+
+
+def ensure_landing_db(python: Path, landing: Path, *, home: Path,
+                      env: dict[str, str]) -> None:
+    """预建落地库:首次上线时尚无推送,ingest 惰性建库,但 mcp 启动即要求库存在。
+
+    先建好空库(基础表),mcp/apply 才能在首个批次到达前正常起来。
+    """
+    if landing.is_file():
+        return
+    landing.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [str(python), "-c",
+         "import sys; from data2agent.connect.landing import LandingStore; "
+         "LandingStore(sys.argv[1])", str(landing)],
+        cwd=str(home), env=env, capture_output=True, check=False,
+        creationflags=_creationflags(),
+    )
 
 
 def admin_url(host: str, port: int, configured: bool) -> str:
@@ -393,7 +428,7 @@ def main(argv: list[str] | None = None) -> int:
     if not admin_already_up:
         try:
             _spawn([str(venv_py), "-m", cfg["module"], *cfg["extra_args"]],
-                   home=home, env=env)
+                   home=home, env=env, log_name="admin")
         except OSError as e:
             release_single_instance()
             _msg(title, f"无法启动:\n{e}", error=True)
@@ -407,11 +442,14 @@ def main(argv: list[str] | None = None) -> int:
     # Only start workers when we ourselves brought admin up. If admin was
     # already listening (e.g. tray crashed), avoid duplicate connector/etc.
     if not args.no_workers and configured and not admin_already_up:
+        landing = landing_db_path(args.role, home)
+        if landing is not None:
+            ensure_landing_db(venv_py, landing, home=home, env=env)
         for name, listen, cmd in worker_commands(args.role, home, venv_py):
             if listen is not None and _port_open("127.0.0.1", listen):
                 continue
             try:
-                _spawn(cmd, home=home, env=env)
+                _spawn(cmd, home=home, env=env, log_name=name)
             except OSError:
                 _msg(title, f"无法启动 {name}", error=True)
 

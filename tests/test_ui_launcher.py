@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -55,6 +56,27 @@ def test_worker_commands_empty_until_configured(tmp_path):
     (tmp_path / "config" / "platform.yaml").write_text("x: 1", encoding="utf-8")
     plat = mod.worker_commands("platform", tmp_path, py)
     assert {n for n, _, _ in plat} == {"ingest", "apply", "mcp"}
+    # apply 是纯落地库操作:不能传 --config(子命令不接受),必须显式带 --templates
+    apply_cmd = next(cmd for n, _, cmd in plat if n == "apply")
+    assert "--config" not in apply_cmd
+    assert "--templates" in apply_cmd
+    assert "--landing" in apply_cmd
+
+
+def test_landing_db_path_platform_only(tmp_path):
+    mod = _load_launcher()
+    assert mod.landing_db_path("middle", tmp_path) is None
+    assert mod.landing_db_path("platform", tmp_path) == tmp_path / "data" / "factory.sqlite"
+
+
+def test_ensure_landing_db_precreates(tmp_path):
+    """预建落地库:mcp 启动即要求库存在,不能等首个推送。"""
+    mod = _load_launcher()
+    landing = tmp_path / "data" / "factory.sqlite"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join([str(ROOT), env.get("PYTHONPATH", "")])
+    mod.ensure_landing_db(Path(sys.executable), landing, home=tmp_path, env=env)
+    assert landing.is_file(), "落地库应被预先创建"
 
 
 def test_admin_url():

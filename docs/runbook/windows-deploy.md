@@ -235,18 +235,25 @@ C:\d2a\venv\Scripts\python.exe -m data2agent.connect serve --config C:\d2a\confi
 | 服务名 | AppParameters |
 | --- | --- |
 | `d2a-ingest` | `-m data2agent.ingest --landing C:\d2a\data\factory.sqlite --host 0.0.0.0 --port 8850` |
-| `d2a-apply`  | `-m data2agent.connect apply --config C:\d2a\config\platform.yaml --landing C:\d2a\data\factory.sqlite --every 1800` |
-| `d2a-mcp`    | `-m data2agent.mcp_server --db C:\d2a\data\factory.sqlite --transport http --host 0.0.0.0 --port 8848` |
+| `d2a-apply`  | `-m data2agent.connect apply --landing C:\d2a\data\factory.sqlite --templates C:\d2a\app\templates --every 1800` |
+| `d2a-mcp`    | `-m data2agent.mcp_server --db C:\d2a\data\factory.sqlite --templates C:\d2a\app\templates --transport http --host 0.0.0.0 --port 8848` |
 | `d2a-console`| `-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849 --log-dir C:\d2a\data\logs` |
 
 > 平台管理界面 `http://<平台机IP>:8849`,登录 Token 为机器级 `D2A_CONSOLE_TOKEN`(setup-platform 生成并显示)。旧版 JSON API 仍在 `/v0`。
 > 便携包请双击目录内唯一入口 `data2agent.exe`(见 [portable.md](portable.md))。
 
-`d2a-apply` 用的 `--every 1800` 是本次新加的常驻循环参数(每 30 分钟跑一轮 `raw_* → obj_*`)——
+`d2a-apply` 用的 `--every 1800` 是常驻循环参数(每 30 分钟跑一轮 `raw_* → obj_*`)——
 拆机部署下 `ingest` 只负责接收落地,没有进程会周期性物化对象层,这个服务补上这个缺口。
+
+> **注意:`connect apply` 不接受 `--config`**(它是纯落地库操作,只认 `--landing` / `--templates` /
+> `--source`)。历史文档误写了 `--config`,会直接 argparse 报错、服务空转 —— 已在本版更正。
+> `--templates` 必须显式指向 `C:\d2a\app\templates`(否则默认找 AppDirectory 下的 `templates`)。
+> 另外 `d2a-mcp` 启动要求落地库文件已存在:首次上线若平台还没收到任何推送,`factory.sqlite`
+> 尚未生成,`d2a-mcp` 会退出并由 NSSM 自动重启,直到首个批次到达(便携包 `data2agent.exe` 会预建空库,不受影响)。
+
 单次验证也可以先不带 `--every` 手动跑一次看效果:
 ```powershell
-C:\d2a\venv\Scripts\python.exe -m data2agent.connect apply --config C:\d2a\config\platform.yaml --landing C:\d2a\data\factory.sqlite
+C:\d2a\venv\Scripts\python.exe -m data2agent.connect apply --landing C:\d2a\data\factory.sqlite --templates C:\d2a\app\templates
 ```
 
 ---

@@ -125,8 +125,8 @@ Write-Host '  D2A_INGEST_TOKEN  = (hidden; must match middle)'
 Write-Host ''
 Write-Step 'NSSM AppParameters (see windows-deploy.md section 5.2):'
 Write-Host "  d2a-ingest : -m data2agent.ingest --landing $landingPath --host 0.0.0.0 --port $IngestPort"
-Write-Host "  d2a-apply  : -m data2agent.connect apply --config $cfgPath --landing $landingPath --every $ApplyEvery"
-Write-Host "  d2a-mcp    : -m data2agent.mcp_server --db $landingPath --transport http --host 0.0.0.0 --port $McpPort"
+Write-Host "  d2a-apply  : -m data2agent.connect apply --landing $landingPath --templates $templatesDir --every $ApplyEvery"
+Write-Host "  d2a-mcp    : -m data2agent.mcp_server --db $landingPath --templates $templatesDir --transport http --host 0.0.0.0 --port $McpPort"
 $logDir = Join-Path $DataDir 'logs'
 Write-Host "  d2a-console: -m data2agent.console --config $cfgPath --host 0.0.0.0 --port $ConsolePort --log-dir $logDir"
 
