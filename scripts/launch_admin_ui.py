@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 """便携包唯一入口:双击 data2agent.exe。
 
-- 启动管理界面并打开浏览器(无配置时进首次配置页)
-- 若已完成配置:顺带拉起主业务进程(中间机 connector / 平台 ingest+apply+mcp)
+- 单实例:已在运行则只打开管理界面浏览器,不重复启动
+- 托盘常驻:可「打开管理界面」或「退出」(停止本入口拉起的进程)
+- 首次/日常:启动管理界面;已配置时顺带拉起业务进程
 """
 
 from __future__ import annotations
 
 import argparse
+import atexit
 import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
 
 DEFAULT_HOME = Path(os.environ.get("D2A_HOME", r"C:\d2a"))
+
+# Populated while this process owns the instance; stopped on tray Quit.
+_CHILDREN: list[subprocess.Popen] = []
+_MUTEX_HANDLE = None
 
 
 def _msg(title: str, text: str, error: bool = False) -> None:
@@ -73,7 +80,8 @@ def _role_config(role: str, home: Path) -> dict:
     if role == "middle":
         port = int(os.environ.get("D2A_MIDDLE_ADMIN_PORT", "8851"))
         return {
-            "title": "data2agent",
+            "title": "data2agent 中间机",
+            "mutex": "Local\\data2agent-middle-launcher",
             "port": port,
             "module": "data2agent.middle_admin",
             "config_file": home / "config" / "connect.yaml",
@@ -86,7 +94,8 @@ def _role_config(role: str, home: Path) -> dict:
     if role == "platform":
         port = int(os.environ.get("D2A_CONSOLE_PORT", "8849"))
         return {
-            "title": "data2agent",
+            "title": "data2agent 平台",
+            "mutex": "Local\\data2agent-platform-launcher",
             "port": port,
             "module": "data2agent.console",
             "config_file": home / "config" / "platform.yaml",
@@ -139,8 +148,8 @@ def _creationflags() -> int:
     return CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
 
-def _spawn(cmd: list[str], *, home: Path, env: dict[str, str]) -> None:
-    subprocess.Popen(
+def _spawn(cmd: list[str], *, home: Path, env: dict[str, str]) -> subprocess.Popen:
+    proc = subprocess.Popen(
         cmd,
         cwd=str(home),
         env=env,
@@ -149,6 +158,88 @@ def _spawn(cmd: list[str], *, home: Path, env: dict[str, str]) -> None:
         creationflags=_creationflags(),
         start_new_session=(sys.platform != "win32"),
     )
+    _CHILDREN.append(proc)
+    return proc
+
+
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+            creationflags=_creationflags(),
+        )
+        return
+    try:
+        proc.terminate()
+        proc.wait(timeout=5)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
+def stop_children() -> None:
+    for proc in list(_CHILDREN):
+        _kill_process_tree(proc)
+    _CHILDREN.clear()
+
+
+def acquire_single_instance(mutex_name: str) -> bool:
+    """Return True if this process is the primary instance; False if another holds it."""
+    global _MUTEX_HANDLE
+    if sys.platform == "win32":
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.CreateMutexW(None, False, mutex_name)
+        if not handle:
+            return True
+        ERROR_ALREADY_EXISTS = 183
+        if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(handle)
+            return False
+        _MUTEX_HANDLE = handle
+        return True
+
+    # Non-Windows: lock file under temp / home
+    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / f"{mutex_name.replace(chr(92), '_')}.lock"
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError:
+        return True
+    try:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return False
+    _MUTEX_HANDLE = fd
+    return True
+
+
+def release_single_instance() -> None:
+    global _MUTEX_HANDLE
+    if _MUTEX_HANDLE is None:
+        return
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.kernel32.CloseHandle(_MUTEX_HANDLE)  # type: ignore[attr-defined]
+    else:
+        try:
+            import fcntl
+
+            fcntl.flock(_MUTEX_HANDLE, fcntl.LOCK_UN)
+            os.close(_MUTEX_HANDLE)
+        except Exception:
+            pass
+    _MUTEX_HANDLE = None
 
 
 def worker_commands(role: str, home: Path, python: Path) -> list[tuple[str, int | None, list[str]]]:
@@ -177,14 +268,81 @@ def worker_commands(role: str, home: Path, python: Path) -> list[tuple[str, int 
     ]
 
 
+def admin_url(host: str, port: int, configured: bool) -> str:
+    return f"http://{host}:{port}/" + ("" if configured else "config")
+
+
+def open_admin(url: str) -> None:
+    webbrowser.open(url)
+
+
+def _tray_image():
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse((4, 4, 60, 60), fill=(18, 49, 79, 255))
+    draw.rectangle((20, 28, 44, 48), fill=(232, 244, 253, 255))
+    return img
+
+
+def run_tray(*, title: str, url: str) -> int:
+    """Block on system tray until user quits. Returns process exit code."""
+    try:
+        import pystray
+        from pystray import Menu, MenuItem
+    except ImportError:
+        _msg(
+            title,
+            "缺少托盘组件(pystray)。请使用 Release 便携包中的 data2agent.exe。",
+            error=True,
+        )
+        # Keep children running; do not exit them if tray unavailable.
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            stop_children()
+            return 0
+
+    def on_open(icon, item):  # noqa: ARG001
+        open_admin(url)
+
+    def on_quit(icon, item):  # noqa: ARG001
+        stop_children()
+        release_single_instance()
+        icon.stop()
+
+    menu = Menu(
+        MenuItem("打开管理界面", on_open, default=True),
+        MenuItem("退出", on_quit),
+    )
+    icon = pystray.Icon("data2agent", _tray_image(), title, menu)
+
+    def _open_soon():
+        time.sleep(0.4)
+        open_admin(url)
+
+    if not getattr(run_tray, "_skip_auto_open", False):
+        threading.Thread(target=_open_soon, daemon=True).start()
+
+    icon.run()
+    stop_children()
+    release_single_instance()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="data2agent portable launcher")
     ap.add_argument("--role", choices=("middle", "platform"), required=True)
     ap.add_argument("--home", type=Path, default=None,
                     help=r"便携根目录(默认:exe 所在目录或 D2A_HOME)")
-    ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--no-browser", action="store_true",
+                    help="启动时不自动打开浏览器(托盘仍可打开)")
     ap.add_argument("--no-workers", action="store_true",
                     help="只开管理界面,不拉起 connector/ingest 等")
+    ap.add_argument("--no-tray", action="store_true",
+                    help="不进入托盘(测试/无 GUI);启动后立即返回")
     args = ap.parse_args(argv)
 
     if args.home is not None:
@@ -203,10 +361,23 @@ def main(argv: list[str] | None = None) -> int:
     port = cfg["port"]
     host = "127.0.0.1"
     configured = Path(cfg["config_file"]).is_file()
-    url = f"http://{host}:{port}/" + ("" if configured else "config")
+    url = admin_url(host, port, configured)
+
+    # Secondary instance: just open the already-running admin UI.
+    if not acquire_single_instance(cfg["mutex"]):
+        if _wait_port(host, port, timeout=20.0):
+            if not args.no_browser:
+                open_admin(url)
+            return 0
+        _msg(title, "检测到程序已在运行,但管理界面尚未就绪,请稍后再双击打开。", error=True)
+        return 1
+
+    atexit.register(release_single_instance)
+    atexit.register(stop_children)
 
     venv_py = _resolve_python(home)
     if venv_py is None or not venv_py.is_file():
+        release_single_instance()
         _msg(
             title,
             f"未找到运行环境。\n\n请确认解压完整,目录中应有:\n  {home}\\runtime\\python.exe",
@@ -218,19 +389,24 @@ def main(argv: list[str] | None = None) -> int:
     env["D2A_HOME"] = str(home)
     env = _merge_secrets_env(home, env)
 
-    already = _port_open(host, port)
-    if not already:
+    admin_already_up = _port_open(host, port)
+    if not admin_already_up:
         try:
             _spawn([str(venv_py), "-m", cfg["module"], *cfg["extra_args"]],
                    home=home, env=env)
         except OSError as e:
+            release_single_instance()
             _msg(title, f"无法启动:\n{e}", error=True)
             return 3
         if not _wait_port(host, port, timeout=25.0):
+            stop_children()
+            release_single_instance()
             _msg(title, f"启动超时(未监听 {host}:{port})。\nHome: {home}", error=True)
             return 4
 
-    if not args.no_workers and configured:
+    # Only start workers when we ourselves brought admin up. If admin was
+    # already listening (e.g. tray crashed), avoid duplicate connector/etc.
+    if not args.no_workers and configured and not admin_already_up:
         for name, listen, cmd in worker_commands(args.role, home, venv_py):
             if listen is not None and _port_open("127.0.0.1", listen):
                 continue
@@ -239,9 +415,26 @@ def main(argv: list[str] | None = None) -> int:
             except OSError:
                 _msg(title, f"无法启动 {name}", error=True)
 
-    if not args.no_browser:
-        webbrowser.open(url)
-    return 0
+    if args.no_tray:
+        if not args.no_browser:
+            open_admin(url)
+        # Test mode: leave children; caller/tests do not need tray.
+        # Detach atexit kill so short-lived test process does not kill servers
+        # when using --no-tray for one-shot open only... Actually tests use
+        # missing python path. For --no-tray we should still stop children on
+        # exit of launcher unless we want fire-and-forget.
+        # Old behavior was fire-and-forget. With tray, primary owns lifecycle.
+        # --no-tray for tests: fire-and-forget (clear atexit stop).
+        try:
+            atexit.unregister(stop_children)
+        except Exception:
+            pass
+        _CHILDREN.clear()  # do not kill on exit in no-tray mode
+        release_single_instance()
+        return 0
+
+    run_tray._skip_auto_open = bool(args.no_browser)  # type: ignore[attr-defined]
+    return run_tray(title=title, url=url)
 
 
 if __name__ == "__main__":

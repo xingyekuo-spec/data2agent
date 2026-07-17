@@ -26,6 +26,7 @@ def test_role_config_uses_home(tmp_path):
     assert mid["module"] == "data2agent.middle_admin"
     assert "--home" in mid["extra_args"]
     assert mid["config_file"] == tmp_path / "config" / "connect.yaml"
+    assert "middle" in mid["mutex"]
 
 
 def test_detect_portable_root(tmp_path):
@@ -56,11 +57,31 @@ def test_worker_commands_empty_until_configured(tmp_path):
     assert {n for n, _, _ in plat} == {"ingest", "apply", "mcp"}
 
 
+def test_admin_url():
+    mod = _load_launcher()
+    assert mod.admin_url("127.0.0.1", 8851, False).endswith("/config")
+    assert mod.admin_url("127.0.0.1", 8851, True) == "http://127.0.0.1:8851/"
+
+
+def test_second_instance_opens_existing_admin(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    opened: list[str] = []
+    monkeypatch.setattr(mod, "open_admin", lambda u: opened.append(u))
+    monkeypatch.setattr(mod, "_msg", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "acquire_single_instance", lambda name: False)
+    monkeypatch.setattr(mod, "_wait_port", lambda *a, **k: True)
+    code = mod.main(["--role", "middle", "--home", str(tmp_path), "--no-tray"])
+    assert code == 0
+    assert opened and opened[0].startswith("http://127.0.0.1:8851/")
+
+
 def test_missing_python_exits_2(tmp_path, monkeypatch):
     mod = _load_launcher()
     monkeypatch.setattr(mod, "_msg", lambda *a, **k: None)
     monkeypatch.setattr(mod, "_resolve_python", lambda home: Path("/nonexistent/python.exe"))
-    code = mod.main(["--role", "middle", "--home", str(tmp_path), "--no-browser"])
+    monkeypatch.setattr(mod, "acquire_single_instance", lambda name: True)
+    monkeypatch.setattr(mod, "release_single_instance", lambda: None)
+    code = mod.main(["--role", "middle", "--home", str(tmp_path), "--no-tray", "--no-browser"])
     assert code == 2
 
 

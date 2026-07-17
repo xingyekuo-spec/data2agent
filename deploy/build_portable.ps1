@@ -119,9 +119,10 @@ data2agent portable ($Role) $Version
 
 Extract anywhere. Double-click data2agent.exe — that is the only entry.
 
-  1. First run opens the browser setup page (fill ERP / tokens).
-  2. Later runs open the admin UI and start background services
-     (middle: connector; platform: ingest + apply + mcp).
+  1. First run opens the browser setup page.
+  2. Tray icon (system tray): Open admin UI / Quit.
+  3. If already running, double-click only reopens the admin UI.
+  4. Quit from tray stops services started by this app.
 
 Middle also needs Microsoft ODBC Driver 18 for SQL Server (MSI).
 

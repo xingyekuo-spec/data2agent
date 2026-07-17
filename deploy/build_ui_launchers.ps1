@@ -3,8 +3,8 @@
   Build the single portable entry exe: data2agent.exe (per role).
 
 .DESCRIPTION
-  Thin PyInstaller one-file. Starts admin UI (+ workers when configured)
-  using the portable folder's runtime\python.exe.
+  Thin PyInstaller one-file with system tray (pystray). Starts admin UI
+  (+ workers when configured) using the portable folder's runtime\python.exe.
 
 .EXAMPLE
   .\deploy\build_ui_launchers.ps1
@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $root
 
-python -m pip install -q "pyinstaller>=6.0"
+python -m pip install -q "pyinstaller>=6.0" "pystray>=0.19" "pillow>=10"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 New-Item -ItemType Directory -Force -Path "$OutDir/middle" | Out-Null
 New-Item -ItemType Directory -Force -Path "$OutDir/platform" | Out-Null
@@ -30,7 +30,13 @@ $common = @(
     "--clean",
     "--paths", "scripts",
     "--workpath", "build/pyinstaller",
-    "--specpath", "build/pyinstaller"
+    "--specpath", "build/pyinstaller",
+    "--hidden-import", "pystray",
+    "--hidden-import", "pystray._win32",
+    "--hidden-import", "PIL",
+    "--hidden-import", "PIL.Image",
+    "--hidden-import", "PIL.ImageDraw",
+    "--collect-all", "pystray"
 )
 
 Write-Host "==> Building middle data2agent.exe"

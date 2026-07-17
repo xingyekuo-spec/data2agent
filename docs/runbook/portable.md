@@ -27,9 +27,11 @@ d2a-portable-middle-<版本>\
 1. **中间机**:先装 [ODBC Driver 18](https://learn.microsoft.com/sql/connect/odbc/download-odbc-driver-for-sql-server)(微软 MSI,一次即可)。
 2. 解压对应 zip(两台机**同版本**)。
 3. 双击 `data2agent.exe`:
-   - 首次:浏览器填配置(ERP / Token 等)
+   - 首次:浏览器填配置
    - 之后:打开管理界面,并自动拉起后台服务  
      (中间机 connector;平台 ingest + apply + mcp)
+   - 右下角托盘图标常驻:**打开管理界面** / **退出**(退出会停止本程序拉起的后台进程)
+   - 若已在运行,再次双击只会重新打开管理界面,不会重复启动
 
 ## 注意
 
