@@ -25,6 +25,14 @@ DEFAULT_HOME = Path(os.environ.get("D2A_HOME", r"C:\d2a"))
 _CHILDREN: list[subprocess.Popen] = []
 _MUTEX_HANDLE = None
 
+# Supervised processes (admin + workers): respawned on crash by the monitor
+# thread, with a circuit breaker so a crash-looping worker stops hammering.
+_MANAGED: list[dict] = []
+_SUPERVISE_STOP = threading.Event()
+SUPERVISE_INTERVAL = 5.0
+SUPERVISE_MAX_RESTARTS = 5   # within SUPERVISE_WINDOW before giving up
+SUPERVISE_WINDOW = 60.0
+
 
 def _msg(title: str, text: str, error: bool = False) -> None:
     try:
@@ -197,6 +205,79 @@ def stop_children() -> None:
     _CHILDREN.clear()
 
 
+def _supervisor_log(home: Path, msg: str) -> None:
+    try:
+        line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n"
+        (home / "data" / "logs" / "launcher.log").open(
+            "a", encoding="utf-8").write(line)
+    except Exception:
+        pass
+
+
+def spawn_managed(name: str, cmd: list[str], *, home: Path, env: dict[str, str],
+                  log_name: str, listen: int | None = None) -> subprocess.Popen:
+    """Spawn and register a process for crash-restart supervision."""
+    proc = _spawn(cmd, home=home, env=env, log_name=log_name)
+    _MANAGED.append({
+        "name": name, "cmd": cmd, "home": home, "env": env,
+        "log_name": log_name, "listen": listen, "proc": proc,
+        "restarts": 0, "window_start": time.time(), "failed": False,
+    })
+    return proc
+
+
+def health_summary() -> tuple[int, int, list[str]]:
+    """Return (up, total, down_names) across supervised processes."""
+    up = 0
+    down: list[str] = []
+    for m in _MANAGED:
+        if m["proc"].poll() is None:
+            up += 1
+        else:
+            down.append(m["name"] + (" 已停止" if m["failed"] else " 重启中"))
+    return up, len(_MANAGED), down
+
+
+def supervise_once(home: Path, *, max_restarts: int = SUPERVISE_MAX_RESTARTS,
+                   window: float = SUPERVISE_WINDOW) -> None:
+    """One monitoring pass: respawn dead workers unless the breaker tripped."""
+    now = time.time()
+    for m in _MANAGED:
+        if m["failed"] or m["proc"].poll() is None:
+            continue
+        if now - m["window_start"] > window:
+            m["window_start"] = now
+            m["restarts"] = 0
+        if m["restarts"] >= max_restarts:
+            if not m["failed"]:
+                m["failed"] = True
+                _supervisor_log(home, f"{m['name']} 在 {window:.0f}s 内退出 "
+                                      f"{max_restarts} 次,停止重启(需人工排查日志)")
+            continue
+        # Port still held (old process not fully gone) — retry next pass.
+        if m["listen"] is not None and _port_open("127.0.0.1", m["listen"]):
+            continue
+        m["restarts"] += 1
+        try:
+            m["proc"] = _spawn(m["cmd"], home=home, env=m["env"],
+                               log_name=m["log_name"])
+            _supervisor_log(home, f"重启 {m['name']}(第 {m['restarts']} 次)")
+        except OSError as e:
+            _supervisor_log(home, f"重启 {m['name']} 失败:{e}")
+
+
+def start_supervisor(home: Path) -> threading.Thread:
+    _SUPERVISE_STOP.clear()
+
+    def loop() -> None:
+        while not _SUPERVISE_STOP.wait(SUPERVISE_INTERVAL):
+            supervise_once(home)
+
+    t = threading.Thread(target=loop, name="d2a-supervisor", daemon=True)
+    t.start()
+    return t
+
+
 def acquire_single_instance(mutex_name: str) -> bool:
     """Return True if this process is the primary instance; False if another holds it."""
     global _MUTEX_HANDLE
@@ -321,7 +402,16 @@ def _tray_image():
     return img
 
 
-def run_tray(*, title: str, url: str) -> int:
+def _health_text(title: str) -> str:
+    up, total, down = health_summary()
+    if total == 0:
+        return title
+    if not down:
+        return f"{title} — 后台 {up}/{total} 正常"
+    return f"{title} — {up}/{total} 正常;异常:{', '.join(down)}"
+
+
+def run_tray(*, title: str, url: str, home: Path | None = None) -> int:
     """Block on system tray until user quits. Returns process exit code."""
     try:
         import pystray
@@ -340,16 +430,32 @@ def run_tray(*, title: str, url: str) -> int:
             stop_children()
             return 0
 
+    if home is not None:
+        start_supervisor(home)
+
     def on_open(icon, item):  # noqa: ARG001
         open_admin(url)
 
+    def on_status(icon, item):  # noqa: ARG001
+        up, total, down = health_summary()
+        if total == 0:
+            body = "未拉起后台进程(仅管理界面)。"
+        elif not down:
+            body = f"后台进程全部正常({up}/{total})。"
+        else:
+            body = (f"{up}/{total} 正常。\n异常:{', '.join(down)}\n\n"
+                    "日志见 data\\logs\\(launcher.log 记录重启)。")
+        _msg(title, body)
+
     def on_quit(icon, item):  # noqa: ARG001
+        _SUPERVISE_STOP.set()
         stop_children()
         release_single_instance()
         icon.stop()
 
     menu = Menu(
         MenuItem("打开管理界面", on_open, default=True),
+        MenuItem("运行状态…", on_status),
         MenuItem("退出", on_quit),
     )
     icon = pystray.Icon("data2agent", _tray_image(), title, menu)
@@ -358,10 +464,20 @@ def run_tray(*, title: str, url: str) -> int:
         time.sleep(0.4)
         open_admin(url)
 
+    def _refresh_title():
+        while not _SUPERVISE_STOP.wait(SUPERVISE_INTERVAL):
+            try:
+                icon.title = _health_text(title)
+            except Exception:
+                pass
+
     if not getattr(run_tray, "_skip_auto_open", False):
         threading.Thread(target=_open_soon, daemon=True).start()
+    if _MANAGED:
+        threading.Thread(target=_refresh_title, daemon=True).start()
 
     icon.run()
+    _SUPERVISE_STOP.set()
     stop_children()
     release_single_instance()
     return 0
@@ -427,8 +543,9 @@ def main(argv: list[str] | None = None) -> int:
     admin_already_up = _port_open(host, port)
     if not admin_already_up:
         try:
-            _spawn([str(venv_py), "-m", cfg["module"], *cfg["extra_args"]],
-                   home=home, env=env, log_name="admin")
+            spawn_managed("admin",
+                          [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]],
+                          home=home, env=env, log_name="admin", listen=port)
         except OSError as e:
             release_single_instance()
             _msg(title, f"无法启动:\n{e}", error=True)
@@ -449,7 +566,8 @@ def main(argv: list[str] | None = None) -> int:
             if listen is not None and _port_open("127.0.0.1", listen):
                 continue
             try:
-                _spawn(cmd, home=home, env=env, log_name=name)
+                spawn_managed(name, cmd, home=home, env=env,
+                              log_name=name, listen=listen)
             except OSError:
                 _msg(title, f"无法启动 {name}", error=True)
 
@@ -468,11 +586,12 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             pass
         _CHILDREN.clear()  # do not kill on exit in no-tray mode
+        _MANAGED.clear()   # no supervision in no-tray mode
         release_single_instance()
         return 0
 
     run_tray._skip_auto_open = bool(args.no_browser)  # type: ignore[attr-defined]
-    return run_tray(title=title, url=url)
+    return run_tray(title=title, url=url, home=home)
 
 
 if __name__ == "__main__":

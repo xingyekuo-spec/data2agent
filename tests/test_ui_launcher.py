@@ -110,3 +110,53 @@ def test_missing_python_exits_2(tmp_path, monkeypatch):
 def test_port_open_localhost_negative():
     mod = _load_launcher()
     assert mod._port_open("127.0.0.1", 1) is False
+
+
+class _FakeProc:
+    """poll() returns None while 'alive', else an exit code."""
+
+    def __init__(self, alive: bool = True):
+        self._alive = alive
+
+    def poll(self):
+        return None if self._alive else 1
+
+
+def test_supervise_restarts_dead_worker(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    mod._MANAGED.clear()
+    dead = _FakeProc(alive=False)
+    mod._MANAGED.append({
+        "name": "connector", "cmd": ["x"], "home": tmp_path, "env": {},
+        "log_name": "connector", "listen": None, "proc": dead,
+        "restarts": 0, "window_start": 0.0, "failed": False,
+    })
+    spawned: list = []
+
+    def fake_spawn(cmd, *, home, env, log_name=None):
+        spawned.append(log_name)
+        return _FakeProc(alive=True)
+
+    monkeypatch.setattr(mod, "_spawn", fake_spawn)
+    mod.supervise_once(tmp_path)
+    assert spawned == ["connector"], "死掉的 worker 应被重启一次"
+    up, total, down = mod.health_summary()
+    assert up == 1 and total == 1 and down == []
+    mod._MANAGED.clear()
+
+
+def test_supervise_circuit_breaker(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    mod._MANAGED.clear()
+    mod._MANAGED.append({
+        "name": "mcp", "cmd": ["x"], "home": tmp_path, "env": {},
+        "log_name": "mcp", "listen": None, "proc": _FakeProc(alive=False),
+        "restarts": 0, "window_start": 9e18, "failed": False,  # 未来窗口:不重置计数
+    })
+    monkeypatch.setattr(mod, "_spawn",
+                        lambda cmd, **k: _FakeProc(alive=False))  # 每次重启即死
+    for _ in range(mod.SUPERVISE_MAX_RESTARTS + 2):
+        mod.supervise_once(tmp_path)
+    assert mod._MANAGED[0]["failed"] is True, "反复崩溃应触发熔断,停止重启"
+    assert mod._MANAGED[0]["restarts"] == mod.SUPERVISE_MAX_RESTARTS
+    mod._MANAGED.clear()
