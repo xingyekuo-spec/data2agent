@@ -187,6 +187,15 @@ def create_app(
     _log_path = Path(log_path) if log_path else (
         home_layout.logs_dir / "d2a-connector.log" if home_layout else None
     )
+    _log_dir = (
+        home_layout.logs_dir if home_layout is not None
+        else (_log_path.parent if _log_path is not None else None)
+    )
+    _LOG_FILES = {
+        "connector": "d2a-connector.log",   # 抽取 / 推送
+        "admin": "d2a-middle-admin.log",    # 管理界面自身(500 报错栈在此)
+        "launcher": "d2a-launcher.log",     # 便携包启动器:进程重启记录
+    }
 
     state = {"token": token}
 
@@ -330,20 +339,29 @@ def create_app(
         return build_status(reload_config())
 
     @api.get("/logs")
-    def get_logs(lines: int = 200, level: str | None = None) -> dict:
-        if _log_path is None:
-            return {"ok": False, "text": "未配置日志路径"}
+    def get_logs(service: str = "connector", lines: int = 200,
+                 level: str | None = None) -> dict:
         capped = max(1, min(lines, 1000))
-        ok, text = tail_lines(_log_path, lines=capped, level=level)
+        if service not in _LOG_FILES:
+            return {"ok": False,
+                    "text": f"未知服务 '{service}',可用:{sorted(_LOG_FILES)}"}
+        if _log_dir is not None:
+            path = _log_dir / _LOG_FILES[service]
+        elif service == "connector" and _log_path is not None:
+            path = _log_path
+        else:
+            return {"ok": False, "text": "未配置日志目录"}
+        ok, text = tail_lines(path, lines=capped, level=level)
         return {"ok": ok, "text": text}
 
     @api.post("/test-connection")
     def test_connection(body: TestConnectionBody = TestConnectionBody()) -> dict:
         cfg = reload_config()
-        pack = load_pack(cfg.templates)
-        name, scfg = _resolve_source(cfg, body.source)
         started = time.perf_counter()
         try:
+            # load_pack 可能因模板校验失败抛错 —— 须在 try 内,否则未捕获直接 500
+            pack = load_pack(cfg.templates)
+            name, scfg = _resolve_source(cfg, body.source)
             with ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(_probe_connection, name, scfg, pack, cfg.landing)
                 tables = future.result(timeout=10.0)
@@ -362,7 +380,10 @@ def create_app(
         if body.action != "sync":
             raise HTTPException(400, f"不支持的动作 '{body.action}'")
         cfg = reload_config()
-        pack = load_pack(cfg.templates)
+        try:
+            pack = load_pack(cfg.templates)
+        except Exception as e:
+            raise HTTPException(400, f"模板加载失败:{_sanitize_detail(str(e))}")
         name, scfg = _resolve_source(cfg, body.source)
         executed = run_sync_cycle(name, scfg, pack, cfg.landing)
         return {"action": "sync", "source": name, "executed": executed,

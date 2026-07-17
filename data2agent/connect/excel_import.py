@@ -161,9 +161,9 @@ def import_tabular(landing: LandingStore, tpl: ObjectTemplate, source: str,
     if missing_keys:
         raise ValueError(f"业务键 {missing_keys} 未被任何表头映射,无法幂等导入")
 
-    binding = next((b for b in tpl.bindings if b.source == source), None)
+    binding = next((b for b in tpl.bindings if b.source == source and b.enabled), None)
     if binding is None or not binding.tables:
-        raise ValueError(f"{tpl.object} 没有 source={source} 的 binding(或未声明锚表)")
+        raise ValueError(f"{tpl.object} 没有 source={source} 的可用 binding(或未声明锚表)")
     anchor = binding.tables[0]
 
     # raw 表结构由 binding 契约决定(而非本次文件恰好有哪些列):

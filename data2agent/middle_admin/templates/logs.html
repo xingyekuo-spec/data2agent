@@ -4,40 +4,53 @@
 <style>
   .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
         box-shadow:0 1px 3px rgba(16,34,54,.08)}
-  .card h2{font-size:15px;margin:0 0 12px;color:#12314f}
+  .card h2{font-size:15px;margin:0 0 6px;color:#12314f}
+  .card .hint{font-size:12px;color:#8a97a5;margin:0 0 12px}
   .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
   .toolbar label{font-size:13px;color:#51606f}
-  .toolbar input{padding:6px 8px;border:1px solid #d0d7de;border-radius:6px;width:80px}
+  .toolbar select,.toolbar input{padding:6px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:13px}
+  .toolbar input[type=number]{width:80px}
   pre.log-view{background:#0f1720;color:#e2e8f0;padding:12px;border-radius:8px;overflow:auto;
               font-size:12px;line-height:1.45;max-height:70vh;white-space:pre-wrap;margin:0}
 </style>
 
 <div class="card">
-  <h2>连接器日志</h2>
+  <h2>运行日志</h2>
+  <p class="hint">页面报错(如连接测试失败)时,先看「管理界面」日志里的报错栈;抽取/推送问题看「连接器」日志。</p>
   <div class="toolbar">
+    <label>日志
+      <select id="log-service">
+        <option value="connector" selected>连接器(抽取/推送)</option>
+        <option value="admin">管理界面(报错栈)</option>
+        <option value="launcher">启动器(重启记录)</option>
+      </select>
+    </label>
     <label>行数 <input type="number" id="log-lines" value="200" min="1" max="1000"></label>
     <label>级别过滤 <input type="text" id="log-level" placeholder="ERROR"></label>
     <button type="button" id="log-refresh">刷新</button>
   </div>
-  <pre id="log-output" class="log-view"
-       hx-get="/api/logs?lines=200"
-       hx-trigger="load"
-       hx-swap="none">加载中…</pre>
+  <pre id="log-output" class="log-view">加载中…</pre>
 </div>
 
 <script>
 (function () {
   var output = document.getElementById('log-output');
 
+  function authHeaders() {
+    var h = {};
+    var token = sessionStorage.getItem('d2a_token');
+    if (token) h['Authorization'] = 'Bearer ' + token;
+    return h;
+  }
+
   function loadLogs() {
+    var service = document.getElementById('log-service').value;
     var lines = document.getElementById('log-lines').value || '200';
     var level = document.getElementById('log-level').value.trim();
-    var url = '/api/logs?lines=' + encodeURIComponent(lines);
+    var url = '/api/logs?service=' + encodeURIComponent(service) +
+              '&lines=' + encodeURIComponent(lines);
     if (level) url += '&level=' + encodeURIComponent(level);
-    var headers = {};
-    var token = sessionStorage.getItem('d2a_token');
-    if (token) headers['Authorization'] = 'Bearer ' + token;
-    fetch(url, {headers: headers})
+    fetch(url, {headers: authHeaders()})
       .then(function (r) { return r.json(); })
       .then(function (body) {
         output.textContent = body.ok ? (body.text || '(空)') : (body.text || '读取失败');
@@ -46,15 +59,8 @@
   }
 
   document.getElementById('log-refresh').addEventListener('click', loadLogs);
-  document.body.addEventListener('htmx:afterOnLoad', function (e) {
-    if (e.detail.elt.id !== 'log-output') return;
-    try {
-      var body = JSON.parse(e.detail.xhr.responseText);
-      output.textContent = body.ok ? (body.text || '(空)') : (body.text || '读取失败');
-    } catch (err) {
-      output.textContent = e.detail.xhr.responseText;
-    }
-  });
+  document.getElementById('log-service').addEventListener('change', loadLogs);
+  loadLogs();
 })();
 </script>
 {% endblock %}

@@ -18,10 +18,11 @@
   <div class="toolbar">
     <label>服务
       <select id="log-service">
-        <option value="ingest">ingest</option>
-        <option value="apply">apply</option>
-        <option value="mcp">mcp</option>
-        <option value="console" selected>console</option>
+        <option value="ingest">ingest(接收)</option>
+        <option value="apply">apply(物化)</option>
+        <option value="mcp">mcp(网关)</option>
+        <option value="console" selected>console(管理界面)</option>
+        <option value="launcher">launcher(启动器/重启)</option>
       </select>
     </label>
     <label>行数 <input type="number" id="log-lines" value="200" min="1" max="1000"></label>

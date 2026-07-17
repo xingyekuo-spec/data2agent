@@ -77,16 +77,24 @@ class SourceBinding(BaseModel):
     遵循映射表达式文法(解析器见 data2agent/mapping.py):
     "表.字段"、"表.字段 (join 锚表.外键)"、"表.字段 (map 源值→对象值 / ...)"。
     derived 为派生属性的决策表(如订单业务状态),映射应用阶段执行。
+
+    status=disabled:现场该源暂无此表(如测试白名单缺 QUOTATION),整条 binding
+    停用 —— 不进白名单、不推导水位、不参与映射与查询,但模板仍可正常加载。
     """
 
     source: str                        # digiwin_yifei / digiwin_e10 / excel_* ...
     tables: list[str] = []
-    status: Literal["draft", "verified"] = "draft"
+    status: Literal["draft", "verified", "disabled"] = "draft"
     key_map: dict[str, str] = {}       # 对象 key -> 源字段
     field_map: dict[str, str] = {}     # 属性 -> 源字段/表达式
     derived: dict[str, DerivedField] = {}  # 属性 -> 决策表(锚表列驱动)
     watermark: Optional[str] = None    # 增量水位字段
     notes: str = ""
+
+    @property
+    def enabled(self) -> bool:
+        """禁用的 binding 不参与抽取 / 映射 / 查询。"""
+        return self.status != "disabled"
 
 
 class ObjectTemplate(BaseModel):

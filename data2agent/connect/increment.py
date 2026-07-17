@@ -31,7 +31,7 @@ def watermarks_from_pack(pack: TemplatePack, source: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for o in pack.objects:
         for b in o.bindings:
-            if b.source != source or not b.watermark:
+            if b.source != source or not b.watermark or not b.enabled:
                 continue
             expr = parse_field_expr(b.watermark)
             if expr.table in out and out[expr.table] != expr.column:

@@ -208,7 +208,7 @@ def stop_children() -> None:
 def _supervisor_log(home: Path, msg: str) -> None:
     try:
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n"
-        (home / "data" / "logs" / "launcher.log").open(
+        (home / "data" / "logs" / "d2a-launcher.log").open(
             "a", encoding="utf-8").write(line)
     except Exception:
         pass
@@ -444,7 +444,8 @@ def run_tray(*, title: str, url: str, home: Path | None = None) -> int:
             body = f"后台进程全部正常({up}/{total})。"
         else:
             body = (f"{up}/{total} 正常。\n异常:{', '.join(down)}\n\n"
-                    "日志见 data\\logs\\(launcher.log 记录重启)。")
+                    "日志见 data\\logs\\(d2a-launcher.log 记录重启),"
+                    "也可在管理界面「日志」页查看。")
         _msg(title, body)
 
     def on_quit(icon, item):  # noqa: ARG001
@@ -543,9 +544,10 @@ def main(argv: list[str] | None = None) -> int:
     admin_already_up = _port_open(host, port)
     if not admin_already_up:
         try:
+            admin_log = "d2a-console" if args.role == "platform" else "d2a-middle-admin"
             spawn_managed("admin",
                           [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]],
-                          home=home, env=env, log_name="admin", listen=port)
+                          home=home, env=env, log_name=admin_log, listen=port)
         except OSError as e:
             release_single_instance()
             _msg(title, f"无法启动:\n{e}", error=True)
@@ -567,7 +569,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             try:
                 spawn_managed(name, cmd, home=home, env=env,
-                              log_name=name, listen=listen)
+                              log_name=f"d2a-{name}", listen=listen)
             except OSError:
                 _msg(title, f"无法启动 {name}", error=True)
 

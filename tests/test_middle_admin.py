@@ -98,6 +98,27 @@ def test_logs_missing_file(middle_env):
     assert r.json()["ok"] is False
 
 
+def test_logs_unknown_service(middle_env):
+    client, _ = middle_env
+    r = client.get("/api/logs?service=bogus",
+                   headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False and "未知服务" in body["text"]
+
+
+def test_logs_admin_service_reads_own_log(middle_env, tmp_path):
+    client, _ = middle_env
+    # log_dir 由 log_path 推导(= c.log 所在目录 = tmp_path)
+    (tmp_path / "d2a-middle-admin.log").write_text(
+        "Traceback: boom\nERROR something\n", encoding="utf-8")
+    r = client.get("/api/logs?service=admin",
+                   headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and "Traceback" in body["text"]
+
+
 def test_trigger_sync_warns_or_runs(middle_env):
     client, _ = middle_env
     r = client.post("/api/actions/trigger", headers={"Authorization": "Bearer secret"},

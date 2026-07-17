@@ -71,6 +71,7 @@ _LOG_FILES = {
     "apply": "d2a-apply.log",
     "mcp": "d2a-mcp.log",
     "console": "d2a-console.log",
+    "launcher": "d2a-launcher.log",   # 便携包启动器:进程重启 / 崩溃记录
 }
 _MCP_TOOLS = frozenset({"query_objects", "query_metrics"})
 

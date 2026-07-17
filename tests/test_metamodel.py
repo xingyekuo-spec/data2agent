@@ -44,6 +44,38 @@ def test_bindings_start_as_draft():
     assert order.bindings and order.bindings[0].status == "draft"
 
 
+def test_binding_status_disabled_accepted():
+    """status=disabled 必须能通过 schema 校验(否则模板加载抛错 → API 500)。"""
+    from data2agent.metamodel.schema import SourceBinding
+
+    assert SourceBinding(source="e10", tables=["T"], status="disabled").enabled is False
+    assert SourceBinding(source="e10", tables=["T"]).enabled is True
+    with pytest.raises(Exception, match="disabled"):
+        SourceBinding(source="e10", tables=["T"], status="bogus")
+
+
+def test_disabled_binding_excluded_from_extraction():
+    """禁用 binding 不进白名单、不推导水位;共享表若另有启用 binding 仍保留。"""
+    from data2agent.connect.increment import watermarks_from_pack
+    from data2agent.connect.sync import whitelist_from_pack
+    from data2agent.metamodel.schema import TemplatePack
+
+    quotation = ObjectTemplate(
+        object="Q", display_name="报价", domain="销售", keys=["a"],
+        properties=[{"name": "a", "type": "string"}],
+        bindings=[{"source": "e10", "tables": ["QUOTATION", "CURRENCY"],
+                   "status": "disabled", "watermark": "QUOTATION.MODIFY_DATE"}],
+    )
+    currency = ObjectTemplate(
+        object="C", display_name="币别", domain="销售", keys=["a"],
+        properties=[{"name": "a", "type": "string"}],
+        bindings=[{"source": "e10", "tables": ["CURRENCY"], "status": "draft"}],
+    )
+    pack = TemplatePack(version="t", objects=[quotation, currency])
+    assert whitelist_from_pack(pack, "e10") == {"CURRENCY"}
+    assert watermarks_from_pack(pack, "e10") == {}
+
+
 def _tpl_with_derived(derived):
     return ObjectTemplate(
         object="D", display_name="派生", domain="销售", keys=["a"],

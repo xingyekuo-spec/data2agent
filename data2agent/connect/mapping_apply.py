@@ -75,7 +75,7 @@ def _coerce(prop, value):
 
 def apply_object(landing: LandingStore, tpl: ObjectTemplate, source: str,
                  threshold: float = DEFAULT_BREAKER_THRESHOLD) -> ObjectApplyResult:
-    binding = next((b for b in tpl.bindings if b.source == source), None)
+    binding = next((b for b in tpl.bindings if b.source == source and b.enabled), None)
     if binding is None or not binding.field_map:
         return ObjectApplyResult(tpl.object, 0, 0, 0, status="skipped(无可用 binding)")
 

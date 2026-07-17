@@ -83,9 +83,10 @@ class QueryService:
         tpl = next((o for o in self.pack.objects if o.object == object), None)
         if tpl is None:
             raise ValueError(f"未知对象 '{object}',可用:{sorted(self.pack.object_names())}")
-        binding = next((b for b in tpl.bindings if b.source == self.source), None)
+        binding = next((b for b in tpl.bindings
+                        if b.source == self.source and b.enabled), None)
         if binding is None:
-            raise ValueError(f"{object} 没有 source={self.source} 的 binding")
+            raise ValueError(f"{object} 没有 source={self.source} 的可用 binding")
 
         sql, params = self._object_sql(tpl, filters, order_by, desc, limit)
         con = self._connect()

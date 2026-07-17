@@ -15,7 +15,7 @@ def whitelist_from_pack(pack: TemplatePack, source: str) -> set[str]:
         t
         for o in pack.objects
         for b in o.bindings
-        if b.source == source
+        if b.source == source and b.enabled
         for t in b.tables
     }
 
