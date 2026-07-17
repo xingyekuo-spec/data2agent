@@ -65,15 +65,16 @@ data2agent 是一个**完整可用的产品**:把制造业 ERP 数据安全接�
 3. `quote_response_hours` 于启动周完成基线实测(MVP 验收指标);
 4. 接单评审卡通过老板测试:非技术人 30 秒看懂 Agent 干了什么。
 
-## 6. 路线与当前状态(2026-07-10)
+## 6. 路线与当前状态(2026-07-17)
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | ① 纵向切片 | 元模型 → E10 展厅模拟库 → 映射引擎首块 → MCP lite | ✅ |
 | ② 抽取框架 | 适配器 / 落地 / 增量 / 对账 / 隔离区 / 调度限流(docs 02,E1–E5) | ✅ |
 | ③ 展厅完整化 | docker compose 全链路 + 网关「说」档 + 接单评审演示链(docs 04) | ✅ |
+| ③′ 现场部署形态 | 便携包(`data2agent.exe`)+ 中间/平台 Jinja 管理界面 + 推送 runbook | ✅ |
 | ④ 现场验证 | 进厂核对字典、binding 置 verified、跑 MVP 验收 | 未开始(外部依赖) |
-| 持续 | 模板 5→18(按需)、金蝶 / 用友 binding(社区)、落地库 PG | 拉动式 |
+| 持续 | 模板 5→18(按需)、金蝶 / 用友 binding(社区)、落地库 PG、Vue console-ui | 拉动式 |
 
 ## 7. 文档索引
 
@@ -81,6 +82,7 @@ data2agent 是一个**完整可用的产品**:把制造业 ERP 数据安全接�
 - [02 抽取框架](02-extraction.md) —— ★ 详设,指导下一阶段编码
 - [03 MCP 网关](03-mcp-gateway.md) —— lite 现状 + 治理档位演进
 - [04 数字厂长展厅](04-showroom.md) —— 拓扑与演示链(粗颗粒)
-- [05 运维控制台](05-console.md) —— 运维界面(2026-07-15 前端独立项目)
+- [05 运维控制台](05-console.md) —— 运维 / 管理界面(Jinja 已落地;Vue `console-ui` 远期)
+- 现场 runbook:[便携包](../runbook/portable.md) · [推送验收](../runbook/push-validation.md)
 - [E10 参考表字典](../dict/digiwin_e10.md) —— 生成文件,勿手改
 - [接单评审演示脚本](../demo/quote-review.md)

@@ -22,7 +22,10 @@
 - **国产 ERP 连接器**:鼎捷 E10 / 易飞参考映射 + 表结构字典(持续积累于 [docs/dict](docs/dict/));
 - **制造业本体模板 + 元模型**:业务对象的声明式模板(YAML,首批 5 个 / 规划 18 个),`validate` 一键校验;
 - **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:数字必须溯源到真实查询,默认脱敏、口径警示内建),任何支持 MCP 的 Agent 五分钟接入;HTTP 部署默认强制 Token + 每工具限流 + 查询审计;
-- **运维控制台**:当前为内嵌单页(`data2agent/console/`,FastAPI + 零外部资源 HTML,5s 轮询刷新),仪表盘/抽取/对象/隔离/审计一览,一键执行同步/对账/重映射/隔离重试(动作与调度器同引擎,窗口白名单约束原样生效;可选 Token);独立前端(Vue 3 + Vite,`console-ui/`,多视图 + SSE)为规划方向,尚未落地;
+- **运维 / 管理界面**:平台 `console`(`:8849`)与中间 `middle_admin`(`:8851`)为 Jinja2+HTMX
+  管理页(配置白名单编辑、状态、日志、调试;浏览器首次配置);v0 内嵌运维单页保留在 `/v0`;
+  独立 Vue 前端(`console-ui/`)为远期规划。现场推荐[便携包](docs/runbook/portable.md)
+  双击 `data2agent.exe`,链路验收见 [push-validation](docs/runbook/push-validation.md);
 - **数字厂长展厅**:`docker compose up` 一键起 SQL Server 模拟工厂(渔具外销厂,E10 参考表形)+ 抽取常驻 + MCP(HTTP :8848)+ 运维控制台(:8849);接单评审演示链脚本版 / Agent 版双就绪。
 
 **安全承诺**:装进你内网、碰你数据库的每一行代码都在这个仓库里 —— 只读账号、白名单表、限时限流、错峰窗口,全部可审计,可逐行核对。
@@ -50,7 +53,9 @@ docker compose up --build   # 展厅一键版:SQL Server 模拟工厂 + 抽取�
 
 ## 设计文档
 
-产品定位、架构、各组件详设见 [docs/design](docs/design/00-overview.md)(00 总览 → 01 元模型 → 02 抽取框架 → 03 MCP 网关 → 04 展厅)。
+产品定位、架构、各组件详设见 [docs/design](docs/design/00-overview.md)(00 总览 → 01 元模型 → 02 抽取框架 → 03 MCP 网关 → 04 展厅 → 05 控制台)。
+
+现场拆机部署:[便携包](docs/runbook/portable.md) · [推送验收](docs/runbook/push-validation.md)。
 
 ## 边界(诚实声明)
 

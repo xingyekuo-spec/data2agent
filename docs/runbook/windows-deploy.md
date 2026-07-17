@@ -2,11 +2,15 @@
 
 > 适用:中间服务器 / 数据平台均为 Windows;E10 用 SQL Server 账号+密码认证
 > (不用集成认证)。原生 Windows 服务部署,不用 Docker,不拆包。
-> 前置概念与拓扑见 [push-validation.md](push-validation.md);本文档只讲 Windows 落地细节。
+> 前置概念、验收清单与**推荐现场形态**见 [push-validation.md](push-validation.md)
+> / [portable.md](portable.md)。
 >
-> **推荐现场形态:[便携包解压即用](portable.md)**(内嵌 runtime,双击 `data2agent.exe`)。  
-> 下文大量章节描述旧版 `C:\d2a` + 系统 Python + 离线 wheels,作深度排障与 NSSM 参考。
-> 只要操作清单:中间机 [install-middle.md](install-middle.md)·平台机 [install-platform.md](install-platform.md)。
+> **新现场请优先便携包**(内嵌 runtime,双击 `data2agent.exe`,浏览器首次配置)。  
+> 下文描述旧版 `C:\d2a` + 系统 Python + 离线 wheels + NSSM,作深度排障与「必须装成
+> Windows 服务」时的参考。操作清单备选:[install-middle.md](install-middle.md) ·
+> [install-platform.md](install-platform.md)。
+>
+> 配置优先用浏览器管理界面(`--home` → `/config`);`setup-*.ps1` 仅作备选。
 
 ---
 
@@ -123,7 +127,11 @@ pip download -d wheels-full --only-binary=:all: `
 
 ### 4.1 中间机 `C:\d2a\config\connect.yaml`
 
-> **推荐:用脚本生成,免手工填连接串**。运行包内含 `setup-middle.ps1`(在 `C:\d2a\app\setup-middle.ps1`)。
+> **推荐:浏览器首次配置** —— `python -m data2agent.middle_admin --home C:\d2a`,打开
+> `http://127.0.0.1:8851/config`(密码写入 `config\secrets.env`,不进 YAML)。
+> 便携包同理,见 [portable.md](portable.md)。
+>
+> 备选:用脚本生成。运行包内含 `setup-middle.ps1`(在 `C:\d2a\app\setup-middle.ps1`)。
 > 以**管理员身份**打开 PowerShell 执行(密码/token 安全提示输入,不落文件、不进历史):
 > ```powershell
 > C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer <ERP主机> -ErpDatabase <E10库> -ErpUser d2a_reader
@@ -171,7 +179,10 @@ sources:
 
 ### 4.3 平台机 `C:\d2a\config\platform.yaml`
 
-> **推荐:用脚本生成**。运行包内含 `setup-platform.ps1`(`C:\d2a\app\setup-platform.ps1`)。
+> **推荐:浏览器首次配置** —— `python -m data2agent.console --home C:\d2a`,打开
+> `http://127.0.0.1:8849/config`(Token 写入 `secrets.env`)。便携包同理。
+>
+> 备选:用脚本生成。运行包内含 `setup-platform.ps1`(`C:\d2a\app\setup-platform.ps1`)。
 > 以**管理员身份**执行(ingest token 提示输入、须与中间机一致;mcp/console token 自动生成并显示):
 > ```powershell
 > C:\d2a\app\setup-platform.ps1
@@ -188,7 +199,7 @@ sources:
     dsn_env: D2A_E10_DSN_PLACEHOLDER   # 平台机不设该变量也无妨:apply 不建 adapter
 ```
 
-平台机环境变量(用了上面的 `setup-platform.ps1` 可跳过 —— 脚本已写入三个 token):
+平台机环境变量(用了浏览器配置 / `setup-platform.ps1` 可跳过 —— 已写入 `secrets.env` 或机器级变量):
 ```powershell
 [Environment]::SetEnvironmentVariable("D2A_INGEST_TOKEN", "<与中间机同一串>", "Machine")
 [Environment]::SetEnvironmentVariable("D2A_MCP_TOKEN", "<随机长串>", "Machine")
@@ -218,10 +229,12 @@ C:\d2a\nssm\nssm.exe start <服务名>
 | 服务名 | AppParameters |
 | --- | --- |
 | `d2a-connector` | `-m data2agent.connect serve --config C:\d2a\config\connect.yaml` |
-| `d2a-middle-admin` | `-m data2agent.middle_admin --config C:\d2a\config\connect.yaml --host 0.0.0.0 --port 8851 --log-path C:\d2a\data\logs\d2a-connector.log` |
+| `d2a-middle-admin` | `-m data2agent.middle_admin --home C:\d2a --host 0.0.0.0 --port 8851` |
 
-> **Token 纪律:** `D2A_MIDDLE_ADMIN_TOKEN` 只设机器级环境变量,**不要**在 NSSM `AppParameters` 里写 `%D2A_MIDDLE_ADMIN_TOKEN%` 或 `--token ...` —— 服务进程继承 Machine env,`middle_admin` 自动读取。
-> 管理界面 `http://<中间机IP>:8851`,浏览器登录时用 setup 脚本输出的 Token。
+> **Token 纪律:** `D2A_MIDDLE_ADMIN_TOKEN` 只设机器级环境变量或写入 `C:\d2a\config\secrets.env`,
+> **不要**在 NSSM `AppParameters` 里写 `%D2A_MIDDLE_ADMIN_TOKEN%` 或 `--token ...` ——
+> `--home` 会加载 `secrets.env`,服务进程亦可继承 Machine env。
+> 管理界面 `http://<中间机IP>:8851`,浏览器登录时用首次配置 / setup 脚本输出的 Token。
 > 便携包请双击目录内唯一入口 `data2agent.exe`(见 [portable.md](portable.md))。
 > 防火墙:内网放行入站 **8851**(仅运维网段,不对公网)。
 
@@ -237,9 +250,10 @@ C:\d2a\venv\Scripts\python.exe -m data2agent.connect serve --config C:\d2a\confi
 | `d2a-ingest` | `-m data2agent.ingest --landing C:\d2a\data\factory.sqlite --host 0.0.0.0 --port 8850` |
 | `d2a-apply`  | `-m data2agent.connect apply --landing C:\d2a\data\factory.sqlite --templates C:\d2a\app\templates --every 1800` |
 | `d2a-mcp`    | `-m data2agent.mcp_server --db C:\d2a\data\factory.sqlite --templates C:\d2a\app\templates --transport http --host 0.0.0.0 --port 8848` |
-| `d2a-console`| `-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849 --log-dir C:\d2a\data\logs` |
+| `d2a-console`| `-m data2agent.console --home C:\d2a --host 0.0.0.0 --port 8849` |
 
-> 平台管理界面 `http://<平台机IP>:8849`,登录 Token 为机器级 `D2A_CONSOLE_TOKEN`(setup-platform 生成并显示)。旧版 JSON API 仍在 `/v0`。
+> 平台管理界面 `http://<平台机IP>:8849`,登录 Token 为 `D2A_CONSOLE_TOKEN`
+> (`secrets.env` 或机器级环境变量;setup-platform / 浏览器首次配置生成)。旧版运维单页仍在 `/v0`。
 > 便携包请双击目录内唯一入口 `data2agent.exe`(见 [portable.md](portable.md))。
 
 `d2a-apply` 用的 `--every 1800` 是常驻循环参数(每 30 分钟跑一轮 `raw_* → obj_*`)——
@@ -266,7 +280,10 @@ Windows 防火墙需放行:平台机入站 8850(ingest,仅对中间机 IP)、884
 
 ---
 
-## 7. 验收(对应 push-validation.md §4,Windows 版检查命令)
+## 7. 验收(对应 [push-validation.md §4](push-validation.md))
+
+优先用管理界面核对(中间 `:8851` / 平台 `:8849` 状态与日志),完整清单见 push-validation §4A。
+CLI 备查:
 
 ```powershell
 # 平台机:确认 raw 已落地

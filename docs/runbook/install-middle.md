@@ -1,6 +1,7 @@
 # 中间服务器安装步骤
 
 > **推荐新现场用便携包:**见 [portable.md](portable.md)(解压即用,无需系统 Python)。  
+> 链路验收见 [push-validation.md](push-validation.md)。  
 > 下文为旧版「系统 Python + venv + 离线 wheels」流程,仅作备选。
 > 平台机须先装好并启动 ingest(8850)。两台机使用**同一 Release 版本**。
 
@@ -77,3 +78,4 @@
     ```
 
 11. 管理界面验收:浏览器打开 `http://127.0.0.1:8851`(或便携包双击 `data2agent.exe`)。
+    完整推送链路验收见 [push-validation.md §4](push-validation.md)。
