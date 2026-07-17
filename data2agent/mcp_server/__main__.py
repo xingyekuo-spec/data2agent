@@ -13,6 +13,9 @@ from pathlib import Path
 
 
 def main() -> int:
+    from ..admin_common.secrets_file import load_home_secrets_if_present
+    load_home_secrets_if_present()
+
     ap = argparse.ArgumentParser(description="data2agent MCP Server(lite,只读 stdio)")
     ap.add_argument("--db", default="landing/factory.sqlite",
                     help="落地库路径(完整管道:seed → connect sync → connect apply)")
@@ -22,7 +25,7 @@ def main() -> int:
                     help="stdio(本机 Agent)/ http(streamable-http,内网 / 展厅 compose)")
     ap.add_argument("--host", default="127.0.0.1", help="http 模式监听地址")
     ap.add_argument("--port", type=int, default=8848, help="http 模式端口")
-    ap.add_argument("--token", default=os.environ.get("D2A_MCP_TOKEN", ""),
+    ap.add_argument("--token", default=None,
                     help="http 模式 Bearer Token(默认取环境变量 D2A_MCP_TOKEN)")
     ap.add_argument("--allow-anonymous", action="store_true",
                     help="http 模式免认证(仅限展厅演示;内网部署必须配 Token)")
@@ -31,6 +34,8 @@ def main() -> int:
     ap.add_argument("--audit-log", default=None,
                     help="查询审计 JSONL 路径(http 模式默认写在落地库旁;'off' 关闭)")
     args = ap.parse_args()
+    if args.token is None:
+        args.token = os.environ.get("D2A_MCP_TOKEN", "")
 
     if not Path(args.db).exists():
         ap.error(f"落地库不存在:{args.db}。展厅链路:python -m data2agent.showroom.seed && "

@@ -1,4 +1,4 @@
-"""中间机管理 FastAPI 应用:配置读写 + 调度状态 JSON API。"""
+"""中间机管理 FastAPI:配置 / 首次浏览器配置 / 状态 / 日志 / 调试。"""
 
 from __future__ import annotations
 
@@ -16,10 +16,17 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..admin_common.config_edit import MIDDLE_EDITABLE, merge_whitelist_and_save
+from ..admin_common.home_layout import HomeLayout
 from ..admin_common.logs import tail_lines
+from ..admin_common.secrets_file import apply_secrets_to_environ, save_secrets
+from ..admin_common.setup_yaml import (
+    build_middle_connect_yaml,
+    build_odbc_dsn,
+    write_yaml,
+)
 from ..connect.config import ConnectConfig, SourceConfig, load_config
 from ..connect.landing import LandingStore
 from ..connect.scheduler import build_adapter, run_sync_cycle
@@ -30,10 +37,10 @@ _PKG = Path(__file__).resolve().parent
 _ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
 _MIDDLE_TEMPLATES = _PKG / "templates"
 _ADMIN_STATIC = _ADMIN_TEMPLATES / "static"
+_LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
 def _make_templates() -> Jinja2Templates:
-    """双搜索路径: middle_admin/templates + admin_templates; admin/ 前缀继承基 layout。"""
     env = Environment(
         loader=ChoiceLoader([
             FileSystemLoader(str(_MIDDLE_TEMPLATES)),
@@ -60,6 +67,22 @@ class TestConnectionBody(BaseModel):
     source: str | None = None
 
 
+class SetupBody(BaseModel):
+    """浏览器首次/完整配置(替代 setup-middle.ps1)。密码只写入 secrets.env。"""
+    platform_url: str = Field(..., description="http://平台IP:8850")
+    erp_server: str
+    erp_database: str
+    erp_user: str
+    erp_password: str
+    erp_port: int = 1433
+    ingest_token: str
+    admin_token: str
+    sync_every: str = "30m"
+    lookback: str = "3d"
+    batch_size: int = 5000
+    rows_per_second: int = 2000
+
+
 _DSN_PATTERN = re.compile(
     r"(?i)(password\s*=|pwd\s*=|server\s*=|data\s+source\s*=|"
     r"uid\s*=|user\s+id\s*=|integrated\s+security|"
@@ -73,8 +96,13 @@ def _env_set(name: str | None) -> bool | None:
     return os.environ.get(name) is not None
 
 
+def _client_host(request: Request) -> str:
+    if request.client is None:
+        return ""
+    return request.client.host or ""
+
+
 def _config_subset(cfg: ConnectConfig) -> dict:
-    """可编辑字段 + 凭据环境变量是否已设置(不暴露值)。"""
     out: dict[str, Any] = {"templates": cfg.templates, "landing": cfg.landing, "sources": {}}
     for name, scfg in cfg.sources.items():
         src: dict[str, Any] = {
@@ -95,8 +123,7 @@ def _config_subset(cfg: ConnectConfig) -> dict:
 
 
 def _patch_to_dict(body: ConfigPatch) -> dict[str, Any]:
-    data = body.model_dump(exclude_none=True)
-    return data
+    return body.model_dump(exclude_none=True)
 
 
 def _resolve_source(cfg: ConnectConfig, source: str | None) -> tuple[str, SourceConfig]:
@@ -126,7 +153,6 @@ def _probe_connection(name: str, scfg: SourceConfig, pack, landing_path: str) ->
 
 
 def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict[str, str]]]:
-    """在临时副本上合并并 load_config,不写原文件。"""
     with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     shutil.copy2(path, tmp_path)
@@ -136,31 +162,77 @@ def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict
         tmp_path.unlink(missing_ok=True)
 
 
-def create_app(config_path: str | Path, token: str | None = None,
-               log_path: str | Path | None = None) -> FastAPI:
-    config_path = Path(config_path)
-    _log_path = Path(log_path) if log_path else None  # Task 4 使用
+def create_app(
+    config_path: str | Path | None = None,
+    token: str | None = None,
+    log_path: str | Path | None = None,
+    home: str | Path | None = None,
+) -> FastAPI:
+    """config_path 可空:配合 home 做浏览器首次配置(needs_setup)。"""
+    home_layout = HomeLayout.from_path(home) if home is not None else None
+    if home_layout is not None:
+        home_layout.ensure_dirs()
+        if home_layout.secrets_env.is_file():
+            apply_secrets_to_environ(home_layout.secrets_env)
+        if token is None:
+            token = os.environ.get("D2A_MIDDLE_ADMIN_TOKEN") or None
+
+    if config_path is not None:
+        cfg_path = Path(config_path)
+    elif home_layout is not None:
+        cfg_path = home_layout.connect_yaml
+    else:
+        raise ValueError("create_app 需要 config_path 或 home")
+
+    _log_path = Path(log_path) if log_path else (
+        home_layout.logs_dir / "d2a-connector.log" if home_layout else None
+    )
+
+    state = {"token": token}
+
+    def needs_setup() -> bool:
+        return not cfg_path.is_file()
 
     def auth(request: Request) -> None:
-        if not token:
+        path = request.url.path
+        # 首次配置:仅本机可无 Token 访问 setup / 读状态
+        if needs_setup():
+            if path in ("/api/setup", "/api/setup/status") or path.startswith("/api/setup"):
+                if _client_host(request) not in _LOOPBACK:
+                    raise HTTPException(403, "首次配置仅允许本机访问")
+                return
+            if path in ("/config", "/", "/status", "/logs") or path.startswith("/static"):
+                return
+            raise HTTPException(409, "尚未完成首次配置,请打开 /config")
+
+        tok = state["token"]
+        if not tok:
             return
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip() \
             or request.query_params.get("token", "")
-        if supplied != token:
+        if supplied != tok:
             raise HTTPException(401, "需要有效的管理 Token(Authorization: Bearer <token>)")
 
     def reload_config() -> ConnectConfig:
-        return load_config(config_path)
+        if needs_setup():
+            raise HTTPException(409, "尚未完成首次配置")
+        return load_config(cfg_path)
 
     app = FastAPI(title="data2agent 中间机管理")
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
     templates = _make_templates()
 
     def page_ctx(request: Request) -> dict[str, Any]:
-        return {"static_url": "/static", "needs_token": bool(token)}
+        return {
+            "static_url": "/static",
+            "needs_token": bool(state["token"]) and not needs_setup(),
+            "needs_setup": needs_setup(),
+        }
 
     @app.get("/")
     def index() -> RedirectResponse:
+        if needs_setup():
+            return RedirectResponse("/config", status_code=302)
         return RedirectResponse("/status", status_code=302)
 
     @app.get("/status", response_class=HTMLResponse)
@@ -175,20 +247,82 @@ def create_app(config_path: str | Path, token: str | None = None,
     def logs_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "logs.html", page_ctx(request))
 
+    @api.get("/setup/status")
+    def setup_status() -> dict:
+        return {
+            "needs_setup": needs_setup(),
+            "config_path": str(cfg_path),
+            "home": str(home_layout.root) if home_layout else None,
+        }
+
+    @api.post("/setup")
+    def run_setup(body: SetupBody, request: Request) -> dict:
+        if _client_host(request) not in _LOOPBACK:
+            raise HTTPException(403, "首次配置仅允许本机访问")
+        if home_layout is None:
+            raise HTTPException(400, "未启用 --home,无法浏览器首次配置")
+        if not body.platform_url.startswith("http"):
+            return {"ok": False, "errors": [{"field": "platform_url", "message": "须为 http(s) URL"}]}
+        if not body.admin_token.strip() or not body.ingest_token.strip():
+            return {"ok": False, "errors": [{"field": "token", "message": "Token 不能为空"}]}
+
+        home_layout.ensure_dirs()
+        data = build_middle_connect_yaml(
+            home_layout,
+            platform_url=body.platform_url,
+            sync_every=body.sync_every,
+            lookback=body.lookback,
+            batch_size=body.batch_size,
+            rows_per_second=body.rows_per_second,
+        )
+        # 校验可加载(凭据在 env)
+        dsn = build_odbc_dsn(
+            server=body.erp_server,
+            database=body.erp_database,
+            user=body.erp_user,
+            password=body.erp_password,
+            port=body.erp_port,
+        )
+        save_secrets(home_layout.secrets_env, {
+            "D2A_E10_DSN": dsn,
+            "D2A_INGEST_TOKEN": body.ingest_token.strip(),
+            "D2A_MIDDLE_ADMIN_TOKEN": body.admin_token.strip(),
+        })
+        apply_secrets_to_environ(home_layout.secrets_env)
+        write_yaml(cfg_path, data)
+        try:
+            load_config(cfg_path)
+        except Exception as e:
+            cfg_path.unlink(missing_ok=True)
+            return {"ok": False, "errors": [{"field": "", "message": str(e)}]}
+
+        state["token"] = body.admin_token.strip()
+        return {
+            "ok": True,
+            "restart_required": True,
+            "message": "配置已写入。请用刚设置的管理 Token 登录;"
+                       "抽取服务(d2a-connector)需另行启动或重启后生效。",
+            "admin_token_hint": "已保存到 config/secrets.env(D2A_MIDDLE_ADMIN_TOKEN)",
+        }
+
     @api.get("/config")
     def get_config() -> dict:
-        return _config_subset(reload_config())
+        if needs_setup():
+            return {"needs_setup": True, "sources": {}}
+        out = _config_subset(reload_config())
+        out["needs_setup"] = False
+        return out
 
     @api.post("/config")
     def post_config(body: ConfigPatch) -> dict:
         patch = _patch_to_dict(body)
         ok, errors = merge_whitelist_and_save(
-            config_path, MIDDLE_EDITABLE, patch, validate=load_config)
-        return {"ok": ok, "errors": errors}
+            cfg_path, MIDDLE_EDITABLE, patch, validate=load_config)
+        return {"ok": ok, "errors": errors, "restart_required": True}
 
     @api.post("/config/validate")
     def validate_config(body: ConfigPatch) -> dict:
-        ok, errors = _validate_merged(config_path, _patch_to_dict(body))
+        ok, errors = _validate_merged(cfg_path, _patch_to_dict(body))
         return {"ok": ok, "errors": errors}
 
     @api.get("/status")
@@ -236,6 +370,17 @@ def create_app(config_path: str | Path, token: str | None = None,
                 "note": "" if executed else "错峰窗口外,未发起(窗口约束同样生效)"}
 
     app.include_router(api)
+    # HTML 也走轻量检查:首次配置时放行
+    @app.middleware("http")
+    async def _html_gate(request: Request, call_next):
+        if request.url.path.startswith("/api"):
+            return await call_next(request)
+        if needs_setup() and request.url.path not in (
+            "/config", "/", "/status", "/logs"
+        ) and not request.url.path.startswith("/static"):
+            return RedirectResponse("/config")
+        return await call_next(request)
+
     if _ADMIN_STATIC.is_dir():
         app.mount("/static", StaticFiles(directory=_ADMIN_STATIC), name="static")
     return app

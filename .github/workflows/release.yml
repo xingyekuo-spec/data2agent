@@ -1,11 +1,6 @@
 name: release
-# 打 tag(v*)或手动触发 → 测试通过后,打出两台 Windows 机各自的离线运行包,上传 GitHub Release。
-# 工厂内网无需访问 GitHub:在一台联网机下载 Release 附件,U 盘 / 内网共享拷到两台即可离线安装。
-#
-# 打包 job 跑在 windows-latest:pip download 直接在真实 Windows/py3.14 环境解析,
-# 环境标记(platform_system=="Windows")与 wheel 标签均原生匹配,自动带上 Windows
-# 专属条件依赖(如 tzlocal→tzdata、click→colorama)。切勿改回 Linux + --platform:
-# --platform 只影响 wheel 兼容标签,不会按目标平台评估 marker,会漏掉这些依赖。
+# 打 tag(v*)或手动触发 → 测试通过后,打出两台 Windows 便携包(解压即用),上传 GitHub Release。
+# 每个便携包只有一个入口:data2agent.exe
 on:
   push:
     tags: ["v*"]
@@ -16,19 +11,17 @@ on:
         required: false
         default: ""
       py_version:
-        description: "目标 Python 版本(须与生产机一致;编译 wheel 绑定此版本)"
+        description: "目标 Python 版本(须与 embeddable / wheel 一致)"
         required: false
         default: "3.14"
 
 permissions:
-  contents: write        # 创建 Release、上传附件需要
+  contents: write
 
 env:
-  # 生产机 Python 版本 —— 打包机(windows runner)按此版本装 Python 并原生下载 wheel,两台机须一致。
   PY_VERSION: ${{ github.event.inputs.py_version || '3.14' }}
 
 jobs:
-  # 打包前先跑测试,坏版本不发布
   test:
     runs-on: ubuntu-latest
     steps:
@@ -44,7 +37,7 @@ jobs:
 
   package:
     needs: test
-    runs-on: windows-latest      # 原生 Windows:pip download 正确解析 win_amd64 wheel 与平台条件依赖
+    runs-on: windows-latest
     defaults:
       run:
         shell: pwsh
@@ -67,119 +60,68 @@ jobs:
             "version=manual-$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           }
 
-      - name: 构建 wheel + sdist
+      - name: 构建 wheel + 启动器 exe
         run: |
           python -m pip install --upgrade pip build
-          python -m build            # 产出 dist/*.whl 与 dist/*.tar.gz(纯 Python,跨平台通用)
+          python -m build
+          .\deploy\build_ui_launchers.ps1 -OutDir dist/launchers
 
-      # 组装运行包骨架:代码 + 模板 + 配置样例(不含 tests/docs/deploy)
-      - name: 组装运行包骨架
+      - name: 下载依赖并组装中间机便携包
         run: |
-          New-Item -ItemType Directory -Force -Path stage | Out-Null
-          Copy-Item -Recurse -Force data2agent stage/
-          Copy-Item -Recurse -Force templates stage/
-          Copy-Item -Force pyproject.toml,README.md,connect.example.yaml stage/
-          Copy-Item -Force deploy/setup-middle.ps1,deploy/setup-platform.ps1 stage/   # 配置生成脚本(防手工误操作)
-
-      # 离线依赖:原生 Windows 下载(生产机为 Windows,不能用 Linux wheel)
-      - name: 下载 Windows 离线依赖(中间机 / connect)
-        run: |
-          python -m pip download --dest stage/wheels --only-binary=:all: `
+          $v = "${{ steps.ver.outputs.version }}"
+          $py = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
+          New-Item -ItemType Directory -Force -Path stage/wheels-middle | Out-Null
+          python -m pip download --dest stage/wheels-middle --only-binary=:all: `
             "setuptools>=68" "wheel" `
             "pydantic>=2.7" "pyyaml>=6.0" `
             "pyodbc>=5.1" "apscheduler>=3.10" `
             "fastapi>=0.110" "uvicorn>=0.29" "jinja2>=3.0" "markupsafe"
-          # setuptools/wheel:-e 可编辑安装会触发 PEP517 构建,离线时需从本地 wheels 取构建依赖。
-          # apscheduler→tzlocal→tzdata(Windows)会被原生自动带上。
-          # middle_admin extra 需要 fastapi/uvicorn/jinja2;markupsafe 为 jinja2 运行时依赖,显式打入离线包。
+          .\deploy\build_portable.ps1 -Role middle -Version $v `
+            -OutDir dist/portable -WheelsDir stage/wheels-middle -PyFullVersion $py `
+            -LauncherExe dist/launchers/middle/data2agent.exe
+          Copy-Item "dist/portable/d2a-portable-middle-$v.zip" .
 
-      - name: 打中间机运行包
+      - name: 下载依赖并组装平台机便携包
         run: |
           $v = "${{ steps.ver.outputs.version }}"
-          $dir = "d2a-runtime-connect-$v"
-          Copy-Item -Recurse -Force stage $dir
-          @'
-          中间服务器离线安装(Windows PowerShell,Python 3.14 64 位 已装):
-            python -m venv C:\d2a\venv
-            C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[connect,middle_admin]
-          另需装 ODBC Driver 18 for SQL Server(连 E10)。
-          安装完成后可双击 Release 中的 d2a-middle-ui.exe 打开管理界面(浏览器 http://127.0.0.1:8851 )。
-          完整步骤见仓库 docs/runbook/windows-deploy.md。
-          '@ | Set-Content -Path "$dir/INSTALL-connect.txt" -Encoding utf8
-          Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip" -Force
-
-      - name: 下载 Windows 离线依赖(平台机 / 全套接收端)
-        run: |
-          Remove-Item -Recurse -Force stage/wheels
-          python -m pip download --dest stage/wheels --only-binary=:all: `
+          $py = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
+          New-Item -ItemType Directory -Force -Path stage/wheels-platform | Out-Null
+          python -m pip download --dest stage/wheels-platform --only-binary=:all: `
             "setuptools>=68" "wheel" `
             "pydantic>=2.7" "pyyaml>=6.0" `
             "pyodbc>=5.1" "apscheduler>=3.10" `
             "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29" "jinja2>=3.0" "markupsafe"
-          # uvicorn→click→colorama(Windows)会被原生自动带上。
-          # console extra 需要 jinja2;markupsafe 显式打入以防离线解析遗漏。
+          .\deploy\build_portable.ps1 -Role platform -Version $v `
+            -OutDir dist/portable -WheelsDir stage/wheels-platform -PyFullVersion $py `
+            -LauncherExe dist/launchers/platform/data2agent.exe
+          Copy-Item "dist/portable/d2a-portable-platform-$v.zip" .
 
-      - name: 打平台机运行包
-        run: |
-          $v = "${{ steps.ver.outputs.version }}"
-          $dir = "d2a-runtime-platform-$v"
-          Copy-Item -Recurse -Force stage $dir
-          @'
-          数据平台离线安装(Windows PowerShell,Python 3.14 64 位 已装):
-            python -m venv C:\d2a\venv
-            C:\d2a\venv\Scripts\pip install --no-index --find-links=wheels -e .[ingest,connect,mcp,console]
-          平台机不连 ERP,无需 ODBC 驱动。
-          安装完成后可双击 d2a-platform-ui.exe 打开管理界面(浏览器 http://127.0.0.1:8849 )。
-          完整步骤见仓库 docs/runbook/windows-deploy.md。
-          '@ | Set-Content -Path "$dir/INSTALL-platform.txt" -Encoding utf8
-          Compress-Archive -Path "$dir/*" -DestinationPath "$dir.zip" -Force
-
-      - name: 构建管理界面启动器 exe
-        run: |
-          .\deploy\build_ui_launchers.ps1 -OutDir dist/launchers
-          $v = "${{ steps.ver.outputs.version }}"
-          # 分别放进两台机运行包旁,便于单独下载;并拷进 zip 需重打则附独立附件即可
-          Copy-Item dist/launchers/d2a-middle-ui.exe "d2a-middle-ui-$v.exe"
-          Copy-Item dist/launchers/d2a-platform-ui.exe "d2a-platform-ui-$v.exe"
-
-      # 手动触发也能拿到产物(不创建 Release)
       - name: 上传构建产物(workflow_dispatch)
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
         with:
-          name: d2a-runtime-${{ steps.ver.outputs.version }}
+          name: d2a-portable-${{ steps.ver.outputs.version }}
           path: |
-            d2a-runtime-connect-${{ steps.ver.outputs.version }}.zip
-            d2a-runtime-platform-${{ steps.ver.outputs.version }}.zip
-            d2a-middle-ui-${{ steps.ver.outputs.version }}.exe
-            d2a-platform-ui-${{ steps.ver.outputs.version }}.exe
-            dist
+            d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
+            d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
 
-      # 打 tag 时创建 Release 并附上运行包(私有仓库:仅有权限者可下载)
       - name: 创建 Release 并上传附件(tag)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            d2a-runtime-connect-${{ steps.ver.outputs.version }}.zip
-            d2a-runtime-platform-${{ steps.ver.outputs.version }}.zip
-            d2a-middle-ui-${{ steps.ver.outputs.version }}.exe
-            d2a-platform-ui-${{ steps.ver.outputs.version }}.exe
-            dist/*.whl
-            dist/*.tar.gz
+            d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
+            d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
           generate_release_notes: true
           body: |
-            ## data2agent ${{ steps.ver.outputs.version }} 离线运行包
+            ## data2agent ${{ steps.ver.outputs.version }} 便携包
 
-            工厂内网离线部署(两台 Windows):在联网机下载附件,拷到目标机离线安装。
+            解压 → 双击 **`data2agent.exe`**(唯一入口)。
 
-            | 附件 | 用途 | 安装 extras |
-            | --- | --- | --- |
-            | `d2a-runtime-connect-*.zip` | 中间服务器(抽取 + 推送 + 管理界面) | `.[connect,middle_admin]` |
-            | `d2a-runtime-platform-*.zip` | 数据平台(接收 + apply + MCP + 控制台) | `.[ingest,connect,mcp,console]` |
-            | `d2a-middle-ui-*.exe` | 中间机:双击启动管理 UI 并打开浏览器(:8851) | 需已安装 connect 包 |
-            | `d2a-platform-ui-*.exe` | 平台机:双击启动管理 UI 并打开浏览器(:8849) | 需已安装 platform 包 |
+            | 附件 | 用途 |
+            | --- | --- |
+            | `d2a-portable-middle-*.zip` | 中间服务器 |
+            | `d2a-portable-platform-*.zip` | 数据平台 |
 
-            每个 zip 解压后 `pyproject.toml`/`data2agent/`/`templates/`/`wheels/` 直接在根目录。
-            **生产机须装 Python 3.14 64 位**(编译 wheel 绑定该版本)。
-            完整部署步骤见 `docs/runbook/windows-deploy.md`。
+            首次打开浏览器完成配置;之后同一次双击会拉起后台服务。  
+            中间机另需 **ODBC Driver 18** MSI。详见 `docs/runbook/portable.md`。

@@ -1,7 +1,8 @@
 # 数据平台安装步骤
 
-> 仅本机操作。**先完成本机并启动 ingest**,再让中间机推送。两台机使用**同一 Release 版本**。
-> 详解见 [windows-deploy.md](windows-deploy.md)。本机不连 ERP,无需 ODBC。
+> **推荐新现场用便携包:**见 [portable.md](portable.md)(解压即用,无需系统 Python)。  
+> 下文为旧版「系统 Python + venv + 离线 wheels」流程,仅作备选。  
+> **先完成本机并启动 ingest**,再让中间机推送。两台机使用**同一 Release 版本**。本机不连 ERP,无需 ODBC。
 
 1. 安装 **Python 3.14 官方 64 位**(勾选 Add to PATH)。
 
@@ -20,18 +21,21 @@
    C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[ingest,connect,mcp,console]
    ```
 
-5. **管理员** PowerShell 生成配置并写入 token(按提示输入 ingest token;mcp/console token 自动生成并显示,请记下)。
-   若报「在此系统上禁止运行脚本」,在同一管理员窗口先放行当前用户再执行:
+5. **首次配置(推荐浏览器,无需 PowerShell 脚本):**
+   ```powershell
+   C:\d2a\venv\Scripts\python.exe -m data2agent.console --home C:\d2a --host 127.0.0.1 --port 8849
+   ```
+   浏览器打开 `http://127.0.0.1:8849/config`,填写 ingest Token(与中间机一致)及管理 Token。
+   MCP Token 可留空自动生成。写入 `C:\d2a\config\platform.yaml` + `secrets.env`。
+   便携包现场请用 [portable.md](portable.md) 的 `data2agent.exe`。
+
+   备选(管理员 PowerShell 脚本):
    ```powershell
    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
    C:\d2a\app\setup-platform.ps1
    ```
-   或单次绕过(不改策略):
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File C:\d2a\app\setup-platform.ps1
-   ```
 
-6. **新开**普通 PowerShell 窗口(机器级环境变量对新进程生效)。
+6. **新开**普通 PowerShell 窗口(若用了脚本写的机器级环境变量)。浏览器配置写入 `secrets.env`;NSSM 服务需能读到 `D2A_INGEST_TOKEN` 等(机器级或启动前加载)。
 
 7. 先手动启动接收端(中间机推送依赖此进程):
    ```powershell
@@ -81,7 +85,7 @@
 
     # d2a-console
     C:\d2a\nssm\nssm.exe install d2a-console C:\d2a\venv\Scripts\python.exe
-    C:\d2a\nssm\nssm.exe set d2a-console AppParameters "-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849 --log-dir C:\d2a\data\logs"
+    C:\d2a\nssm\nssm.exe set d2a-console AppParameters "-m data2agent.console --home C:\d2a --host 0.0.0.0 --port 8849"
     C:\d2a\nssm\nssm.exe set d2a-console AppDirectory C:\d2a\app
     C:\d2a\nssm\nssm.exe set d2a-console AppStdout C:\d2a\data\logs\d2a-console.log
     C:\d2a\nssm\nssm.exe set d2a-console AppStderr C:\d2a\data\logs\d2a-console.log
@@ -93,8 +97,4 @@
     C:\d2a\nssm\nssm.exe start d2a-console
     ```
 
-12. 管理界面验收(浏览器,setup-platform 输出的 `D2A_CONSOLE_TOKEN` 登录):
-    - **推荐**:双击 Release 附件 `d2a-platform-ui.exe`(可拷到桌面)。会启动管理服务并自动打开浏览器 `http://127.0.0.1:8849`
-    - 或手动打开 `http://<本机内网IP>:8849`(若已用 NSSM 常驻 `d2a-console`)
-    - 仪表盘/配置/日志/调试页可用;旧版 JSON API 仍在 `/v0`
-    - 说明:exe 是**启动器**,不替代离线 zip 安装;须已存在 `C:\d2a\venv` 与 `C:\d2a\config\platform.yaml`
+12. 管理界面验收:浏览器打开 `http://127.0.0.1:8849`(或便携包双击 `data2agent.exe`)。

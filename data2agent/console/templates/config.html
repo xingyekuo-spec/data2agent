@@ -7,25 +7,42 @@
   .card h2{font-size:15px;margin:0 0 14px;color:#12314f}
   .field{display:block;margin-bottom:12px}
   .field-label{display:block;font-size:13px;color:#51606f;margin-bottom:4px}
-  .field input[type=text]{width:100%;max-width:520px;box-sizing:border-box;
+  .field input[type=text],.field input[type=password]{
+    width:100%;max-width:520px;box-sizing:border-box;
     padding:8px 10px;border:1px solid #d0d7de;border-radius:6px;font-size:14px}
   .banner{background:#e8f4fd;border:1px solid #b6d9f5;color:#0b4a6f;border-radius:8px;
           padding:12px 14px;margin-bottom:16px;font-size:13px}
+  .banner.warn{background:#fff8e6;border-color:#f0d78c;color:#6b5200}
   .banner code{background:#fff;padding:2px 6px;border-radius:4px}
   .errors{color:#b42318;font-size:13px;margin-top:8px}
 </style>
+
+<div id="setup-banner" class="banner warn" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
+  首次使用:请填写与中间机一致的 ingest Token,以及本机管理/MCP Token。
+  保存后写入 <code>config/platform.yaml</code> 与 <code>config/secrets.env</code>,无需运行 PowerShell 脚本。
+</div>
 
 <div id="restart-banner" class="banner" style="display:none">
   配置已保存。请重启相关服务使变更生效:
   <code>nssm restart d2a-ingest</code> ·
   <code>nssm restart d2a-apply</code> ·
   <code>nssm restart d2a-mcp</code>
-  （或通过 Windows 服务管理器重启对应服务）
 </div>
 
-<form id="config-form" class="card">
+<form id="setup-form" class="card" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
+  <h2>首次配置</h2>
+  <label class="field"><span class="field-label">平台 ingest Token (与中间机一致)</span>
+    <input type="password" name="ingest_token" required></label>
+  <label class="field"><span class="field-label">本机管理界面 Token (登录用)</span>
+    <input type="password" name="console_token" required></label>
+  <label class="field"><span class="field-label">MCP Token (可留空自动生成)</span>
+    <input type="password" name="mcp_token" placeholder="留空则自动生成"></label>
+  <div id="setup-errors" class="errors"></div>
+  <button type="submit">保存并启用</button>
+</form>
+
+<form id="config-form" class="card" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
   <h2>platform.yaml 可编辑字段</h2>
-  {% from "form_macros.html" import text_input %}
   <label class="field">
     <span class="field-label">templates 路径</span>
     <input type="text" name="templates" id="cfg-templates">
@@ -40,6 +57,8 @@
 
 <script>
 (function () {
+  var needsSetup = {{ 'true' if needs_setup else 'false' }};
+
   function authHeaders() {
     var h = {'Content-Type': 'application/json'};
     var token = sessionStorage.getItem('d2a_token');
@@ -51,14 +70,38 @@
     fetch('/api/config', {headers: authHeaders()})
       .then(function (r) { return r.json(); })
       .then(function (data) {
+        if (data.needs_setup) return;
         document.getElementById('cfg-templates').value = data.templates || '';
         document.getElementById('cfg-landing').value = data.landing || '';
       })
       .catch(function () {
         document.getElementById('config-errors').textContent =
-          '无法加载配置(需要 --config 且已认证)';
+          '无法加载配置(需要 --config/--home 且已认证)';
       });
   }
+
+  document.getElementById('setup-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var fd = new FormData(ev.target);
+    var body = {};
+    fd.forEach(function (v, k) { body[k] = v; });
+    if (!body.mcp_token) delete body.mcp_token;
+    fetch('/api/setup', {method: 'POST', headers: authHeaders(), body: JSON.stringify(body)})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var err = document.getElementById('setup-errors');
+        if (!j.ok) {
+          err.textContent = (j.errors || []).map(function (e) { return e.message; }).join('; ') || '保存失败';
+          return;
+        }
+        err.textContent = '';
+        if (body.console_token) sessionStorage.setItem('d2a_token', body.console_token);
+        var b = document.getElementById('restart-banner');
+        b.style.display = 'block';
+        b.textContent = j.message || '配置已保存';
+        setTimeout(function () { location.href = '/'; }, 800);
+      });
+  });
 
   document.getElementById('config-form').addEventListener('submit', function (e) {
     e.preventDefault();
@@ -83,7 +126,7 @@
       });
   });
 
-  loadConfig();
+  if (!needsSetup) loadConfig();
 })();
 </script>
 {% endblock %}

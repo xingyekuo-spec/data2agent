@@ -3,6 +3,9 @@
 > 适用:中间服务器 / 数据平台均为 Windows;E10 用 SQL Server 账号+密码认证
 > (不用集成认证)。原生 Windows 服务部署,不用 Docker,不拆包。
 > 前置概念与拓扑见 [push-validation.md](push-validation.md);本文档只讲 Windows 落地细节。
+>
+> **推荐现场形态:[便携包解压即用](portable.md)**(内嵌 runtime,双击 `data2agent.exe`)。  
+> 下文大量章节描述旧版 `C:\d2a` + 系统 Python + 离线 wheels,作深度排障与 NSSM 参考。
 > 只要操作清单:中间机 [install-middle.md](install-middle.md)·平台机 [install-platform.md](install-platform.md)。
 
 ---
@@ -219,7 +222,7 @@ C:\d2a\nssm\nssm.exe start <服务名>
 
 > **Token 纪律:** `D2A_MIDDLE_ADMIN_TOKEN` 只设机器级环境变量,**不要**在 NSSM `AppParameters` 里写 `%D2A_MIDDLE_ADMIN_TOKEN%` 或 `--token ...` —— 服务进程继承 Machine env,`middle_admin` 自动读取。
 > 管理界面 `http://<中间机IP>:8851`,浏览器登录时用 setup 脚本输出的 Token。
-> 也可双击 Release 附件 `d2a-middle-ui.exe`(启动器:拉起管理服务并打开本机浏览器;须已装好 venv+connect.yaml)。
+> 便携包请双击目录内唯一入口 `data2agent.exe`(见 [portable.md](portable.md))。
 > 防火墙:内网放行入站 **8851**(仅运维网段,不对公网)。
 
 先手动验证一轮再装服务:
@@ -237,7 +240,7 @@ C:\d2a\venv\Scripts\python.exe -m data2agent.connect serve --config C:\d2a\confi
 | `d2a-console`| `-m data2agent.console --config C:\d2a\config\platform.yaml --host 0.0.0.0 --port 8849 --log-dir C:\d2a\data\logs` |
 
 > 平台管理界面 `http://<平台机IP>:8849`,登录 Token 为机器级 `D2A_CONSOLE_TOKEN`(setup-platform 生成并显示)。旧版 JSON API 仍在 `/v0`。
-> 也可双击 Release 附件 `d2a-platform-ui.exe`(启动器;须已装好 venv+platform.yaml)。
+> 便携包请双击目录内唯一入口 `data2agent.exe`(见 [portable.md](portable.md))。
 
 `d2a-apply` 用的 `--every 1800` 是本次新加的常驻循环参数(每 30 分钟跑一轮 `raw_* → obj_*`)——
 拆机部署下 `ingest` 只负责接收落地,没有进程会周期性物化对象层,这个服务补上这个缺口。

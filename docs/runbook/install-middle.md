@@ -1,7 +1,8 @@
 # 中间服务器安装步骤
 
-> 仅本机操作。平台机须先装好并启动 ingest(8850)。两台机使用**同一 Release 版本**。
-> 详解见 [windows-deploy.md](windows-deploy.md)。
+> **推荐新现场用便携包:**见 [portable.md](portable.md)(解压即用,无需系统 Python)。  
+> 下文为旧版「系统 Python + venv + 离线 wheels」流程,仅作备选。
+> 平台机须先装好并启动 ingest(8850)。两台机使用**同一 Release 版本**。
 
 1. 安装 **Python 3.14 官方 64 位**(勾选 Add to PATH)。
 
@@ -25,21 +26,25 @@
    C:\d2a\venv\Scripts\pip.exe install --no-index --find-links=C:\d2a\app\wheels -e C:\d2a\app[connect,middle_admin]
    ```
 
-6. **管理员** PowerShell 生成配置并写入凭据(按提示输入 ERP 密码、与平台一致的 ingest token)。
-   若报「在此系统上禁止运行脚本」,先执行 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`。
-   命名实例(如 `HOST\SQLEXPRESS`)请给 `-ErpServer` 加引号;脚本会自动省略端口:
+6. **首次配置(推荐浏览器,无需 PowerShell 脚本):**
+   ```powershell
+   C:\d2a\venv\Scripts\python.exe -m data2agent.middle_admin --home C:\d2a --host 127.0.0.1 --port 8851
+   ```
+   浏览器打开 `http://127.0.0.1:8851/config`,填写平台 URL、ERP、ingest/管理 Token。
+   配置写入 `C:\d2a\config\connect.yaml` + `C:\d2a\config\secrets.env`(密码不进 YAML)。
+   便携包现场请用 [portable.md](portable.md) 的 `data2agent.exe`。
+
+   备选(管理员 PowerShell 脚本,仍可用):
    ```powershell
    C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer 'DESKTOP-X\SQLEXPRESS' -ErpDatabase <E10库> -ErpUser d2a_reader
    ```
-   默认实例(带端口):
-   ```powershell
-   C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer <ERP主机> -ErpDatabase <E10库> -ErpUser d2a_reader
-   ```
+   命名实例请给 `-ErpServer` 加引号;脚本会自动省略端口。默认实例可省略引号并带端口。
 
-7. **新开**普通 PowerShell 窗口(机器级环境变量对新进程生效)。
+7. **新开**普通 PowerShell 窗口(若用了脚本写的机器级环境变量)。浏览器配置写入 `secrets.env`,管理界面与 connector 启动时会自动加载;若用 NSSM,请把 `secrets.env` 里的键同步到机器级环境变量,或让服务启动前加载该文件。
 
 8. 确认平台机 ingest 已监听 8850 后,冒烟一次:
    ```powershell
+   # 若用 secrets.env,先加载到当前会话,或已设机器级 D2A_E10_DSN / D2A_INGEST_TOKEN
    C:\d2a\venv\Scripts\python.exe -m data2agent.connect serve --config C:\d2a\config\connect.yaml --once
    ```
 
@@ -53,9 +58,9 @@
    C:\d2a\nssm\nssm.exe set d2a-connector AppStderr C:\d2a\data\logs\d2a-connector.log
    C:\d2a\nssm\nssm.exe set d2a-connector AppExit Default Restart
 
-   # d2a-middle-admin (port 8851; Token 从机器级 D2A_MIDDLE_ADMIN_TOKEN 继承,勿在 AppParameters 写 %VAR%)
+   # d2a-middle-admin (port 8851; Token 从环境变量 / secrets.env 继承,勿在 AppParameters 写 %VAR%)
    C:\d2a\nssm\nssm.exe install d2a-middle-admin C:\d2a\venv\Scripts\python.exe
-   C:\d2a\nssm\nssm.exe set d2a-middle-admin AppParameters "-m data2agent.middle_admin --config C:\d2a\config\connect.yaml --host 0.0.0.0 --port 8851 --log-path C:\d2a\data\logs\d2a-connector.log"
+   C:\d2a\nssm\nssm.exe set d2a-middle-admin AppParameters "-m data2agent.middle_admin --home C:\d2a --host 0.0.0.0 --port 8851"
    C:\d2a\nssm\nssm.exe set d2a-middle-admin AppDirectory C:\d2a\app
    C:\d2a\nssm\nssm.exe set d2a-middle-admin AppStdout C:\d2a\data\logs\d2a-middle-admin.log
    C:\d2a\nssm\nssm.exe set d2a-middle-admin AppStderr C:\d2a\data\logs\d2a-middle-admin.log
@@ -71,8 +76,4 @@
     C:\d2a\venv\Scripts\python.exe -m data2agent.connect status --landing C:\d2a\data\middle.sqlite
     ```
 
-11. 管理界面验收(浏览器,setup-middle 输出的 `D2A_MIDDLE_ADMIN_TOKEN` 登录):
-    - **推荐**:双击 Release 附件 `d2a-middle-ui.exe`(可拷到桌面)。会启动管理服务并自动打开浏览器 `http://127.0.0.1:8851`
-    - 或手动打开 `http://<本机内网IP>:8851`(若已用 NSSM 常驻 `d2a-middle-admin`)
-    - 状态页应显示 sync 配置;配置页可查看 connect.yaml 白名单字段
-    - 说明:exe 是**启动器**,不替代离线 zip 安装;须已存在 `C:\d2a\venv` 与 `C:\d2a\config\connect.yaml`
+11. 管理界面验收:浏览器打开 `http://127.0.0.1:8851`(或便携包双击 `data2agent.exe`)。

@@ -10,20 +10,24 @@ import os
 
 
 def main() -> int:
+    from ..admin_common.secrets_file import load_home_secrets_if_present
+    load_home_secrets_if_present()
+
     ap = argparse.ArgumentParser(description="data2agent 接收端(Pattern A 平台侧)")
     ap.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径")
     ap.add_argument("--host", default="127.0.0.1", help="监听地址(内网可信段)")
     ap.add_argument("--port", type=int, default=8850)
-    ap.add_argument("--token", default=os.environ.get("D2A_INGEST_TOKEN", ""),
+    ap.add_argument("--token", default=None,
                     help="Bearer Token(默认取环境变量 D2A_INGEST_TOKEN;空 = 不认证)")
     args = ap.parse_args()
+    token = args.token if args.token is not None else os.environ.get("D2A_INGEST_TOKEN", "")
 
     import uvicorn
 
     from .app import create_app
-    app = create_app(args.landing, args.token or None)
+    app = create_app(args.landing, token or None)
     print(f"ingest 接收端:http://{args.host}:{args.port}/ingest"
-          f"({'Token 认证' if args.token else '⚠ 无认证,仅内网可信段'};落地 {args.landing})")
+          f"({'Token 认证' if token else '⚠ 无认证,仅内网可信段'};落地 {args.landing})")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

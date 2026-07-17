@@ -58,6 +58,9 @@ def _build(args, ap):
 
 
 def main() -> int:
+    from ..admin_common.secrets_file import load_home_secrets_if_present
+    load_home_secrets_if_present()
+
     ap = argparse.ArgumentParser(description="data2agent 抽取(只读:增量 / 全量 / 对账)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 

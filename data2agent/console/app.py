@@ -24,14 +24,17 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
 from pydantic import BaseModel
 
 from ..admin_common.config_edit import PLATFORM_EDITABLE, merge_whitelist_and_save
+from ..admin_common.home_layout import HomeLayout
 from ..admin_common.logs import tail_lines
+from ..admin_common.secrets_file import apply_secrets_to_environ, save_secrets
+from ..admin_common.setup_yaml import build_platform_yaml, write_yaml
 from ..connect.config import ConnectConfig, load_config
 from ..connect.landing import LandingStore
 from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_objects
@@ -43,6 +46,7 @@ _PKG = Path(__file__).resolve().parent
 _ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
 _CONSOLE_TEMPLATES = _PKG / "templates"
 _ADMIN_STATIC = _ADMIN_TEMPLATES / "static"
+_LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
 def _make_templates() -> Jinja2Templates:
@@ -82,9 +86,27 @@ class ConfigPatch(BaseModel):
     landing: str | None = None
 
 
+class SetupBody(BaseModel):
+    """浏览器首次配置(替代 setup-platform.ps1)。Token 写入 secrets.env。"""
+    ingest_token: str
+    console_token: str
+    mcp_token: str | None = None
+
+
 class McpCallBody(BaseModel):
     tool: str
     params: dict[str, Any] = {}
+
+
+def _client_host(request: Request) -> str:
+    if request.client is None:
+        return ""
+    return request.client.host or ""
+
+
+def _new_token() -> str:
+    import secrets
+    return secrets.token_urlsafe(32)
 
 
 def _probe_http(url: str, timeout: float = 2.0) -> tuple[bool, str]:
@@ -156,43 +178,118 @@ def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict
         tmp_path.unlink(missing_ok=True)
 
 
-def create_app(landing: str, templates: str = "templates",
+def create_app(landing: str | None = None, templates: str = "templates",
                config: ConnectConfig | None = None, token: str | None = None,
                config_path: str | Path | None = None,
-               log_dir: str | Path | None = None) -> FastAPI:
+               log_dir: str | Path | None = None,
+               home: str | Path | None = None) -> FastAPI:
+    """landing/templates 可空:配合 home 做浏览器首次配置(needs_setup)。"""
+    home_layout = HomeLayout.from_path(home) if home is not None else None
+    if home_layout is not None:
+        home_layout.ensure_dirs()
+        if home_layout.secrets_env.is_file():
+            apply_secrets_to_environ(home_layout.secrets_env)
+        if token is None:
+            token = os.environ.get("D2A_CONSOLE_TOKEN") or None
+        if config is None and home_layout.platform_yaml.is_file():
+            config = load_config(home_layout.platform_yaml)
+            config_path = home_layout.platform_yaml
+
     if config is not None:  # 配置在场时以其为准,避免两套路径
         landing, templates = config.landing, config.templates
-    _config_path = Path(config_path) if config_path else None
-    _log_dir = Path(log_dir) if log_dir else None
-    pack = load_pack(templates)
-    default_source = next(iter(config.sources), "digiwin_e10") if config else "digiwin_e10"
+    elif landing is None:
+        if home_layout is None:
+            raise ValueError("create_app 需要 landing 或 home")
+        landing, templates = "", templates
+
+    _config_path = Path(config_path) if config_path else (
+        home_layout.platform_yaml if home_layout else None
+    )
+    _log_dir = Path(log_dir) if log_dir else (
+        home_layout.logs_dir if home_layout else None
+    )
+
+    state: dict[str, Any] = {
+        "token": token,
+        "config": config,
+        "landing": landing or "",
+        "templates": templates,
+        "pack": None,
+        "config_path": _config_path,
+        "log_dir": _log_dir,
+    }
+    if state["landing"] and not (
+        home_layout is not None and (_config_path is None or not Path(_config_path).is_file())
+    ):
+        state["pack"] = load_pack(templates)
+
+    def needs_setup() -> bool:
+        if home_layout is None:
+            return False
+        path = state["config_path"]
+        return path is None or not Path(path).is_file()
+
+    def hydrate_from_disk() -> None:
+        path = state["config_path"]
+        if path is None or not Path(path).is_file():
+            return
+        cfg = load_config(path)
+        state["config"] = cfg
+        state["landing"] = cfg.landing
+        state["templates"] = cfg.templates
+        state["pack"] = load_pack(cfg.templates)
 
     def auth(request: Request) -> None:
-        if not token:
+        path = request.url.path
+        if needs_setup():
+            if path in ("/api/setup", "/api/setup/status") or path.startswith("/api/setup"):
+                if _client_host(request) not in _LOOPBACK:
+                    raise HTTPException(403, "首次配置仅允许本机访问")
+                return
+            if path in ("/config", "/", "/logs", "/debug", "/v0") or path.startswith("/static"):
+                return
+            raise HTTPException(409, "尚未完成首次配置,请打开 /config")
+
+        tok = state["token"]
+        if not tok:
             return
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip() \
             or request.query_params.get("token", "")
-        if supplied != token:
+        if supplied != tok:
             raise HTTPException(401, "需要有效的控制台 Token(Authorization: Bearer <token>)")
 
     def store() -> LandingStore:
-        return LandingStore(landing)
+        if needs_setup() or not state["landing"]:
+            raise HTTPException(409, "尚未完成首次配置")
+        return LandingStore(state["landing"])
 
     def require_config() -> ConnectConfig:
-        if config is None:
+        cfg = state["config"]
+        if cfg is None:
             raise HTTPException(
-                409, "控制台以只读模式运行(未加载 --config connect.yaml),动作不可用")
-        return config
+                409, "控制台以只读模式运行(未加载 --config),动作不可用")
+        return cfg
 
     def require_config_path() -> Path:
-        if _config_path is None:
+        path = state["config_path"]
+        if path is None:
             raise HTTPException(409, "未配置 config_path(--config),配置 API 不可用")
-        return _config_path
+        return Path(path)
+
+    def require_pack():
+        pack = state["pack"]
+        if pack is None:
+            raise HTTPException(409, "尚未完成首次配置或模板不可用")
+        return pack
+
+    def default_source() -> str:
+        cfg = state["config"]
+        return next(iter(cfg.sources), "digiwin_e10") if cfg else "digiwin_e10"
 
     def _mcp_in_process(tool: str, params: dict[str, Any]) -> dict:
         from ..mcp_server.core import QueryService
 
-        svc = QueryService(landing, templates, default_source)
+        svc = QueryService(state["landing"], state["templates"], default_source())
         if tool == "query_objects":
             return svc.query_objects(**params)
         return svc.query_metrics(**params)
@@ -223,48 +320,103 @@ def create_app(landing: str, templates: str = "templates",
 
     app = FastAPI(title="data2agent 运维控制台")
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
-    templates = _make_templates()
+    jinja = _make_templates()
 
     def page_ctx(request: Request) -> dict[str, Any]:
-        return {"static_url": "/static", "needs_token": bool(token)}
+        return {
+            "static_url": "/static",
+            "needs_token": bool(state["token"]) and not needs_setup(),
+            "needs_setup": needs_setup(),
+        }
 
-    @app.get("/", response_class=HTMLResponse)
-    def index(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(request, "dashboard.html", page_ctx(request))
+    @app.get("/")
+    def index(request: Request):
+        if needs_setup():
+            return RedirectResponse("/config", status_code=302)
+        return jinja.TemplateResponse(request, "dashboard.html", page_ctx(request))
 
     @app.get("/config", response_class=HTMLResponse)
     def config_page(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(request, "config.html", page_ctx(request))
+        return jinja.TemplateResponse(request, "config.html", page_ctx(request))
 
     @app.get("/logs", response_class=HTMLResponse)
     def logs_page(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(request, "logs.html", page_ctx(request))
+        return jinja.TemplateResponse(request, "logs.html", page_ctx(request))
 
     @app.get("/debug", response_class=HTMLResponse)
     def debug_page(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(request, "debug.html", page_ctx(request))
+        return jinja.TemplateResponse(request, "debug.html", page_ctx(request))
 
     @app.get("/v0", response_class=HTMLResponse)
     def v0() -> str:
         return UI_HTML
+
+    # ---- 首次配置 ----
+
+    @api.get("/setup/status")
+    def setup_status() -> dict:
+        return {
+            "needs_setup": needs_setup(),
+            "config_path": str(state["config_path"]) if state["config_path"] else None,
+            "home": str(home_layout.root) if home_layout else None,
+        }
+
+    @api.post("/setup")
+    def run_setup(body: SetupBody, request: Request) -> dict:
+        if _client_host(request) not in _LOOPBACK:
+            raise HTTPException(403, "首次配置仅允许本机访问")
+        if home_layout is None:
+            raise HTTPException(400, "未启用 --home,无法浏览器首次配置")
+        if not body.ingest_token.strip() or not body.console_token.strip():
+            return {"ok": False, "errors": [{"field": "token", "message": "Token 不能为空"}]}
+
+        home_layout.ensure_dirs()
+        mcp = (body.mcp_token or "").strip() or _new_token()
+        save_secrets(home_layout.secrets_env, {
+            "D2A_INGEST_TOKEN": body.ingest_token.strip(),
+            "D2A_CONSOLE_TOKEN": body.console_token.strip(),
+            "D2A_MCP_TOKEN": mcp,
+        })
+        apply_secrets_to_environ(home_layout.secrets_env)
+        data = build_platform_yaml(home_layout)
+        cfg_path = home_layout.platform_yaml
+        write_yaml(cfg_path, data)
+        try:
+            load_config(cfg_path)
+        except Exception as e:
+            cfg_path.unlink(missing_ok=True)
+            return {"ok": False, "errors": [{"field": "", "message": str(e)}]}
+
+        state["token"] = body.console_token.strip()
+        state["config_path"] = cfg_path
+        hydrate_from_disk()
+        return {
+            "ok": True,
+            "restart_required": True,
+            "message": "配置已写入。请用刚设置的控制台 Token 登录;"
+                       "ingest / apply / mcp 服务需另行启动或重启后生效。",
+            "mcp_token_generated": not bool((body.mcp_token or "").strip()),
+        }
 
     # ---- 只读视图 ----
 
     @api.get("/overview")
     def overview() -> dict:
         db = store()
+        pack = require_pack()
+        cfg = state["config"]
         sources = sorted({r[0] for r in db.con.execute(
             "SELECT DISTINCT source FROM d2a_sync_state")}
-            | (set(config.sources) if config else set()))
+            | (set(cfg.sources) if cfg else set()))
         out_sources = []
         for s in sources:
-            state = [dict(r) for r in db.con.execute(
+            sync_state = [dict(r) for r in db.con.execute(
                 "SELECT table_name, watermark_col, high_water, last_run_at "
                 "FROM d2a_sync_state WHERE source = ? ORDER BY table_name", (s,))]
             (quarantined,) = db.con.execute(
                 "SELECT COUNT(*) FROM d2a_quarantine WHERE source = ? AND resolved_at IS NULL",
                 (s,)).fetchone()
-            out_sources.append({"source": s, "state": state, "quarantined": quarantined})
+            out_sources.append({"source": s, "state": sync_state, "quarantined": quarantined})
         objects = []
         for o in pack.objects:
             try:
@@ -279,9 +431,10 @@ def create_app(landing: str, templates: str = "templates",
                 (o.object,)).fetchone()
             objects.append({"object": o.object, "display_name": o.display_name,
                             "rows": rows, "mapped_at": mapped_at, "quarantined": q})
-        return {"landing": landing, "readonly": config is None,
-                "actions_sync_reconcile": _actions_sync_reconcile(config),
-                "sources": out_sources, "objects": objects}
+        return {"landing": state["landing"], "readonly": cfg is None,
+                "actions_sync_reconcile": _actions_sync_reconcile(cfg),
+                "sources": out_sources, "objects": objects,
+                "needs_setup": False}
 
     @api.get("/runs")
     def runs(limit: int = 15) -> list[dict]:
@@ -309,8 +462,12 @@ def create_app(landing: str, templates: str = "templates",
 
     @api.get("/config")
     def get_config() -> dict:
+        if needs_setup():
+            return {"needs_setup": True, "templates": "", "landing": ""}
         path = require_config_path()
-        return _platform_config_subset(load_config(path))
+        out = _platform_config_subset(load_config(path))
+        out["needs_setup"] = False
+        return out
 
     @api.post("/config")
     def post_config(body: ConfigPatch) -> dict:
@@ -318,7 +475,9 @@ def create_app(landing: str, templates: str = "templates",
         patch = body.model_dump(exclude_none=True)
         ok, errors = merge_whitelist_and_save(
             path, PLATFORM_EDITABLE, patch, validate=load_config)
-        return {"ok": ok, "errors": errors}
+        if ok:
+            hydrate_from_disk()
+        return {"ok": ok, "errors": errors, "restart_required": True}
 
     @api.post("/config/validate")
     def validate_config(body: ConfigPatch) -> dict:
@@ -332,7 +491,7 @@ def create_app(landing: str, templates: str = "templates",
         mcp_ok, mcp_method = _probe_http(_MCP_URL)
         if not mcp_ok:
             mcp_ok, mcp_method = _probe_tcp(_MCP_HOST, _MCP_PORT)
-        apply_ok, apply_method = _probe_apply(_log_dir)
+        apply_ok, apply_method = _probe_apply(state["log_dir"])
         return {
             "ingest": {"ok": ingest_ok, "method": ingest_method},
             "mcp": {"ok": mcp_ok, "method": mcp_method},
@@ -344,10 +503,11 @@ def create_app(landing: str, templates: str = "templates",
     def get_logs(service: str, lines: int = 200, level: str | None = None) -> dict:
         if service not in _LOG_FILES:
             raise HTTPException(400, f"未知服务 '{service}',可用:{sorted(_LOG_FILES)}")
-        if _log_dir is None:
+        log_dir = state["log_dir"]
+        if log_dir is None:
             return {"ok": False, "text": "未配置日志目录(--log-dir)"}
         capped = max(1, min(lines, 1000))
-        ok, text = tail_lines(_log_dir / _LOG_FILES[service], lines=capped, level=level)
+        ok, text = tail_lines(Path(log_dir) / _LOG_FILES[service], lines=capped, level=level)
         return {"ok": ok, "text": text}
 
     @api.get("/debug/raw-table")
@@ -393,21 +553,23 @@ def create_app(landing: str, templates: str = "templates",
     @api.post("/actions/sync")
     def action_sync(body: ActionBody) -> dict:
         cfg = require_config()
-        executed = run_sync_cycle(body.source, _scfg(cfg, body.source), pack, cfg.landing)
+        executed = run_sync_cycle(
+            body.source, _scfg(cfg, body.source), require_pack(), cfg.landing)
         return {"executed": executed,
                 "note": "" if executed else "错峰窗口外,未发起(窗口约束对控制台同样生效)"}
 
     @api.post("/actions/reconcile")
     def action_reconcile(body: ActionBody) -> dict:
         cfg = require_config()
-        executed = run_reconcile_cycle(body.source, _scfg(cfg, body.source), pack,
-                                       cfg.landing, deep=body.deep)
+        executed = run_reconcile_cycle(
+            body.source, _scfg(cfg, body.source), require_pack(),
+            cfg.landing, deep=body.deep)
         return {"executed": executed,
                 "note": "" if executed else "错峰窗口外,未发起"}
 
     @api.post("/actions/apply")
     def action_apply(body: ActionBody) -> dict:
-        report = apply_objects(store(), pack, body.source)
+        report = apply_objects(store(), require_pack(), body.source)
         return {"executed": True, "results": [asdict(r) for r in report.results],
                 "aborted": [r.object for r in report.aborted]}
 
@@ -415,6 +577,7 @@ def create_app(landing: str, templates: str = "templates",
     def action_retry(body: ActionBody) -> dict:
         if not body.object:
             raise HTTPException(422, "retry 需要 object 参数")
+        pack = require_pack()
         tpl = next((o for o in pack.objects if o.object == body.object), None)
         if tpl is None:
             raise HTTPException(404, f"未知对象 '{body.object}'")
@@ -425,6 +588,17 @@ def create_app(landing: str, templates: str = "templates",
         return {"executed": True, **asdict(result)}
 
     app.include_router(api)
+
+    @app.middleware("http")
+    async def _html_gate(request: Request, call_next):
+        if request.url.path.startswith("/api"):
+            return await call_next(request)
+        if needs_setup() and request.url.path not in (
+            "/config", "/", "/logs", "/debug", "/v0"
+        ) and not request.url.path.startswith("/static"):
+            return RedirectResponse("/config")
+        return await call_next(request)
+
     if _ADMIN_STATIC.is_dir():
         app.mount("/static", StaticFiles(directory=_ADMIN_STATIC), name="static")
     return app

@@ -1,4 +1,4 @@
-"""PyInstaller / 双击入口 → d2a-middle-ui.exe(中间机管理界面)。"""
+"""PyInstaller 入口 → 便携包 data2agent.exe(中间机)。"""
 from __future__ import annotations
 
 import sys

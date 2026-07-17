@@ -7,25 +7,52 @@
   .card h2{font-size:15px;margin:0 0 14px;color:#12314f}
   .field{display:block;margin-bottom:12px}
   .field-label{display:block;font-size:13px;color:#51606f;margin-bottom:4px}
-  .field input[type=text],.field input[type=number]{width:100%;max-width:520px;box-sizing:border-box;
+  .field input[type=text],.field input[type=number],.field input[type=password]{
+    width:100%;max-width:520px;box-sizing:border-box;
     padding:8px 10px;border:1px solid #d0d7de;border-radius:6px;font-size:14px}
-  .hint{font-size:12px;color:#6b7785;margin-top:4px}
   .banner{background:#e8f4fd;border:1px solid #b6d9f5;color:#0b4a6f;border-radius:8px;
           padding:12px 14px;margin-bottom:16px;font-size:13px}
+  .banner.warn{background:#fff8e6;border-color:#f0d78c;color:#6b5200}
   .banner code{background:#fff;padding:2px 6px;border-radius:4px}
   .errors{color:#b42318;font-size:13px;margin-top:8px}
   .source-block{border-top:1px solid #e8edf2;padding-top:14px;margin-top:14px}
 </style>
 
-<div id="restart-banner" class="banner" style="display:none">
-  配置已保存。请重启连接器服务使变更生效:
-  <code>nssm restart d2a-connector</code>
-  （或通过 Windows 服务管理器重启 <strong>d2a-connector</strong>）
+<div id="setup-banner" class="banner warn" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
+  首次使用:请在本页填写 ERP 与平台地址。保存后写入本机配置,无需运行 PowerShell 脚本。
+  凭据保存在 <code>config/secrets.env</code>(不会出现在 YAML 中)。
 </div>
 
-<form id="config-form" class="card">
+<div id="restart-banner" class="banner" style="display:none"></div>
+
+<!-- 首次配置表单 -->
+<form id="setup-form" class="card" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
+  <h2>首次配置</h2>
+  <label class="field"><span class="field-label">平台 ingest URL</span>
+    <input type="text" name="platform_url" placeholder="http://192.168.x.x:8850" required></label>
+  <label class="field"><span class="field-label">ERP 主机 (可 HOST\实例名)</span>
+    <input type="text" name="erp_server" required></label>
+  <label class="field"><span class="field-label">ERP 端口 (命名实例填 0)</span>
+    <input type="number" name="erp_port" value="1433"></label>
+  <label class="field"><span class="field-label">ERP 数据库</span>
+    <input type="text" name="erp_database" required></label>
+  <label class="field"><span class="field-label">ERP 只读账号</span>
+    <input type="text" name="erp_user" required></label>
+  <label class="field"><span class="field-label">ERP 密码</span>
+    <input type="password" name="erp_password" required></label>
+  <label class="field"><span class="field-label">平台 ingest Token (与平台一致)</span>
+    <input type="password" name="ingest_token" required></label>
+  <label class="field"><span class="field-label">本机管理界面 Token (登录用)</span>
+    <input type="password" name="admin_token" required></label>
+  <label class="field"><span class="field-label">sync_every</span>
+    <input type="text" name="sync_every" value="30m"></label>
+  <div id="setup-errors" class="errors"></div>
+  <button type="submit">保存并启用</button>
+</form>
+
+<!-- 日常白名单配置 -->
+<form id="config-form" class="card" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
   <h2>全局</h2>
-  {% from "form_macros.html" import text_input, number_input %}
   <label class="field">
     <span class="field-label">templates 路径</span>
     <input type="text" name="templates" id="cfg-templates">
@@ -34,9 +61,7 @@
     <span class="field-label">landing 路径</span>
     <input type="text" name="landing" id="cfg-landing">
   </label>
-
   <div id="sources-container"></div>
-
   <div id="config-errors" class="errors"></div>
   <button type="submit" style="margin-top:8px">保存配置</button>
 </form>
@@ -44,6 +69,7 @@
 <script>
 (function () {
   var sourcesEl = document.getElementById('sources-container');
+  var needsSetup = {{ 'true' if needs_setup else 'false' }};
 
   function authHeaders(extra) {
     var h = {'Content-Type': 'application/json'};
@@ -78,81 +104,92 @@
       '<input type="number" data-key="rate.rows_per_second" value="' + esc(rate.rows_per_second != null ? rate.rows_per_second : '') + '"></label>' +
       '<label class="field"><span class="field-label">sink.url</span>' +
       '<input type="text" data-key="sink.url" value="' + esc(sink.url || '') + '"></label>' +
-      '<p class="hint">dsn_env: ' + esc(src.dsn_env || '—') +
-      (src.dsn_env_set != null ? ' (' + (src.dsn_env_set ? '已设置' : '未设置') + ')' : '') +
-      ' · token_env: ' + esc(sink.token_env || '—') +
-      (sink.token_env_set != null ? ' (' + (sink.token_env_set ? '已设置' : '未设置') + ')' : '') +
-      '</p></div>';
+      '<p class="hint">dsn_env=' + esc(src.dsn_env || '') +
+      ' (' + (src.dsn_env_set ? '已设置' : '未设置') + ')</p>' +
+      '</div>';
   }
 
-  function loadConfig() {
+  function loadDaily() {
     fetch('/api/config', {headers: authHeaders()})
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        document.getElementById('cfg-templates').value = data.templates || '';
-        document.getElementById('cfg-landing').value = data.landing || '';
+      .then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
+      .then(function (x) {
+        if (!x.ok) return;
+        if (x.j.needs_setup) return;
+        document.getElementById('cfg-templates').value = x.j.templates || '';
+        document.getElementById('cfg-landing').value = x.j.landing || '';
         var html = '';
-        Object.keys(data.sources || {}).forEach(function (name) {
-          html += renderSource(name, data.sources[name]);
+        Object.keys(x.j.sources || {}).forEach(function (name) {
+          html += renderSource(name, x.j.sources[name]);
         });
         sourcesEl.innerHTML = html;
       });
   }
 
-  function collectPatch() {
-    var patch = {
-      templates: document.getElementById('cfg-templates').value || null,
-      landing: document.getElementById('cfg-landing').value || null,
-      sources: {}
-    };
-    sourcesEl.querySelectorAll('[data-source]').forEach(function (block) {
+  document.getElementById('setup-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var fd = new FormData(ev.target);
+    var body = {};
+    fd.forEach(function (v, k) { body[k] = v; });
+    body.erp_port = parseInt(body.erp_port || '1433', 10);
+    fetch('/api/setup', {method: 'POST', headers: authHeaders(), body: JSON.stringify(body)})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var err = document.getElementById('setup-errors');
+        if (!j.ok) {
+          err.textContent = (j.errors || []).map(function (e) { return e.message; }).join('; ') || '保存失败';
+          return;
+        }
+        err.textContent = '';
+        if (body.admin_token) sessionStorage.setItem('d2a_token', body.admin_token);
+        var b = document.getElementById('restart-banner');
+        b.style.display = 'block';
+        b.textContent = j.message || '配置已保存';
+        setTimeout(function () { location.href = '/status'; }, 800);
+      });
+  });
+
+  document.getElementById('config-form').addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    var sources = {};
+    sourcesEl.querySelectorAll('.source-block').forEach(function (block) {
       var name = block.getAttribute('data-source');
-      var src = {};
-      block.querySelectorAll('[data-key]').forEach(function (input) {
-        var key = input.getAttribute('data-key');
-        var val = input.value.trim();
-        if (!val && input.type === 'number') return;
-        if (key === 'windows') {
-          src.windows = val ? val.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [];
-        } else if (key === 'extra_whitelist') {
-          src.extra_whitelist = val ? val.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [];
+      var src = {rate: {}, sink: {}};
+      block.querySelectorAll('[data-key]').forEach(function (inp) {
+        var key = inp.getAttribute('data-key');
+        var val = inp.value;
+        if (key === 'windows' || key === 'extra_whitelist') {
+          src[key] = val ? val.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [];
         } else if (key.indexOf('rate.') === 0) {
-          src.rate = src.rate || {};
-          src.rate[key.slice(5)] = input.type === 'number' ? Number(val) : val;
-        } else if (key.indexOf('sink.') === 0) {
-          src.sink = src.sink || {};
-          src.sink[key.slice(5)] = val;
+          src.rate[key.slice(5)] = val === '' ? null : Number(val);
+        } else if (key === 'sink.url') {
+          src.sink.url = val;
         } else {
           src[key] = val;
         }
       });
-      patch.sources[name] = src;
+      sources[name] = src;
     });
-    return patch;
-  }
-
-  document.getElementById('config-form').addEventListener('submit', function (e) {
-    e.preventDefault();
-    var errEl = document.getElementById('config-errors');
-    errEl.textContent = '';
-    fetch('/api/config', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify(collectPatch())
-    }).then(function (r) { return r.json().then(function (body) { return {ok: r.ok, body: body}; }); })
-      .then(function (res) {
-        if (res.body.ok) {
-          document.getElementById('restart-banner').style.display = '';
-          errEl.textContent = '';
-        } else {
-          errEl.textContent = (res.body.errors || []).map(function (e) {
-            return (e.field || '') + ': ' + (e.message || '');
-          }).join('; ') || '保存失败';
+    var body = {
+      templates: document.getElementById('cfg-templates').value,
+      landing: document.getElementById('cfg-landing').value,
+      sources: sources
+    };
+    fetch('/api/config', {method: 'POST', headers: authHeaders(), body: JSON.stringify(body)})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var err = document.getElementById('config-errors');
+        if (!j.ok) {
+          err.textContent = (j.errors || []).map(function (e) { return e.message; }).join('; ');
+          return;
         }
+        err.textContent = '';
+        var b = document.getElementById('restart-banner');
+        b.style.display = 'block';
+        b.innerHTML = '配置已保存。请重启连接器: <code>nssm restart d2a-connector</code>';
       });
   });
 
-  loadConfig();
+  if (!needsSetup) loadDaily();
 })();
 </script>
 {% endblock %}
