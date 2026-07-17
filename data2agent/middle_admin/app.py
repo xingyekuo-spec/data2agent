@@ -211,7 +211,7 @@ def create_app(
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip() \
             or request.query_params.get("token", "")
         if supplied != tok:
-            raise HTTPException(401, "需要有效的管理 Token(Authorization: Bearer <token>)")
+            raise HTTPException(401, "需要有效的管理界面登录密码")
 
     def reload_config() -> ConnectConfig:
         if needs_setup():
@@ -300,9 +300,9 @@ def create_app(
         return {
             "ok": True,
             "restart_required": True,
-            "message": "配置已写入。请用刚设置的管理 Token 登录;"
-                       "抽取服务(d2a-connector)需另行启动或重启后生效。",
-            "admin_token_hint": "已保存到 config/secrets.env(D2A_MIDDLE_ADMIN_TOKEN)",
+            "message": "配置已写入。请用刚设置的管理界面登录密码登录;"
+                       "抽取服务需另行启动或重启后生效。",
+            "admin_token_hint": "已保存到 config/secrets.env",
         }
 
     @api.get("/config")

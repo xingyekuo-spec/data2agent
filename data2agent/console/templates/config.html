@@ -1,56 +1,101 @@
 {% extends "layout.html" %}
-{% block title %}配置 — 运维控制台{% endblock %}
+{% block title %}配置 — 数据平台{% endblock %}
 {% block content %}
 <style>
   .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
         box-shadow:0 1px 3px rgba(16,34,54,.08)}
-  .card h2{font-size:15px;margin:0 0 14px;color:#12314f}
-  .field{display:block;margin-bottom:12px}
-  .field-label{display:block;font-size:13px;color:#51606f;margin-bottom:4px}
+  .card h2{font-size:15px;margin:0 0 8px;color:#12314f}
+  .card-lead{font-size:13px;color:#51606f;margin:0 0 16px;line-height:1.5;max-width:640px}
+  .field{display:block;margin-bottom:14px}
+  .field-label{display:block;font-size:13px;color:#12314f;font-weight:600;margin-bottom:4px}
+  .field-hint{display:block;font-size:12px;color:#6a7682;margin:4px 0 0;line-height:1.45;max-width:560px}
   .field input[type=text],.field input[type=password]{
-    width:100%;max-width:520px;box-sizing:border-box;
+    width:100%;max-width:560px;box-sizing:border-box;
     padding:8px 10px;border:1px solid #d0d7de;border-radius:6px;font-size:14px}
   .banner{background:#e8f4fd;border:1px solid #b6d9f5;color:#0b4a6f;border-radius:8px;
-          padding:12px 14px;margin-bottom:16px;font-size:13px}
+          padding:12px 14px;margin-bottom:16px;font-size:13px;line-height:1.5}
   .banner.warn{background:#fff8e6;border-color:#f0d78c;color:#6b5200}
   .banner code{background:#fff;padding:2px 6px;border-radius:4px}
   .errors{color:#b42318;font-size:13px;margin-top:8px}
+  .section-title{font-size:13px;color:#51606f;margin:18px 0 10px;padding-top:8px;
+                 border-top:1px solid #e8edf2}
+  .section-title:first-of-type{border-top:0;margin-top:0;padding-top:0}
 </style>
 
 <div id="setup-banner" class="banner warn" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
-  首次使用:请填写与中间机一致的 ingest Token,以及本机管理/MCP Token。
-  保存后写入 <code>config/platform.yaml</code> 与 <code>config/secrets.env</code>,无需运行 PowerShell 脚本。
+  本机是<strong>数据平台</strong>：接收中间服务器推来的数据（本机「数据接收服务」监听 <code>8850</code>）。<br>
+  请先设好接收口令与管理界面登录密码；中间机上的「推送口令」必须与这里的「接收口令」完全一致。
+</div>
+
+<div id="daily-banner" class="banner" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
+  以下为日常可调路径。保存后需重启平台相关进程才完全生效。
+  接收口令 / 管理界面登录密码在 <code>config/secrets.env</code>，不在本页修改。
 </div>
 
 <div id="restart-banner" class="banner" style="display:none">
-  配置已保存。请重启相关服务使变更生效:
-  <code>nssm restart d2a-ingest</code> ·
-  <code>nssm restart d2a-apply</code> ·
-  <code>nssm restart d2a-mcp</code>
+  配置已保存。请重启平台进程后生效（便携包可再双击一次 <code>data2agent.exe</code>；或重启对应 Windows 服务）。
 </div>
 
 <form id="setup-form" class="card" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
   <h2>首次配置</h2>
-  <label class="field"><span class="field-label">平台 ingest Token (与中间机一致)</span>
-    <input type="password" name="ingest_token" required></label>
-  <label class="field"><span class="field-label">本机管理界面 Token (登录用)</span>
-    <input type="password" name="console_token" required></label>
-  <label class="field"><span class="field-label">MCP Token (可留空自动生成)</span>
-    <input type="password" name="mcp_token" placeholder="留空则自动生成"></label>
+  <p class="card-lead">
+    本机不连工厂 ERP。中间机抽完后会把数据推到本机 <code>8850</code>。
+    建议先完成本页，再去中间机填写「数据平台接收地址」和相同的推送口令。
+  </p>
+
+  <p class="section-title">一、接收中间机推送</p>
+  <label class="field">
+    <span class="field-label">接收口令（给中间机用）</span>
+    <input type="password" name="ingest_token" required>
+    <span class="field-hint">
+      中间机往本机推数据时必须带上的口令。请设一串足够长的密码，
+      并<strong>原样</strong>填到中间机「推送口令」；两边不一致会导致推送失败。
+    </span>
+  </label>
+
+  <p class="section-title">二、本机管理与接口</p>
+  <label class="field">
+    <span class="field-label">管理界面登录密码</span>
+    <input type="password" name="console_token" required>
+    <span class="field-hint">打开本机管理页时输入的密码，可与接收口令不同，请自行保管。</span>
+  </label>
+  <label class="field">
+    <span class="field-label">MCP 访问口令（可选）</span>
+    <input type="password" name="mcp_token" placeholder="不清楚可留空，将自动生成">
+    <span class="field-hint">
+      给外部 Agent / MCP 客户端调用本机查询接口用的口令。
+      若暂不接入 Agent，可留空，系统会自动生成并写入 <code>secrets.env</code>。
+    </span>
+  </label>
+
   <div id="setup-errors" class="errors"></div>
   <button type="submit">保存并启用</button>
 </form>
 
 <form id="config-form" class="card" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
-  <h2>platform.yaml 可编辑字段</h2>
+  <h2>运行参数</h2>
+  <p class="card-lead">
+    平台侧日常主要改这两处路径。中间机推过来的数据会落到「落地库」；
+    「模板目录」定义如何把原始表映射成业务对象。一般保持安装时的默认值即可。
+  </p>
+
   <label class="field">
-    <span class="field-label">templates 路径</span>
+    <span class="field-label">模板目录</span>
     <input type="text" name="templates" id="cfg-templates">
+    <span class="field-hint">
+      业务对象 / 映射规则所在目录（通常是本包内的 <code>app\templates</code>）。
+      须与中间机使用同一版本模板，否则可能抽了表却映射不上。一般不要改。
+    </span>
   </label>
   <label class="field">
-    <span class="field-label">landing 路径</span>
+    <span class="field-label">落地库路径</span>
     <input type="text" name="landing" id="cfg-landing">
+    <span class="field-hint">
+      平台存放接收数据与物化结果的本地库文件（如 <code>data\factory.sqlite</code>）。
+      须与接收服务、物化任务指向同一文件。一般不要改。
+    </span>
   </label>
+
   <div id="config-errors" class="errors"></div>
   <button type="submit" style="margin-top:8px">保存配置</button>
 </form>
@@ -76,7 +121,7 @@
       })
       .catch(function () {
         document.getElementById('config-errors').textContent =
-          '无法加载配置(需要 --config/--home 且已认证)';
+          '无法加载配置，请确认已完成首次配置并使用正确的管理界面登录密码。';
       });
   }
 
@@ -98,7 +143,7 @@
         if (body.console_token) sessionStorage.setItem('d2a_token', body.console_token);
         var b = document.getElementById('restart-banner');
         b.style.display = 'block';
-        b.textContent = j.message || '配置已保存';
+        b.textContent = j.message || '配置已保存。请用管理界面登录密码登录；接收等服务需启动或重启后生效。';
         setTimeout(function () { location.href = '/'; }, 800);
       });
   });

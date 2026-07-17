@@ -256,7 +256,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip() \
             or request.query_params.get("token", "")
         if supplied != tok:
-            raise HTTPException(401, "需要有效的控制台 Token(Authorization: Bearer <token>)")
+            raise HTTPException(401, "需要有效的管理界面登录密码")
 
     def store() -> LandingStore:
         if needs_setup() or not state["landing"]:
@@ -393,8 +393,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return {
             "ok": True,
             "restart_required": True,
-            "message": "配置已写入。请用刚设置的控制台 Token 登录;"
-                       "ingest / apply / mcp 服务需另行启动或重启后生效。",
+            "message": "配置已写入。请用刚设置的管理界面登录密码登录;"
+                       "接收 / 物化 / MCP 服务需另行启动或重启后生效。",
             "mcp_token_generated": not bool((body.mcp_token or "").strip()),
         }
 

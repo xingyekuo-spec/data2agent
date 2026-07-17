@@ -33,10 +33,10 @@
 <main>
 {% if needs_token %}
 <div id="login-panel" class="login-panel" style="display:none">
-  <h2>需要 Token 认证</h2>
+  <h2>请登录管理界面</h2>
   <form id="token-form">
-    <label for="d2a-token-input">访问 Token</label>
-    <input type="password" id="d2a-token-input" autocomplete="off" required>
+    <label for="d2a-token-input">管理界面登录密码</label>
+    <input type="password" id="d2a-token-input" autocomplete="current-password" required>
     <button type="submit">登录</button>
   </form>
 </div>
