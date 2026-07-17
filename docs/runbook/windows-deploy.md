@@ -11,6 +11,9 @@
 > [install-platform.md](install-platform.md)。
 >
 > 配置优先用浏览器管理界面(`--home` → `/config`);`setup-*.ps1` 仅作备选。
+>
+> 本文中的跨机直连 HTTP 仅用于 v0.4 之前的受控内网技术验证。正式试点必须在平台 ingest
+> 前配置 TLS 反向代理,平台 URL 改为 `https://`,并完成批次回执与 E6b 验收。
 
 ---
 
@@ -136,7 +139,7 @@ pip download -d wheels-full --only-binary=:all: `
 > ```powershell
 > C:\d2a\app\setup-middle.ps1 -PlatformIP <平台机内网IP> -ErpServer <ERP主机> -ErpDatabase <E10库> -ErpUser d2a_reader
 > ```
-> 脚本会:生成 `C:\d2a\config\connect.yaml`(已存在则备份)、设置机器级环境变量 `D2A_E10_DSN`/`D2A_INGEST_TOKEN`/`D2A_MIDDLE_ADMIN_TOKEN`、并调 `load_config` 自检。
+> 脚本会:生成 `C:\d2a\config\connect.yaml`(已存在则备份)、设置机器级环境变量 `D2A_E10_DSN`/`D2A_INGEST_TOKEN`/`D2A_MIDDLE_ADMIN_TOKEN`、并调 `load_config` 自检。脚本生成的直连 HTTP URL 只适用于受控验证;正式试点需在管理界面改为 TLS 反向代理的 `https://` URL。
 > 完成后**新开窗口**再跑服务。下面的手工模板仅供参考/排错。
 
 ```yaml
@@ -152,7 +155,7 @@ sources:
     lookback: 3d
     sync_every: 30m
     # reconcile_at 留空 —— 推送模式下配了会被 config 校验直接拒绝(见 push-validation.md §5)
-    sink: { type: http, url: "http://<平台机内网IP>:8850", token_env: D2A_INGEST_TOKEN }
+    sink: { type: http, url: "https://<平台域名>", token_env: D2A_INGEST_TOKEN }  # 正式试点;TLS 由平台反向代理终止
 ```
 
 ### 4.2 SQL 账号连接串(密码只放系统环境变量,不落文件)
@@ -234,7 +237,8 @@ C:\d2a\nssm\nssm.exe start <服务名>
 > **Token 纪律:** `D2A_MIDDLE_ADMIN_TOKEN` 只设机器级环境变量或写入 `C:\d2a\config\secrets.env`,
 > **不要**在 NSSM `AppParameters` 里写 `%D2A_MIDDLE_ADMIN_TOKEN%` 或 `--token ...` ——
 > `--home` 会加载 `secrets.env`,服务进程亦可继承 Machine env。
-> 管理界面 `http://<中间机IP>:8851`,浏览器登录时用首次配置 / setup 脚本输出的 Token。
+> 本机管理可访问 `http://127.0.0.1:8851`;跨机运维访问正式试点必须经 TLS 反向代理,
+> 使用 `https://<中间机管理域名>`,浏览器登录时用首次配置 / setup 脚本输出的 Token。
 > 便携包请双击目录内唯一入口 `data2agent.exe`(见 [portable.md](portable.md))。
 > 防火墙:内网放行入站 **8851**(仅运维网段,不对公网)。
 
@@ -252,7 +256,8 @@ C:\d2a\venv\Scripts\python.exe -m data2agent.connect serve --config C:\d2a\confi
 | `d2a-mcp`    | `-m data2agent.mcp_server --db C:\d2a\data\factory.sqlite --templates C:\d2a\app\templates --transport http --host 0.0.0.0 --port 8848` |
 | `d2a-console`| `-m data2agent.console --home C:\d2a --host 0.0.0.0 --port 8849` |
 
-> 平台管理界面 `http://<平台机IP>:8849`,登录 Token 为 `D2A_CONSOLE_TOKEN`
+> 本机管理可访问 `http://127.0.0.1:8849`;跨机运维访问正式试点必须使用 TLS 反向代理的
+> `https://<平台管理域名>`,登录 Token 为 `D2A_CONSOLE_TOKEN`
 > (`secrets.env` 或机器级环境变量;setup-platform / 浏览器首次配置生成)。旧版运维单页仍在 `/v0`。
 > 便携包请双击目录内唯一入口 `data2agent.exe`(见 [portable.md](portable.md))。
 

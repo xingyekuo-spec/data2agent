@@ -1,12 +1,17 @@
 # console-ui · 运维控制台前端重设计
 
-> 状态: 设计完成(v1.1,经评审修订)· 2026-07-15 · 消费者: 工厂 IT / 实施伙伴
+> 状态: 当前实施规格(v1.2,已对齐产品路线)· 2026-07-17 · 消费者: 工厂 IT / 实施伙伴
+> 上层基线:[产品开发路线图](../plans/2026-07-17-product-development-roadmap.md)。若范围或优先级冲突,以路线图为准。
 
 > **修订记录 v1.1(2026-07-15 评审)**:① 补前置依赖 —— 后端全端点 response model
 > 化,否则类型生成全是 unknown;② 决策本机(非 Docker)用户方案:ui.py 降级保留;
 > ③ API 层重写(统一 openapi-fetch、修 baseUrl 双前缀 bug、加 schema 漂移 CI 检查、
 > 明确动作语义 200/executed:false vs 409);④ 后端配合清单从 4 条补全到 10 条;
 > ⑤ 隔离区改按对象重试(后端语义如此);⑥ Element Plus 主题语法更正;⑦ 新增测试与 CI 节。
+>
+> **修订记录 v1.2(2026-07-17)**:Vue Console 从远期规划升级为 v0.2 主产品路线;
+> 增加管道、数据浏览与 MCP Lab;统一 MOCK/DEMO/REAL 标识;字段级血缘移入 v0.3;
+> Token 改用 sessionStorage;Jinja 管理页继续作为安装与故障恢复入口。
 
 ## 1. 背景与动机
 
@@ -32,6 +37,17 @@ JS + 内联 CSS。5 个对象 / 1 个源时勉强可用，扩展到 18 个对象
 - 静态资源全部打进 dist，不依赖外部 CDN
 - Docker 多阶段构建产 nginx 镜像
 - 仓库不进 node 工具链 (`.gitignore` dist 以外的构建产物)
+- 顶栏始终显示 `MOCK / DEMO / REAL`;生产构建不得默认启用 Mock
+- 未知或无法检测的状态必须显示 `unknown`,不得推断为正常
+- API 失败不得转换为空列表后继续显示成功状态
+
+### 2.1 Mock 与真实接口切换
+
+- API 层支持显式 `mock / demo / real` 模式,领域组件不直接判断模式;
+- fixture 至少覆盖:首次安装、全链路正常、运行中、推送失败、apply 熔断且使用旧版本、
+  服务不可达、未处理隔离、draft 口径、Token 无效和未知错误;
+- 每个 fixture 与真实 OpenAPI 响应使用同一 TypeScript 类型;
+- Mock 只用于开发和演示,不能生成生产验收结论。
 
 ## 3. 布局与导航
 
@@ -53,13 +69,17 @@ JS + 内联 CSS。5 个对象 / 1 个源时勉强可用，扩展到 18 个对象
 ```
 运维监控 (分组标题)
   ├─ 仪表盘     /
-  ├─ 抽取状态   /sync
+  ├─ 管道状态   /pipeline
+  ├─ 运行记录   /runs
   └─ 审计日志   /audit
 
 数据管理
-  ├─ 对象层     /objects
+  ├─ 数据浏览   /data
   ├─ 隔离区     /quarantine
-  └─ 模板       /templates (占位)
+  └─ 模板       /templates
+
+Agent
+  └─ MCP Lab    /mcp
 
 系统
   └─ 配置       /settings (占位)
@@ -92,24 +112,34 @@ JS + 内联 CSS。5 个对象 / 1 个源时勉强可用，扩展到 18 个对象
 - **对象分布**: 水平数据条，各对象行数占比
 - **最近运行**: 仅展示最近 5 条，更多通过"抽取状态"视图查看
 
-### 4.2 抽取状态 (SyncStatus)
+### 4.2 管道状态 (Pipeline)
+
+- 按 `ERP → 抽取 → 推送 → Raw → 映射 → 对象层 → MCP` 展示链路;
+- 节点状态统一为 `unknown / idle / running / healthy / warning / failed / stale`;
+- 节点展示最近成功/失败时间、输入输出、耗时、版本、错误摘要和详情入口;
+- 明确显示对象层是否仍在使用上一稳定版本。
+
+### 4.3 运行记录 (Runs)
 
 - 每源的水位状态表: 源 / 表 / 水位列 / 高水位 / 最近同步
+- 运行列表与详情:sync / apply / reconcile / ingest,含表/对象/批次步骤
 - 动作按钮组: 立即同步 / 对账 L1 / 深度对账 / 重新映射
 - 按钮复用后端动作接口，错峰窗口外点击返回提示
 
-### 4.3 审计日志 (Audit)
+### 4.4 审计日志 (Audit)
 
 - 发往源库的每条 SQL 记录表: 时间 / 源 / 动作 / 行数 / 耗时 / SQL
 - 分页加载
 - 支持按源和动作类型筛选
 
-### 4.4 对象层 (Objects)
+### 4.5 数据浏览 (DataBrowser)
 
-- 对象卡片列表: 对象名/显示名 / 行数 / 最后物化时间 / 未处理隔离数
-- 支持按对象重试映射
+- raw 表和对象层只读浏览,服务端分页并强制 limit 上限;
+- 支持按业务键搜索、查看原始 JSON、批次和更新时间;
+- 敏感字段与脱敏状态必须显著标识;
+- 对象卡片展示对象名、显示名、行数、最后物化时间和未处理隔离数。
 
-### 4.5 隔离区 (Quarantine)
+### 4.6 隔离区 (Quarantine)
 
 - 未处理隔离行: # / 对象 / 业务键 / 原因 / 时间
 - 支持按对象筛选
@@ -117,12 +147,20 @@ JS + 内联 CSS。5 个对象 / 1 个源时勉强可用，扩展到 18 个对象
   不存在行级重试)。UI 按对象分组,组头放 [修复后重试该对象] 按钮,
   并提示"将重新映射整个对象,该对象全部隔离记录会被重新评估"
 
-### 4.6 模板 (Templates) — 占位
+### 4.7 模板 (Templates)
 
 - 展示当前模板包对象列表 (从 API 获取)
-- 初版只读展示，不做编辑
+- 展示属性、binding 状态、field map、枚举 map 与 derived 规则;
+- v0.2 只读展示，不做编辑。
 
-### 4.7 配置 (Settings) — 占位
+### 4.8 MCP Lab
+
+- 调用 `query_objects` / `query_metrics`,显示原始 JSON、脱敏字段与口径警示;
+- 生成“说”档建议卡并展开 evidence;
+- 建议卡使用独立的 gateway/proposal API,不扩大 Jinja `/api/debug/mcp-call` 的只读白名单;
+- v0.3 接入主体、会话和结果摘要级证据。
+
+### 4.9 配置 (Settings) — 占位
 
 - 展示当前 connect.yaml 的核心配置
 - DSN 脱敏展示 (仅显示环境变量名)
@@ -144,12 +182,15 @@ store.execute(action)     → 调用 POST 动作接口
 Stores(**overview 只有一个 store、一处轮询**,避免三个页面各自打同一接口):
 - `useOverviewStore` — overview API 的唯一持有者;Dashboard / SyncStatus / Objects
   页面都消费它(computed 切片),轮询由它统一管理(按当前路由决定间隔)
-- `useSyncStore` — runs API + sync/reconcile actions
+- `usePipelineStore` — pipeline/services API 与节点状态
+- `useRunStore` — runs API + sync/reconcile actions
+- `useDataStore` — raw/object 分页浏览与业务键搜索
 - `useObjectStore` — apply/retry actions(数据来自 useOverviewStore)
 - `useQuarantineStore` — quarantine API + retry action
 - `useAuditStore` — audit API(分页 + 筛选参数)
+- `useMcpLabStore` — 查询、指标、建议卡和 evidence
 
-## 6. API 层(v1.1 重写)
+## 6. API 层(v1.2)
 
 ### 6.1 前置依赖:后端 response model 化
 
@@ -186,7 +227,7 @@ const client = createClient<paths>({ baseUrl: "" });
 // Token 认证走中间件(§9.4 与此统一,不用 axios 拦截器)
 client.use({
   onRequest({ request }) {
-    const token = localStorage.getItem("d2a_token");
+    const token = sessionStorage.getItem("d2a_token");
     if (token) request.headers.set("Authorization", `Bearer ${token}`);
     return request;
   },
@@ -234,19 +275,23 @@ console-ui/
 │   │   └── index.ts             # history 模式路由
 │   ├── stores/
 │   │   ├── overview.ts
-│   │   ├── sync.ts
-│   │   ├── objects.ts
+│   │   ├── pipeline.ts
+│   │   ├── runs.ts
+│   │   ├── data.ts
 │   │   ├── quarantine.ts
-│   │   └── audit.ts
+│   │   ├── audit.ts
+│   │   └── mcpLab.ts
 │   ├── api/
 │   │   └── client.ts            # openapi-typescript 生成的客户端封装
 │   ├── views/
 │   │   ├── Dashboard.vue
-│   │   ├── SyncStatus.vue
-│   │   ├── Objects.vue
+│   │   ├── Pipeline.vue
+│   │   ├── Runs.vue
+│   │   ├── DataBrowser.vue
 │   │   ├── Quarantine.vue
 │   │   ├── Audit.vue
 │   │   ├── Templates.vue
+│   │   ├── McpLab.vue
 │   │   └── Settings.vue
 │   ├── components/
 │   │   ├── layout/
@@ -276,7 +321,8 @@ npm run dev   # Vite dev server :5173, proxy /api → localhost:8849
 
 ### 生产模式
 
-Docker Compose 加 nginx 容器:
+`vite.config.ts` 的生产 `base` 固定为 `/v1/`。Docker Compose 加 nginx 容器,
+Vue 固定挂 `/v1`;Jinja 管理页继续使用 `/`:
 
 ```yaml
 console-ui:
@@ -290,7 +336,8 @@ console-ui:
 server {
   root /usr/share/nginx/html;
   location /api/ { proxy_pass http://console-api:8849/api/; }
-  location / { try_files $uri /index.html; }  # SPA fallback
+  location /v1/ { try_files $uri $uri/ /index.html; }  # Vue SPA fallback
+  location / { proxy_pass http://console-api:8849; }    # Jinja 管理页与 /v0
 }
 ```
 
@@ -304,22 +351,22 @@ COPY . .
 RUN npm run build
 
 FROM nginx:alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=build /app/dist /usr/share/nginx/html/v1
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 ```
 
-### 本机(非 Docker)用户方案 —— v1.1 决策
+### 本机(非 Docker)用户方案 —— v1.2 决策
 
 `dist/` 不进仓库 + 生产走 nginx 容器,会让 `pip install` + `python -m
 data2agent.console` 的本机用户没有页面可看(README 快速开始里就有这条命令)。决策:
 
 1. **ui.py 降级保留**(不是废弃):作为本机场景的简版页,顶部加横幅
    "简版控制台;完整版见 console-ui(Docker / npm run build)";
-2. FastAPI 启动时检测 `console-ui/dist/` 存在则 mount 静态目录(本地构建过即得完整版,
-   含 SPA fallback),否则回落 ui.py;
+2. FastAPI 启动时检测已打包的 `console-ui/dist/`，存在则挂载到 `/v1` 并提供 SPA fallback;
+   不存在时 `/` 与 `/v0` 仍由 Jinja/v0 页面服务,`/v1` 明确提示未安装 Vue 产物;
 3. dist 随 release 附件 / PyPI 包数据分发后,再评估移除 ui.py。
 
-### 后端需配合的改动(v1.1 补全,前 3 条为前端动工前置)
+### 后端需配合的改动(v1.2,前 3 条为前端动工前置)
 
 1. **全部端点 response model 化**(§6.1,类型链路地基);
 2. `d2a_sync_run` 增加 `run_type` 字段(sync / apply / reconcile),
@@ -329,12 +376,14 @@ data2agent.console` 的本机用户没有页面可看(README 快速开始里就�
 5. 新增 `/api/config`(配置页,只读;SourceConfig 本身只存 dsn_env 环境变量名,
    不含凭据,天然安全 —— 实现时禁止任何解析环境变量的路径);
 6. 动作接口统一 ActionResult 基座(§6.4);
-7. dist 存在时 mount 静态目录 + SPA fallback,否则回落 ui.py(见上);
-8. 根 docker-compose.yml 改造:现 `console` 服务(uvicorn 直出 ui.py)拆为
-   `console-api`(仅 API)+ `console-ui`(nginx :80,本节 compose 片段);
-9. CI:契约漂移检查(§6.2)+ `npm ci && npm run build` 前端构建检查
+7. 新增 `/api/pipeline`、`/api/services` 与标准化运行详情 `/api/runs/{run_id}`;
+8. 新增 raw/object 安全分页浏览接口,所有表名/字段名来自后端白名单;
+9. 新增独立建议卡端点;Jinja `/api/debug/mcp-call` 继续只允许查询类工具;
+10. dist 存在时挂载 `/v1` + SPA fallback,否则保留 Jinja `/` 与 `/v0`(见上);
+11. 根 docker-compose.yml 增加 Vue 构建/静态服务,同时保留 Jinja 路由;
+12. CI:契约漂移检查(§6.2)+ `npm ci && npm run build` 前端构建检查
    (dist 不进仓库,不构建即腐);
-10. `.gitignore` 补 `console-ui/node_modules/`、`console-ui/dist/`。
+13. `.gitignore` 补 `console-ui/node_modules/`、`console-ui/dist/`。
 
 注:CORS 无需放行 —— 开发模式 Vite proxy 转发 /api(同源),生产 nginx 同域。
 FastAPI 的 /openapi.json 默认已暴露,无需改动。
@@ -352,7 +401,9 @@ FastAPI 的 /openapi.json 默认已暴露,无需改动。
 | 视图 | 空状态文案 |
 |------|-----------|
 | 仪表盘 | 统计卡片显示 "—"，图表区显示"暂无数据" |
-| 抽取状态 | "尚无水位状态，执行首次同步后将显示" |
+| 管道状态 | "尚无运行状态，执行首次同步后将显示" |
+| 数据浏览 | "尚无可浏览数据，完成同步与映射后将显示" |
+| MCP Lab | "对象层尚未就绪，完成同步与映射后再试" |
 | 隔离区 | `<el-empty description="隔离区为空，系统运行良好" />` |
 | 审计日志 | "暂无审计记录" |
 | 模板/配置 | "页面建设中" (占位阶段) |
@@ -370,11 +421,11 @@ FastAPI 的 /openapi.json 默认已暴露,无需改动。
 
 ### 9.4 Token 认证
 
-- 页面加载时检测 401 → 弹出输入框，用户输入后存入 `localStorage`
+- 页面加载时检测 401 → 弹出输入框，用户输入后存入 `sessionStorage`
 - 所有 API 请求经 openapi-fetch 中间件自动带 `Authorization: Bearer <token>`
   (统一 §6.3 的客户端,不引 axios)
 - 顶栏显示认证状态：未认证 / 已认证
-- Token 无效时不清除本地存储，提示用户重新输入
+- Token 无效时清除当前 sessionStorage 值并提示用户重新输入
 
 ### 9.5 自动刷新
 
@@ -415,9 +466,10 @@ Element Plus 默认主题为亮蓝色 (`#409EFF`)，需覆盖为项目配色。
 CI 新增 job `console-ui`(node 22),与现有 python job 并行,只在
 `console-ui/**` 或 console API 相关路径变更时触发(paths 过滤)。
 
-## 12. 不做的事情
+## 12. 分阶段范围与非目标
 
-- 对象流程图 / 血缘图 (场景未到)
+- v0.2 不做字段级血缘;v0.3 必须实现字段追溯详情,但不做自由布局的复杂全局血缘大图
+- v0.2 不做在线生产 mapping 编辑、自动 verified 或数据删除
 - 移动端适配 (内网桌面浏览器场景)
 - 国际化 (中文硬编码)
 - 实时 SSE 推送 (先轮询，后续升级)

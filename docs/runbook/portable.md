@@ -4,6 +4,9 @@
 > 无需系统 Python、无需 pip、无需固定 `C:\d2a`。每个包只有这一个入口。
 >
 > 推送链路验收清单见 [push-validation.md](push-validation.md)。
+>
+> 当前便携包可用于受控内网技术验证。正式试点必须在平台 ingest 前配置 TLS 反向代理,
+> 并完成产品路线规定的批次回执与 E6b;未满足时不代表生产就绪。
 
 ## 产物
 
@@ -41,7 +44,7 @@ d2a-portable-middle-<版本>\
 3. 双击 `data2agent.exe`:
    - 首次:浏览器填配置
      - 平台:`/config` 填接收口令(ingest Token)与管理 Token
-     - 中间:`/config` 填平台 URL(`http://<平台IP>:8850`)、ERP、同一接收口令
+     - 中间:`/config` 填平台 URL(正式试点:`https://<平台域名>`;受控验证可直连 `http://<平台IP>:8850`)、ERP、同一接收口令
    - 之后:打开管理界面,并自动拉起后台服务  
      (中间机 connector;平台 ingest + apply + mcp)
    - 右下角托盘图标常驻:**打开管理界面** / **运行状态…** / **退出**(退出会停止本程序拉起的后台进程)

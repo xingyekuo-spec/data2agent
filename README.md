@@ -16,15 +16,15 @@
 ## 这是什么
 
 中小制造企业的数据(鼎捷 / 金蝶 / 用友 ERP、MES、SRM、CAD、Excel)大多锁在没有 API 的老系统里。
-`data2agent` 提供一条经过真实工厂验证的路,把这些数据安全地接给任何 AI Agent:
+`data2agent` 正在把一条已通过模拟工厂全链路验证的方案推进到真实工厂试点,目标是把数据安全地接给任何 AI Agent:
 
-- **抽取框架**:只读直连 / API 轮询适配器、ELT(原样落地 → 声明式映射)、水位 + 回看 + 分段 checksum 增量、隔离区;
+- **抽取框架**:只读直连、ELT(原样落地 → 声明式映射)、水位 + 回看 + 分段对账、隔离区(API 轮询适配器按真实来源需求建设,当前未实现);
 - **国产 ERP 连接器**:鼎捷 E10 / 易飞参考映射 + 表结构字典(持续积累于 [docs/dict](docs/dict/));
 - **制造业本体模板 + 元模型**:业务对象的声明式模板(YAML,首批 5 个 / 规划 18 个),`validate` 一键校验;
-- **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:数字必须溯源到真实查询,默认脱敏、口径警示内建),任何支持 MCP 的 Agent 五分钟接入;HTTP 部署默认强制 Token + 每工具限流 + 查询审计;
+- **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:依据必须引用已记录查询 ID,默认脱敏、口径警示内建;主体/会话/结果摘要级证据在 v0.3 加固),任何支持 MCP 的 Agent 五分钟接入;HTTP 部署默认强制 Token + 每工具限流 + 查询审计;
 - **运维 / 管理界面**:平台 `console`(`:8849`)与中间 `middle_admin`(`:8851`)为 Jinja2+HTMX
   管理页(配置白名单编辑、状态、日志、调试;浏览器首次配置);v0 内嵌运维单页保留在 `/v0`;
-  独立 Vue 前端(`console-ui/`)为远期规划。现场推荐[便携包](docs/runbook/portable.md)
+  独立 Vue Console(`console-ui/`)是当前产品主路线,用于日常监控与数据验证。现场推荐[便携包](docs/runbook/portable.md)
   双击 `data2agent.exe`,链路验收见 [push-validation](docs/runbook/push-validation.md);
 - **数字厂长展厅**:`docker compose up` 一键起 SQL Server 模拟工厂(渔具外销厂,E10 参考表形)+ 抽取常驻 + MCP(HTTP :8848)+ 运维控制台(:8849);接单评审演示链脚本版 / Agent 版双就绪。
 
@@ -59,7 +59,7 @@ docker compose up --build   # 展厅一键版:SQL Server 模拟工厂 + 抽取�
 
 ## 边界(诚实声明)
 
-data2agent 是一个完整可用的产品,当前版本已覆盖"数据安全到达 Agent + 接单评审"。以下为路线上的后续能力(尚未实现,不夸大):口径校准、跨系统业务对账(抽取层的分段 checksum 对账已实现,见 `connect reconcile`)、主数据对齐、"做"档审批治理、行业知识包。
+data2agent 当前是**完整可运行的 MVP / 展厅链**,已覆盖“数据到达 Agent + 接单评审”的演示和单机验证。真实工厂试点前仍需完成可观察控制台、字段级验证、跨机对账(E6b)、批次回执和生产加密传输;详见[产品开发路线图](docs/superpowers/plans/2026-07-17-product-development-roadmap.md)。口径校准、主数据对齐、“做”档审批治理和行业知识包仍属后续能力。
 
 ## 贡献与安全
 

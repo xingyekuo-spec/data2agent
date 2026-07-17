@@ -1,6 +1,7 @@
 # 02 · 抽取框架(详设)
 
-> 状态:详设 v0.3(2026-07-11)· 实现目录:`data2agent/connect/` + `data2agent/ingest/` · 抽取框架 E1–E5 已实现;部署 E6a(推送 sink)已实现,E6b(对账劈开)待建
+> 状态:设计修订 r0.4(2026-07-17)· 实现目录:`data2agent/connect/` + `data2agent/ingest/` · 当前:E1–E5 + E6a 推送 sink 已实现;产品 v0.3 原子发布、v0.4 批次回执/E6b/TLS 门槛待建
+> 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
 
 ## 1. 目标与非目标
 
@@ -69,7 +70,7 @@ class SourceAdapter(Protocol):
 | `_d2a_deleted_at` | 软删标记(对账发现源侧消失时打标,永不物理删) |
 
 - 写入语义:按源主键 **upsert**(E10 为 `Id`),幂等 —— 回看窗口和对账重抽天然安全;
-- 落地库:当前实现为 **SQLite**(零依赖、单文件、零运维),覆盖开发 / 展厅 / 首个工厂现场验证。访问模式是单写者(connector 进程)+ 多只读者(MCP 网关 / 运维控制台),正是 SQLite 的舒适区;`LandingStore` 初始化即开 `journal_mode=WAL` + `busy_timeout`,写批次不阻塞只读连接。
+- 落地库:当前实现为 **SQLite**(零依赖、单文件、零运维),覆盖开发与展厅,并作为首个工厂试点的候选落地库。能否用于正式试点取决于 v0.4 对容量、并发、WAL checkpoint、备份与恢复的量化基线,不能仅凭“单写多读”直接宣告生产适用。当前访问模式是 connector/ingest/apply 写入 + MCP/控制台读取;必须验证实际多进程写争用。`LandingStore` 初始化开启 `journal_mode=WAL` + `busy_timeout`。
 - 并发上界(需换库的信号):平台托管**多源 / 多工厂并发写同一落地库**、落地库需**跨机远程访问**、或 Agent 读并发大到单文件读锁成瓶颈 —— 任一出现再切 PostgreSQL(装 `.[postgres]` extra 引入 psycopg;当前 `connect`/`ingest` 不含它)。因落地库不是数据主体(ERP 才是),切库是一次性倒库 / `backfill` 重抽 + 一遍 `apply` 重建对象层,非持续迁移负担。
 - 迁移面控制:方言用法(`INSERT ... ON CONFLICT`、`PRAGMA`、`file:...?mode=ro`)集中在 `landing.py` 与各读取方的 `_connect`,统一参数化 SQL 薄封装、不引 ORM,把将来 PG 切片的改造面圈在可控范围。
 
@@ -112,6 +113,42 @@ since = high_water - lookback          # 回看窗口,默认 3 天,吸收迟到�
 - **熔断**:单批次隔离率超过阈值(默认 5%)→ 中止本批并告警,防止系统性口径错误(比如源表结构变了)被静默吞掉;
 - 处理:`quarantine list / retry` CLI,或运维控制台(docs 05)的复核与一键重试。
 
+### 7.1 v0.3 映射 preview 与字段血缘(待建)
+
+preview 与正式 apply 使用同一解析、map、derived、类型校验和隔离判断代码,但必须满足:
+
+- 输入为选定 raw 样本或临时 binding 草稿;
+- 输出仅包含预览结果、隔离原因、枚举未覆盖值、业务键问题和规则覆盖率;
+- 不修改正式 `obj_*`、水位、正式隔离区或当前数据集版本;
+- 返回 `template_version`、`binding_hash` 与样本批次,保证预览可复现。
+
+字段血缘由正式 apply 产生,至少记录:
+
+```text
+dataset_version / object / object_key / property
+source / source_table / source_pk / source_column / source_value
+transform(map/join/derived) / result_value / extract_batch_id / map_batch_id
+```
+
+敏感源值遵循出口脱敏规则,不能因血缘接口绕过 `sensitive`。字典/字段语义是否正确仍需
+现场核对;血缘只证明系统实际读取和转换了什么。
+
+### 7.2 v0.3 对象层原子发布(待建)
+
+当前 `mapping_apply` 对每个对象执行 `DROP → CREATE → INSERT`,适合展厅但不是 v0.3
+发布语义。目标流程:
+
+```text
+为全部目标对象构建 obj_{Object}__build_{version}
+  → 完整校验与熔断判断
+  → 任一关键对象失败则全部不发布,当前 obj_* 保持不变
+  → SQLite 短事务内切换全部稳定表名并写 dataset/object version 元数据
+  → 保留上一稳定版本用于回滚
+```
+
+元数据至少包含 `dataset_version / object_version / template_version / binding_hash / source / built_at / published_at / status`。MCP 只能读取 `published` 数据集;raw 已更新但
+对象尚未发布时,控制台和 MCP metadata 必须显示 `stale`/旧版本,不能伪装成最新。
+
 ## 8. 调度与运行(scheduler.py + __main__.py)
 
 - apscheduler 按源调度;**错峰窗口**(如 `windows: ["22:00-06:30"]`)硬约束:窗口外不发起,运行中越界则在批次边界优雅暂停、下窗口续跑(水位机制天然支持断点);
@@ -139,7 +176,9 @@ sources:
 
 每表策略无需配置:有 `binding.watermark` 声明 → 水位增量;没有 → full_refresh(自动推导,元模型仍是唯一事实来源)。示例见仓库根 `connect.example.yaml`。
 
-## 10. 安全承诺 → 机制对照(README 承诺的逐条落地)
+## 10. 安全机制与试点门槛
+
+### 10.1 当前已实现
 
 | 承诺 | 机制 | 层 |
 | --- | --- | --- |
@@ -148,6 +187,19 @@ sources:
 | 限时 | 错峰窗口硬约束,越界批次边界暂停 | 调度 |
 | 限流 | batch_size + rows_per_second + 语句超时 | 适配器 |
 | 全部可审计 | d2a_audit_log 逐条 SQL + d2a_sync_run 逐轮汇总 | 全层 |
+
+### 10.2 v0.4 正式试点前必须补齐
+
+| 门槛 | 目标机制 | 当前状态 |
+| --- | --- | --- |
+| 跨机加密传输 | 平台反向代理终止 TLS 或等价方案;中间 URL 强制 `https://` | ingest 自身仅 HTTP;受控内网验证可用,正式试点未完成 |
+| 端到端提交 | schema fingerprint + 行数/摘要 + commit receipt;保存 receipt 后推进水位 | 待建 |
+| 跨机对账 | 中间算源侧统计,平台比对并返回差异段,重抽 + 主键 diff 软删 | E6b 待建 |
+| raw 数据保护 | 最小目录权限、数据盘/备份加密、保留与清理策略、敏感列裁剪决策 | 待形成试点基线 |
+| 凭据治理 | ingest/console/MCP 凭据分离、轮换、吊销、主体审计 | 待建 |
+| SQLite 适用性 | 容量/并发/延迟/checkpoint/备份恢复压测与换库阈值 | 待验证 |
+
+因此“只读、白名单、窗口、限流、SQL 审计已实现”不等于整条跨机链已经生产就绪。
 
 ## 11. 实施切片(每片带测试,可独立合入)
 
@@ -160,6 +212,14 @@ sources:
 | E5 | 调度 + 窗口 + 限流 + CLI + 审计完备 | 窗口/限流行为测试;E10 真实环境预演清单 |
 | E6a | 部署(§12):推送 sink（Sink 抽象 + ingest 接收端） | ✅ 中间/平台双进程集成通过(展厅);推送落地与直连逐行一致 |
 | E6b | 部署(§12):对账劈开(中间源侧统计 ↔ 平台落地侧比对) | 待建 |
+
+产品版本映射:
+
+| 产品版本 | 本文交付 |
+| --- | --- |
+| v0.2 可观察 | 运行/批次/水位/raw/object/隔离状态通过管理 API 提供给 Vue Console |
+| v0.3 可验证 | §7.1 preview/血缘 + §7.2 数据集版本与原子发布 |
+| v0.4 可试点 | §10.2 + §12.3 的提交回执、E6b、TLS 与 SQLite 基线 |
 
 ## 12. 部署拓扑(现场:薄中间 + 数据平台)
 
@@ -178,7 +238,7 @@ Informatica Secure Agent、Fivetran Hybrid 皆同形):
    │ 本地只读:仅 SELECT / 白名单 / 错峰 / 限流 / 逐条 SQL 审计
    ▼
 中间服务器(薄,无状态流式转发)      ← 持有 ERP 只读凭据;数据流过不落盘
-   │ 出站推送 raw 批次(HTTPS/TLS)
+   │ 出站推送 raw 批次(当前 HTTP sink;正式试点经反向代理使用 HTTPS/TLS)
    ▼
 数据平台(内网,有外网)            ← 落地 raw_* → apply obj_* → MCP 网关(出口脱敏)
    ▼
@@ -202,12 +262,13 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
 | 对账 · 落地侧统计 + 打软删 | 数据平台 | 与中间侧比对 |
 | apply 映射 / 隔离 / 熔断 / MCP 网关 / 脱敏 | 数据平台 | 见 §7 / docs 03 |
 
-### 12.3 需要的改动(E6a 已实现,E6b 待建)
+### 12.3 拆机可靠性能力(E6a 已实现;提交协议与 E6b 待建)
 
 现有 connect 是"落地再映射"引擎(适配器+增量+对账+落地全在一处)。
-本拓扑把抽取放在中间、落地放在平台,需两项改动,其余全部复用。
+本拓扑把抽取放在中间、落地放在平台,需要推送 sink、端到端提交协议和跨机对账三项能力;
+其余抽取、映射与隔离逻辑继续复用。
 
-**E6a · 推送 sink(✅ 已实现)**
+**E6a · 推送 sink(✅ 已实现,仅表示传输与幂等落地可运行)**
 - 落地出口抽象为 Sink(`connect/sink.py`):`LocalSink`(写本地库,同机/开发默认)、
   `HttpPushSink`(POST 给平台;中间服务器用,stdlib urllib 零额外依赖、值推送前归一化、
   失败指数退避重试);`incremental_sync` 默认 `LocalSink(landing)`,行为向后兼容;
@@ -223,7 +284,20 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
 - **约束**:推送模式下 `reconcile_at` 必须留空(config 校验强制)—— 中间只有水位无 raw,
   本地对账会误判整库不一致;跨机对账须待 E6b(中间驱动)。
 
-**E6b · 对账劈开(待建)**:纯出站推送下平台不能回调中间,故对账**中间驱动** ——
+当前中间机在 HTTP 请求成功返回后推进本地水位;平台没有持久化、可查询的 commit receipt,
+也没有 schema fingerprint/内容摘要协商。因此 E6a 解决了“能推、重推幂等”,没有单独证明
+平台备份回退、响应丢失或 schema 漂移后的端到端完整性。
+
+**v0.4 · 端到端批次提交协议(待建)**:
+
+- 请求携带不可重复 batch ID、应用/模板版本、schema fingerprint、行数和内容摘要;
+- 平台事务提交后持久化批次记录并返回带 commit ID 的 receipt;
+- 中间机验证并保存 receipt 后才推进对应表水位;
+- 相同 batch ID + 相同摘要重推返回原 receipt;相同 ID + 不同摘要拒绝;
+- schema 不兼容明确拒绝,不静默丢列/改类型;
+- 控制台可查 pending/committed/retrying/failed/mismatch 并在授权后重放批次。
+
+**E6b · 对账劈开(v0.4 待建)**:纯出站推送下平台不能回调中间,故对账**中间驱动** ——
 中间算源侧段统计 POST `/ingest/reconcile` → 平台比对落地侧、响应回不一致段 →
 中间重抽这些段推送(行 + 当前主键全集)→ 平台按主键 diff 打软删。
 
@@ -235,8 +309,8 @@ ERP 只授只读 → **CDC / 日志捕获被封死**(SQL Server CDC / Change Tra
 只读账号做不到)。故增量采用**游标(水位)增量**,其删除 / 静默改盲区
 由 §6 分段对账 + 软删补齐 —— 这正是廉价标准 agent 默认没有、data2agent 内建的部分。
 
-## 附录 · 现场核对清单(进厂当天用)
+## 附录 · v0.4 通过后现场核对清单
 
 按对象逐 binding 确认并置 verified:① 表名与我们参考表形的差异;② 每个 field_map 字段的真实字段名;③ 水位字段语义(修改时间?审核时间?时区?);④ 状态码全集(map 是否遗漏取值);⑤ 业务键唯一性实测;⑥ 只读账号 + 白名单授权是否就位;⑦ 允许的抽取窗口与限流上限(和 IT 书面确认)。
 
-部署拓扑(§12)现场确认项:⑧ 中间服务器可跑无状态流式 agent(本方案前提);⑨ 中间→数据平台的出站已放行;⑩ 数据平台的外网出站收窄为白名单(仅 LLM 端点等);⑪ ERP 只授只读(游标增量 + 对账为准;如另开 CDC/Change Tracking 权限则重估)。
+部署拓扑(§12)现场确认项:⑧ 中间服务器可跑无状态流式 agent(本方案前提);⑨ 中间→数据平台的出站已放行;⑩ 数据平台的外网出站收窄为白名单(仅 LLM 端点等);⑪ ERP 只授只读(游标增量 + 对账为准;如另开 CDC/Change Tracking 权限则重估);⑫ TLS 证书与反向代理验收;⑬ 批次 receipt/摘要校验通过;⑭ E6b 与 deep 周期已经配置;⑮ SQLite 容量、备份和恢复基线通过。

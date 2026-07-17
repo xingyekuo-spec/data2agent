@@ -1,6 +1,7 @@
 # 01 · 元模型与模板包
 
-> 状态:已实现,本文为契约定义(2026-07-10)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py` · 消费者:映射引擎、MCP 网关、对账工具(规划)、白名单推导(规划)
+> 状态:对象/绑定契约已实现;版本与验证目标已对齐产品路线(r1,2026-07-17)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py` · 当前消费者:映射引擎、MCP 网关、白名单推导、本地对账;后续消费者:v0.3 血缘/preview/数据集发布与 v0.4 跨机协议
+> 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
 
 ## 1. 设计目标
 
@@ -95,10 +96,34 @@ derived:
 | 跨对象 | `TemplatePack.cross_validate` | relation/ref 目标存在、指标 id 唯一 |
 | binding↔表形 | pytest(展厅) | e10 binding 引用的每个 表.字段 必须存在于模拟表形 |
 
-第三层是防漂移的关键:模板与表形任何一侧单独改动,CI 立即失败。现场版本的同类校验(binding↔客户真实字典)是对账工具的一部分,见 docs 02 §7。
+第三层是防漂移的关键:模板与模拟表形任何一侧单独改动,CI 立即失败。
+客户真实字典校验不属于数据对账工具:它在 v0.3 由模板只读展示、字段血缘、映射 preview
+和一键验收提供机器辅助证据,在 v0.4 现场由实施人员按 docs 02 附录核对后将 binding
+置为 `verified`。COUNT/水位/主键 diff 等数据对账只负责记录一致性,不证明字段业务语义正确。
 
-## 6. 演进规则
+## 6. 版本与发布标识(v0.3/v0.4 目标)
+
+`pack.yaml: version` 继续表示模板包的人工语义版本,但不能单独承担运行数据版本。
+产品路线引入以下互不替代的标识:
+
+| 标识 | 产生方 | 含义 | 首次要求 |
+| --- | --- | --- | --- |
+| `template_version` | 模板加载器 | 当前 `pack.yaml` 的语义版本 | v0.3 |
+| `binding_hash` | 模板加载器 | 选定 source binding 的规范化内容摘要 | v0.3 |
+| `schema_fingerprint` | 抽取/ingest | 源表名、列、类型、主键的规范化摘要 | v0.4 |
+| `object_version` | mapping apply | 单个对象成功构建并发布的版本 | v0.3 |
+| `dataset_version` | 数据集发布器 | 一组兼容对象版本的统一可见快照 | v0.3 |
+
+约束:
+
+- `binding_hash` 变化必须触发 preview/重建,不能沿用旧对象版本并标为最新;
+- `schema_fingerprint` 不兼容时 ingest 明确拒绝,不能静默丢列或改类型;
+- MCP 响应与字段血缘返回当前 `dataset_version/template_version/binding_hash`;
+- 一次建议卡引用的数据必须属于可解释的数据集版本,跨版本引用需显式警告;
+- 破坏性模板变更需要迁移说明,但 v0.3 初期允许通过 raw 重建对象层完成迁移。
+
+## 7. 演进规则
 
 - 模板 5 → 18:由场景拉动(接单评审链下一批大概率是询单、产能、库存),**不为凑数提前填**;
-- 破坏性变更(改字段名 / 类型 / 文法)需同版本升级 `pack.yaml: version` 并给出迁移说明;
+- 破坏性变更(改字段名 / 类型 / 文法)需升级 `pack.yaml: version` 并给出迁移说明;
 - 新 ERP 支持 = 新 `source` 的 binding + 表字典进 `docs/dict/`,不改元模型。

@@ -5,6 +5,8 @@
 >
 > 适用范围:E6a(推送 sink)已实现。**本 runbook 只验同步,不含对账**
 > (E6b 跨机对账未实现,见 §5 边界)。
+> 因此本页是 v0.4 之前的**受控内网技术验证**流程,不是生产就绪声明;正式试点验收还必须
+> 完成批次回执、E6b、加密传输和产品路线中的 v0.4 门槛。
 >
 > **推荐现场形态:[便携包解压即用](portable.md)** —— 两台机各双击 `data2agent.exe`,
 > 浏览器完成首次配置与管理界面验收。下文 §3A / §4A 是主路径。
@@ -23,8 +25,8 @@
 生产 ERP(内网,SQL Server / 鼎捷 E10)
    │ 只读账号:仅 SELECT / 白名单 / 限流 / 逐条 SQL 审计
    ▼
-中间服务器(薄):connect serve + sink=http    ← 持有 ERP 只读凭据;本地只留水位/审计,不落 raw
-   │ 出站推送 raw 批次(POST /ingest/batch)
+中间服务器(薄):connect serve + HTTP sink    ← 持有 ERP 只读凭据;本地只留水位/审计,不落 raw
+   │ 出站推送 raw 批次(生产试点:HTTPS;受控验证可直连 HTTP)
    ▼
 数据平台:ingest → apply → MCP              ← 落地 raw_* → 物化 obj_* → Agent 入口
 ```
@@ -60,8 +62,9 @@ data\logs\                  # 各进程 + launcher 日志
 | ⑤ | 两台机拿到**同版本**便携包 zip(或同版本 runtime 备选包) | 协议/模板不一致 |
 | ⑥ | 允许的抽取窗口与限流上限(与 IT 书面确认) | 影响 `windows` / `rate` 配置 |
 
-> 传输安全:`ingest` 自身跑明文 HTTP。验证阶段在**内网可信段**用「明文 + Bearer Token」可接受;
-> 需要 TLS 时在平台侧加反向代理(nginx / caddy)终止 TLS,再把中间机「平台 URL」指到它。
+> 传输安全:`ingest` 自身只监听 HTTP。v0.4 之前仅允许在隔离、可信且经 IT 批准的内网段
+> 用“明文 + Bearer Token”做技术验证。正式试点必须在平台侧用 nginx/caddy 等反向代理
+> 终止 TLS,中间机平台 URL 使用 `https://`;没有 TLS 的跨机链路不得通过 v0.4 验收。
 
 ---
 
@@ -76,7 +79,7 @@ data\logs\                  # 各进程 + launcher 日志
    - 填写 **接收口令**(ingest Token,与中间机一致)及管理 Token;MCP Token 可留空自动生成
    - 保存后托盘常驻,自动拉起 ingest / apply / mcp
 2. **中间机**:先装 ODBC Driver 18 → 解压同版本 middle zip → 双击 `data2agent.exe`
-   - `/config` 填写:平台 URL(`http://<平台内网IP>:8850`)、ERP 连接、与平台相同的接收口令、管理 Token
+   - `/config` 填写:平台 URL(正式试点用 `https://<平台域名>`;受控验证可用 `http://<平台内网IP>:8850`)、ERP 连接、与平台相同的接收口令、管理 Token
    - 保存后自动拉起 connector
 3. 托盘「运行状态」两侧均应健康;再次双击只会重开管理界面,不会重复启动。
 
@@ -121,7 +124,8 @@ sources:
     lookback: 3d
     sync_every: 30m
     apply_after_sync: true             # 推送模式下自动忽略(映射在平台侧)
-    sink: { type: http, url: "http://<平台内网IP>:8850", token_env: D2A_INGEST_TOKEN }
+    # 正式试点必须指向终止 TLS 的反向代理;下方直连 URL 仅用于受控内网技术验证
+    sink: { type: http, url: "https://<平台域名>", token_env: D2A_INGEST_TOKEN }
     # 注意:推送模式下不要配 reconcile_at(config 校验会拒绝;E6b 未实现)
 ```
 
@@ -196,7 +200,8 @@ python -m data2agent.mcp_server --db data/factory.sqlite --templates templates \
 - **binding 仍为 `draft`**:适配器机制已验证,但真实 E10 的表名 / 字段名 / 水位字段语义
   可能与参考表形有差异,数据正确性取决于按
   [02-extraction 附录·现场核对清单](../design/02-extraction.md) 逐 binding 核对并置 `verified`。
-- **TLS 非内建**:`ingest` 明文 HTTP,TLS 需外部反代(见 §2)。
+- **TLS 非内建**:`ingest` 明文 HTTP,TLS 需外部反代(见 §2);未配置 TLS 只能做
+  v0.4 之前的受控验证,不能作为正式试点验收结果。
 
 ---
 
