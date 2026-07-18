@@ -19,19 +19,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _build_app():
+def dump_openapi() -> str:
     from data2agent.console.app import create_app
 
-    # Temporary landing path is enough: OpenAPI generation does not open the DB.
-    td = Path(tempfile.mkdtemp(prefix="d2a-openapi-"))
-    landing = td / "landing.sqlite"
-    templates = ROOT / "templates"
-    return create_app(landing=str(landing), templates=str(templates))
-
-
-def dump_openapi() -> str:
-    app = _build_app()
-    spec = app.openapi()
+    # Landing path is never opened during OpenAPI generation; keep it ephemeral.
+    with tempfile.TemporaryDirectory(prefix="d2a-openapi-") as td:
+        landing = Path(td) / "landing.sqlite"
+        app = create_app(landing=str(landing), templates=str(ROOT / "templates"))
+        spec = app.openapi()
     return json.dumps(spec, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
 

@@ -6,7 +6,7 @@ M1 目标:给现有 wire shape 增加可生成的 OpenAPI 类型,不改变成功
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
@@ -14,15 +14,37 @@ LEGACY_TIME_DESC = (
     "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1"
 )
 
-JsonPrimitive = str | int | float | bool | None
-JsonValue = Annotated[
-    JsonPrimitive | list[Any] | dict[str, Any],
-    Field(description="Bounded JSON value (object/array/scalar); not free-form Any in docs"),
-]
+
+class JsonValue(RootModel[
+    str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
+]):
+    """Recursive JSON value with an explicit anyOf schema for OpenAPI/TS.
+
+    Do not use pydantic.JsonValue or Any here: those emit empty `{}` schemas that
+    become `unknown` after openapi-typescript.
+    """
 
 
 class HttpError(BaseModel):
+    """HTTPException-style error body: detail is always a string."""
+
     detail: str
+
+
+class RequestValidationErrorItem(BaseModel):
+    """FastAPI/Pydantic request validation error item (422)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    loc: list[str | int]
+    msg: str
+    type: str
+
+
+class RequestError(BaseModel):
+    """422 body: either HTTPException string detail or FastAPI validation list."""
+
+    detail: str | list[RequestValidationErrorItem]
 
 
 class FieldError(BaseModel):
@@ -59,7 +81,7 @@ class SetupBody(BaseModel):
 
 
 class McpCallBody(BaseModel):
-    tool: Literal["query_objects", "query_metrics"] | str
+    tool: Literal["query_objects", "query_metrics"]
     params: dict[str, JsonValue] = Field(default_factory=dict)
 
 
@@ -84,14 +106,10 @@ class SetupFailureResponse(BaseModel):
     errors: list[FieldError]
 
 
-class SetupResponse(BaseModel):
-    """POST /api/setup 成功或字段校验失败的联合形状。"""
-
-    ok: bool
-    errors: list[FieldError] = Field(default_factory=list)
-    restart_required: bool | None = None
-    message: str | None = None
-    mcp_token_generated: bool | None = None
+SetupResponse = Annotated[
+    SetupSuccessResponse | SetupFailureResponse,
+    Field(discriminator="ok"),
+]
 
 
 class ConfigViewResponse(BaseModel):

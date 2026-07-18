@@ -55,12 +55,15 @@ from .contracts import (
     OverviewResponse,
     QuarantineRecord,
     RawTablePageResponse,
+    RequestError,
     RetryActionResult,
     RunSummary,
     ServicesStatusResponse,
     SetupBody,
+    SetupFailureResponse,
     SetupResponse,
     SetupStatusResponse,
+    SetupSuccessResponse,
     ValidationResult,
 )
 from .ui import UI_HTML
@@ -69,9 +72,14 @@ _RESP_HTTP_ERROR = {
     401: {"model": HttpError, "description": "缺少或无效的 Bearer Token"},
     403: {"model": HttpError, "description": "禁止访问"},
     409: {"model": HttpError, "description": "冲突/未配置/只读/熔断"},
-    422: {"model": HttpError, "description": "请求参数错误"},
+    422: {
+        "model": RequestError,
+        "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)",
+    },
     500: {"model": HttpError, "description": "未处理异常"},
 }
+
+_SETUP_API_PATHS = frozenset({"/api/setup", "/api/setup/status"})
 
 _PKG = Path(__file__).resolve().parent
 _ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
@@ -350,15 +358,19 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "recommended for Vue Console."
             ),
         }
-        # Document that /api routes accept Bearer; do not mark HTML pages as secured
-        # the same way (pages load without token; APIs enforce).
+        # Token is optional at runtime (disabled when unset). Document Bearer as
+        # optional for management APIs; setup endpoints remain unauthenticated.
         for path, item in schema.get("paths", {}).items():
             if not path.startswith("/api"):
                 continue
             for method, op in item.items():
                 if method not in ("get", "post", "put", "patch", "delete"):
                     continue
-                op.setdefault("security", [{"HTTPBearer": []}])
+                if path in _SETUP_API_PATHS:
+                    op["security"] = []
+                else:
+                    # OpenAPI optional auth: empty requirement OR Bearer
+                    op["security"] = [{"HTTPBearer": []}, {}]
         app.openapi_schema = schema
         return app.openapi_schema
 
@@ -412,14 +424,15 @@ def create_app(landing: str | None = None, templates: str = "templates",
         response_model=SetupResponse,
         responses={400: {"model": HttpError}, 403: _RESP_HTTP_ERROR[403]},
     )
-    def run_setup(body: SetupBody, request: Request) -> SetupResponse:
+    def run_setup(
+        body: SetupBody, request: Request
+    ) -> SetupSuccessResponse | SetupFailureResponse:
         if _client_host(request) not in _LOOPBACK:
             raise HTTPException(403, "首次配置仅允许本机访问")
         if home_layout is None:
             raise HTTPException(400, "未启用 --home,无法浏览器首次配置")
         if not body.ingest_token.strip() or not body.console_token.strip():
-            return SetupResponse(
-                ok=False,
+            return SetupFailureResponse(
                 errors=[{"field": "token", "message": "Token 不能为空"}],
             )
 
@@ -438,16 +451,14 @@ def create_app(landing: str | None = None, templates: str = "templates",
             load_config(cfg_path)
         except Exception as e:
             cfg_path.unlink(missing_ok=True)
-            return SetupResponse(
-                ok=False,
+            return SetupFailureResponse(
                 errors=[{"field": "", "message": str(e)}],
             )
 
         state["token"] = body.console_token.strip()
         state["config_path"] = cfg_path
         hydrate_from_disk()
-        return SetupResponse(
-            ok=True,
+        return SetupSuccessResponse(
             restart_required=True,
             message=(
                 "配置已写入。请用刚设置的管理界面登录密码登录;"

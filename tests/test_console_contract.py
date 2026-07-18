@@ -30,9 +30,12 @@ from data2agent.console.contracts import (  # noqa: E402
     HttpError,
     OverviewResponse,
     QuarantineRecord,
+    RequestError,
     RunSummary,
     ServicesStatusResponse,
+    SetupFailureResponse,
     SetupStatusResponse,
+    SetupSuccessResponse,
 )
 from data2agent.metamodel.loader import load_pack  # noqa: E402
 from data2agent.showroom.seed import build, write_db  # noqa: E402
@@ -77,7 +80,7 @@ NAMED_SUCCESS_SCHEMAS = {
     ("post", "/api/actions/reconcile"): "ActionExecutionResult",
     ("post", "/api/actions/apply"): "ApplyActionResult",
     ("post", "/api/actions/retry"): "RetryActionResult",
-    ("post", "/api/setup"): "SetupResponse",
+    ("post", "/api/setup"): ("oneOf", ("SetupSuccessResponse", "SetupFailureResponse")),
 }
 
 
@@ -115,6 +118,26 @@ def _schema_ref(node: dict) -> str | None:
     return None
 
 
+def _assert_schema_not_unknown(schemas: dict, name: str) -> None:
+    """Reject empty `{}` / items:{} shapes that become TypeScript `unknown`."""
+    assert name in schemas, name
+    node = schemas[name]
+    assert node != {}, f"{name} must not be an empty schema"
+    if "anyOf" in node:
+        assert node["anyOf"], f"{name}.anyOf empty"
+        return
+    if node.get("type") == "object":
+        props = node.get("properties") or {}
+        addl = node.get("additionalProperties")
+        assert props or addl not in (None, True, {}), (
+            f"{name} object must declare properties or typed additionalProperties, got {node}"
+        )
+        if isinstance(addl, dict) and "$ref" in addl:
+            _assert_schema_not_unknown(schemas, _schema_ref(addl))
+        return
+    assert "type" in node or "$ref" in node, f"{name} untyped: {node}"
+
+
 def test_required_api_routes_present(tmp_path):
     spec = _openapi_app(tmp_path).openapi()
     found = set()
@@ -139,27 +162,45 @@ def test_success_responses_use_named_schemas(tmp_path):
             assert content.get("type") == "array", path
             name = _schema_ref(content.get("items", {}))
             assert name == expected[1], f"{path}: expected list[{expected[1]}], got {content}"
-            assert name in schemas
-            assert schemas[name].get("type") == "object"
-            assert schemas[name].get("properties"), f"{name} must not be empty object"
+            _assert_schema_not_unknown(schemas, name)
+        elif isinstance(expected, tuple) and expected[0] == "oneOf":
+            refs = {_schema_ref(x) for x in content.get("oneOf", [])}
+            assert refs == set(expected[1]), f"{path}: expected oneOf {expected[1]}, got {content}"
+            assert "discriminator" in content
+            for name in expected[1]:
+                _assert_schema_not_unknown(schemas, name)
         else:
             name = _schema_ref(content)
             assert name == expected, f"{path}: expected {expected}, got {content}"
-            assert name in schemas
-            props = schemas[name].get("properties") or {}
-            # RootModel may expose via additionalProperties / items; require non-empty schema body
-            assert props or schemas[name].get("additionalProperties") is not None \
-                or "anyOf" in schemas[name] or schemas[name].get("type") == "object", name
+            _assert_schema_not_unknown(schemas, name)
 
 
-def test_openapi_declares_bearer_security(tmp_path):
+def test_json_value_schemas_are_recursive_anyof(tmp_path):
+    schemas = _openapi_app(tmp_path).openapi()["components"]["schemas"]
+    for name in ("JsonValue-Input", "JsonValue-Output"):
+        node = schemas[name]
+        assert "anyOf" in node, name
+        kinds = {item.get("type") for item in node["anyOf"] if isinstance(item, dict)}
+        assert {"string", "integer", "number", "boolean", "array", "object", "null"} <= kinds
+        assert node.get("additionalProperties") is not True
+        for item in node["anyOf"]:
+            if item.get("type") == "array":
+                assert item.get("items") not in ({}, None)
+                assert "$ref" in item["items"]
+            if item.get("type") == "object":
+                assert item.get("additionalProperties") not in (True, {}, None)
+
+
+def test_openapi_declares_optional_bearer_security(tmp_path):
     spec = _openapi_app(tmp_path).openapi()
     schemes = spec["components"]["securitySchemes"]
     assert "HTTPBearer" in schemes
     assert schemes["HTTPBearer"]["scheme"] == "bearer"
     overview = spec["paths"]["/api/overview"]["get"]
-    assert {"HTTPBearer": []} in overview.get("security", [])
-
+    assert overview.get("security") == [{"HTTPBearer": []}, {}]
+    setup = spec["paths"]["/api/setup"]["post"]
+    assert setup.get("security") == []
+    assert spec["paths"]["/api/setup/status"]["get"].get("security") == []
 
 def test_wire_shape_arrays_and_objects(env):
     landing, _ = env
@@ -245,8 +286,48 @@ def test_mcp_unknown_tool_rejected(env):
     cfg = load_config(cfg_file)
     client = TestClient(create_app(cfg.landing, cfg.templates, cfg))
     r = client.post("/api/debug/mcp-call", json={"tool": "propose_action", "params": {}})
-    assert r.status_code == 400
-    HttpError.model_validate(r.json())
+    assert r.status_code == 422
+    RequestError.model_validate(r.json())
+    body = _openapi_app(Path(cfg.landing).parent).openapi()
+    tool_schema = body["components"]["schemas"]["McpCallBody"]["properties"]["tool"]
+    assert tool_schema.get("enum") == ["query_objects", "query_metrics"]
+
+
+def test_retry_422_string_and_validation_list(env):
+    landing, cfg_file = env
+    client = TestClient(create_app("ignored", "ignored", load_config(cfg_file)))
+    missing = client.post("/api/actions/retry", json={"source": SOURCE})
+    assert missing.status_code == 422
+    missing_body = RequestError.model_validate(missing.json())
+    assert isinstance(missing_body.detail, str)
+
+    invalid = client.post("/api/actions/retry", json={"source": SOURCE, "deep": "not-bool"})
+    assert invalid.status_code == 422
+    invalid_body = RequestError.model_validate(invalid.json())
+    assert isinstance(invalid_body.detail, list) and invalid_body.detail
+
+    spec = _openapi_app(Path(cfg_file).parent).openapi()
+    retry_422 = spec["paths"]["/api/actions/retry"]["post"]["responses"]["422"]
+    assert _schema_ref(retry_422["content"]["application/json"]["schema"]) == "RequestError"
+
+
+def test_setup_response_is_discriminated_union(tmp_path):
+    home = HomeLayout(tmp_path)
+    home.ensure_dirs()
+    shutil.copytree(ROOT / "templates", home.app / "templates")
+    client = TestClient(create_app(home=home.root))
+    fail = client.post("/api/setup", json={"ingest_token": " ", "console_token": " "})
+    assert fail.status_code == 200
+    SetupFailureResponse.model_validate(fail.json())
+    assert "message" not in fail.json()
+
+    ok = client.post("/api/setup", json={
+        "ingest_token": "ingest-tok",
+        "console_token": "console-tok",
+    })
+    assert ok.status_code == 200
+    SetupSuccessResponse.model_validate(ok.json())
+    assert "errors" not in ok.json()
 
 
 def test_action_executed_false_is_success_body(env, tmp_path):
@@ -293,13 +374,18 @@ def test_legacy_time_fields_remain_strings(env):
     assert isinstance(audit["ts"], str)
 
 
-def test_openapi_snapshot_roundtrip(tmp_path):
+def test_openapi_snapshot_roundtrip(tmp_path, monkeypatch):
+    import tempfile as tempfile_mod
+
     script = ROOT / "scripts" / "export_console_openapi.py"
     out = tmp_path / "openapi.json"
+    before = set(Path(tempfile_mod.gettempdir()).glob("d2a-openapi-*"))
     r1 = subprocess.run(
         [sys.executable, str(script), str(out)],
         cwd=ROOT, capture_output=True, text=True, check=False)
     assert r1.returncode == 0, r1.stderr
+    after = set(Path(tempfile_mod.gettempdir()).glob("d2a-openapi-*"))
+    assert after == before, f"export left temp dirs behind: {after - before}"
     first = out.read_bytes()
     r2 = subprocess.run(
         [sys.executable, str(script), str(out)],

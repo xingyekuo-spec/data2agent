@@ -241,6 +241,7 @@
         "type": "object"
       },
       "HttpError": {
+        "description": "HTTPException-style error body: detail is always a string.",
         "properties": {
           "detail": {
             "title": "Detail",
@@ -252,6 +253,72 @@
         ],
         "title": "HttpError",
         "type": "object"
+      },
+      "JsonValue-Input": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Recursive JSON value with an explicit anyOf schema for OpenAPI/TS.\n\nDo not use pydantic.JsonValue or Any here: those emit empty `{}` schemas that\nbecome `unknown` after openapi-typescript.",
+        "title": "JsonValue"
+      },
+      "JsonValue-Output": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Recursive JSON value with an explicit anyOf schema for OpenAPI/TS.\n\nDo not use pydantic.JsonValue or Any here: those emit empty `{}` schemas that\nbecome `unknown` after openapi-typescript.",
+        "title": "JsonValue"
       },
       "LogsResponse": {
         "properties": {
@@ -276,50 +343,18 @@
         "properties": {
           "params": {
             "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "boolean"
-                },
-                {
-                  "items": {},
-                  "type": "array"
-                },
-                {
-                  "additionalProperties": true,
-                  "type": "object"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Bounded JSON value (object/array/scalar); not free-form Any in docs"
+              "$ref": "#/components/schemas/JsonValue-Input"
             },
             "title": "Params",
             "type": "object"
           },
           "tool": {
-            "anyOf": [
-              {
-                "enum": [
-                  "query_objects",
-                  "query_metrics"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "string"
-              }
+            "enum": [
+              "query_objects",
+              "query_metrics"
             ],
-            "title": "Tool"
+            "title": "Tool",
+            "type": "string"
           }
         },
         "required": [
@@ -330,32 +365,7 @@
       },
       "McpToolResult": {
         "additionalProperties": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "integer"
-            },
-            {
-              "type": "number"
-            },
-            {
-              "type": "boolean"
-            },
-            {
-              "items": {},
-              "type": "array"
-            },
-            {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Bounded JSON value (object/array/scalar); not free-form Any in docs"
+          "$ref": "#/components/schemas/JsonValue-Output"
         },
         "description": "query_objects / query_metrics 白名单工具结果;结构随工具变化,用有界 JSON 对象表达。",
         "title": "McpToolResult",
@@ -568,32 +578,7 @@
           "rows": {
             "items": {
               "additionalProperties": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "integer"
-                  },
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "items": {},
-                    "type": "array"
-                  },
-                  {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "description": "Bounded JSON value (object/array/scalar); not free-form Any in docs"
+                "$ref": "#/components/schemas/JsonValue-Output"
               },
               "type": "object"
             },
@@ -617,6 +602,65 @@
           "rows"
         ],
         "title": "RawTablePageResponse",
+        "type": "object"
+      },
+      "RequestError": {
+        "description": "422 body: either HTTPException string detail or FastAPI validation list.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RequestValidationErrorItem"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "RequestError",
+        "type": "object"
+      },
+      "RequestValidationErrorItem": {
+        "additionalProperties": true,
+        "description": "FastAPI/Pydantic request validation error item (422).",
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Loc",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Msg",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "RequestValidationErrorItem",
         "type": "object"
       },
       "RetryActionResult": {
@@ -809,8 +853,7 @@
         "title": "SetupBody",
         "type": "object"
       },
-      "SetupResponse": {
-        "description": "POST /api/setup 成功或字段校验失败的联合形状。",
+      "SetupFailureResponse": {
         "properties": {
           "errors": {
             "items": {
@@ -819,48 +862,17 @@
             "title": "Errors",
             "type": "array"
           },
-          "mcp_token_generated": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mcp Token Generated"
-          },
-          "message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Message"
-          },
           "ok": {
+            "const": false,
+            "default": false,
             "title": "Ok",
             "type": "boolean"
-          },
-          "restart_required": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Restart Required"
           }
         },
         "required": [
-          "ok"
+          "errors"
         ],
-        "title": "SetupResponse",
+        "title": "SetupFailureResponse",
         "type": "object"
       },
       "SetupStatusResponse": {
@@ -896,6 +908,35 @@
           "needs_setup"
         ],
         "title": "SetupStatusResponse",
+        "type": "object"
+      },
+      "SetupSuccessResponse": {
+        "properties": {
+          "mcp_token_generated": {
+            "default": false,
+            "title": "Mcp Token Generated",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "ok": {
+            "const": true,
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "restart_required": {
+            "default": true,
+            "title": "Restart Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "SetupSuccessResponse",
         "type": "object"
       },
       "SyncStateRow": {
@@ -1101,7 +1142,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Action Apply"
       }
@@ -1174,7 +1216,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Action Reconcile"
       }
@@ -1237,17 +1280,18 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HttpError"
+                  "$ref": "#/components/schemas/RequestError"
                 }
               }
             },
-            "description": "请求参数错误"
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
           }
         },
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Action Retry"
       }
@@ -1320,7 +1364,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Action Sync"
       }
@@ -1389,7 +1434,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Audit"
       }
@@ -1432,7 +1478,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Get Config"
       },
@@ -1493,7 +1540,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Post Config"
       }
@@ -1556,7 +1604,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Validate Config"
       }
@@ -1649,7 +1698,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Debug Mcp Call"
       }
@@ -1753,7 +1803,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Debug Raw Table"
       }
@@ -1843,7 +1894,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Get Logs"
       }
@@ -1886,7 +1938,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Overview"
       }
@@ -1961,7 +2014,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Quarantine"
       }
@@ -2030,7 +2084,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Runs"
       }
@@ -2063,7 +2118,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Services"
       }
@@ -2086,7 +2142,22 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SetupResponse"
+                  "discriminator": {
+                    "mapping": {
+                      "False": "#/components/schemas/SetupFailureResponse",
+                      "True": "#/components/schemas/SetupSuccessResponse"
+                    },
+                    "propertyName": "ok"
+                  },
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SetupSuccessResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SetupFailureResponse"
+                    }
+                  ],
+                  "title": "Response Run Setup Api Setup Post"
                 }
               }
             },
@@ -2123,11 +2194,7 @@
             "description": "Validation Error"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
+        "security": [],
         "summary": "Run Setup"
       }
     },
@@ -2156,11 +2223,7 @@
             "description": "禁止访问"
           }
         },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
+        "security": [],
         "summary": "Setup Status"
       }
     },
