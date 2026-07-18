@@ -1,18 +1,53 @@
 <script setup lang="ts">
+import { onMounted, onUnmounted, watch } from 'vue'
 import ScenarioSwitcher from '@/components/shared/ScenarioSwitcher.vue'
 import { IS_MOCK } from '@/config/mode'
 import { scenarioEpoch } from '@/config/scenario-epoch'
+import { useOverviewStore } from '@/stores/overview'
+import { usePipelineStore } from '@/stores/pipeline'
+import { createPoller } from '@/stores/poller'
+import { useSessionStore } from '@/stores/session'
 import AuthDialog from './AuthDialog.vue'
 import SideMenu from './SideMenu.vue'
 import TopBar from './TopBar.vue'
+
+const overviewStore = useOverviewStore()
+const pipelineStore = usePipelineStore()
+const session = useSessionStore()
+
+// 唯一轮询所有者:Dashboard / 管道页 / TopBar 只消费 store,不另建 timer
+const poller = createPoller({
+  intervalMs: 5000,
+  task: async () => {
+    await Promise.all([overviewStore.refresh(), pipelineStore.refresh()])
+  },
+  isFailing: () =>
+    overviewStore.refreshError !== null ||
+    pipelineStore.refreshError !== null ||
+    overviewStore.overview.status === 'error' ||
+    pipelineStore.pipeline.status === 'error',
+})
+
+onMounted(() => poller.start())
+onUnmounted(() => poller.stop())
+
+// Mock 场景切换 / 认证恢复后立即刷新一轮
+watch(scenarioEpoch, () => {
+  void poller.tickNow()
+})
+watch(
+  () => session.authenticated,
+  (authed, was) => {
+    if (authed && !was) {
+      void poller.tickNow()
+    }
+  },
+)
 </script>
 
 <template>
   <el-container class="app-shell">
-    <el-aside
-      class="app-shell__aside"
-      width="240px"
-    >
+    <el-aside class="app-shell__aside">
       <SideMenu />
     </el-aside>
     <el-container class="app-shell__body">
@@ -39,8 +74,10 @@ import TopBar from './TopBar.vue'
   height: 100%;
 }
 
-/* 侧栏:白底 + 右侧分隔线(参考 UI) */
+/* 侧栏:白底 + 右侧分隔线(参考 UI);宽度由 tokens 的 --d2a-sidebar-width 驱动 */
 .app-shell__aside {
+  width: var(--d2a-sidebar-width);
+  flex: 0 0 var(--d2a-sidebar-width);
   background: #fff;
   border-right: 1px solid var(--d2a-border);
 }

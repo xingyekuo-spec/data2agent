@@ -290,7 +290,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Pipeline */
+        /**
+         * Pipeline
+         * @description 真实管道状态:固定 7 节点 + 折叠总体状态(观测口径见 observability)。
+         *
+         *     服务探测与数据健康分开:MCP/ingest 进程健康不覆盖数据 stale。
+         */
         get: operations["pipeline_api_pipeline_get"];
         put?: never;
         post?: never;
@@ -549,6 +554,15 @@ export interface components {
              */
             ts: string;
         };
+        /** BindingSummary */
+        BindingSummary: {
+            /** Disabled */
+            disabled: number;
+            /** Draft */
+            draft: number;
+            /** Verified */
+            verified: number;
+        };
         /** ConfigPatch */
         ConfigPatch: {
             /** Landing */
@@ -582,6 +596,18 @@ export interface components {
              * @default
              */
             templates: string;
+        };
+        /**
+         * CountNote
+         * @description 数量口径说明:名称、口径、数据来源。
+         */
+        CountNote: {
+            /** Name */
+            name: string;
+            /** Semantics */
+            semantics: string;
+            /** Source */
+            source: string;
         };
         /** FieldError */
         FieldError: {
@@ -705,6 +731,38 @@ export interface components {
              */
             version: string | null;
         };
+        /**
+         * OverviewAlert
+         * @description 当前告警:由节点/服务/隔离/治理状态确定性聚合,非持久化实体。
+         */
+        OverviewAlert: {
+            /**
+             * Detail Path
+             * @description 详情入口;目标页未实现时为 null,不生死链
+             */
+            detail_path: string | null;
+            /**
+             * Id
+             * @description kind+node/source/object 组成,刷新后稳定
+             */
+            id: string;
+            /**
+             * Observed At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            observed_at: string | null;
+            /** Reason */
+            reason: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "info" | "warning" | "critical";
+            /** Source */
+            source: string | null;
+            /** Title */
+            title: string;
+        };
         /** OverviewObject */
         OverviewObject: {
             /** Display Name */
@@ -725,6 +783,17 @@ export interface components {
         OverviewResponse: {
             /** Actions Sync Reconcile */
             actions_sync_reconcile: boolean;
+            /** Alerts */
+            alerts: components["schemas"]["OverviewAlert"][];
+            binding_summary: components["schemas"]["BindingSummary"];
+            /** Count Notes */
+            count_notes: components["schemas"]["CountNote"][];
+            /**
+             * Generated At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            generated_at: string;
             /** Landing */
             landing: string;
             /**
@@ -736,8 +805,20 @@ export interface components {
             objects: components["schemas"]["OverviewObject"][];
             /** Readonly */
             readonly: boolean;
+            /**
+             * Recent Runs
+             * @description 最近运行;查询失败为 null(不可检测),不返回空列表冒充从未运行
+             */
+            recent_runs: components["schemas"]["RecentRun"][] | null;
             /** Sources */
             sources: components["schemas"]["OverviewSource"][];
+            summary: components["schemas"]["OverviewSummary"];
+            /**
+             * Sync Trend
+             * @description 24h 趋势;查询失败为 null(不可检测),不返回空列表冒充无数据
+             */
+            sync_trend: components["schemas"]["SyncTrendPoint"][] | null;
+            versions: components["schemas"]["OverviewVersions"];
         };
         /** OverviewSource */
         OverviewSource: {
@@ -749,10 +830,82 @@ export interface components {
             state: components["schemas"]["SyncStateRow"][];
         };
         /**
+         * OverviewSummary
+         * @description Dashboard 摘要计数;任一聚合不可检测时为 null,不用 0 掩盖错误。
+         */
+        OverviewSummary: {
+            /**
+             * Data Updated At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            data_updated_at: string | null;
+            /**
+             * Last Run At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            last_run_at: string | null;
+            /**
+             * Materialized Objects
+             * @description 覆盖率分子:已物化对象数
+             */
+            materialized_objects: number;
+            /**
+             * Object Rows
+             * @description 已物化 obj_* 行数合计
+             */
+            object_rows: number | null;
+            /**
+             * Quarantine Pending
+             * @description 未处理隔离(resolved 为空)
+             */
+            quarantine_pending: number | null;
+            /**
+             * Raw Rows
+             * @description 当前配置范围内 raw 活跃行数合计
+             */
+            raw_rows: number | null;
+            /**
+             * Template Objects
+             * @description 覆盖率分母:模板对象数
+             */
+            template_objects: number;
+        };
+        /**
+         * OverviewVersions
+         * @description 版本信息;dataset/object version 属 v0.3,当前恒为 null(显示"尚未启用")。
+         */
+        OverviewVersions: {
+            /**
+             * App
+             * @description 安装包元数据版本;取不到为 null(unknown)
+             */
+            app: string | null;
+            /**
+             * Dataset
+             * @description dataset version 属 v0.3,当前为 null
+             */
+            dataset: string | null;
+            /**
+             * Object
+             * @description object version 属 v0.3,当前为 null
+             */
+            object: string | null;
+            /**
+             * Template
+             * @description 模板 pack 结构化 version
+             */
+            template: string | null;
+        };
+        /**
          * PipelineNode
          * @description 管道单节点。status=unknown 表示后端无法检测,前端不得显示为正常。
          */
         PipelineNode: {
+            /**
+             * Detail Path
+             * @description 详情入口;目标页未实现时为 null,不生死链
+             */
+            detail_path?: string | null;
             /** Duration Ms */
             duration_ms: number | null;
             /** Error */
@@ -772,15 +925,36 @@ export interface components {
              * @description 节点 ID:erp / extract / push / raw / mapping / objects / mcp
              */
             node: string;
+            /**
+             * Observed At
+             * @description 该节点证据的观测时间;timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            observed_at?: string | null;
             /** Rows In */
             rows_in: number | null;
             /** Rows Out */
             rows_out: number | null;
             /**
+             * Run Id
+             * @description 正在运行/最近一次运行的 ID
+             */
+            run_id?: string | null;
+            /**
+             * Source
+             * @description 节点归属数据源
+             */
+            source?: string | null;
+            /**
              * Status
              * @enum {string}
              */
             status: "unknown" | "idle" | "running" | "healthy" | "warning" | "failed" | "stale";
+            /**
+             * Status Reason
+             * @description 状态原因(人话;截断,不含 Token/SQL/敏感行)
+             * @default
+             */
+            status_reason: string;
             /**
              * Version
              * @description 数据或组件版本;dataset/object version 属 v0.3,当前可为空
@@ -797,6 +971,13 @@ export interface components {
             generated_at: string;
             /** Nodes */
             nodes: components["schemas"]["PipelineNode"][];
+            /**
+             * Overall Status
+             * @description 按 failed>stale>warning>running>unknown>idle>healthy 折叠;存在 unknown 时不得为 healthy
+             * @default unknown
+             * @enum {string}
+             */
+            overall_status: "unknown" | "idle" | "running" | "healthy" | "warning" | "failed" | "stale";
         };
         /** ProposalEvidence */
         ProposalEvidence: {
@@ -918,6 +1099,34 @@ export interface components {
             table: string;
             /** Total */
             total: number;
+        };
+        /** RecentRun */
+        RecentRun: {
+            /**
+             * Finished At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            finished_at: string | null;
+            /** Id */
+            id: number;
+            /** Rows */
+            rows: number | null;
+            /**
+             * Run Type
+             * @description 结构化运行类型;历史记录为 NULL(类型未知),不回填猜测
+             */
+            run_type: ("sync" | "apply" | "reconcile" | "ingest") | null;
+            /** Source */
+            source: string;
+            /**
+             * Started At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            started_at: string | null;
+            /** Status */
+            status: string | null;
+            /** Tables */
+            tables: number | null;
         };
         /**
          * RequestError
@@ -1122,6 +1331,19 @@ export interface components {
             table_name: string;
             /** Watermark Col */
             watermark_col: string;
+        };
+        /** SyncTrendPoint */
+        SyncTrendPoint: {
+            /**
+             * Bucket
+             * Format: date-time
+             * @description 趋势桶起点(小时),timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            bucket: string;
+            /** Rows */
+            rows: number;
+            /** Runs */
+            runs: number;
         };
         /** TemplateBinding */
         TemplateBinding: {
@@ -2106,8 +2328,8 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
-            501: {
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

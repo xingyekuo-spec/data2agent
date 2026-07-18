@@ -23,6 +23,22 @@ const OVERVIEW_OK = {
   sources: [],
   objects: [],
   needs_setup: false,
+  generated_at: '2026-07-18T09:12:00+08:00',
+  summary: {
+    raw_rows: 0,
+    object_rows: null,
+    materialized_objects: 0,
+    template_objects: 5,
+    quarantine_pending: 0,
+    last_run_at: null,
+    data_updated_at: null,
+  },
+  versions: { app: '0.1.6', template: '0.1.0', dataset: null, object: null },
+  binding_summary: { verified: 0, draft: 10, disabled: 0 },
+  alerts: [],
+  recent_runs: [],
+  sync_trend: [],
+  count_notes: [],
 }
 
 function stubFetch(handler: (url: string, init?: RequestInit) => Response | Promise<Response>) {

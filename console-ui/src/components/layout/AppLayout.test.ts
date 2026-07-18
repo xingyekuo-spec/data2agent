@@ -46,20 +46,20 @@ describe('AppLayout', () => {
   it('切换 Mock 场景后当前视图重挂载并重新取数', async () => {
     setScenario('healthy')
     const wrapper = await mountLayout('/')
-    // healthy:仪表盘成功渲染来源表格
+    // healthy:仪表盘成功渲染摘要卡与口径说明
     expect(wrapper.find('[data-testid="error-state"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('digiwin_e10')
+    expect(wrapper.text()).toContain('raw_rows')
 
-    // 切到 unknown-error:仪表盘必须立即变成错误视图(不再显示旧数据)
+    // 切到 unknown-error:刷新失败 → 标记 + 旧数据保留(M3 语义)
     setScenario('unknown-error')
     await flushPromises()
-    expect(wrapper.find('[data-testid="error-state"]').exists()).toBe(true)
-    expect(wrapper.text()).not.toContain('digiwin_e10')
+    expect(wrapper.find('[data-testid="refresh-error"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('raw_rows')
 
-    // 切回 healthy:恢复正常
+    // 切回 healthy:标记清除,数据正常
     setScenario('healthy')
     await flushPromises()
-    expect(wrapper.find('[data-testid="error-state"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('digiwin_e10')
+    expect(wrapper.find('[data-testid="refresh-error"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('raw_rows')
   })
 })

@@ -23,7 +23,7 @@ describe('场景切换全链路(模拟用户操作)', () => {
     await flushPromises()
 
     expect(getScenario()).toBe('healthy')
-    expect(wrapper.text()).toContain('digiwin_e10')
+    expect(wrapper.text()).toContain('raw_rows')
 
     const select = wrapper.find('[data-testid="scenario-switcher"] select')
     expect(select.exists()).toBe(true)
@@ -31,12 +31,14 @@ describe('场景切换全链路(模拟用户操作)', () => {
     await flushPromises()
 
     expect(getScenario()).toBe('unknown-error')
-    expect(wrapper.find('[data-testid="error-state"]').exists()).toBe(true)
-    expect(wrapper.text()).not.toContain('digiwin_e10')
+    // 刷新失败:标记可见 + 旧数据保留,不是整屏错误
+    expect(wrapper.find('[data-testid="refresh-error"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('raw_rows')
 
     await select.setValue('healthy')
     await flushPromises()
-    expect(wrapper.text()).toContain('digiwin_e10')
+    expect(wrapper.find('[data-testid="refresh-error"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('raw_rows')
 
     wrapper.unmount()
   })

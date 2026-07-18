@@ -89,7 +89,7 @@ def _repair_full(adapter: SourceAdapter, landing: LandingStore, source: str,
 def reconcile(adapter: SourceAdapter, landing: LandingStore, source: str,
               watermarks: dict[str, str] | None = None, deep: bool = False) -> ReconcileReport:
     watermarks = watermarks or {}
-    report = ReconcileReport(source=source, run_id=landing.start_run(source), deep=deep)
+    report = ReconcileReport(source=source, run_id=landing.start_run(source, "reconcile"), deep=deep)
     try:
         for info in adapter.tables():
             wm_col = watermarks.get(info.name)

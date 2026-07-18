@@ -85,8 +85,8 @@ NAMED_SUCCESS_SCHEMAS = {
 }
 
 # M2 v0.2 契约桩:schema 先行,运行时在所属里程碑实现前一律 501。
+# (M3 已实现 /api/pipeline,不再属于桩)
 STUB_API_ROUTES = {
-    ("GET", "/api/pipeline"),
     ("GET", "/api/runs/{run_id}"),
     ("GET", "/api/data/raw/{source}/{table}"),
     ("GET", "/api/objects"),
@@ -96,7 +96,6 @@ STUB_API_ROUTES = {
 }
 
 STUB_SUCCESS_SCHEMAS = {
-    ("get", "/api/pipeline"): "PipelineResponse",
     ("get", "/api/runs/{run_id}"): "RunDetailResponse",
     ("get", "/api/data/raw/{source}/{table}"): "RawDataPageResponse",
     ("get", "/api/objects"): ("array", "ObjectSummary"),
@@ -107,7 +106,6 @@ STUB_SUCCESS_SCHEMAS = {
 
 # (method, concrete path, kwargs) for runtime 501 checks
 STUB_RUNTIME_CALLS = [
-    ("get", "/api/pipeline", {}),
     ("get", "/api/runs/1", {}),
     ("get", "/api/data/raw/digiwin_e10/raw_x", {}),
     ("get", "/api/objects", {}),
@@ -480,7 +478,7 @@ def test_stub_routes_present(tmp_path):
                 found.add((method.upper(), path))
     missing = STUB_API_ROUTES - found
     assert not missing, f"missing stub routes: {sorted(missing)}"
-    assert len(STUB_API_ROUTES) == 7
+    assert len(STUB_API_ROUTES) == 6
 
 
 def test_stub_success_schemas_named_and_typed(tmp_path):
@@ -524,3 +522,57 @@ def test_stub_proposal_request_validation(env):
     r = client.post("/api/gateway/proposals", json={
         "object": "SalesOrder", "action": "review", "conclusion": "c", "evidence": []})
     assert r.status_code == 422
+
+
+# ---- M3 观测口径契约 ----
+
+
+def test_overview_m3_blocks_present_and_tz_aware(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    body = OverviewResponse.model_validate(client.get("/api/overview").json())
+    # 旧字段兼容
+    assert body.sources and body.objects
+    assert body.readonly is True
+    # M3 块:带时区时间、版本、口径说明
+    assert body.generated_at.tzinfo is not None
+    assert body.versions.template
+    assert body.versions.dataset is None and body.versions.object is None
+    assert isinstance(body.alerts, list)
+    assert isinstance(body.sync_trend, list)
+    assert {n.name for n in body.count_notes} >= {"raw_rows", "object_rows"}
+    # 正常库:raw/object 行数为真实计数(不是 null)
+    assert body.summary.raw_rows is not None and body.summary.raw_rows > 0
+    assert body.summary.object_rows is not None and body.summary.object_rows > 0
+    assert body.summary.template_objects >= body.summary.materialized_objects >= 1
+    # 最近运行:T02 起写入真实 run_type,时间带时区
+    assert body.recent_runs
+    assert body.recent_runs[0].run_type in ("sync", "apply", "reconcile", "ingest")
+    assert body.recent_runs[0].started_at.tzinfo is not None
+
+
+def test_overview_unknown_counts_are_null_not_zero(tmp_path):
+    """不可检测/未物化的计数为 null(unknown),不是 0 也不是 healthy。"""
+    landing = tmp_path / "empty.sqlite"
+    client = TestClient(create_app(str(landing), str(ROOT / "templates")))
+    body = OverviewResponse.model_validate(client.get("/api/overview").json())
+    # 空库没有任何 raw 表:0 是事实
+    assert body.summary.raw_rows == 0
+    # 未物化:object_rows 为 null(不是 0),覆盖率为 0/N
+    assert body.summary.object_rows is None
+    assert body.summary.materialized_objects == 0
+    assert body.summary.template_objects > 0
+    assert body.versions.dataset is None and body.versions.object is None
+
+
+def test_pipeline_contract_overall_and_node_fields(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    schemas = spec["components"]["schemas"]
+    resp = schemas["PipelineResponse"]
+    assert "overall_status" in resp["properties"]
+    node_props = schemas["PipelineNode"]["properties"]
+    for field in ("status_reason", "observed_at", "run_id", "source", "detail_path"):
+        assert field in node_props, field
+    expected = {"unknown", "idle", "running", "healthy", "warning", "failed", "stale"}
+    assert set(node_props["status"]["enum"]) == expected
+    assert set(resp["properties"]["overall_status"]["enum"]) == expected

@@ -75,6 +75,8 @@ def _now() -> str:
 
 
 class LandingStore:
+    RUN_TYPES = frozenset({"sync", "apply", "reconcile", "ingest"})
+
     def __init__(self, db_path: str | Path):
         db_path = Path(db_path)
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +88,17 @@ class LandingStore:
         self.con.execute("PRAGMA journal_mode=WAL")
         self.con.execute("PRAGMA busy_timeout=5000")
         self.con.executescript(_SYSTEM_DDL)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """幂等兼容升级(M3):d2a_sync_run 增加结构化 run_type。
+
+        旧记录保持 NULL(类型未知),不批量回填猜测;重复初始化无副作用。
+        """
+        cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_sync_run)")}
+        if "run_type" not in cols:
+            self.con.execute("ALTER TABLE d2a_sync_run ADD COLUMN run_type TEXT")
+            self.con.commit()
 
     # ---- raw 表 ----
 
@@ -242,10 +255,13 @@ class LandingStore:
             (_now(), source, action, sql, rows, round(duration_ms, 2), batch_id))
         self.con.commit()
 
-    def start_run(self, source: str) -> int:
+    def start_run(self, source: str, run_type: str) -> int:
+        if run_type not in self.RUN_TYPES:
+            raise ValueError(f"未知 run_type '{run_type}',可用:{sorted(self.RUN_TYPES)}")
         cur = self.con.execute(
-            "INSERT INTO d2a_sync_run (source, started_at, status) VALUES (?, ?, 'running')",
-            (source, _now()))
+            "INSERT INTO d2a_sync_run (source, started_at, status, run_type) "
+            "VALUES (?, ?, 'running', ?)",
+            (source, _now(), run_type))
         self.con.commit()
         return cur.lastrowid
 

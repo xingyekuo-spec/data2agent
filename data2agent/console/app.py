@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import os
 import shutil
 import socket
@@ -20,6 +21,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,7 @@ from ..connect.landing import LandingStore
 from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_objects
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..metamodel.loader import load_pack
+from . import observability as obs
 from .contracts import (
     ActionBody,
     ActionExecutionResult,
@@ -125,6 +128,19 @@ _LOG_FILES = {
     "launcher": "d2a-launcher.log",   # 便携包启动器:进程重启 / 崩溃记录
 }
 _MCP_TOOLS = frozenset({"query_objects", "query_metrics"})
+
+# 数量口径说明(M3):名称、口径、数据来源;页面按此展示,不让用户猜数字含义
+_COUNT_NOTES = [
+    {"name": "raw_rows",
+     "semantics": "当前配置范围内、未逻辑删除的 raw 活跃行数合计",
+     "source": "raw_* 表 COUNT(*)"},
+    {"name": "object_rows",
+     "semantics": "已物化 obj_* 表行数合计;与 raw 因隔离/软删有差",
+     "source": "obj_* 表 COUNT(*)"},
+    {"name": "quarantine_pending",
+     "semantics": "未处理(resolved_at 为空)的隔离行数",
+     "source": "d2a_quarantine"},
+]
 
 
 def _client_host(request: Request) -> str:
@@ -524,10 +540,84 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 (o.object,)).fetchone()
             objects.append({"object": o.object, "display_name": o.display_name,
                             "rows": rows, "mapped_at": mapped_at, "quarantined": q})
+
+        # ---- M3 观测聚合(observability;查询失败按字段降级为 null + 告警)----
+        query_failures: list[str] = []
+        # raw 行数:任一源查询失败则整体为 null,部分合计不得冒充总数
+        raw_rows_total = 0
+        raw_failed = False
+        agg_sources = sorted(set(cfg.sources) if cfg else {s["source"] for s in out_sources})
+        for s in agg_sources:
+            try:
+                tables = obs.raw_table_names(db, s)
+            except Exception:
+                raw_failed = True
+                continue
+            r_rows, _r_latest = obs.raw_stats(db, s, tables)
+            if r_rows is None:
+                raw_failed = True
+            else:
+                raw_rows_total += r_rows
+        if raw_failed:
+            query_failures.append("raw 行数查询失败(部分源),raw_rows 置为不可检测")
+        obj_stats = obs.object_stats(db, pack)
+        obj_errors = [v["error"] for v in obj_stats.values() if v.get("error")]
+        if obj_errors:
+            query_failures.append(obj_errors[0])
+        materialized = [v for v in obj_stats.values() if v["rows"] is not None]
+        object_rows = (
+            sum(v["rows"] for v in materialized)
+            if materialized and not obj_errors
+            else None
+        )
+        try:
+            (lr,) = db.con.execute("SELECT MAX(last_run_at) FROM d2a_sync_state").fetchone()
+            last_run_at = obs.aware(lr)
+        except sqlite3.Error:
+            last_run_at = None
+            query_failures.append("最近运行时间查询失败(d2a_sync_state)")
+        mapped_vals = [v["mapped_at"] for v in obj_stats.values() if v["mapped_at"] is not None]
+        try:
+            app_version = importlib.metadata.version("data2agent")
+        except importlib.metadata.PackageNotFoundError:
+            app_version = None  # 开发环境无包元数据:明确 null(unknown)
+        bs = obs.binding_summary(pack)
+        qp = obs.quarantine_pending(db)
+        default_src = next(iter(agg_sources), "digiwin_e10")
+        nodes = obs.compute_nodes(db, pack, cfg, default_src,
+                                  component_version=app_version)
+        recent = obs.recent_runs(db)
+        if recent is None:
+            query_failures.append("最近运行查询失败(d2a_sync_run)")
+        trend = obs.sync_trend(db)
+        if trend is None:
+            query_failures.append("抽取趋势查询失败(d2a_sync_run)")
+        alerts = obs.build_alerts(nodes, quarantine=qp, drafts=bs["draft"],
+                                  query_failures=query_failures)
+
         return {"landing": state["landing"], "readonly": cfg is None,
                 "actions_sync_reconcile": _actions_sync_reconcile(cfg),
                 "sources": out_sources, "objects": objects,
-                "needs_setup": False}
+                "needs_setup": False,
+                "generated_at": datetime.now().astimezone(),
+                "summary": {
+                    "raw_rows": None if raw_failed else raw_rows_total,
+                    "object_rows": object_rows,
+                    "materialized_objects": len(materialized),
+                    "template_objects": len(pack.objects),
+                    "quarantine_pending": qp,
+                    "last_run_at": last_run_at,
+                    "data_updated_at": max(mapped_vals) if mapped_vals else None,
+                },
+                "versions": {
+                    "app": app_version, "template": pack.version,
+                    "dataset": None, "object": None,  # v0.3 前恒 null(尚未启用)
+                },
+                "binding_summary": bs,
+                "alerts": alerts,
+                "recent_runs": recent,
+                "sync_trend": trend,
+                "count_notes": _COUNT_NOTES}
 
     @api.get(
         "/runs",
@@ -766,20 +856,42 @@ def create_app(landing: str | None = None, templates: str = "templates",
             raise HTTPException(409, f"重试触发熔断:{e}") from e
         return {"executed": True, **asdict(result)}
 
-    # ---- v0.2 契约桩(M2)----
-    # schema 先行供前端类型生成与 Mock;真实实现归属 M3–M6,
-    # 实现前一律返回 501,不得返回伪造成功或空数据。
+    # ---- v0.2 M3:真实观测端点 ----
 
-    _STUB_501 = "契约桩:端点已声明,将在所属里程碑实现;不得视为成功或空数据"
+    def _probe_mcp() -> tuple[bool, str]:
+        ok, method = _probe_http(_MCP_URL)
+        if not ok:
+            ok, method = _probe_tcp(_MCP_HOST, _MCP_PORT)
+        return ok, method
 
     @api.get(
         "/pipeline",
         response_model=PipelineResponse,
-        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
-        tags=["v0.2-stub"],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
     )
-    def pipeline() -> PipelineResponse:
-        raise HTTPException(501, f"{_STUB_501}(M3 管道状态)")
+    def pipeline() -> dict:
+        """真实管道状态:固定 7 节点 + 折叠总体状态(观测口径见 observability)。
+
+        服务探测与数据健康分开:MCP/ingest 进程健康不覆盖数据 stale。
+        """
+        db = store()
+        cfg = state["config"]
+        probes = {
+            "ingest": lambda: _probe_http(_INGEST_HEALTH),
+            "mcp": _probe_mcp,
+        }
+        try:
+            component_version = importlib.metadata.version("data2agent")
+        except importlib.metadata.PackageNotFoundError:
+            component_version = None
+        return obs.build_pipeline(db, require_pack(), cfg, default_source(),
+                                  probes=probes, component_version=component_version)
+
+    # ---- v0.2 契约桩(M2)----
+    # schema 先行供前端类型生成与 Mock;真实实现归属 M4–M6,
+    # 实现前一律返回 501,不得返回伪造成功或空数据。
+
+    _STUB_501 = "契约桩:端点已声明,将在所属里程碑实现;不得视为成功或空数据"
 
     @api.get(
         "/runs/{run_id}",

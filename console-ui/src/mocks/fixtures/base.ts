@@ -54,6 +54,8 @@ export function pipelineNode(
   partial: Partial<PipelineNode> & Pick<PipelineNode, 'node' | 'status'>,
 ): PipelineNode {
   return {
+    status_reason: '',
+    observed_at: null,
     last_success_at: null,
     last_failure_at: null,
     rows_in: null,
@@ -61,12 +63,16 @@ export function pipelineNode(
     duration_ms: null,
     error: null,
     version: null,
+    run_id: null,
+    source: null,
+    detail_path: null,
     ...partial,
   }
 }
 
 const basePipeline: PipelineResponse = {
   generated_at: T,
+  overall_status: 'healthy',
   nodes: [
     pipelineNode({ node: 'erp', status: 'healthy', last_success_at: T }),
     pipelineNode({
@@ -229,6 +235,39 @@ export const baseFixture: ScenarioFixture = {
       { object: 'SalesOrder', display_name: '销售订单', rows: 52, mapped_at: '2026-07-18 09:11:30', quarantined: 0 },
     ],
     needs_setup: false,
+    generated_at: T,
+    summary: {
+      raw_rows: 1284,
+      object_rows: 187,
+      materialized_objects: 4,
+      template_objects: 5,
+      quarantine_pending: 0,
+      last_run_at: T,
+      data_updated_at: T,
+    },
+    versions: { app: '0.1.6', template: '0.1.0', dataset: null, object: null },
+    binding_summary: { verified: 10, draft: 0, disabled: 0 },
+    alerts: [],
+    recent_runs: [
+      {
+        id: 42,
+        run_type: 'sync',
+        source: 'digiwin_e10',
+        status: 'ok',
+        rows: 1284,
+        tables: 4,
+        started_at: T,
+        finished_at: T,
+      },
+    ],
+    sync_trend: [
+      { bucket: '2026-07-18T08:00:00+08:00', rows: 36, runs: 1 },
+      { bucket: '2026-07-18T09:00:00+08:00', rows: 1284, runs: 1 },
+    ],
+    count_notes: [
+      { name: 'raw_rows', semantics: '当前配置范围内、未逻辑删除的 raw 活跃行数合计', source: 'raw_* 表 COUNT(*)' },
+      { name: 'object_rows', semantics: '已物化 obj_* 表行数合计;与 raw 因隔离/软删有差', source: 'obj_* 表 COUNT(*)' },
+    ],
   },
   runs: [
     {

@@ -63,7 +63,7 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
     暂停时进行中的表不推进水位(已落批次幂等),下窗口自然续跑。"""
     watermarks = watermarks or {}
     sink = sink or LocalSink(landing)
-    report = SyncReport(source=source, run_id=landing.start_run(source))
+    report = SyncReport(source=source, run_id=landing.start_run(source, "sync"))
     try:
         for info in adapter.tables():
             if should_continue and not should_continue():

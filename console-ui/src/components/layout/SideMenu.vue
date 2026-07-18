@@ -125,17 +125,19 @@ const icons: Record<ViewName, typeof Odometer> = {
   margin-left: 8px;
 }
 
-/* 菜单项:圆角胶囊;紧凑密度(13px 字、40px 行高、缩进 20px) */
+/* 菜单项:圆角胶囊;紧凑密度(13px 字、40px 行高、缩进 12px)。
+   padding-left 必须 !important:EP 的 .el-menu--vertical:not(...):not(...) .el-menu-item
+   选择器权重是 4 个类,普通覆盖永远输给它 */
 .sidemenu__menu :deep(.el-menu-item) {
   height: 40px;
-  margin: 2px 6px;
-  padding-left: 20px;
+  margin: 0px 6px;
+  padding-left: 12px !important;
   border-radius: 6px;
   font-size: 13px;
 }
 
 .sidemenu__menu :deep(.el-menu-item .el-icon) {
-  margin-right: 8px;
+  margin-right: 0px;
   font-size: 16px;
 }
 

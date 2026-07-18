@@ -11,6 +11,24 @@ export const emptyInstallFixture = {
     sources: [],
     objects: [],
     needs_setup: true,
+    generated_at: '2026-07-18T09:12:00+08:00',
+    summary: {
+      raw_rows: 0,
+      object_rows: null,
+      materialized_objects: 0,
+      template_objects: 5,
+      quarantine_pending: 0,
+      last_run_at: null,
+      data_updated_at: null,
+    },
+    versions: { app: '0.1.6', template: '0.1.0', dataset: null, object: null },
+    binding_summary: { verified: 0, draft: 10, disabled: 0 },
+    alerts: [],
+    recent_runs: [],
+    sync_trend: [],
+    count_notes: [
+      { name: 'raw_rows', semantics: '当前配置范围内、未逻辑删除的 raw 活跃行数合计', source: 'raw_* 表 COUNT(*)' },
+    ],
   },
   runs: [],
   quarantine: [],
@@ -19,6 +37,7 @@ export const emptyInstallFixture = {
   rawTable: { table: '', offset: 0, limit: 50, total: 0, rows: [] },
   pipeline: {
     generated_at: '2026-07-18T09:12:00+08:00',
+    overall_status: 'unknown',
     nodes: [
       pipelineNode({ node: 'erp', status: 'unknown' }),
       pipelineNode({ node: 'extract', status: 'unknown' }),

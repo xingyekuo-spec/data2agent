@@ -5,69 +5,89 @@ import { setScenario } from '@/mocks/scenario'
 import { server } from '@/test/setup'
 import { useOverviewStore } from './overview'
 
-describe('overview store(垂直切片)', () => {
+const OVERVIEW_MINIMAL = {
+  landing: '',
+  readonly: true,
+  actions_sync_reconcile: false,
+  sources: [],
+  objects: [],
+  needs_setup: false,
+  generated_at: '2026-07-18T09:12:00+08:00',
+  summary: {
+    raw_rows: 0,
+    object_rows: null,
+    materialized_objects: 0,
+    template_objects: 5,
+    quarantine_pending: 0,
+    last_run_at: null,
+    data_updated_at: null,
+  },
+  versions: { app: '0.1.6', template: '0.1.0', dataset: null, object: null },
+  binding_summary: { verified: 0, draft: 10, disabled: 0 },
+  alerts: [],
+  recent_runs: [],
+  sync_trend: [],
+  count_notes: [],
+}
+
+describe('overview store(单一所有者)', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     setScenario('healthy')
   })
 
-  it('idle → loading → success,数据完整', async () => {
+  it('idle → loading → success,记录成功时间', async () => {
     const store = useOverviewStore()
     expect(store.overview.status).toBe('idle')
     const pending = store.refresh()
     expect(store.overview.status).toBe('loading')
     await pending
     expect(store.overview.status).toBe('success')
-    if (store.overview.status === 'success') {
-      expect(store.overview.data.sources.length).toBeGreaterThan(0)
-      expect(store.overview.data.objects.length).toBeGreaterThan(0)
-    }
-    expect(store.services.status).toBe('success')
+    expect(store.data?.sources.length).toBeGreaterThan(0)
+    expect(store.lastSuccessAt).not.toBeNull()
+    expect(store.refreshError).toBeNull()
   })
 
-  it('失败保留错误(500),不变成空数据', async () => {
+  it('首次加载失败 → 请求 error(不是空数据)', async () => {
     setScenario('unknown-error')
     const store = useOverviewStore()
     await store.refresh()
     expect(store.overview.status).toBe('error')
     if (store.overview.status === 'error') {
       expect(store.overview.error.status).toBe(500)
-      expect(store.overview.error.retriable).toBe(true)
     }
-    expect(store.services.status).toBe('error')
   })
 
-  it('empty-install:成功 + 空集合,与请求失败是两种语义', async () => {
-    setScenario('empty-install')
+  it('刷新失败保留旧数据并标记 refreshError;恢复后清除', async () => {
     const store = useOverviewStore()
     await store.refresh()
     expect(store.overview.status).toBe('success')
-    if (store.overview.status === 'success') {
-      expect(store.overview.data.needs_setup).toBe(true)
-      expect(store.overview.data.sources).toEqual([])
-    }
+    const before = store.data
+
+    setScenario('unknown-error')
+    await store.refresh()
+    // 旧数据仍在,refreshError 标记,不变成健康假象
+    expect(store.overview.status).toBe('success')
+    expect(store.data).toEqual(before)
+    expect(store.refreshError?.status).toBe(500)
+
+    setScenario('healthy')
+    await store.refresh()
+    expect(store.refreshError).toBeNull()
   })
 
-  it('并发刷新防重复:在途时后续调用不再发请求', async () => {
-    let overviewCalls = 0
+  it('防重入:在途请求未完成时跳过', async () => {
+    let calls = 0
     server.use(
       http.get('*/api/overview', () => {
-        overviewCalls += 1
-        return new HttpResponse(
-          JSON.stringify({
-            landing: '',
-            readonly: true,
-            actions_sync_reconcile: false,
-            sources: [],
-            objects: [],
-            needs_setup: false,
-          }),
-          { headers: { 'Content-Type': 'application/json' } },
-        )
+        calls += 1
+        return new HttpResponse(JSON.stringify(OVERVIEW_MINIMAL), {
+          headers: { 'Content-Type': 'application/json' },
+        })
       }),
     )
     const store = useOverviewStore()
     await Promise.all([store.refresh(), store.refresh(), store.refresh()])
-    expect(overviewCalls).toBe(1)
+    expect(calls).toBe(1)
   })
 })

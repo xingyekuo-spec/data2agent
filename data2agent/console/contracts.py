@@ -20,6 +20,11 @@ LEGACY_TIME_DESC = (
     "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1"
 )
 
+TZ_TIME_DESC = (
+    "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must "
+    "convert legacy local text to an offset-bearing value"
+)
+
 
 class JsonValue(RootModel[
     str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -160,6 +165,17 @@ class OverviewResponse(BaseModel):
     sources: list[OverviewSource]
     objects: list[OverviewObject]
     needs_setup: bool = False
+    # ---- M3 追加:Dashboard 观测聚合(旧字段保持 wire 兼容)----
+    generated_at: datetime = Field(description=TZ_TIME_DESC)
+    summary: OverviewSummary
+    versions: OverviewVersions
+    binding_summary: BindingSummary
+    alerts: list[OverviewAlert]
+    recent_runs: list[RecentRun] | None = Field(
+        description="最近运行;查询失败为 null(不可检测),不返回空列表冒充从未运行")
+    sync_trend: list[SyncTrendPoint] | None = Field(
+        description="24h 趋势;查询失败为 null(不可检测),不返回空列表冒充无数据")
+    count_notes: list[CountNote]
 
 
 class RunSummary(BaseModel):
@@ -258,11 +274,6 @@ class RetryActionResult(BaseModel):
 
 # ---- v0.2 契约桩(M2):schema 先行,运行时在所属里程碑实现前返回 501 ----
 
-TZ_TIME_DESC = (
-    "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must "
-    "convert legacy local text to an offset-bearing value"
-)
-
 PipelineNodeStatus = Literal[
     "unknown", "idle", "running", "healthy", "warning", "failed", "stale"
 ]
@@ -274,6 +285,10 @@ class PipelineNode(BaseModel):
     node: str = Field(
         description="节点 ID:erp / extract / push / raw / mapping / objects / mcp")
     status: PipelineNodeStatus
+    status_reason: str = Field(
+        default="", description="状态原因(人话;截断,不含 Token/SQL/敏感行)")
+    observed_at: datetime | None = Field(
+        default=None, description="该节点证据的观测时间;" + TZ_TIME_DESC)
     last_success_at: datetime | None = Field(description=TZ_TIME_DESC)
     last_failure_at: datetime | None = Field(description=TZ_TIME_DESC)
     rows_in: int | None
@@ -282,10 +297,18 @@ class PipelineNode(BaseModel):
     error: str | None
     version: str | None = Field(
         description="数据或组件版本;dataset/object version 属 v0.3,当前可为空")
+    run_id: str | None = Field(default=None, description="正在运行/最近一次运行的 ID")
+    source: str | None = Field(default=None, description="节点归属数据源")
+    detail_path: str | None = Field(
+        default=None, description="详情入口;目标页未实现时为 null,不生死链")
 
 
 class PipelineResponse(BaseModel):
     generated_at: datetime = Field(description=TZ_TIME_DESC)
+    overall_status: PipelineNodeStatus = Field(
+        default="unknown",
+        description="按 failed>stale>warning>running>unknown>idle>healthy 折叠;"
+        "存在 unknown 时不得为 healthy")
     nodes: list[PipelineNode]
 
 
@@ -414,3 +437,73 @@ class ProposalResponse(BaseModel):
     evidence: list[ProposalEvidence]
     caveats: list[str]
     governance: str
+
+
+# ---- v0.2 M3:观测口径(总览聚合 / 管道扩展)----
+
+AlertSeverity = Literal["info", "warning", "critical"]
+
+
+class OverviewSummary(BaseModel):
+    """Dashboard 摘要计数;任一聚合不可检测时为 null,不用 0 掩盖错误。"""
+
+    raw_rows: int | None = Field(description="当前配置范围内 raw 活跃行数合计")
+    object_rows: int | None = Field(description="已物化 obj_* 行数合计")
+    materialized_objects: int = Field(description="覆盖率分子:已物化对象数")
+    template_objects: int = Field(description="覆盖率分母:模板对象数")
+    quarantine_pending: int | None = Field(description="未处理隔离(resolved 为空)")
+    last_run_at: datetime | None = Field(description=TZ_TIME_DESC)
+    data_updated_at: datetime | None = Field(description=TZ_TIME_DESC)
+
+
+class OverviewVersions(BaseModel):
+    """版本信息;dataset/object version 属 v0.3,当前恒为 null(显示"尚未启用")。"""
+
+    app: str | None = Field(description="安装包元数据版本;取不到为 null(unknown)")
+    template: str | None = Field(description="模板 pack 结构化 version")
+    dataset: str | None = Field(description="dataset version 属 v0.3,当前为 null")
+    object: str | None = Field(description="object version 属 v0.3,当前为 null")
+
+
+class BindingSummary(BaseModel):
+    verified: int
+    draft: int
+    disabled: int
+
+
+class OverviewAlert(BaseModel):
+    """当前告警:由节点/服务/隔离/治理状态确定性聚合,非持久化实体。"""
+
+    id: str = Field(description="kind+node/source/object 组成,刷新后稳定")
+    severity: AlertSeverity
+    title: str
+    reason: str
+    source: str | None
+    observed_at: datetime | None = Field(description=TZ_TIME_DESC)
+    detail_path: str | None = Field(description="详情入口;目标页未实现时为 null,不生死链")
+
+
+class RecentRun(BaseModel):
+    id: int
+    run_type: RunType | None = Field(
+        description="结构化运行类型;历史记录为 NULL(类型未知),不回填猜测")
+    source: str
+    status: str | None
+    rows: int | None
+    tables: int | None
+    started_at: datetime | None = Field(description=TZ_TIME_DESC)
+    finished_at: datetime | None = Field(description=TZ_TIME_DESC)
+
+
+class SyncTrendPoint(BaseModel):
+    bucket: datetime = Field(description="趋势桶起点(小时)," + TZ_TIME_DESC)
+    rows: int
+    runs: int
+
+
+class CountNote(BaseModel):
+    """数量口径说明:名称、口径、数据来源。"""
+
+    name: str
+    semantics: str
+    source: str

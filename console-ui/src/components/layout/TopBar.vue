@@ -1,14 +1,25 @@
 <script setup lang="ts">
-// 白底顶栏(参考 UI):左侧当前页面标题,右侧模式标识 + 用户入口。
+// 白底顶栏(参考 UI):左侧当前页面标题;右侧源状态 / 更新时间 / 隔离数 /
+// 模式标识 / 用户入口。只读两个观测 store,不直接调 API。
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowDown } from '@element-plus/icons-vue'
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge.vue'
+import StatusBadge from '@/components/shared/StatusBadge.vue'
+import { useOverviewStore } from '@/stores/overview'
+import { usePipelineStore } from '@/stores/pipeline'
 import { useSessionStore } from '@/stores/session'
+import { formatTimeHM } from '@/utils/time'
 
 const route = useRoute()
 const session = useSessionStore()
+const overviewStore = useOverviewStore()
+const pipelineStore = usePipelineStore()
+
 const title = computed(() => (typeof route.meta.title === 'string' ? route.meta.title : ''))
+const overall = computed(() => pipelineStore.data?.overall_status ?? null)
+const quarantine = computed(() => overviewStore.data?.summary.quarantine_pending ?? null)
+const updatedAt = computed(() => formatTimeHM(overviewStore.data?.summary.data_updated_at))
 
 function onUserCommand(command: string): void {
   if (command === 'login') {
@@ -28,6 +39,25 @@ function onUserCommand(command: string): void {
       {{ title }}
     </h1>
     <div class="topbar__right">
+      <StatusBadge
+        v-if="overall"
+        :status="overall"
+        data-testid="topbar-overall"
+      />
+      <span
+        v-if="quarantine !== null"
+        class="topbar__metric"
+        data-testid="topbar-quarantine"
+      >
+        隔离 {{ quarantine }}
+      </span>
+      <span
+        v-if="updatedAt"
+        class="topbar__metric"
+        data-testid="topbar-updated"
+      >
+        更新 {{ updatedAt }}
+      </span>
       <EnvironmentBadge />
       <el-dropdown
         trigger="click"
@@ -82,8 +112,13 @@ function onUserCommand(command: string): void {
 
 .topbar__right {
   display: flex;
-  gap: 16px;
+  gap: 14px;
   align-items: center;
+}
+
+.topbar__metric {
+  font-size: 12px;
+  color: var(--d2a-text-secondary);
 }
 
 .topbar__user {

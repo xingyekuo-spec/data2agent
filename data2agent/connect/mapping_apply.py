@@ -196,7 +196,7 @@ def apply_objects(landing: LandingStore, pack: TemplatePack, source: str,
                   threshold: float = DEFAULT_BREAKER_THRESHOLD) -> ApplyReport:
     """物化全部有 binding 的对象;单对象熔断记为 aborted,不阻塞其他对象。"""
     report = ApplyReport(source=source)
-    run_id = landing.start_run(source)
+    run_id = landing.start_run(source, "apply")
     aborted_msgs = []
     for tpl in pack.objects:
         try:

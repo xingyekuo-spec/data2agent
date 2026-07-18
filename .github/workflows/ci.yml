@@ -48,6 +48,14 @@ jobs:
       - run: npm run test
       - run: npm run build          # 生产构建(默认 REAL,base=/v1/)
       - run: node scripts/check-dist.mjs   # 产物 base/CDN/MSW 分包检查
+      # e2e 浏览器验收(Real 部分需要 Python 后端 + Playwright 浏览器)
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -e ".[dev,console,connect]"
+        working-directory: .
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
 
   # MSSQL 适配器集成测试(重:手动触发)
   mssql-integration:

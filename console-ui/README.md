@@ -66,10 +66,14 @@ TS2502,脚本注入等价手写别名并校验 anyOf 形状防漂移)。
 npm run lint         # ESLint(核心代码禁止显式 any)
 npm run typecheck    # vue-tsc(含生成类型编译期校验 src/types/api.compile-check.ts)
 npm run test         # Vitest + jsdom(MSW node server,不依赖已启动的后端)
+npm run test:e2e     # Playwright 浏览器验收(Mock 场景 + Real 临时 SQLite/后端)
 npm run build        # 生产构建:默认 REAL,base=/v1/
 npm run preview      # 预览构建产物
 node scripts/check-dist.mjs   # 产物检查:base=/v1/、无 CDN、全量产物无 Mock 痕迹
 ```
+
+`test:e2e` 的 Real 部分需要 Python 后端(默认 `../.venv/bin/python`,可用
+`D2A_PYTHON` 覆盖)与 Playwright 浏览器(`npx playwright install chromium`)。
 
 ## 目录速览
 

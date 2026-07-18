@@ -18,6 +18,7 @@ export const syncRunningFixture = {
   ],
   pipeline: {
     generated_at: '2026-07-18T09:30:20+08:00',
+    overall_status: 'running',
     nodes: [
       pipelineNode({ node: 'erp', status: 'healthy', last_success_at: '2026-07-18T09:10:00+08:00' }),
       pipelineNode({ node: 'extract', status: 'running', last_success_at: '2026-07-18T09:10:02+08:00' }),

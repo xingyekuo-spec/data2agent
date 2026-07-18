@@ -11,9 +11,44 @@ export const applyCircuitBrokenFixture = {
       { object: 'Quotation', display_name: '报价单', rows: 41, mapped_at: '2026-07-17 22:00:05', quarantined: 0 },
       { object: 'SalesOrder', display_name: '销售订单', rows: 52, mapped_at: '2026-07-17 22:00:08', quarantined: 3 },
     ],
+    summary: { ...baseFixture.overview.summary, quarantine_pending: 44 },
+    alerts: [
+      {
+        id: 'node-mapping',
+        severity: 'critical',
+        title: '管道节点 mapping failed',
+        reason: 'Customer 隔离率 53% 超过熔断阈值 20%,apply 已中止',
+        source: 'digiwin_e10',
+        observed_at: '2026-07-18T09:48:40+08:00',
+        detail_path: null,
+      },
+      {
+        id: 'node-objects',
+        severity: 'warning',
+        title: '管道节点 objects stale',
+        reason: 'apply 失败,对象层继续使用上一稳定结果',
+        source: 'digiwin_e10',
+        observed_at: '2026-07-17T22:00:12+08:00',
+        detail_path: null,
+      },
+    ],
+    recent_runs: [
+      {
+        id: 44,
+        run_type: 'apply',
+        source: 'digiwin_e10',
+        status: 'failed',
+        rows: 36,
+        tables: 1,
+        started_at: '2026-07-18T09:48:00+08:00',
+        finished_at: '2026-07-18T09:48:40+08:00',
+      },
+      ...(baseFixture.overview.recent_runs ?? []),
+    ],
   },
   pipeline: {
     generated_at: '2026-07-18T09:50:00+08:00',
+    overall_status: 'failed',
     nodes: [
       pipelineNode({ node: 'erp', status: 'healthy', last_success_at: '2026-07-18T09:10:00+08:00' }),
       pipelineNode({ node: 'extract', status: 'healthy', last_success_at: '2026-07-18T09:10:02+08:00' }),
@@ -22,6 +57,7 @@ export const applyCircuitBrokenFixture = {
       pipelineNode({
         node: 'mapping',
         status: 'failed',
+        status_reason: 'Customer 隔离率 53% 超过熔断阈值 20%,apply 已中止',
         last_success_at: '2026-07-17T22:00:10+08:00',
         last_failure_at: '2026-07-18T09:48:40+08:00',
         error: 'Customer 隔离率 53% 超过熔断阈值 20%,apply 已中止',
@@ -29,6 +65,7 @@ export const applyCircuitBrokenFixture = {
       pipelineNode({
         node: 'objects',
         status: 'stale',
+        status_reason: 'apply 失败,对象层继续使用上一稳定结果',
         last_success_at: '2026-07-17T22:00:12+08:00',
         version: '上一稳定版本(2026-07-17 22:00)',
       }),

@@ -1,43 +1,56 @@
 /**
- * overview 垂直切片:API → service → store → view 的完整样例。
+ * overview 单一所有者(M3-T07):overview 请求、旧数据保留、刷新状态。
  *
- * Mock 与 Real 使用同一 store;两个请求的状态各自独立(一个失败不把另一个
- * 变成空数据)。M3 在此模式上扩展真实 Dashboard。
+ * - 首次加载失败 → 请求 error 视图;刷新失败 → 保留上一次成功数据 +
+ *   refreshError 标记("刷新失败/数据截至…"),绝不变回健康假象;
+ * - 防重入:上一请求未结束时跳过;
+ * - Dashboard / TopBar 只消费状态,不直接调 API。
  */
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { getOverview, getServices } from '@/api/services'
+import { computed, ref } from 'vue'
+import type { ApiError } from '@/api/errors'
+import { getOverview } from '@/api/services'
 import type { components } from '@/types/api'
 import type { RequestState } from '@/types/state'
 
 type OverviewResponse = components['schemas']['OverviewResponse']
-type ServicesStatusResponse = components['schemas']['ServicesStatusResponse']
 
 export const useOverviewStore = defineStore('overview', () => {
   const overview = ref<RequestState<OverviewResponse>>({ status: 'idle' })
-  const services = ref<RequestState<ServicesStatusResponse>>({ status: 'idle' })
+  /** 上一次成功刷新时间(旧数据的"数据截至") */
+  const lastSuccessAt = ref<Date | null>(null)
+  /** 刷新失败(保留旧数据时展示);成功后清空 */
+  const refreshError = ref<ApiError | null>(null)
   let inFlight = false
 
+  const data = computed(() =>
+    overview.value.status === 'success' ? overview.value.data : null,
+  )
+
   async function refresh(): Promise<void> {
-    // 防重复:已有刷新在途时直接返回
     if (inFlight) {
       return
     }
     inFlight = true
-    overview.value = { status: 'loading' }
-    services.value = { status: 'loading' }
+    const firstLoad = overview.value.status !== 'success'
+    if (firstLoad) {
+      overview.value = { status: 'loading' }
+    }
     try {
-      const [ov, sv] = await Promise.all([getOverview(), getServices()])
-      overview.value = ov.ok
-        ? { status: 'success', data: ov.data }
-        : { status: 'error', error: ov.error }
-      services.value = sv.ok
-        ? { status: 'success', data: sv.data }
-        : { status: 'error', error: sv.error }
+      const result = await getOverview()
+      if (result.ok) {
+        overview.value = { status: 'success', data: result.data }
+        lastSuccessAt.value = new Date()
+        refreshError.value = null
+      } else if (firstLoad) {
+        overview.value = { status: 'error', error: result.error }
+      } else {
+        refreshError.value = result.error
+      }
     } finally {
       inFlight = false
     }
   }
 
-  return { overview, services, refresh }
+  return { overview, data, lastSuccessAt, refreshError, refresh }
 })
