@@ -26,6 +26,7 @@
   管理页(配置白名单编辑、状态、日志、调试;浏览器首次配置);v0 内嵌运维单页保留在 `/v0`;
   独立 Vue Console(`console-ui/`)是当前产品主路线,用于日常监控与数据验证。现场推荐[便携包](docs/runbook/portable.md)
   双击 `data2agent.exe`,链路验收见 [push-validation](docs/runbook/push-validation.md);
+  管理 API 契约快照见 `console-ui/openapi.json`(用 `python scripts/export_console_openapi.py` 重新生成);
 - **数字厂长展厅**:`docker compose up` 一键起 SQL Server 模拟工厂(渔具外销厂,E10 参考表形)+ 抽取常驻 + MCP(HTTP :8848)+ 运维控制台(:8849);接单评审演示链脚本版 / Agent 版双就绪。
 
 **安全承诺**:装进你内网、碰你数据库的每一行代码都在这个仓库里 —— 只读账号、白名单表、限时限流、错峰窗口,全部可审计,可逐行核对。

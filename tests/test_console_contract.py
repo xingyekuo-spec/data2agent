@@ -1,0 +1,526 @@
+"""Console API contract tests: routes, wire shape, named schemas, auth, snapshot."""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient  # noqa: E402
+
+from data2agent.admin_common.home_layout import HomeLayout  # noqa: E402
+from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
+from data2agent.connect.config import load_config  # noqa: E402
+from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
+from data2agent.connect.landing import LandingStore  # noqa: E402
+from data2agent.connect.mapping_apply import apply_objects  # noqa: E402
+from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
+from data2agent.console.app import create_app  # noqa: E402
+from data2agent.console.contracts import (  # noqa: E402
+    ActionExecutionResult,
+    ApplyActionResult,
+    AuditRecord,
+    ConfigViewResponse,
+    HttpError,
+    OverviewResponse,
+    QuarantineRecord,
+    RequestError,
+    RunSummary,
+    ServicesStatusResponse,
+    SetupFailureResponse,
+    SetupStatusResponse,
+    SetupSuccessResponse,
+)
+from data2agent.metamodel.loader import load_pack  # noqa: E402
+from data2agent.showroom.seed import build, write_db  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = "digiwin_e10"
+
+REQUIRED_API_ROUTES = {
+    ("GET", "/api/setup/status"),
+    ("POST", "/api/setup"),
+    ("GET", "/api/overview"),
+    ("GET", "/api/runs"),
+    ("GET", "/api/quarantine"),
+    ("GET", "/api/audit"),
+    ("GET", "/api/config"),
+    ("POST", "/api/config"),
+    ("POST", "/api/config/validate"),
+    ("GET", "/api/services"),
+    ("GET", "/api/logs"),
+    ("GET", "/api/debug/raw-table"),
+    ("POST", "/api/debug/mcp-call"),
+    ("POST", "/api/actions/sync"),
+    ("POST", "/api/actions/reconcile"),
+    ("POST", "/api/actions/apply"),
+    ("POST", "/api/actions/retry"),
+}
+
+NAMED_SUCCESS_SCHEMAS = {
+    ("get", "/api/setup/status"): "SetupStatusResponse",
+    ("get", "/api/overview"): "OverviewResponse",
+    ("get", "/api/runs"): ("array", "RunSummary"),
+    ("get", "/api/quarantine"): ("array", "QuarantineRecord"),
+    ("get", "/api/audit"): ("array", "AuditRecord"),
+    ("get", "/api/config"): "ConfigViewResponse",
+    ("post", "/api/config"): "ConfigSaveResponse",
+    ("post", "/api/config/validate"): "ValidationResult",
+    ("get", "/api/services"): "ServicesStatusResponse",
+    ("get", "/api/logs"): "LogsResponse",
+    ("get", "/api/debug/raw-table"): "RawTablePageResponse",
+    ("post", "/api/debug/mcp-call"): "McpToolResult",
+    ("post", "/api/actions/sync"): "ActionExecutionResult",
+    ("post", "/api/actions/reconcile"): "ActionExecutionResult",
+    ("post", "/api/actions/apply"): "ApplyActionResult",
+    ("post", "/api/actions/retry"): "RetryActionResult",
+    # 普通 anyOf(无 discriminator):保证 TS 生成 ok 的 boolean 字面量,可收窄
+    ("post", "/api/setup"): ("anyOf", ("SetupSuccessResponse", "SetupFailureResponse")),
+}
+
+# M2 v0.2 契约桩:schema 先行,运行时在所属里程碑实现前一律 501。
+STUB_API_ROUTES = {
+    ("GET", "/api/pipeline"),
+    ("GET", "/api/runs/{run_id}"),
+    ("GET", "/api/data/raw/{source}/{table}"),
+    ("GET", "/api/objects"),
+    ("GET", "/api/objects/{object}"),
+    ("GET", "/api/templates"),
+    ("POST", "/api/gateway/proposals"),
+}
+
+STUB_SUCCESS_SCHEMAS = {
+    ("get", "/api/pipeline"): "PipelineResponse",
+    ("get", "/api/runs/{run_id}"): "RunDetailResponse",
+    ("get", "/api/data/raw/{source}/{table}"): "RawDataPageResponse",
+    ("get", "/api/objects"): ("array", "ObjectSummary"),
+    ("get", "/api/objects/{object}"): "ObjectRowsPageResponse",
+    ("get", "/api/templates"): ("array", "TemplateObject"),
+    ("post", "/api/gateway/proposals"): "ProposalResponse",
+}
+
+# (method, concrete path, kwargs) for runtime 501 checks
+STUB_RUNTIME_CALLS = [
+    ("get", "/api/pipeline", {}),
+    ("get", "/api/runs/1", {}),
+    ("get", "/api/data/raw/digiwin_e10/raw_x", {}),
+    ("get", "/api/objects", {}),
+    ("get", "/api/objects/SalesOrder", {}),
+    ("get", "/api/templates", {}),
+    ("post", "/api/gateway/proposals", {
+        "json": {"object": "SalesOrder", "action": "review", "conclusion": "c",
+                 "evidence": [{"claim": "c", "query_id": "q1"}]},
+    }),
+]
+
+
+@pytest.fixture()
+def env(tmp_path):
+    src = tmp_path / "source.sqlite"
+    write_db(src, build(seed=42, asof=date(2026, 7, 10)))
+    pack = load_pack(ROOT / "templates")
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    hook = lambda action, sql, rows, ms: landing.log_audit(SOURCE, action, sql, rows, ms)  # noqa: E731
+    adapter = SqliteReadOnlyAdapter(
+        str(src), whitelist_from_pack(pack, SOURCE), audit_hook=hook)
+    incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
+    apply_objects(landing, pack, SOURCE)
+    cfg_file = tmp_path / "connect.yaml"
+    cfg_file.write_text(
+        f"templates: {ROOT / 'templates'}\n"
+        f"landing: {landing.db_path}\n"
+        "sources:\n"
+        "  digiwin_e10:\n"
+        "    adapter: sqlite_readonly\n"
+        f"    path: {src}\n",
+        encoding="utf-8")
+    return landing, cfg_file
+
+
+def _openapi_app(tmp_path):
+    landing = tmp_path / "empty-landing.sqlite"
+    return create_app(landing=str(landing), templates=str(ROOT / "templates"))
+
+
+def _schema_ref(node: dict) -> str | None:
+    if "$ref" in node:
+        return node["$ref"].rsplit("/", 1)[-1]
+    return None
+
+
+def _assert_schema_not_unknown(schemas: dict, name: str) -> None:
+    """Reject empty `{}` / items:{} shapes that become TypeScript `unknown`."""
+    assert name in schemas, name
+    node = schemas[name]
+    assert node != {}, f"{name} must not be an empty schema"
+    if "anyOf" in node:
+        assert node["anyOf"], f"{name}.anyOf empty"
+        return
+    if node.get("type") == "object":
+        props = node.get("properties") or {}
+        addl = node.get("additionalProperties")
+        assert props or addl not in (None, True, {}), (
+            f"{name} object must declare properties or typed additionalProperties, got {node}"
+        )
+        if isinstance(addl, dict) and "$ref" in addl:
+            _assert_schema_not_unknown(schemas, _schema_ref(addl))
+        return
+    assert "type" in node or "$ref" in node, f"{name} untyped: {node}"
+
+
+def test_required_api_routes_present(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    found = set()
+    for path, item in spec["paths"].items():
+        for method, op in item.items():
+            if method in ("get", "post", "put", "patch", "delete"):
+                found.add((method.upper(), path))
+    missing = REQUIRED_API_ROUTES - found
+    assert not missing, f"missing API routes: {sorted(missing)}"
+    assert len(REQUIRED_API_ROUTES) == 17
+
+
+def test_success_responses_use_named_schemas(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    schemas = spec.get("components", {}).get("schemas", {})
+    for (method, path), expected in NAMED_SUCCESS_SCHEMAS.items():
+        content = (
+            spec["paths"][path][method]["responses"]["200"]
+            ["content"]["application/json"]["schema"]
+        )
+        if isinstance(expected, tuple) and expected[0] == "array":
+            assert content.get("type") == "array", path
+            name = _schema_ref(content.get("items", {}))
+            assert name == expected[1], f"{path}: expected list[{expected[1]}], got {content}"
+            _assert_schema_not_unknown(schemas, name)
+        elif isinstance(expected, tuple) and expected[0] == "anyOf":
+            refs = {_schema_ref(x) for x in content.get("anyOf", [])}
+            assert refs == set(expected[1]), f"{path}: expected anyOf {expected[1]}, got {content}"
+            # 成员必须带 ok 的 const 字面量,TS 才能收窄;不得退回 discriminator
+            # (openapi-typescript 会把 ok 重写为字符串枚举,破坏收窄)
+            assert "discriminator" not in content
+            for name in expected[1]:
+                ok_schema = schemas[name]["properties"]["ok"]
+                assert ok_schema.get("const") in (True, False), f"{name}.ok needs const"
+                _assert_schema_not_unknown(schemas, name)
+        else:
+            name = _schema_ref(content)
+            assert name == expected, f"{path}: expected {expected}, got {content}"
+            _assert_schema_not_unknown(schemas, name)
+
+
+def test_json_value_schemas_are_recursive_anyof(tmp_path):
+    schemas = _openapi_app(tmp_path).openapi()["components"]["schemas"]
+    for name in ("JsonValue-Input", "JsonValue-Output"):
+        node = schemas[name]
+        assert "anyOf" in node, name
+        kinds = {item.get("type") for item in node["anyOf"] if isinstance(item, dict)}
+        assert {"string", "integer", "number", "boolean", "array", "object", "null"} <= kinds
+        assert node.get("additionalProperties") is not True
+        for item in node["anyOf"]:
+            if item.get("type") == "array":
+                assert item.get("items") not in ({}, None)
+                assert "$ref" in item["items"]
+            if item.get("type") == "object":
+                assert item.get("additionalProperties") not in (True, {}, None)
+
+
+def test_openapi_declares_optional_bearer_security(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    schemes = spec["components"]["securitySchemes"]
+    assert "HTTPBearer" in schemes
+    assert schemes["HTTPBearer"]["scheme"] == "bearer"
+    optional = [{"HTTPBearer": []}, {}]
+    overview = spec["paths"]["/api/overview"]["get"]
+    assert overview.get("security") == optional
+    # Setup routes use the same optional Bearer: after first-time setup + token,
+    # runtime returns 401 without credentials (not permanently unauthenticated).
+    assert spec["paths"]["/api/setup"]["post"].get("security") == optional
+    assert spec["paths"]["/api/setup/status"]["get"].get("security") == optional
+    assert "needs_setup" in (spec["paths"]["/api/setup"]["post"].get("description") or "")
+
+def test_wire_shape_arrays_and_objects(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    overview = client.get("/api/overview").json()
+    OverviewResponse.model_validate(overview)
+    assert isinstance(overview, dict)
+    assert "sources" in overview and "objects" in overview
+
+    runs = client.get("/api/runs").json()
+    assert isinstance(runs, list)
+    assert not isinstance(runs, dict)
+    RunSummary.model_validate(runs[0])
+
+    audit = client.get("/api/audit").json()
+    assert isinstance(audit, list)
+    AuditRecord.model_validate(audit[0])
+
+    quarantine = client.get("/api/quarantine").json()
+    assert isinstance(quarantine, list)
+    for row in quarantine:
+        QuarantineRecord.model_validate(row)
+
+    cfg = client.get("/api/config")
+    # readonly app without config_path → 409
+    assert cfg.status_code == 409
+    HttpError.model_validate(cfg.json())
+
+
+def test_config_and_services_models(env):
+    landing, cfg_file = env
+    cfg = load_config(cfg_file)
+    client = TestClient(create_app(
+        cfg.landing, cfg.templates, cfg, token="t",
+        config_path=cfg_file, log_dir=Path(".")))
+    h = {"Authorization": "Bearer t"}
+    view = client.get("/api/config", headers=h).json()
+    ConfigViewResponse.model_validate(view)
+    services = client.get("/api/services", headers=h).json()
+    ServicesStatusResponse.model_validate(services)
+    assert services["console"]["ok"] is True
+
+
+def test_token_missing_returns_http_error_not_empty_data(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates", token="s3cret"))
+    r = client.get("/api/overview")
+    assert r.status_code == 401
+    err = HttpError.model_validate(r.json())
+    assert err.detail
+    assert "sources" not in r.json()
+
+
+def test_setup_mode_blocks_management_apis(tmp_path):
+    home = HomeLayout(tmp_path)
+    home.ensure_dirs()
+    shutil.copytree(ROOT / "templates", home.app / "templates")
+    client = TestClient(create_app(home=home.root))
+    st = client.get("/api/setup/status")
+    assert st.status_code == 200
+    SetupStatusResponse.model_validate(st.json())
+    assert st.json()["needs_setup"] is True
+
+    blocked = client.get("/api/overview")
+    assert blocked.status_code == 409
+    HttpError.model_validate(blocked.json())
+    assert client.get("/api/runs").status_code == 409
+    assert client.get("/api/audit").status_code == 409
+
+
+def test_limit_is_capped(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    runs = client.get("/api/runs", params={"limit": 9999}).json()
+    assert isinstance(runs, list)
+    assert len(runs) <= 100
+    audit = client.get("/api/audit", params={"limit": 9999}).json()
+    assert len(audit) <= 200
+
+
+def test_mcp_unknown_tool_rejected(env):
+    landing, cfg_file = env
+    cfg = load_config(cfg_file)
+    client = TestClient(create_app(cfg.landing, cfg.templates, cfg))
+    r = client.post("/api/debug/mcp-call", json={"tool": "propose_action", "params": {}})
+    assert r.status_code == 422
+    RequestError.model_validate(r.json())
+    body = _openapi_app(Path(cfg.landing).parent).openapi()
+    tool_schema = body["components"]["schemas"]["McpCallBody"]["properties"]["tool"]
+    assert tool_schema.get("enum") == ["query_objects", "query_metrics"]
+
+
+def test_retry_422_string_and_validation_list(env):
+    landing, cfg_file = env
+    client = TestClient(create_app("ignored", "ignored", load_config(cfg_file)))
+    missing = client.post("/api/actions/retry", json={"source": SOURCE})
+    assert missing.status_code == 422
+    missing_body = RequestError.model_validate(missing.json())
+    assert isinstance(missing_body.detail, str)
+
+    invalid = client.post("/api/actions/retry", json={"source": SOURCE, "deep": "not-bool"})
+    assert invalid.status_code == 422
+    invalid_body = RequestError.model_validate(invalid.json())
+    assert isinstance(invalid_body.detail, list) and invalid_body.detail
+
+    spec = _openapi_app(Path(cfg_file).parent).openapi()
+    retry_422 = spec["paths"]["/api/actions/retry"]["post"]["responses"]["422"]
+    assert _schema_ref(retry_422["content"]["application/json"]["schema"]) == "RequestError"
+
+
+def test_setup_response_union_narrowable(tmp_path):
+    home = HomeLayout(tmp_path)
+    home.ensure_dirs()
+    shutil.copytree(ROOT / "templates", home.app / "templates")
+    client = TestClient(create_app(home=home.root))
+    fail = client.post("/api/setup", json={"ingest_token": " ", "console_token": " "})
+    assert fail.status_code == 200
+    SetupFailureResponse.model_validate(fail.json())
+    assert "message" not in fail.json()
+
+    ok = client.post("/api/setup", json={
+        "ingest_token": "ingest-tok",
+        "console_token": "console-tok",
+    })
+    assert ok.status_code == 200
+    SetupSuccessResponse.model_validate(ok.json())
+    assert "errors" not in ok.json()
+
+    # After setup + token, setup endpoints require Bearer (matches OpenAPI optional auth).
+    assert client.get("/api/setup/status").status_code == 401
+    assert client.post("/api/setup", json={
+        "ingest_token": "x", "console_token": "y",
+    }).status_code == 401
+    authed = client.get(
+        "/api/setup/status", headers={"Authorization": "Bearer console-tok"})
+    assert authed.status_code == 200
+    assert authed.json()["needs_setup"] is False
+
+    schemas = _openapi_app(tmp_path).openapi()["components"]["schemas"]
+    for name in ("SetupSuccessResponse", "SetupFailureResponse"):
+        assert "ok" in schemas[name].get("required", []), (
+            f"{name}.ok must be required for TS discriminant narrowing"
+        )
+        assert "default" not in schemas[name]["properties"]["ok"]
+
+
+def test_action_executed_false_is_success_body(env, tmp_path):
+    from datetime import datetime, timedelta
+
+    landing, cfg_file = env
+    t2 = datetime.now() + timedelta(hours=2)
+    t3 = datetime.now() + timedelta(hours=3)
+    closed = tmp_path / "closed.yaml"
+    closed.write_text(
+        cfg_file.read_text(encoding="utf-8")
+        + f'    windows: ["{t2:%H:%M}-{t3:%H:%M}"]\n',
+        encoding="utf-8")
+    client = TestClient(create_app("ignored", "ignored", load_config(closed)))
+    r = client.post("/api/actions/sync", json={"source": SOURCE})
+    assert r.status_code == 200
+    body = ActionExecutionResult.model_validate(r.json())
+    assert body.executed is False
+    assert "窗口" in body.note
+
+
+def test_apply_response_model(env):
+    landing, cfg_file = env
+    client = TestClient(create_app("ignored", "ignored", load_config(cfg_file)))
+    r = client.post("/api/actions/apply", json={"source": SOURCE})
+    assert r.status_code == 200
+    ApplyActionResult.model_validate(r.json())
+
+
+def test_errors_do_not_validate_as_success_models(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates", token="x"))
+    err = client.get("/api/overview").json()
+    with pytest.raises(Exception):
+        OverviewResponse.model_validate(err)
+
+
+def test_legacy_time_fields_remain_strings(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    run = client.get("/api/runs").json()[0]
+    assert isinstance(run["started_at"], str)
+    audit = client.get("/api/audit").json()[0]
+    assert isinstance(audit["ts"], str)
+
+
+def test_openapi_snapshot_roundtrip(tmp_path, monkeypatch):
+    import tempfile as tempfile_mod
+
+    script = ROOT / "scripts" / "export_console_openapi.py"
+    out = tmp_path / "openapi.json"
+    before = set(Path(tempfile_mod.gettempdir()).glob("d2a-openapi-*"))
+    r1 = subprocess.run(
+        [sys.executable, str(script), str(out)],
+        cwd=ROOT, capture_output=True, text=True, check=False)
+    assert r1.returncode == 0, r1.stderr
+    after = set(Path(tempfile_mod.gettempdir()).glob("d2a-openapi-*"))
+    assert after == before, f"export left temp dirs behind: {after - before}"
+    first = out.read_bytes()
+    r2 = subprocess.run(
+        [sys.executable, str(script), str(out)],
+        cwd=ROOT, capture_output=True, text=True, check=False)
+    assert r2.returncode == 0, r2.stderr
+    assert out.read_bytes() == first
+    check = subprocess.run(
+        [sys.executable, str(script), "--check", str(out)],
+        cwd=ROOT, capture_output=True, text=True, check=False)
+    assert check.returncode == 0, check.stderr + check.stdout
+
+    # Drift must fail check
+    data = json.loads(first)
+    data["info"]["title"] = "drifted"
+    out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    drifted = subprocess.run(
+        [sys.executable, str(script), "--check", str(out)],
+        cwd=ROOT, capture_output=True, text=True, check=False)
+    assert drifted.returncode != 0
+    assert "export_console_openapi.py" in (drifted.stdout + drifted.stderr)
+
+
+# ---- M2 v0.2 契约桩 ----
+
+
+def test_stub_routes_present(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    found = set()
+    for path, item in spec["paths"].items():
+        for method in item:
+            if method in ("get", "post", "put", "patch", "delete"):
+                found.add((method.upper(), path))
+    missing = STUB_API_ROUTES - found
+    assert not missing, f"missing stub routes: {sorted(missing)}"
+    assert len(STUB_API_ROUTES) == 7
+
+
+def test_stub_success_schemas_named_and_typed(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    schemas = spec.get("components", {}).get("schemas", {})
+    for (method, path), expected in STUB_SUCCESS_SCHEMAS.items():
+        op = spec["paths"][path][method]
+        content = (
+            op["responses"]["200"]["content"]["application/json"]["schema"]
+        )
+        if isinstance(expected, tuple) and expected[0] == "array":
+            assert content.get("type") == "array", path
+            name = _schema_ref(content.get("items", {}))
+            assert name == expected[1], f"{path}: expected list[{expected[1]}], got {content}"
+        else:
+            name = _schema_ref(content)
+            assert name == expected, f"{path}: expected {expected}, got {content}"
+        _assert_schema_not_unknown(schemas, name)
+        # 501 必须声明为 HttpError,不得只出现在描述文本里
+        err = op["responses"]["501"]["content"]["application/json"]["schema"]
+        assert _schema_ref(err) == "HttpError", f"{path}: 501 must use HttpError"
+
+
+def test_stubs_return_501_http_error_not_fake_success(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    success_keys = {"nodes", "steps", "rows", "objects", "proposal_id", "evidence"}
+    for method, path, kwargs in STUB_RUNTIME_CALLS:
+        r = getattr(client, method)(path, **kwargs)
+        assert r.status_code == 501, f"{method.upper()} {path}: {r.status_code}"
+        err = HttpError.model_validate(r.json())
+        assert "契约桩" in err.detail
+        assert not (success_keys & r.json().keys()), (
+            f"{path} must not return fake success fields")
+
+
+def test_stub_proposal_request_validation(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    # 空 evidence 应在进入桩逻辑前被 422 拒绝(契约语义与 propose_action 一致)
+    r = client.post("/api/gateway/proposals", json={
+        "object": "SalesOrder", "action": "review", "conclusion": "c", "evidence": []})
+    assert r.status_code == 422

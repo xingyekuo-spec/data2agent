@@ -185,6 +185,17 @@ POST /api/gateway/proposals              # 独立建议卡入口
 每个端点必须定义 Pydantic request/response model。OpenAPI 快照提交到 `console-ui/openapi.json`,
 由 `openapi-typescript` 生成类型;CI 从后端代码重新导出 schema 并与快照比较。
 
+```bash
+# 重新生成快照(契约变更后必须提交)
+python scripts/export_console_openapi.py console-ui/openapi.json
+# CI / 本地漂移检查
+python scripts/export_console_openapi.py --check console-ui/openapi.json
+```
+
+M1 已将现有 `/api/**` 契约集中在 `data2agent/console/contracts.py`;成功响应最外层
+wire shape(数组列表、overview/config 对象)保持兼容。历史落库时间字段仍为 legacy
+local ISO text,OpenAPI 描述中标明不保证时区 offset。
+
 ### 5.3 通用动作和错误语义
 
 | HTTP/响应 | 含义 |

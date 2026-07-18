@@ -24,11 +24,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
-from pydantic import BaseModel
 
 from ..admin_common.config_edit import PLATFORM_EDITABLE, merge_whitelist_and_save
 from ..admin_common.home_layout import HomeLayout
@@ -40,7 +40,58 @@ from ..connect.landing import LandingStore
 from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_objects
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..metamodel.loader import load_pack
+from .contracts import (
+    ActionBody,
+    ActionExecutionResult,
+    ApplyActionResult,
+    AuditRecord,
+    ConfigPatch,
+    ConfigSaveResponse,
+    ConfigViewResponse,
+    HttpError,
+    LogsResponse,
+    McpCallBody,
+    McpToolResult,
+    ObjectRowsPageResponse,
+    ObjectSummary,
+    OverviewResponse,
+    PipelineResponse,
+    ProposalRequest,
+    ProposalResponse,
+    QuarantineRecord,
+    RawDataPageResponse,
+    RawTablePageResponse,
+    RequestError,
+    RetryActionResult,
+    RunDetailResponse,
+    RunSummary,
+    ServicesStatusResponse,
+    SetupBody,
+    SetupFailureResponse,
+    SetupResponse,
+    SetupStatusResponse,
+    SetupSuccessResponse,
+    TemplateObject,
+    ValidationResult,
+)
 from .ui import UI_HTML
+
+_RESP_HTTP_ERROR = {
+    401: {"model": HttpError, "description": "缺少或无效的 Bearer Token"},
+    403: {"model": HttpError, "description": "禁止访问"},
+    409: {"model": HttpError, "description": "冲突/未配置/只读/熔断"},
+    422: {
+        "model": RequestError,
+        "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)",
+    },
+    500: {"model": HttpError, "description": "未处理异常"},
+}
+
+_RESP_HTTP_ERROR_STUB = {
+    501: {"model": HttpError, "description": "契约桩:端点在所属里程碑实现前返回 501"},
+}
+
+_SETUP_API_PATHS = frozenset({"/api/setup", "/api/setup/status"})
 
 _PKG = Path(__file__).resolve().parent
 _ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
@@ -74,29 +125,6 @@ _LOG_FILES = {
     "launcher": "d2a-launcher.log",   # 便携包启动器:进程重启 / 崩溃记录
 }
 _MCP_TOOLS = frozenset({"query_objects", "query_metrics"})
-
-
-class ActionBody(BaseModel):
-    source: str = "digiwin_e10"
-    object: str | None = None
-    deep: bool = False
-
-
-class ConfigPatch(BaseModel):
-    templates: str | None = None
-    landing: str | None = None
-
-
-class SetupBody(BaseModel):
-    """浏览器首次配置(替代 setup-platform.ps1)。Token 写入 secrets.env。"""
-    ingest_token: str
-    console_token: str
-    mcp_token: str | None = None
-
-
-class McpCallBody(BaseModel):
-    tool: str
-    params: dict[str, Any] = {}
 
 
 def _client_host(request: Request) -> str:
@@ -323,6 +351,48 @@ def create_app(landing: str | None = None, templates: str = "templates",
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
     jinja = _make_templates()
 
+    def custom_openapi():
+        if app.openapi_schema:
+            return app.openapi_schema
+        schema = get_openapi(
+            title=app.title,
+            version=getattr(app, "version", "0.1.0"),
+            routes=app.routes,
+        )
+        components = schema.setdefault("components", {})
+        components.setdefault("securitySchemes", {})["HTTPBearer"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "Token",
+            "description": (
+                "Console management Bearer Token. "
+                "Prefer Authorization header; query ?token= is legacy-only and not "
+                "recommended for Vue Console."
+            ),
+        }
+        # Token is optional at runtime (disabled when unset). After first-time setup
+        # completes with a token, /api/setup* also require Bearer — same as other
+        # management APIs. During needs_setup the runtime skips token checks.
+        for path, item in schema.get("paths", {}).items():
+            if not path.startswith("/api"):
+                continue
+            for method, op in item.items():
+                if method not in ("get", "post", "put", "patch", "delete"):
+                    continue
+                # OpenAPI optional auth: empty requirement OR Bearer
+                op["security"] = [{"HTTPBearer": []}, {}]
+                if path in _SETUP_API_PATHS:
+                    op["description"] = (
+                        (op.get("description") or "")
+                        + ("\n\n" if op.get("description") else "")
+                        + "Auth: skipped only while needs_setup=true (first-time bootstrap). "
+                        "After configuration, Bearer is required when D2A_CONSOLE_TOKEN is set."
+                    ).strip()
+        app.openapi_schema = schema
+        return app.openapi_schema
+
+    app.openapi = custom_openapi  # type: ignore[method-assign]
+
     def page_ctx(request: Request) -> dict[str, Any]:
         return {
             "static_url": "/static",
@@ -354,22 +424,35 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     # ---- 首次配置 ----
 
-    @api.get("/setup/status")
-    def setup_status() -> dict:
-        return {
-            "needs_setup": needs_setup(),
-            "config_path": str(state["config_path"]) if state["config_path"] else None,
-            "home": str(home_layout.root) if home_layout else None,
-        }
+    @api.get(
+        "/setup/status",
+        response_model=SetupStatusResponse,
+        responses={403: _RESP_HTTP_ERROR[403]},
+    )
+    def setup_status() -> SetupStatusResponse:
+        return SetupStatusResponse(
+            needs_setup=needs_setup(),
+            config_path=str(state["config_path"]) if state["config_path"] else None,
+            home=str(home_layout.root) if home_layout else None,
+        )
 
-    @api.post("/setup")
-    def run_setup(body: SetupBody, request: Request) -> dict:
+    @api.post(
+        "/setup",
+        response_model=SetupResponse,
+        responses={400: {"model": HttpError}, 403: _RESP_HTTP_ERROR[403]},
+    )
+    def run_setup(
+        body: SetupBody, request: Request
+    ) -> SetupSuccessResponse | SetupFailureResponse:
         if _client_host(request) not in _LOOPBACK:
             raise HTTPException(403, "首次配置仅允许本机访问")
         if home_layout is None:
             raise HTTPException(400, "未启用 --home,无法浏览器首次配置")
         if not body.ingest_token.strip() or not body.console_token.strip():
-            return {"ok": False, "errors": [{"field": "token", "message": "Token 不能为空"}]}
+            return SetupFailureResponse(
+                ok=False,
+                errors=[{"field": "token", "message": "Token 不能为空"}],
+            )
 
         home_layout.ensure_dirs()
         mcp = (body.mcp_token or "").strip() or _new_token()
@@ -386,22 +469,31 @@ def create_app(landing: str | None = None, templates: str = "templates",
             load_config(cfg_path)
         except Exception as e:
             cfg_path.unlink(missing_ok=True)
-            return {"ok": False, "errors": [{"field": "", "message": str(e)}]}
+            return SetupFailureResponse(
+                ok=False,
+                errors=[{"field": "", "message": str(e)}],
+            )
 
         state["token"] = body.console_token.strip()
         state["config_path"] = cfg_path
         hydrate_from_disk()
-        return {
-            "ok": True,
-            "restart_required": True,
-            "message": "配置已写入。请用刚设置的管理界面登录密码登录;"
-                       "接收 / 物化 / MCP 服务需另行启动或重启后生效。",
-            "mcp_token_generated": not bool((body.mcp_token or "").strip()),
-        }
+        return SetupSuccessResponse(
+            ok=True,
+            restart_required=True,
+            message=(
+                "配置已写入。请用刚设置的管理界面登录密码登录;"
+                "接收 / 物化 / MCP 服务需另行启动或重启后生效。"
+            ),
+            mcp_token_generated=not bool((body.mcp_token or "").strip()),
+        )
 
     # ---- 只读视图 ----
 
-    @api.get("/overview")
+    @api.get(
+        "/overview",
+        response_model=OverviewResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
     def overview() -> dict:
         db = store()
         pack = require_pack()
@@ -437,13 +529,21 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "sources": out_sources, "objects": objects,
                 "needs_setup": False}
 
-    @api.get("/runs")
+    @api.get(
+        "/runs",
+        response_model=list[RunSummary],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
     def runs(limit: int = 15) -> list[dict]:
         return [dict(r) for r in store().con.execute(
             "SELECT * FROM d2a_sync_run ORDER BY id DESC LIMIT ?",
             (max(1, min(limit, 100)),))]
 
-    @api.get("/quarantine")
+    @api.get(
+        "/quarantine",
+        response_model=list[QuarantineRecord],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
     def quarantine(object: str | None = None) -> list[dict]:
         where, params = "resolved_at IS NULL", []
         if object:
@@ -453,7 +553,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
             f"SELECT id, source, object, keys_json, reason, created_at "
             f"FROM d2a_quarantine WHERE {where} ORDER BY id DESC LIMIT 200", params)]
 
-    @api.get("/audit")
+    @api.get(
+        "/audit",
+        response_model=list[AuditRecord],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
     def audit(limit: int = 30) -> list[dict]:
         return [dict(r) for r in store().con.execute(
             "SELECT ts, source, action, sql, rows, duration_ms FROM d2a_audit_log "
@@ -461,7 +565,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     # ---- 配置 / 服务 / 日志 / 调试 ----
 
-    @api.get("/config")
+    @api.get(
+        "/config",
+        response_model=ConfigViewResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
     def get_config() -> dict:
         if needs_setup():
             return {"needs_setup": True, "templates": "", "landing": ""}
@@ -470,7 +578,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
         out["needs_setup"] = False
         return out
 
-    @api.post("/config")
+    @api.post(
+        "/config",
+        response_model=ConfigSaveResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
     def post_config(body: ConfigPatch) -> dict:
         path = require_config_path()
         patch = body.model_dump(exclude_none=True)
@@ -480,13 +592,21 @@ def create_app(landing: str | None = None, templates: str = "templates",
             hydrate_from_disk()
         return {"ok": ok, "errors": errors, "restart_required": True}
 
-    @api.post("/config/validate")
+    @api.post(
+        "/config/validate",
+        response_model=ValidationResult,
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
     def validate_config(body: ConfigPatch) -> dict:
         path = require_config_path()
         ok, errors = _validate_merged(path, body.model_dump(exclude_none=True))
         return {"ok": ok, "errors": errors}
 
-    @api.get("/services")
+    @api.get(
+        "/services",
+        response_model=ServicesStatusResponse,
+        responses={401: _RESP_HTTP_ERROR[401]},
+    )
     def services() -> dict:
         ingest_ok, ingest_method = _probe_http(_INGEST_HEALTH)
         mcp_ok, mcp_method = _probe_http(_MCP_URL)
@@ -500,7 +620,14 @@ def create_app(landing: str | None = None, templates: str = "templates",
             "console": {"ok": True, "method": "self"},
         }
 
-    @api.get("/logs")
+    @api.get(
+        "/logs",
+        response_model=LogsResponse,
+        responses={
+            400: {"model": HttpError},
+            401: _RESP_HTTP_ERROR[401],
+        },
+    )
     def get_logs(service: str, lines: int = 200, level: str | None = None) -> dict:
         if service not in _LOG_FILES:
             raise HTTPException(400, f"未知服务 '{service}',可用:{sorted(_LOG_FILES)}")
@@ -511,7 +638,16 @@ def create_app(landing: str | None = None, templates: str = "templates",
         ok, text = tail_lines(Path(log_dir) / _LOG_FILES[service], lines=capped, level=level)
         return {"ok": ok, "text": text}
 
-    @api.get("/debug/raw-table")
+    @api.get(
+        "/debug/raw-table",
+        response_model=RawTablePageResponse,
+        responses={
+            400: {"model": HttpError},
+            401: _RESP_HTTP_ERROR[401],
+            404: {"model": HttpError},
+            409: _RESP_HTTP_ERROR[409],
+        },
+    )
     def debug_raw_table(table: str, offset: int = 0, limit: int = 50) -> dict:
         if not table.startswith("raw_"):
             raise HTTPException(400, "仅允许 raw_* 表")
@@ -527,7 +663,17 @@ def create_app(landing: str | None = None, templates: str = "templates",
         (total,) = db.con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()
         return {"table": table, "offset": off, "limit": capped, "total": total, "rows": rows}
 
-    @api.post("/debug/mcp-call")
+    @api.post(
+        "/debug/mcp-call",
+        response_model=McpToolResult,
+        responses={
+            400: {"model": HttpError},
+            401: _RESP_HTTP_ERROR[401],
+            409: _RESP_HTTP_ERROR[409],
+            502: {"model": HttpError},
+            503: {"model": HttpError},
+        },
+    )
     def debug_mcp_call(body: McpCallBody) -> dict:
         if body.tool not in _MCP_TOOLS:
             raise HTTPException(400, f"工具 '{body.tool}' 不在白名单,可用:{sorted(_MCP_TOOLS)}")
@@ -551,7 +697,15 @@ def create_app(landing: str | None = None, templates: str = "templates",
             raise HTTPException(404, f"配置中没有源 '{source}',可用:{sorted(cfg.sources)}")
         return scfg
 
-    @api.post("/actions/sync")
+    @api.post(
+        "/actions/sync",
+        response_model=ActionExecutionResult,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            404: {"model": HttpError},
+            409: _RESP_HTTP_ERROR[409],
+        },
+    )
     def action_sync(body: ActionBody) -> dict:
         cfg = require_config()
         executed = run_sync_cycle(
@@ -559,7 +713,15 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return {"executed": executed,
                 "note": "" if executed else "错峰窗口外,未发起(窗口约束对控制台同样生效)"}
 
-    @api.post("/actions/reconcile")
+    @api.post(
+        "/actions/reconcile",
+        response_model=ActionExecutionResult,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            404: {"model": HttpError},
+            409: _RESP_HTTP_ERROR[409],
+        },
+    )
     def action_reconcile(body: ActionBody) -> dict:
         cfg = require_config()
         executed = run_reconcile_cycle(
@@ -568,13 +730,29 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return {"executed": executed,
                 "note": "" if executed else "错峰窗口外,未发起"}
 
-    @api.post("/actions/apply")
+    @api.post(
+        "/actions/apply",
+        response_model=ApplyActionResult,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            409: _RESP_HTTP_ERROR[409],
+        },
+    )
     def action_apply(body: ActionBody) -> dict:
         report = apply_objects(store(), require_pack(), body.source)
         return {"executed": True, "results": [asdict(r) for r in report.results],
                 "aborted": [r.object for r in report.aborted]}
 
-    @api.post("/actions/retry")
+    @api.post(
+        "/actions/retry",
+        response_model=RetryActionResult,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            404: {"model": HttpError},
+            409: _RESP_HTTP_ERROR[409],
+            422: _RESP_HTTP_ERROR[422],
+        },
+    )
     def action_retry(body: ActionBody) -> dict:
         if not body.object:
             raise HTTPException(422, "retry 需要 object 参数")
@@ -587,6 +765,81 @@ def create_app(landing: str | None = None, templates: str = "templates",
         except MappingCircuitBreaker as e:
             raise HTTPException(409, f"重试触发熔断:{e}") from e
         return {"executed": True, **asdict(result)}
+
+    # ---- v0.2 契约桩(M2)----
+    # schema 先行供前端类型生成与 Mock;真实实现归属 M3–M6,
+    # 实现前一律返回 501,不得返回伪造成功或空数据。
+
+    _STUB_501 = "契约桩:端点已声明,将在所属里程碑实现;不得视为成功或空数据"
+
+    @api.get(
+        "/pipeline",
+        response_model=PipelineResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def pipeline() -> PipelineResponse:
+        raise HTTPException(501, f"{_STUB_501}(M3 管道状态)")
+
+    @api.get(
+        "/runs/{run_id}",
+        response_model=RunDetailResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def run_detail(run_id: int) -> RunDetailResponse:
+        raise HTTPException(501, f"{_STUB_501}(M4 运行详情)")
+
+    @api.get(
+        "/data/raw/{source}/{table}",
+        response_model=RawDataPageResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def data_raw(source: str, table: str, offset: int = 0,
+                 limit: int = 50) -> RawDataPageResponse:
+        raise HTTPException(501, f"{_STUB_501}(M4 raw 数据浏览)")
+
+    @api.get(
+        "/objects",
+        response_model=list[ObjectSummary],
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def objects() -> list[ObjectSummary]:
+        raise HTTPException(501, f"{_STUB_501}(M4 对象列表)")
+
+    @api.get(
+        "/objects/{object}",
+        response_model=ObjectRowsPageResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def object_rows(object: str, offset: int = 0,
+                    limit: int = 50) -> ObjectRowsPageResponse:
+        raise HTTPException(501, f"{_STUB_501}(M4 对象数据浏览)")
+
+    @api.get(
+        "/templates",
+        response_model=list[TemplateObject],
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def templates_view() -> list[TemplateObject]:
+        raise HTTPException(501, f"{_STUB_501}(M5 模板只读展示)")
+
+    @api.post(
+        "/gateway/proposals",
+        response_model=ProposalResponse,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            422: _RESP_HTTP_ERROR[422],
+            501: _RESP_HTTP_ERROR_STUB[501],
+        },
+        tags=["v0.2-stub"],
+    )
+    def gateway_proposals(body: ProposalRequest) -> ProposalResponse:
+        raise HTTPException(501, f"{_STUB_501}(M6 MCP Lab 建议卡)")
 
     app.include_router(api)
 

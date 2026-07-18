@@ -1,0 +1,3597 @@
+{
+  "components": {
+    "schemas": {
+      "ActionBody": {
+        "properties": {
+          "deep": {
+            "default": false,
+            "title": "Deep",
+            "type": "boolean"
+          },
+          "object": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object"
+          },
+          "source": {
+            "default": "digiwin_e10",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "title": "ActionBody",
+        "type": "object"
+      },
+      "ActionExecutionResult": {
+        "properties": {
+          "executed": {
+            "title": "Executed",
+            "type": "boolean"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executed"
+        ],
+        "title": "ActionExecutionResult",
+        "type": "object"
+      },
+      "ApplyActionResult": {
+        "properties": {
+          "aborted": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aborted",
+            "type": "array"
+          },
+          "executed": {
+            "title": "Executed",
+            "type": "boolean"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectApplyResultModel"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "executed",
+          "results",
+          "aborted"
+        ],
+        "title": "ApplyActionResult",
+        "type": "object"
+      },
+      "AuditRecord": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string"
+          },
+          "ts": {
+            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ts",
+          "source",
+          "action",
+          "sql"
+        ],
+        "title": "AuditRecord",
+        "type": "object"
+      },
+      "ConfigPatch": {
+        "properties": {
+          "landing": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Landing"
+          },
+          "templates": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Templates"
+          }
+        },
+        "title": "ConfigPatch",
+        "type": "object"
+      },
+      "ConfigSaveResponse": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "restart_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": true,
+            "title": "Restart Required"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "ConfigSaveResponse",
+        "type": "object"
+      },
+      "ConfigViewResponse": {
+        "properties": {
+          "landing": {
+            "default": "",
+            "title": "Landing",
+            "type": "string"
+          },
+          "needs_setup": {
+            "title": "Needs Setup",
+            "type": "boolean"
+          },
+          "templates": {
+            "default": "",
+            "title": "Templates",
+            "type": "string"
+          }
+        },
+        "required": [
+          "needs_setup"
+        ],
+        "title": "ConfigViewResponse",
+        "type": "object"
+      },
+      "FieldError": {
+        "properties": {
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "message"
+        ],
+        "title": "FieldError",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HttpError": {
+        "description": "HTTPException-style error body: detail is always a string.",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "HttpError",
+        "type": "object"
+      },
+      "JsonValue-Input": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Recursive JSON value with an explicit anyOf schema for OpenAPI/TS.\n\nDo not use pydantic.JsonValue or Any here: those emit empty `{}` schemas that\nbecome `unknown` after openapi-typescript.",
+        "title": "JsonValue"
+      },
+      "JsonValue-Output": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "array"
+          },
+          {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Recursive JSON value with an explicit anyOf schema for OpenAPI/TS.\n\nDo not use pydantic.JsonValue or Any here: those emit empty `{}` schemas that\nbecome `unknown` after openapi-typescript.",
+        "title": "JsonValue"
+      },
+      "LogsResponse": {
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "text": {
+            "description": "Log tail text; failure must keep ok=false (not empty success)",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ok",
+          "text"
+        ],
+        "title": "LogsResponse",
+        "type": "object"
+      },
+      "McpCallBody": {
+        "properties": {
+          "params": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Input"
+            },
+            "title": "Params",
+            "type": "object"
+          },
+          "tool": {
+            "enum": [
+              "query_objects",
+              "query_metrics"
+            ],
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tool"
+        ],
+        "title": "McpCallBody",
+        "type": "object"
+      },
+      "McpToolResult": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/JsonValue-Output"
+        },
+        "description": "query_objects / query_metrics 白名单工具结果;结构随工具变化,用有界 JSON 对象表达。",
+        "title": "McpToolResult",
+        "type": "object"
+      },
+      "ObjectApplyResultModel": {
+        "properties": {
+          "mapped": {
+            "title": "Mapped",
+            "type": "integer"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "quarantined": {
+            "title": "Quarantined",
+            "type": "integer"
+          },
+          "status": {
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object",
+          "total",
+          "mapped",
+          "quarantined"
+        ],
+        "title": "ObjectApplyResultModel",
+        "type": "object"
+      },
+      "ObjectRowsPageResponse": {
+        "properties": {
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object",
+          "offset",
+          "limit",
+          "total",
+          "rows"
+        ],
+        "title": "ObjectRowsPageResponse",
+        "type": "object"
+      },
+      "ObjectSummary": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "mapped_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Mapped At"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "quarantined": {
+            "title": "Quarantined",
+            "type": "integer"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "尚未物化时为 null,不等于 0",
+            "title": "Rows"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "object version 属 v0.3,当前为空",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "object",
+          "display_name",
+          "domain",
+          "rows",
+          "mapped_at",
+          "quarantined",
+          "version"
+        ],
+        "title": "ObjectSummary",
+        "type": "object"
+      },
+      "OverviewObject": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "mapped_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "title": "Mapped At"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "quarantined": {
+            "title": "Quarantined",
+            "type": "integer"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          }
+        },
+        "required": [
+          "object",
+          "display_name",
+          "quarantined"
+        ],
+        "title": "OverviewObject",
+        "type": "object"
+      },
+      "OverviewResponse": {
+        "properties": {
+          "actions_sync_reconcile": {
+            "title": "Actions Sync Reconcile",
+            "type": "boolean"
+          },
+          "landing": {
+            "title": "Landing",
+            "type": "string"
+          },
+          "needs_setup": {
+            "default": false,
+            "title": "Needs Setup",
+            "type": "boolean"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/OverviewObject"
+            },
+            "title": "Objects",
+            "type": "array"
+          },
+          "readonly": {
+            "title": "Readonly",
+            "type": "boolean"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/OverviewSource"
+            },
+            "title": "Sources",
+            "type": "array"
+          }
+        },
+        "required": [
+          "landing",
+          "readonly",
+          "actions_sync_reconcile",
+          "sources",
+          "objects"
+        ],
+        "title": "OverviewResponse",
+        "type": "object"
+      },
+      "OverviewSource": {
+        "properties": {
+          "quarantined": {
+            "title": "Quarantined",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "state": {
+            "items": {
+              "$ref": "#/components/schemas/SyncStateRow"
+            },
+            "title": "State",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source",
+          "state",
+          "quarantined"
+        ],
+        "title": "OverviewSource",
+        "type": "object"
+      },
+      "PipelineNode": {
+        "description": "管道单节点。status=unknown 表示后端无法检测,前端不得显示为正常。",
+        "properties": {
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "last_failure_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Last Failure At"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Last Success At"
+          },
+          "node": {
+            "description": "节点 ID:erp / extract / push / raw / mapping / objects / mcp",
+            "title": "Node",
+            "type": "string"
+          },
+          "rows_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows In"
+          },
+          "rows_out": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Out"
+          },
+          "status": {
+            "enum": [
+              "unknown",
+              "idle",
+              "running",
+              "healthy",
+              "warning",
+              "failed",
+              "stale"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "数据或组件版本;dataset/object version 属 v0.3,当前可为空",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "node",
+          "status",
+          "last_success_at",
+          "last_failure_at",
+          "rows_in",
+          "rows_out",
+          "duration_ms",
+          "error",
+          "version"
+        ],
+        "title": "PipelineNode",
+        "type": "object"
+      },
+      "PipelineResponse": {
+        "properties": {
+          "generated_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "generated_at",
+          "nodes"
+        ],
+        "title": "PipelineResponse",
+        "type": "object"
+      },
+      "ProposalEvidence": {
+        "properties": {
+          "claim": {
+            "title": "Claim",
+            "type": "string"
+          },
+          "query": {
+            "$ref": "#/components/schemas/ProposalQueryRef"
+          }
+        },
+        "required": [
+          "claim",
+          "query"
+        ],
+        "title": "ProposalEvidence",
+        "type": "object"
+      },
+      "ProposalEvidenceInput": {
+        "properties": {
+          "claim": {
+            "minLength": 1,
+            "title": "Claim",
+            "type": "string"
+          },
+          "query_id": {
+            "minLength": 1,
+            "title": "Query Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim",
+          "query_id"
+        ],
+        "title": "ProposalEvidenceInput",
+        "type": "object"
+      },
+      "ProposalQueryRef": {
+        "properties": {
+          "at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "query_id": {
+            "title": "Query Id",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query_id",
+          "tool",
+          "target",
+          "at"
+        ],
+        "title": "ProposalQueryRef",
+        "type": "object"
+      },
+      "ProposalRequest": {
+        "description": "建议卡请求,语义与 MCP propose_action 一致:\n\nevidence 必须引用同会话已记录查询的 meta.query_id;不得凭空生成。",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "conclusion": {
+            "minLength": 1,
+            "title": "Conclusion",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalEvidenceInput"
+            },
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "object",
+          "action",
+          "conclusion",
+          "evidence"
+        ],
+        "title": "ProposalRequest",
+        "type": "object"
+      },
+      "ProposalResponse": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "action_desc": {
+            "title": "Action Desc",
+            "type": "string"
+          },
+          "at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "caveats": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Caveats",
+            "type": "array"
+          },
+          "conclusion": {
+            "title": "Conclusion",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "governance": {
+            "title": "Governance",
+            "type": "string"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "at",
+          "object",
+          "action",
+          "action_desc",
+          "tier",
+          "conclusion",
+          "evidence",
+          "caveats",
+          "governance"
+        ],
+        "title": "ProposalResponse",
+        "type": "object"
+      },
+      "QuarantineRecord": {
+        "properties": {
+          "created_at": {
+            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "keys_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keys Json"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "object",
+          "reason",
+          "created_at"
+        ],
+        "title": "QuarantineRecord",
+        "type": "object"
+      },
+      "RawDataPageResponse": {
+        "properties": {
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "table": {
+            "title": "Table",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "table",
+          "offset",
+          "limit",
+          "total",
+          "rows"
+        ],
+        "title": "RawDataPageResponse",
+        "type": "object"
+      },
+      "RawTablePageResponse": {
+        "properties": {
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "table": {
+            "title": "Table",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "table",
+          "offset",
+          "limit",
+          "total",
+          "rows"
+        ],
+        "title": "RawTablePageResponse",
+        "type": "object"
+      },
+      "RequestError": {
+        "description": "422 body: either HTTPException string detail or FastAPI validation list.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "$ref": "#/components/schemas/RequestValidationErrorItem"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "RequestError",
+        "type": "object"
+      },
+      "RequestValidationErrorItem": {
+        "additionalProperties": true,
+        "description": "FastAPI/Pydantic request validation error item (422).",
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Loc",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Msg",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "RequestValidationErrorItem",
+        "type": "object"
+      },
+      "RetryActionResult": {
+        "properties": {
+          "executed": {
+            "title": "Executed",
+            "type": "boolean"
+          },
+          "mapped": {
+            "title": "Mapped",
+            "type": "integer"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "quarantined": {
+            "title": "Quarantined",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executed",
+          "object",
+          "total",
+          "mapped",
+          "quarantined",
+          "status"
+        ],
+        "title": "RetryActionResult",
+        "type": "object"
+      },
+      "RunDetailResponse": {
+        "description": "统一运行模型(v0.3 起 validation 复用同一 Run/steps 结构)。",
+        "properties": {
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "dataset version 属 v0.3,当前为空",
+            "title": "Dataset Version"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "started_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "ok",
+              "paused",
+              "failed",
+              "aborted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/RunStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "type": {
+            "enum": [
+              "sync",
+              "apply",
+              "reconcile",
+              "ingest"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "status",
+          "source",
+          "started_at",
+          "finished_at",
+          "duration_ms",
+          "dataset_version",
+          "steps"
+        ],
+        "title": "RunDetailResponse",
+        "type": "object"
+      },
+      "RunStep": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "name": {
+            "description": "步骤对象:表名 / 对象名 / 批次 ID",
+            "title": "Name",
+            "type": "string"
+          },
+          "quarantined": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quarantined"
+          },
+          "rows_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows In"
+          },
+          "rows_out": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Out"
+          },
+          "watermark_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark After"
+          },
+          "watermark_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark Before"
+          }
+        },
+        "required": [
+          "name",
+          "rows_in",
+          "rows_out",
+          "quarantined",
+          "watermark_before",
+          "watermark_after",
+          "error"
+        ],
+        "title": "RunStep",
+        "type": "object"
+      },
+      "RunSummary": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "started_at": {
+            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tables": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tables"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "started_at"
+        ],
+        "title": "RunSummary",
+        "type": "object"
+      },
+      "ServiceProbe": {
+        "properties": {
+          "method": {
+            "title": "Method",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "method"
+        ],
+        "title": "ServiceProbe",
+        "type": "object"
+      },
+      "ServicesStatusResponse": {
+        "properties": {
+          "apply": {
+            "$ref": "#/components/schemas/ServiceProbe"
+          },
+          "console": {
+            "$ref": "#/components/schemas/ServiceProbe"
+          },
+          "ingest": {
+            "$ref": "#/components/schemas/ServiceProbe"
+          },
+          "mcp": {
+            "$ref": "#/components/schemas/ServiceProbe"
+          }
+        },
+        "required": [
+          "ingest",
+          "mcp",
+          "apply",
+          "console"
+        ],
+        "title": "ServicesStatusResponse",
+        "type": "object"
+      },
+      "SetupBody": {
+        "description": "浏览器首次配置(替代 setup-platform.ps1)。Token 写入 secrets.env。",
+        "properties": {
+          "console_token": {
+            "title": "Console Token",
+            "type": "string"
+          },
+          "ingest_token": {
+            "title": "Ingest Token",
+            "type": "string"
+          },
+          "mcp_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mcp Token"
+          }
+        },
+        "required": [
+          "ingest_token",
+          "console_token"
+        ],
+        "title": "SetupBody",
+        "type": "object"
+      },
+      "SetupFailureResponse": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "ok": {
+            "const": false,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "errors"
+        ],
+        "title": "SetupFailureResponse",
+        "type": "object"
+      },
+      "SetupStatusResponse": {
+        "properties": {
+          "config_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Config Path"
+          },
+          "home": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Home"
+          },
+          "needs_setup": {
+            "title": "Needs Setup",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "needs_setup"
+        ],
+        "title": "SetupStatusResponse",
+        "type": "object"
+      },
+      "SetupSuccessResponse": {
+        "properties": {
+          "mcp_token_generated": {
+            "default": false,
+            "title": "Mcp Token Generated",
+            "type": "boolean"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "ok": {
+            "const": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "restart_required": {
+            "default": true,
+            "title": "Restart Required",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "message"
+        ],
+        "title": "SetupSuccessResponse",
+        "type": "object"
+      },
+      "SyncStateRow": {
+        "properties": {
+          "high_water": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "title": "High Water"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "title": "Last Run At"
+          },
+          "table_name": {
+            "title": "Table Name",
+            "type": "string"
+          },
+          "watermark_col": {
+            "title": "Watermark Col",
+            "type": "string"
+          }
+        },
+        "required": [
+          "table_name",
+          "watermark_col"
+        ],
+        "title": "SyncStateRow",
+        "type": "object"
+      },
+      "TemplateBinding": {
+        "properties": {
+          "field_map": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Field Map",
+            "type": "object"
+          },
+          "key_map": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Key Map",
+            "type": "object"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "verified",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tables": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tables",
+            "type": "array"
+          },
+          "watermark": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark"
+          }
+        },
+        "required": [
+          "source",
+          "tables",
+          "status"
+        ],
+        "title": "TemplateBinding",
+        "type": "object"
+      },
+      "TemplateObject": {
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateBinding"
+            },
+            "title": "Bindings",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateProperty"
+            },
+            "title": "Properties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "object",
+          "display_name",
+          "keys",
+          "properties",
+          "bindings"
+        ],
+        "title": "TemplateObject",
+        "type": "object"
+      },
+      "TemplateProperty": {
+        "properties": {
+          "desc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desc"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "TemplateProperty",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "ValidationResult": {
+        "properties": {
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/FieldError"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "restart_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Restart Required"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "ValidationResult",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "bearerFormat": "Token",
+        "description": "Console management Bearer Token. Prefer Authorization header; query ?token= is legacy-only and not recommended for Vue Console.",
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "data2agent 运维控制台",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/": {
+      "get": {
+        "operationId": "index__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Index"
+      }
+    },
+    "/api/actions/apply": {
+      "post": {
+        "operationId": "action_apply_api_actions_apply_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApplyActionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Action Apply"
+      }
+    },
+    "/api/actions/reconcile": {
+      "post": {
+        "operationId": "action_reconcile_api_actions_reconcile_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionExecutionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Action Reconcile"
+      }
+    },
+    "/api/actions/retry": {
+      "post": {
+        "operationId": "action_retry_api_actions_retry_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryActionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Action Retry"
+      }
+    },
+    "/api/actions/sync": {
+      "post": {
+        "operationId": "action_sync_api_actions_sync_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActionBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActionExecutionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Action Sync"
+      }
+    },
+    "/api/audit": {
+      "get": {
+        "operationId": "audit_api_audit_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AuditRecord"
+                  },
+                  "title": "Response Audit Api Audit Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Audit"
+      }
+    },
+    "/api/config": {
+      "get": {
+        "operationId": "get_config_api_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigViewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Get Config"
+      },
+      "post": {
+        "operationId": "post_config_api_config_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigSaveResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Post Config"
+      }
+    },
+    "/api/config/validate": {
+      "post": {
+        "operationId": "validate_config_api_config_validate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Validate Config"
+      }
+    },
+    "/api/data/raw/{source}/{table}": {
+      "get": {
+        "operationId": "data_raw_api_data_raw__source___table__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "table",
+            "required": true,
+            "schema": {
+              "title": "Table",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RawDataPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Data Raw",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
+    "/api/debug/mcp-call": {
+      "post": {
+        "operationId": "debug_mcp_call_api_debug_mcp_call_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpCallBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpToolResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Debug Mcp Call"
+      }
+    },
+    "/api/debug/raw-table": {
+      "get": {
+        "operationId": "debug_raw_table_api_debug_raw_table_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "table",
+            "required": true,
+            "schema": {
+              "title": "Table",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RawTablePageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Debug Raw Table"
+      }
+    },
+    "/api/gateway/proposals": {
+      "post": {
+        "operationId": "gateway_proposals_api_gateway_proposals_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Gateway Proposals",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
+    "/api/logs": {
+      "get": {
+        "operationId": "get_logs_api_logs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "service",
+            "required": true,
+            "schema": {
+              "title": "Service",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lines",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "title": "Lines",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Level"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Get Logs"
+      }
+    },
+    "/api/objects": {
+      "get": {
+        "operationId": "objects_api_objects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ObjectSummary"
+                  },
+                  "title": "Response Objects Api Objects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Objects",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
+    "/api/objects/{object}": {
+      "get": {
+        "operationId": "object_rows_api_objects__object__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "object",
+            "required": true,
+            "schema": {
+              "title": "Object",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectRowsPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Object Rows",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
+    "/api/overview": {
+      "get": {
+        "operationId": "overview_api_overview_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Overview"
+      }
+    },
+    "/api/pipeline": {
+      "get": {
+        "operationId": "pipeline_api_pipeline_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Pipeline",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
+    "/api/quarantine": {
+      "get": {
+        "operationId": "quarantine_api_quarantine_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "object",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Object"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QuarantineRecord"
+                  },
+                  "title": "Response Quarantine Api Quarantine Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Quarantine"
+      }
+    },
+    "/api/runs": {
+      "get": {
+        "operationId": "runs_api_runs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 15,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/RunSummary"
+                  },
+                  "title": "Response Runs Api Runs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Runs"
+      }
+    },
+    "/api/runs/{run_id}": {
+      "get": {
+        "operationId": "run_detail_api_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Run Detail",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
+    "/api/services": {
+      "get": {
+        "operationId": "services_api_services_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServicesStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Services"
+      }
+    },
+    "/api/setup": {
+      "post": {
+        "description": "Auth: skipped only while needs_setup=true (first-time bootstrap). After configuration, Bearer is required when D2A_CONSOLE_TOKEN is set.",
+        "operationId": "run_setup_api_setup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetupBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SetupSuccessResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SetupFailureResponse"
+                    }
+                  ],
+                  "title": "Response Run Setup Api Setup Post"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "禁止访问"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Run Setup"
+      }
+    },
+    "/api/setup/status": {
+      "get": {
+        "description": "Auth: skipped only while needs_setup=true (first-time bootstrap). After configuration, Bearer is required when D2A_CONSOLE_TOKEN is set.",
+        "operationId": "setup_status_api_setup_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "禁止访问"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Setup Status"
+      }
+    },
+    "/api/templates": {
+      "get": {
+        "operationId": "templates_view_api_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TemplateObject"
+                  },
+                  "title": "Response Templates View Api Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Templates View",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
+    "/config": {
+      "get": {
+        "operationId": "config_page_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Config Page"
+      }
+    },
+    "/debug": {
+      "get": {
+        "operationId": "debug_page_debug_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Debug Page"
+      }
+    },
+    "/logs": {
+      "get": {
+        "operationId": "logs_page_logs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logs Page"
+      }
+    },
+    "/v0": {
+      "get": {
+        "operationId": "v0_v0_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "V0"
+      }
+    }
+  }
+}
