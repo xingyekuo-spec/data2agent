@@ -358,19 +358,24 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "recommended for Vue Console."
             ),
         }
-        # Token is optional at runtime (disabled when unset). Document Bearer as
-        # optional for management APIs; setup endpoints remain unauthenticated.
+        # Token is optional at runtime (disabled when unset). After first-time setup
+        # completes with a token, /api/setup* also require Bearer — same as other
+        # management APIs. During needs_setup the runtime skips token checks.
         for path, item in schema.get("paths", {}).items():
             if not path.startswith("/api"):
                 continue
             for method, op in item.items():
                 if method not in ("get", "post", "put", "patch", "delete"):
                     continue
+                # OpenAPI optional auth: empty requirement OR Bearer
+                op["security"] = [{"HTTPBearer": []}, {}]
                 if path in _SETUP_API_PATHS:
-                    op["security"] = []
-                else:
-                    # OpenAPI optional auth: empty requirement OR Bearer
-                    op["security"] = [{"HTTPBearer": []}, {}]
+                    op["description"] = (
+                        (op.get("description") or "")
+                        + ("\n\n" if op.get("description") else "")
+                        + "Auth: skipped only while needs_setup=true (first-time bootstrap). "
+                        "After configuration, Bearer is required when D2A_CONSOLE_TOKEN is set."
+                    ).strip()
         app.openapi_schema = schema
         return app.openapi_schema
 
@@ -433,6 +438,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
             raise HTTPException(400, "未启用 --home,无法浏览器首次配置")
         if not body.ingest_token.strip() or not body.console_token.strip():
             return SetupFailureResponse(
+                ok=False,
                 errors=[{"field": "token", "message": "Token 不能为空"}],
             )
 
@@ -452,6 +458,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         except Exception as e:
             cfg_path.unlink(missing_ok=True)
             return SetupFailureResponse(
+                ok=False,
                 errors=[{"field": "", "message": str(e)}],
             )
 
@@ -459,6 +466,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         state["config_path"] = cfg_path
         hydrate_from_disk()
         return SetupSuccessResponse(
+            ok=True,
             restart_required=True,
             message=(
                 "配置已写入。请用刚设置的管理界面登录密码登录;"

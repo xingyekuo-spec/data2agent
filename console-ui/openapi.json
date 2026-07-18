@@ -864,12 +864,12 @@
           },
           "ok": {
             "const": false,
-            "default": false,
             "title": "Ok",
             "type": "boolean"
           }
         },
         "required": [
+          "ok",
           "errors"
         ],
         "title": "SetupFailureResponse",
@@ -923,7 +923,6 @@
           },
           "ok": {
             "const": true,
-            "default": true,
             "title": "Ok",
             "type": "boolean"
           },
@@ -934,6 +933,7 @@
           }
         },
         "required": [
+          "ok",
           "message"
         ],
         "title": "SetupSuccessResponse",
@@ -2126,6 +2126,7 @@
     },
     "/api/setup": {
       "post": {
+        "description": "Auth: skipped only while needs_setup=true (first-time bootstrap). After configuration, Bearer is required when D2A_CONSOLE_TOKEN is set.",
         "operationId": "run_setup_api_setup_post",
         "requestBody": {
           "content": {
@@ -2194,12 +2195,18 @@
             "description": "Validation Error"
           }
         },
-        "security": [],
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
         "summary": "Run Setup"
       }
     },
     "/api/setup/status": {
       "get": {
+        "description": "Auth: skipped only while needs_setup=true (first-time bootstrap). After configuration, Bearer is required when D2A_CONSOLE_TOKEN is set.",
         "operationId": "setup_status_api_setup_status_get",
         "responses": {
           "200": {
@@ -2223,7 +2230,12 @@
             "description": "禁止访问"
           }
         },
-        "security": [],
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
         "summary": "Setup Status"
       }
     },

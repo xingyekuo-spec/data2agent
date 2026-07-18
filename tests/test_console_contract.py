@@ -196,11 +196,14 @@ def test_openapi_declares_optional_bearer_security(tmp_path):
     schemes = spec["components"]["securitySchemes"]
     assert "HTTPBearer" in schemes
     assert schemes["HTTPBearer"]["scheme"] == "bearer"
+    optional = [{"HTTPBearer": []}, {}]
     overview = spec["paths"]["/api/overview"]["get"]
-    assert overview.get("security") == [{"HTTPBearer": []}, {}]
-    setup = spec["paths"]["/api/setup"]["post"]
-    assert setup.get("security") == []
-    assert spec["paths"]["/api/setup/status"]["get"].get("security") == []
+    assert overview.get("security") == optional
+    # Setup routes use the same optional Bearer: after first-time setup + token,
+    # runtime returns 401 without credentials (not permanently unauthenticated).
+    assert spec["paths"]["/api/setup"]["post"].get("security") == optional
+    assert spec["paths"]["/api/setup/status"]["get"].get("security") == optional
+    assert "needs_setup" in (spec["paths"]["/api/setup"]["post"].get("description") or "")
 
 def test_wire_shape_arrays_and_objects(env):
     landing, _ = env
@@ -328,6 +331,23 @@ def test_setup_response_is_discriminated_union(tmp_path):
     assert ok.status_code == 200
     SetupSuccessResponse.model_validate(ok.json())
     assert "errors" not in ok.json()
+
+    # After setup + token, setup endpoints require Bearer (matches OpenAPI optional auth).
+    assert client.get("/api/setup/status").status_code == 401
+    assert client.post("/api/setup", json={
+        "ingest_token": "x", "console_token": "y",
+    }).status_code == 401
+    authed = client.get(
+        "/api/setup/status", headers={"Authorization": "Bearer console-tok"})
+    assert authed.status_code == 200
+    assert authed.json()["needs_setup"] is False
+
+    schemas = _openapi_app(tmp_path).openapi()["components"]["schemas"]
+    for name in ("SetupSuccessResponse", "SetupFailureResponse"):
+        assert "ok" in schemas[name].get("required", []), (
+            f"{name}.ok must be required for TS discriminant narrowing"
+        )
+        assert "default" not in schemas[name]["properties"]["ok"]
 
 
 def test_action_executed_false_is_success_body(env, tmp_path):

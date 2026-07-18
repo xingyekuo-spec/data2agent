@@ -95,14 +95,15 @@ class SetupStatusResponse(BaseModel):
 
 
 class SetupSuccessResponse(BaseModel):
-    ok: Literal[True] = True
+    # ok has no default so OpenAPI marks it required; TS can narrow on ok === true.
+    ok: Literal[True]
     restart_required: bool = True
     message: str
     mcp_token_generated: bool = False
 
 
 class SetupFailureResponse(BaseModel):
-    ok: Literal[False] = False
+    ok: Literal[False]
     errors: list[FieldError]
 
 
