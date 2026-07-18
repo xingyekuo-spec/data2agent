@@ -2,11 +2,17 @@
 
 M1 目标:给现有 wire shape 增加可生成的 OpenAPI 类型,不改变成功响应最外层结构。
 历史落库时间字段保持 str|None,并在描述中标明 legacy local ISO text(不保证 offset)。
+
+M2 追加:v0.2 新端点(pipeline / run 详情 / 数据浏览 / 对象 / 模板 / 建议卡)的
+契约桩模型。路由已注册进 OpenAPI,运行时在所属里程碑实现前一律返回 501,
+不得返回伪造成功。新端点时间字段一律 datetime(带时区 ISO 8601,v0.2 口径),
+由实现里程碑负责把 legacy 本地时间迁移为带时区值。
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
@@ -107,10 +113,10 @@ class SetupFailureResponse(BaseModel):
     errors: list[FieldError]
 
 
-SetupResponse = Annotated[
-    SetupSuccessResponse | SetupFailureResponse,
-    Field(discriminator="ok"),
-]
+# 普通 anyOf 联合(不加 discriminator):pydantic 生成的 mapping 键是 Python
+# 风格 "True"/"False",openapi-typescript 会把 ok 重写为字符串枚举,破坏 TS
+# 收窄;anyOf + const 字面量让 ok 生成 boolean 字面量 true/false,收窄正确。
+SetupResponse = SetupSuccessResponse | SetupFailureResponse
 
 
 class ConfigViewResponse(BaseModel):
@@ -248,3 +254,163 @@ class RetryActionResult(BaseModel):
     mapped: int
     quarantined: int
     status: str
+
+
+# ---- v0.2 契约桩(M2):schema 先行,运行时在所属里程碑实现前返回 501 ----
+
+TZ_TIME_DESC = (
+    "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must "
+    "convert legacy local text to an offset-bearing value"
+)
+
+PipelineNodeStatus = Literal[
+    "unknown", "idle", "running", "healthy", "warning", "failed", "stale"
+]
+
+
+class PipelineNode(BaseModel):
+    """管道单节点。status=unknown 表示后端无法检测,前端不得显示为正常。"""
+
+    node: str = Field(
+        description="节点 ID:erp / extract / push / raw / mapping / objects / mcp")
+    status: PipelineNodeStatus
+    last_success_at: datetime | None = Field(description=TZ_TIME_DESC)
+    last_failure_at: datetime | None = Field(description=TZ_TIME_DESC)
+    rows_in: int | None
+    rows_out: int | None
+    duration_ms: float | None
+    error: str | None
+    version: str | None = Field(
+        description="数据或组件版本;dataset/object version 属 v0.3,当前可为空")
+
+
+class PipelineResponse(BaseModel):
+    generated_at: datetime = Field(description=TZ_TIME_DESC)
+    nodes: list[PipelineNode]
+
+
+RunType = Literal["sync", "apply", "reconcile", "ingest"]
+RunStatus = Literal["running", "ok", "paused", "failed", "aborted"]
+
+
+class RunStep(BaseModel):
+    name: str = Field(description="步骤对象:表名 / 对象名 / 批次 ID")
+    rows_in: int | None
+    rows_out: int | None
+    quarantined: int | None
+    watermark_before: str | None
+    watermark_after: str | None
+    error: str | None
+
+
+class RunDetailResponse(BaseModel):
+    """统一运行模型(v0.3 起 validation 复用同一 Run/steps 结构)。"""
+
+    id: int
+    type: RunType
+    status: RunStatus
+    source: str | None
+    started_at: datetime = Field(description=TZ_TIME_DESC)
+    finished_at: datetime | None = Field(description=TZ_TIME_DESC)
+    duration_ms: float | None
+    dataset_version: str | None = Field(description="dataset version 属 v0.3,当前为空")
+    steps: list[RunStep]
+
+
+class RawDataPageResponse(BaseModel):
+    source: str
+    table: str
+    offset: int
+    limit: int
+    total: int
+    rows: list[dict[str, JsonValue]]
+
+
+class ObjectSummary(BaseModel):
+    object: str
+    display_name: str
+    domain: str | None
+    rows: int | None = Field(description="尚未物化时为 null,不等于 0")
+    mapped_at: datetime | None = Field(description=TZ_TIME_DESC)
+    quarantined: int
+    version: str | None = Field(description="object version 属 v0.3,当前为空")
+
+
+class ObjectRowsPageResponse(BaseModel):
+    object: str
+    offset: int
+    limit: int
+    total: int
+    rows: list[dict[str, JsonValue]]
+
+
+BindingStatus = Literal["draft", "verified", "disabled"]
+
+
+class TemplateProperty(BaseModel):
+    name: str
+    type: str
+    desc: str | None = None
+    sensitive: bool = False
+
+
+class TemplateBinding(BaseModel):
+    source: str
+    tables: list[str]
+    status: BindingStatus
+    key_map: dict[str, str] = Field(default_factory=dict)
+    field_map: dict[str, str] = Field(default_factory=dict)
+    watermark: str | None = None
+    notes: str | None = None
+
+
+class TemplateObject(BaseModel):
+    object: str
+    display_name: str
+    description: str | None = None
+    domain: str | None = None
+    keys: list[str]
+    properties: list[TemplateProperty]
+    bindings: list[TemplateBinding]
+
+
+class ProposalEvidenceInput(BaseModel):
+    claim: str = Field(min_length=1)
+    query_id: str = Field(min_length=1)
+
+
+class ProposalRequest(BaseModel):
+    """建议卡请求,语义与 MCP propose_action 一致:
+
+    evidence 必须引用同会话已记录查询的 meta.query_id;不得凭空生成。
+    """
+
+    object: str
+    action: str
+    conclusion: str = Field(min_length=1)
+    evidence: list[ProposalEvidenceInput] = Field(min_length=1)
+
+
+class ProposalQueryRef(BaseModel):
+    query_id: str
+    tool: str
+    target: str
+    at: datetime = Field(description=TZ_TIME_DESC)
+
+
+class ProposalEvidence(BaseModel):
+    claim: str
+    query: ProposalQueryRef
+
+
+class ProposalResponse(BaseModel):
+    proposal_id: str
+    at: datetime = Field(description=TZ_TIME_DESC)
+    object: str
+    action: str
+    action_desc: str
+    tier: str
+    conclusion: str
+    evidence: list[ProposalEvidence]
+    caveats: list[str]
+    governance: str

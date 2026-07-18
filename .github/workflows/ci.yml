@@ -27,6 +27,28 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Vue Console(console-ui):契约类型 → lint → typecheck → test → build,
+  # 全程不依赖已启动的后端或外网 API(npm ci 之后)。
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console-ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console-ui/package-lock.json
+      - run: npm ci
+      - run: npm run api:check      # openapi.json 与生成类型漂移即失败
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test
+      - run: npm run build          # 生产构建(默认 REAL,base=/v1/)
+      - run: node scripts/check-dist.mjs   # 产物 base/CDN/MSW 分包检查
+
   # MSSQL 适配器集成测试(重:手动触发)
   mssql-integration:
     if: github.event_name == 'workflow_dispatch'

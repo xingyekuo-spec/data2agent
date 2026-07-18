@@ -404,6 +404,120 @@
         "title": "ObjectApplyResultModel",
         "type": "object"
       },
+      "ObjectRowsPageResponse": {
+        "properties": {
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "object",
+          "offset",
+          "limit",
+          "total",
+          "rows"
+        ],
+        "title": "ObjectRowsPageResponse",
+        "type": "object"
+      },
+      "ObjectSummary": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "mapped_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Mapped At"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "quarantined": {
+            "title": "Quarantined",
+            "type": "integer"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "尚未物化时为 null,不等于 0",
+            "title": "Rows"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "object version 属 v0.3,当前为空",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "object",
+          "display_name",
+          "domain",
+          "rows",
+          "mapped_at",
+          "quarantined",
+          "version"
+        ],
+        "title": "ObjectSummary",
+        "type": "object"
+      },
       "OverviewObject": {
         "properties": {
           "display_name": {
@@ -520,6 +634,314 @@
         "title": "OverviewSource",
         "type": "object"
       },
+      "PipelineNode": {
+        "description": "管道单节点。status=unknown 表示后端无法检测,前端不得显示为正常。",
+        "properties": {
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "last_failure_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Last Failure At"
+          },
+          "last_success_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Last Success At"
+          },
+          "node": {
+            "description": "节点 ID:erp / extract / push / raw / mapping / objects / mcp",
+            "title": "Node",
+            "type": "string"
+          },
+          "rows_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows In"
+          },
+          "rows_out": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Out"
+          },
+          "status": {
+            "enum": [
+              "unknown",
+              "idle",
+              "running",
+              "healthy",
+              "warning",
+              "failed",
+              "stale"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "数据或组件版本;dataset/object version 属 v0.3,当前可为空",
+            "title": "Version"
+          }
+        },
+        "required": [
+          "node",
+          "status",
+          "last_success_at",
+          "last_failure_at",
+          "rows_in",
+          "rows_out",
+          "duration_ms",
+          "error",
+          "version"
+        ],
+        "title": "PipelineNode",
+        "type": "object"
+      },
+      "PipelineResponse": {
+        "properties": {
+          "generated_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/PipelineNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "generated_at",
+          "nodes"
+        ],
+        "title": "PipelineResponse",
+        "type": "object"
+      },
+      "ProposalEvidence": {
+        "properties": {
+          "claim": {
+            "title": "Claim",
+            "type": "string"
+          },
+          "query": {
+            "$ref": "#/components/schemas/ProposalQueryRef"
+          }
+        },
+        "required": [
+          "claim",
+          "query"
+        ],
+        "title": "ProposalEvidence",
+        "type": "object"
+      },
+      "ProposalEvidenceInput": {
+        "properties": {
+          "claim": {
+            "minLength": 1,
+            "title": "Claim",
+            "type": "string"
+          },
+          "query_id": {
+            "minLength": 1,
+            "title": "Query Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim",
+          "query_id"
+        ],
+        "title": "ProposalEvidenceInput",
+        "type": "object"
+      },
+      "ProposalQueryRef": {
+        "properties": {
+          "at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "query_id": {
+            "title": "Query Id",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "tool": {
+            "title": "Tool",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query_id",
+          "tool",
+          "target",
+          "at"
+        ],
+        "title": "ProposalQueryRef",
+        "type": "object"
+      },
+      "ProposalRequest": {
+        "description": "建议卡请求,语义与 MCP propose_action 一致:\n\nevidence 必须引用同会话已记录查询的 meta.query_id;不得凭空生成。",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "conclusion": {
+            "minLength": 1,
+            "title": "Conclusion",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalEvidenceInput"
+            },
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          }
+        },
+        "required": [
+          "object",
+          "action",
+          "conclusion",
+          "evidence"
+        ],
+        "title": "ProposalRequest",
+        "type": "object"
+      },
+      "ProposalResponse": {
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "action_desc": {
+            "title": "Action Desc",
+            "type": "string"
+          },
+          "at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "caveats": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Caveats",
+            "type": "array"
+          },
+          "conclusion": {
+            "title": "Conclusion",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ProposalEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "governance": {
+            "title": "Governance",
+            "type": "string"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "proposal_id": {
+            "title": "Proposal Id",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proposal_id",
+          "at",
+          "object",
+          "action",
+          "action_desc",
+          "tier",
+          "conclusion",
+          "evidence",
+          "caveats",
+          "governance"
+        ],
+        "title": "ProposalResponse",
+        "type": "object"
+      },
       "QuarantineRecord": {
         "properties": {
           "created_at": {
@@ -563,6 +985,50 @@
           "created_at"
         ],
         "title": "QuarantineRecord",
+        "type": "object"
+      },
+      "RawDataPageResponse": {
+        "properties": {
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "rows": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              "type": "object"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "table": {
+            "title": "Table",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "table",
+          "offset",
+          "limit",
+          "total",
+          "rows"
+        ],
+        "title": "RawDataPageResponse",
         "type": "object"
       },
       "RawTablePageResponse": {
@@ -699,6 +1165,195 @@
           "status"
         ],
         "title": "RetryActionResult",
+        "type": "object"
+      },
+      "RunDetailResponse": {
+        "description": "统一运行模型(v0.3 起 validation 复用同一 Run/steps 结构)。",
+        "properties": {
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "dataset version 属 v0.3,当前为空",
+            "title": "Dataset Version"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "started_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "ok",
+              "paused",
+              "failed",
+              "aborted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/RunStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          },
+          "type": {
+            "enum": [
+              "sync",
+              "apply",
+              "reconcile",
+              "ingest"
+            ],
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "status",
+          "source",
+          "started_at",
+          "finished_at",
+          "duration_ms",
+          "dataset_version",
+          "steps"
+        ],
+        "title": "RunDetailResponse",
+        "type": "object"
+      },
+      "RunStep": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "name": {
+            "description": "步骤对象:表名 / 对象名 / 批次 ID",
+            "title": "Name",
+            "type": "string"
+          },
+          "quarantined": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quarantined"
+          },
+          "rows_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows In"
+          },
+          "rows_out": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows Out"
+          },
+          "watermark_after": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark After"
+          },
+          "watermark_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark Before"
+          }
+        },
+        "required": [
+          "name",
+          "rows_in",
+          "rows_out",
+          "quarantined",
+          "watermark_before",
+          "watermark_after",
+          "error"
+        ],
+        "title": "RunStep",
         "type": "object"
       },
       "RunSummary": {
@@ -979,6 +1634,171 @@
           "watermark_col"
         ],
         "title": "SyncStateRow",
+        "type": "object"
+      },
+      "TemplateBinding": {
+        "properties": {
+          "field_map": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Field Map",
+            "type": "object"
+          },
+          "key_map": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Key Map",
+            "type": "object"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "draft",
+              "verified",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tables": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tables",
+            "type": "array"
+          },
+          "watermark": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark"
+          }
+        },
+        "required": [
+          "source",
+          "tables",
+          "status"
+        ],
+        "title": "TemplateBinding",
+        "type": "object"
+      },
+      "TemplateObject": {
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateBinding"
+            },
+            "title": "Bindings",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Keys",
+            "type": "array"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "properties": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateProperty"
+            },
+            "title": "Properties",
+            "type": "array"
+          }
+        },
+        "required": [
+          "object",
+          "display_name",
+          "keys",
+          "properties",
+          "bindings"
+        ],
+        "title": "TemplateObject",
+        "type": "object"
+      },
+      "TemplateProperty": {
+        "properties": {
+          "desc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desc"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "sensitive": {
+            "default": false,
+            "title": "Sensitive",
+            "type": "boolean"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "type"
+        ],
+        "title": "TemplateProperty",
         "type": "object"
       },
       "ValidationError": {
@@ -1610,6 +2430,103 @@
         "summary": "Validate Config"
       }
     },
+    "/api/data/raw/{source}/{table}": {
+      "get": {
+        "operationId": "data_raw_api_data_raw__source___table__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "table",
+            "required": true,
+            "schema": {
+              "title": "Table",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RawDataPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Data Raw",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
     "/api/debug/mcp-call": {
       "post": {
         "operationId": "debug_mcp_call_api_debug_mcp_call_post",
@@ -1809,6 +2726,73 @@
         "summary": "Debug Raw Table"
       }
     },
+    "/api/gateway/proposals": {
+      "post": {
+        "operationId": "gateway_proposals_api_gateway_proposals_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProposalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Gateway Proposals",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
     "/api/logs": {
       "get": {
         "operationId": "get_logs_api_logs_get",
@@ -1900,6 +2884,145 @@
         "summary": "Get Logs"
       }
     },
+    "/api/objects": {
+      "get": {
+        "operationId": "objects_api_objects_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ObjectSummary"
+                  },
+                  "title": "Response Objects Api Objects Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Objects",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
+    "/api/objects/{object}": {
+      "get": {
+        "operationId": "object_rows_api_objects__object__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "object",
+            "required": true,
+            "schema": {
+              "title": "Object",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectRowsPageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Object Rows",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
     "/api/overview": {
       "get": {
         "operationId": "overview_api_overview_get",
@@ -1942,6 +3065,53 @@
           {}
         ],
         "summary": "Overview"
+      }
+    },
+    "/api/pipeline": {
+      "get": {
+        "operationId": "pipeline_api_pipeline_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PipelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Pipeline",
+        "tags": [
+          "v0.2-stub"
+        ]
       }
     },
     "/api/quarantine": {
@@ -2090,6 +3260,74 @@
         "summary": "Runs"
       }
     },
+    "/api/runs/{run_id}": {
+      "get": {
+        "operationId": "run_detail_api_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Run Detail",
+        "tags": [
+          "v0.2-stub"
+        ]
+      }
+    },
     "/api/services": {
       "get": {
         "operationId": "services_api_services_get",
@@ -2143,14 +3381,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "discriminator": {
-                    "mapping": {
-                      "False": "#/components/schemas/SetupFailureResponse",
-                      "True": "#/components/schemas/SetupSuccessResponse"
-                    },
-                    "propertyName": "ok"
-                  },
-                  "oneOf": [
+                  "anyOf": [
                     {
                       "$ref": "#/components/schemas/SetupSuccessResponse"
                     },
@@ -2237,6 +3468,57 @@
           {}
         ],
         "summary": "Setup Status"
+      }
+    },
+    "/api/templates": {
+      "get": {
+        "operationId": "templates_view_api_templates_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TemplateObject"
+                  },
+                  "title": "Response Templates View Api Templates Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Templates View",
+        "tags": [
+          "v0.2-stub"
+        ]
       }
     },
     "/config": {

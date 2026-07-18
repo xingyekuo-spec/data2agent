@@ -80,8 +80,44 @@ NAMED_SUCCESS_SCHEMAS = {
     ("post", "/api/actions/reconcile"): "ActionExecutionResult",
     ("post", "/api/actions/apply"): "ApplyActionResult",
     ("post", "/api/actions/retry"): "RetryActionResult",
-    ("post", "/api/setup"): ("oneOf", ("SetupSuccessResponse", "SetupFailureResponse")),
+    # 普通 anyOf(无 discriminator):保证 TS 生成 ok 的 boolean 字面量,可收窄
+    ("post", "/api/setup"): ("anyOf", ("SetupSuccessResponse", "SetupFailureResponse")),
 }
+
+# M2 v0.2 契约桩:schema 先行,运行时在所属里程碑实现前一律 501。
+STUB_API_ROUTES = {
+    ("GET", "/api/pipeline"),
+    ("GET", "/api/runs/{run_id}"),
+    ("GET", "/api/data/raw/{source}/{table}"),
+    ("GET", "/api/objects"),
+    ("GET", "/api/objects/{object}"),
+    ("GET", "/api/templates"),
+    ("POST", "/api/gateway/proposals"),
+}
+
+STUB_SUCCESS_SCHEMAS = {
+    ("get", "/api/pipeline"): "PipelineResponse",
+    ("get", "/api/runs/{run_id}"): "RunDetailResponse",
+    ("get", "/api/data/raw/{source}/{table}"): "RawDataPageResponse",
+    ("get", "/api/objects"): ("array", "ObjectSummary"),
+    ("get", "/api/objects/{object}"): "ObjectRowsPageResponse",
+    ("get", "/api/templates"): ("array", "TemplateObject"),
+    ("post", "/api/gateway/proposals"): "ProposalResponse",
+}
+
+# (method, concrete path, kwargs) for runtime 501 checks
+STUB_RUNTIME_CALLS = [
+    ("get", "/api/pipeline", {}),
+    ("get", "/api/runs/1", {}),
+    ("get", "/api/data/raw/digiwin_e10/raw_x", {}),
+    ("get", "/api/objects", {}),
+    ("get", "/api/objects/SalesOrder", {}),
+    ("get", "/api/templates", {}),
+    ("post", "/api/gateway/proposals", {
+        "json": {"object": "SalesOrder", "action": "review", "conclusion": "c",
+                 "evidence": [{"claim": "c", "query_id": "q1"}]},
+    }),
+]
 
 
 @pytest.fixture()
@@ -163,11 +199,15 @@ def test_success_responses_use_named_schemas(tmp_path):
             name = _schema_ref(content.get("items", {}))
             assert name == expected[1], f"{path}: expected list[{expected[1]}], got {content}"
             _assert_schema_not_unknown(schemas, name)
-        elif isinstance(expected, tuple) and expected[0] == "oneOf":
-            refs = {_schema_ref(x) for x in content.get("oneOf", [])}
-            assert refs == set(expected[1]), f"{path}: expected oneOf {expected[1]}, got {content}"
-            assert "discriminator" in content
+        elif isinstance(expected, tuple) and expected[0] == "anyOf":
+            refs = {_schema_ref(x) for x in content.get("anyOf", [])}
+            assert refs == set(expected[1]), f"{path}: expected anyOf {expected[1]}, got {content}"
+            # 成员必须带 ok 的 const 字面量,TS 才能收窄;不得退回 discriminator
+            # (openapi-typescript 会把 ok 重写为字符串枚举,破坏收窄)
+            assert "discriminator" not in content
             for name in expected[1]:
+                ok_schema = schemas[name]["properties"]["ok"]
+                assert ok_schema.get("const") in (True, False), f"{name}.ok needs const"
                 _assert_schema_not_unknown(schemas, name)
         else:
             name = _schema_ref(content)
@@ -314,7 +354,7 @@ def test_retry_422_string_and_validation_list(env):
     assert _schema_ref(retry_422["content"]["application/json"]["schema"]) == "RequestError"
 
 
-def test_setup_response_is_discriminated_union(tmp_path):
+def test_setup_response_union_narrowable(tmp_path):
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
     shutil.copytree(ROOT / "templates", home.app / "templates")
@@ -426,3 +466,61 @@ def test_openapi_snapshot_roundtrip(tmp_path, monkeypatch):
         cwd=ROOT, capture_output=True, text=True, check=False)
     assert drifted.returncode != 0
     assert "export_console_openapi.py" in (drifted.stdout + drifted.stderr)
+
+
+# ---- M2 v0.2 契约桩 ----
+
+
+def test_stub_routes_present(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    found = set()
+    for path, item in spec["paths"].items():
+        for method in item:
+            if method in ("get", "post", "put", "patch", "delete"):
+                found.add((method.upper(), path))
+    missing = STUB_API_ROUTES - found
+    assert not missing, f"missing stub routes: {sorted(missing)}"
+    assert len(STUB_API_ROUTES) == 7
+
+
+def test_stub_success_schemas_named_and_typed(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    schemas = spec.get("components", {}).get("schemas", {})
+    for (method, path), expected in STUB_SUCCESS_SCHEMAS.items():
+        op = spec["paths"][path][method]
+        content = (
+            op["responses"]["200"]["content"]["application/json"]["schema"]
+        )
+        if isinstance(expected, tuple) and expected[0] == "array":
+            assert content.get("type") == "array", path
+            name = _schema_ref(content.get("items", {}))
+            assert name == expected[1], f"{path}: expected list[{expected[1]}], got {content}"
+        else:
+            name = _schema_ref(content)
+            assert name == expected, f"{path}: expected {expected}, got {content}"
+        _assert_schema_not_unknown(schemas, name)
+        # 501 必须声明为 HttpError,不得只出现在描述文本里
+        err = op["responses"]["501"]["content"]["application/json"]["schema"]
+        assert _schema_ref(err) == "HttpError", f"{path}: 501 must use HttpError"
+
+
+def test_stubs_return_501_http_error_not_fake_success(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    success_keys = {"nodes", "steps", "rows", "objects", "proposal_id", "evidence"}
+    for method, path, kwargs in STUB_RUNTIME_CALLS:
+        r = getattr(client, method)(path, **kwargs)
+        assert r.status_code == 501, f"{method.upper()} {path}: {r.status_code}"
+        err = HttpError.model_validate(r.json())
+        assert "契约桩" in err.detail
+        assert not (success_keys & r.json().keys()), (
+            f"{path} must not return fake success fields")
+
+
+def test_stub_proposal_request_validation(env):
+    landing, _ = env
+    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
+    # 空 evidence 应在进入桩逻辑前被 422 拒绝(契约语义与 propose_action 一致)
+    r = client.post("/api/gateway/proposals", json={
+        "object": "SalesOrder", "action": "review", "conclusion": "c", "evidence": []})
+    assert r.status_code == 422

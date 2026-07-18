@@ -1,0 +1,50 @@
+:root {
+  /* 规格 §3.4 配色(2026-07-18 按参考 UI 修订:顶栏改白色、侧栏选中改胶囊) */
+  --d2a-topbar-bg: #ffffff;
+  --d2a-primary: #1677ff;
+  --d2a-content-bg: #f5f7fa;
+  --d2a-text-primary: #001529;
+  --d2a-text-secondary: #999999;
+  --d2a-border: #e5e6eb;
+
+  /* 侧栏(参考 UI:白底 + 浅蓝圆角胶囊选中;紧凑) */
+  --d2a-sidebar-width: 240px;
+  --d2a-menu-active-bg: #e6f4ff;
+  --d2a-brand-bg: #001529;
+
+  /* 领域健康状态语义色:unknown 是灰,不是绿 */
+  --d2a-status-unknown: #909399;
+  --d2a-status-idle: #a8abb2;
+  --d2a-status-running: #1677ff;
+  --d2a-status-healthy: #52c41a;
+  --d2a-status-warning: #faad14;
+  --d2a-status-failed: #cf1322;
+  --d2a-status-stale: #b88230;
+
+  /* 环境模式标识 */
+  --d2a-env-mock: #faad14;
+  --d2a-env-demo: #1677ff;
+  --d2a-env-real: #52c41a;
+
+  --d2a-layout-topbar-height: 48px;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* 内容区白色圆角卡片(参考 UI:表格 / 区块承载于卡片);紧凑间距让内容区尽量大 */
+.d2a-card {
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid var(--d2a-border);
+  border-radius: 8px;
+}
+
+.d2a-card + .d2a-card {
+  margin-top: 8px;
+}

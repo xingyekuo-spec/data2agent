@@ -52,11 +52,18 @@ from .contracts import (
     LogsResponse,
     McpCallBody,
     McpToolResult,
+    ObjectRowsPageResponse,
+    ObjectSummary,
     OverviewResponse,
+    PipelineResponse,
+    ProposalRequest,
+    ProposalResponse,
     QuarantineRecord,
+    RawDataPageResponse,
     RawTablePageResponse,
     RequestError,
     RetryActionResult,
+    RunDetailResponse,
     RunSummary,
     ServicesStatusResponse,
     SetupBody,
@@ -64,6 +71,7 @@ from .contracts import (
     SetupResponse,
     SetupStatusResponse,
     SetupSuccessResponse,
+    TemplateObject,
     ValidationResult,
 )
 from .ui import UI_HTML
@@ -77,6 +85,10 @@ _RESP_HTTP_ERROR = {
         "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)",
     },
     500: {"model": HttpError, "description": "未处理异常"},
+}
+
+_RESP_HTTP_ERROR_STUB = {
+    501: {"model": HttpError, "description": "契约桩:端点在所属里程碑实现前返回 501"},
 }
 
 _SETUP_API_PATHS = frozenset({"/api/setup", "/api/setup/status"})
@@ -753,6 +765,81 @@ def create_app(landing: str | None = None, templates: str = "templates",
         except MappingCircuitBreaker as e:
             raise HTTPException(409, f"重试触发熔断:{e}") from e
         return {"executed": True, **asdict(result)}
+
+    # ---- v0.2 契约桩(M2)----
+    # schema 先行供前端类型生成与 Mock;真实实现归属 M3–M6,
+    # 实现前一律返回 501,不得返回伪造成功或空数据。
+
+    _STUB_501 = "契约桩:端点已声明,将在所属里程碑实现;不得视为成功或空数据"
+
+    @api.get(
+        "/pipeline",
+        response_model=PipelineResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def pipeline() -> PipelineResponse:
+        raise HTTPException(501, f"{_STUB_501}(M3 管道状态)")
+
+    @api.get(
+        "/runs/{run_id}",
+        response_model=RunDetailResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def run_detail(run_id: int) -> RunDetailResponse:
+        raise HTTPException(501, f"{_STUB_501}(M4 运行详情)")
+
+    @api.get(
+        "/data/raw/{source}/{table}",
+        response_model=RawDataPageResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def data_raw(source: str, table: str, offset: int = 0,
+                 limit: int = 50) -> RawDataPageResponse:
+        raise HTTPException(501, f"{_STUB_501}(M4 raw 数据浏览)")
+
+    @api.get(
+        "/objects",
+        response_model=list[ObjectSummary],
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def objects() -> list[ObjectSummary]:
+        raise HTTPException(501, f"{_STUB_501}(M4 对象列表)")
+
+    @api.get(
+        "/objects/{object}",
+        response_model=ObjectRowsPageResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def object_rows(object: str, offset: int = 0,
+                    limit: int = 50) -> ObjectRowsPageResponse:
+        raise HTTPException(501, f"{_STUB_501}(M4 对象数据浏览)")
+
+    @api.get(
+        "/templates",
+        response_model=list[TemplateObject],
+        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
+        tags=["v0.2-stub"],
+    )
+    def templates_view() -> list[TemplateObject]:
+        raise HTTPException(501, f"{_STUB_501}(M5 模板只读展示)")
+
+    @api.post(
+        "/gateway/proposals",
+        response_model=ProposalResponse,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            422: _RESP_HTTP_ERROR[422],
+            501: _RESP_HTTP_ERROR_STUB[501],
+        },
+        tags=["v0.2-stub"],
+    )
+    def gateway_proposals(body: ProposalRequest) -> ProposalResponse:
+        raise HTTPException(501, f"{_STUB_501}(M6 MCP Lab 建议卡)")
 
     app.include_router(api)
 
