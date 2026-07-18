@@ -113,14 +113,17 @@ Run
   id / type(sync|ingest|apply|reconcile|validation)
   status(running|ok|paused|failed|aborted)
   source / dataset_version / started_at / finished_at / duration_ms
+  steps_state(available|legacy_unavailable)
   steps[]
-    target(table|object|batch)
+    kind(table|object|segment|batch) / name
     rows_in / rows_out / quarantined
     watermark_before / watermark_after
     status / error_id / error
 ```
 
-时间均返回带时区 ISO 8601;页面按浏览器时区展示,详情保留原始值。
+`validation` 从 v0.3 起复用同一 Run 模型。历史记录没有 step 证据时返回
+`legacy_unavailable`,不得用空数组伪装为“实际处理 0 项”。时间均返回带时区 ISO 8601;
+页面按浏览器时区展示,详情保留原始值。
 
 ### 4.3 数据浏览
 
@@ -129,7 +132,9 @@ Run
 - 服务端分页、稳定排序、limit 上限和业务键搜索;
 - 显示批次、抽取/映射时间、数据集版本;
 - 对象敏感字段按元模型脱敏;
-- raw 浏览可能包含敏感原值,仅授权管理主体可访问,访问逐次审计;v0.4 前需明确列裁剪和 raw 保护策略。
+- raw 浏览可能含未分类的敏感原值,仅配置有效管理 Token 的授权主体可访问,访问允许/拒绝均逐次审计;
+- v0.2 对能够识别的 raw 敏感列同样服务端脱敏,未知分类持续警告,不提供 unmask;
+- 表格和原始 JSON 使用同一个已脱敏、已截断响应;v0.4 前仍需明确源端列裁剪和 raw 保护策略。
 
 ### 4.4 隔离与模板
 
@@ -171,10 +176,12 @@ GET  /api/pipeline
 GET  /api/services
 GET  /api/runs?limit&offset&type&status
 GET  /api/runs/{run_id}
-GET  /api/audit?limit&offset&source&action
-GET  /api/data/raw/{source}/{table}?limit&offset
+GET  /api/audit?limit&offset&source&action&from&to
+GET  /api/audit/access?limit&offset
+GET  /api/data/raw
+GET  /api/data/raw/{source}/{table}?limit&offset&q
 GET  /api/objects
-GET  /api/objects/{object}?limit&offset
+GET  /api/objects/{object}?limit&offset&q
 GET  /api/quarantine?object&limit&offset
 GET  /api/templates
 GET  /api/config
@@ -182,7 +189,9 @@ POST /api/debug/mcp-call                 # 只允许 query_objects/query_metrics
 POST /api/gateway/proposals              # 独立建议卡入口
 ```
 
-每个端点必须定义 Pydantic request/response model。OpenAPI 快照提交到 `console-ui/openapi.json`,
+既有 `/api/runs` 和 `/api/audit` 保持数组正文兼容,分页总数通过声明的
+`X-Total-Count` 响应头返回;新增浏览接口使用具名分页响应。每个端点必须定义
+Pydantic request/response model。OpenAPI 快照提交到 `console-ui/openapi.json`,
 由 `openapi-typescript` 生成类型;CI 从后端代码重新导出 schema 并与快照比较。
 
 ```bash

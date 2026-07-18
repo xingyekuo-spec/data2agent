@@ -549,6 +549,8 @@ GET  /api/services
 GET  /api/runs
 GET  /api/runs/{run_id}
 GET  /api/audit
+GET  /api/audit/access                  # raw/object 控制台访问审计
+GET  /api/data/raw                      # 可浏览 raw 目录
 GET  /api/data/raw/{source}/{table}
 GET  /api/objects
 GET  /api/objects/{object}

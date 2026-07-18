@@ -260,8 +260,10 @@ await client.POST("/api/actions/sync", { body: { source: "digiwin_e10" } });
 
 ### 6.5 列表接口参数
 
-审计日志:`GET /api/audit?limit&offset&source&action` + 返回 `total`(分页);
-隔离区:`GET /api/quarantine?object`(现状够用);runs:`?limit&run_type`。
+审计日志:`GET /api/audit?limit&offset&source&action&from&to`;
+隔离区:`GET /api/quarantine?object`(现状够用);runs:`?limit&offset&type&status`。
+既有 runs/audit 保持数组正文,分页总数由 `X-Total-Count` 响应头返回;
+raw/object 新接口使用具名分页对象。
 
 ## 7. 目录结构
 
@@ -377,8 +379,9 @@ data2agent.console` 的本机用户没有页面可看(README 快速开始里就�
 
 1. **全部端点 response model 化**(§6.1,类型链路地基);
 2. `d2a_sync_run` 增加 `run_type` 字段(sync / apply / reconcile),
-   runs 接口支持 `?run_type=` 筛选(仪表盘趋势图依赖);
-3. 审计接口分页 + 筛选:`?limit&offset&source&action` + 返回 total;
+   runs 接口对外支持 `?type=` 筛选(数据库 `run_type` 仅为内部列名);
+3. 审计接口分页 + 筛选:`?limit&offset&source&action&from&to`,数组正文保持
+   兼容并通过 `X-Total-Count` 返回总数;
 4. 新增 `/api/templates`(模板页,只读:对象/属性/binding 状态,来自元模型);
 5. 新增 `/api/config`(配置页,只读;SourceConfig 本身只存 dsn_env 环境变量名,
    不含凭据,天然安全 —— 实现时禁止任何解析环境变量的路径);
