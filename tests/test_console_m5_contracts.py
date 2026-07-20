@@ -126,11 +126,10 @@ def test_quarantine_detail_extends_record():
     assert detail.id == 1
     assert detail.source == "erp"
     assert isinstance(detail.created_at, datetime)
-    # Own fields: raw is JsonValue | None, dict values are wrapped in JsonValue
+    # Own fields: raw is JsonObject (dict[str, JsonValue]) | None
     assert detail.raw is not None
-    assert isinstance(detail.raw, JsonValue)
-    # Use model_dump() to unwrap nested JsonValue wrappers
-    assert detail.raw.model_dump() == {"code": "SO-001", "status": "pending"}
+    assert isinstance(detail.raw, dict)
+    assert detail.raw == {"code": JsonValue("SO-001"), "status": JsonValue("pending")}
     assert detail.truncations == []
     assert detail.request_id == "req-123"
 

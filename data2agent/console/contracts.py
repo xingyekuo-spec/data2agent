@@ -227,7 +227,7 @@ class QuarantineRecord(BaseModel):
 class QuarantineDetail(QuarantineRecord):
     """隔离详情:仅由 GET /api/quarantine/{id} 返回(强制 Bearer auth)。"""
 
-    raw: JsonValue | None = None  # sanitized, truncated, JSON-safe
+    raw: JsonObject | None = None  # sanitized, truncated, JSON-safe
     truncations: list[FieldTruncation] = Field(default_factory=list)
     request_id: str
 
