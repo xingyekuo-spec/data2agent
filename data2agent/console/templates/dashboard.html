@@ -266,6 +266,37 @@
       .catch(function (err) { msg(label + ' 失败: ' + err.message); });
   });
 
+  document.getElementById('quarantine-panel').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    var act = btn.getAttribute('data-act');
+    var source = btn.getAttribute('data-source');
+    var object = btn.getAttribute('data-object');
+
+    if (act === 'retry') {
+      if (!confirm('会重新映射整个对象 ' + object + '，确认继续？')) return;
+      var label = '重试 ' + object;
+      msg(label + '…');
+      fetch('/api/actions/retry', {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({source: source, object: object})
+      }).then(function (r) { return r.json().then(function (res) { return {ok: r.ok, res: res}; }); })
+        .then(function (out) {
+          if (!out.ok) {
+            msg(label + ' 失败: ' + (out.res.detail || 'HTTP 错误'));
+            return;
+          }
+          var res = out.res;
+          msg(label + ' 完成' +
+              (res.aborted && res.aborted.length ? '; 熔断: ' + res.aborted.join(',') : ''));
+          refreshOverview();
+          htmx.trigger('#runs-panel', 'load');
+          htmx.trigger('#quarantine-panel', 'load');
+        })
+        .catch(function (err) { msg(label + ' 失败: ' + err.message); });
+    }
+  });
+
   refreshOverview();
   setInterval(refreshOverview, 5000);
 })();

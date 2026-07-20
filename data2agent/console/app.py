@@ -76,6 +76,7 @@ from .contracts import (
     RawTableCatalogResponse,
     RawTablePageResponse,
     RequestError,
+    RetryActionError,
     RetryActionResult,
     RunDetailResponse,
     RunStatus,
@@ -1582,17 +1583,177 @@ def create_app(landing: str | None = None, templates: str = "templates",
         tpl = next((o for o in pack.objects if o.object == body.object), None)
         if tpl is None:
             raise HTTPException(404, f"未知对象 '{body.object}'")
+
+        # ---- 前置校验(before creating Run)----
+        cfg = require_config()
+        if body.source not in cfg.sources:
+            raise HTTPException(
+                404, f"配置中没有源 '{body.source}',可用:{sorted(cfg.sources)}")
+
+        bindings = [b for b in tpl.bindings if b.source == body.source]
+        if not bindings:
+            raise HTTPException(
+                409, f"对象 '{body.object}' 在源 '{body.source}' 没有绑定")
+        if not any(b.enabled for b in bindings):
+            raise HTTPException(
+                409, f"对象 '{body.object}' 在源 '{body.source}' 的绑定已禁用")
+
+        # ---- 创建 Run + step ----
+        db = store()
+        run_id: int | None = None
+        step_id: int | None = None
         try:
-            result = apply_object(store(), tpl, body.source)
+            run_id = db.start_run(body.source, "apply")
+        except Exception:
+            raise HTTPException(500, "创建运行记录失败")
+
+        try:
+            step_id = db.add_step(run_id, 1, "object", body.object)
+        except Exception:
+            # step 写入失败,关闭 run 为 failed 并 fail-close
+            try:
+                db.finish_run(run_id, tables=0, rows=0, status="failed",
+                             detail="apply step observation failed")
+            except Exception:
+                pass
+            error_id = str(uuid.uuid4())
+            return JSONResponse(
+                status_code=500,
+                content=RetryActionError(
+                    detail="写入 step 观测记录失败",
+                    reason_code="observation_failed",
+                    executed=False,
+                    object=body.object,
+                    status="failed",
+                    run_id=run_id,
+                    step_id=None,
+                    detail_path=f"/api/runs/{run_id}",
+                    error_id=error_id,
+                ).model_dump())
+
+        # ---- 执行 apply_object ----
+        try:
+            result = apply_object(db, tpl, body.source)
         except MappingCircuitBreaker as e:
-            raise HTTPException(409, f"重试触发熔断:{e}") from e
-        return {
-            "executed": True, **asdict(result),
-            # M5: new required fields (M5-T06 retry 实现前用占位值保持 wire 兼容)
-            "run_id": 0,
-            "step_id": 0,
-            "detail_path": "",
-        }
+            # 熔断:关闭 step 与 run；旧对象表已保留
+            try:
+                db.update_step(
+                    step_id, status="aborted",
+                    rows_in=e.total, rows_out=e.mapped,
+                    quarantined=e.quarantined, batch_id=e.batch_id,
+                    error=str(e)[:500])
+            except Exception:
+                pass
+            try:
+                db.finish_run(run_id, tables=1, rows=e.mapped, status="failed",
+                             detail=f"apply retry breaker: {e}")
+            except Exception:
+                pass
+            return JSONResponse(
+                status_code=409,
+                content=RetryActionError(
+                    detail=f"重试触发熔断: {tpl.object} 隔离率 {e.quarantined}/{e.total}",
+                    reason_code="circuit_broken",
+                    executed=True,
+                    object=body.object,
+                    total=e.total,
+                    mapped=e.mapped,
+                    quarantined=e.quarantined,
+                    status="aborted",
+                    run_id=run_id,
+                    step_id=step_id,
+                    detail_path=f"/api/runs/{run_id}",
+                ).model_dump())
+        except Exception as exc:
+            # 执行异常:关闭 step 与 run
+            try:
+                db.update_step(step_id, status="failed", error=str(exc)[:500])
+            except Exception:
+                pass
+            try:
+                db.finish_run(run_id, tables=1, rows=0, status="failed",
+                             detail=f"apply retry failed: {exc}")
+            except Exception:
+                pass
+            return JSONResponse(
+                status_code=500,
+                content=RetryActionError(
+                    detail=f"重试执行失败: {tpl.object}",
+                    reason_code="execution_failed",
+                    executed=True,
+                    object=body.object,
+                    status="failed",
+                    run_id=run_id,
+                    step_id=step_id,
+                    detail_path=f"/api/runs/{run_id}",
+                ).model_dump())
+
+        # ---- 成功:关闭 step 与 run ----
+        try:
+            db.update_step(
+                step_id, status="ok",
+                rows_in=result.total, rows_out=result.mapped,
+                quarantined=result.quarantined)
+        except Exception:
+            try:
+                db.finish_run(run_id, tables=1, rows=result.mapped,
+                             status="failed",
+                             detail="apply step observation failed")
+            except Exception:
+                pass
+            error_id = str(uuid.uuid4())
+            return JSONResponse(
+                status_code=500,
+                content=RetryActionError(
+                    detail="写入 step 观测记录失败",
+                    reason_code="observation_failed",
+                    executed=True,
+                    object=body.object,
+                    total=result.total,
+                    mapped=result.mapped,
+                    quarantined=result.quarantined,
+                    status="failed",
+                    run_id=run_id,
+                    step_id=step_id,
+                    detail_path=f"/api/runs/{run_id}",
+                    error_id=error_id,
+                ).model_dump())
+
+        try:
+            db.finish_run(run_id, tables=1, rows=result.mapped, status="ok",
+                         detail=f"apply retry: {body.object} ({result.mapped}/{result.total})")
+        except Exception:
+            error_id = str(uuid.uuid4())
+            return JSONResponse(
+                status_code=500,
+                content=RetryActionError(
+                    detail="写入 run 观测记录失败",
+                    reason_code="observation_failed",
+                    executed=True,
+                    object=body.object,
+                    total=result.total,
+                    mapped=result.mapped,
+                    quarantined=result.quarantined,
+                    status="failed",
+                    run_id=run_id,
+                    step_id=step_id,
+                    detail_path=f"/api/runs/{run_id}",
+                    error_id=error_id,
+                ).model_dump())
+
+        return JSONResponse(
+            status_code=200,
+            content=RetryActionResult(
+                executed=True,
+                object=body.object,
+                total=result.total,
+                mapped=result.mapped,
+                quarantined=result.quarantined,
+                status="ok",
+                run_id=run_id,
+                step_id=step_id,
+                detail_path=f"/api/runs/{run_id}",
+            ).model_dump())
 
     # ---- v0.2 M3:真实观测端点 ----
 
