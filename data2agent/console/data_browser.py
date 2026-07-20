@@ -354,9 +354,11 @@ def _quarantine_sensitive_cols(pack: TemplatePack, source: str,
     if not sensitive_props:
         return set()
     sensitive_cols: set[str] = set()
+    found_binding = False
     for binding in tpl.bindings:
         if not binding.enabled or binding.source != source:
             continue
+        found_binding = True
         for table in binding.tables:
             prefix = f"{table}."
             for prop, expr in [*binding.key_map.items(), *binding.field_map.items()]:
@@ -366,6 +368,8 @@ def _quarantine_sensitive_cols(pack: TemplatePack, source: str,
                     continue
                 col = expr[len(prefix):].split(" ")[0]
                 sensitive_cols.add(col)
+    if not found_binding:
+        return None  # 无可靠 binding → 调用方应全量遮罩
     return sensitive_cols
 
 

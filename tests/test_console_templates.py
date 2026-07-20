@@ -226,14 +226,18 @@ class TestTemplatesList:
         assert so["materialized"] is not None
         assert so["materialized"]["batch_id"] == "batch-1"
 
-    def test_materialized_source_from_binding(self, db):
-        """materialized.source 来自第一个 enabled binding。"""
+    def test_materialized_source_from_apply_step(self, db):
+        """materialized.source 来自最近一次 apply step 的关联 run(不从 binding 猜测)。"""
         client = _client(db)
         body = client.get("/api/templates").json()
+        # SalesOrder 有 apply step(run_id 的 source=digiwin_e10)
+        so = next(o for o in body if o["object"] == "SalesOrder")
+        assert so["materialized"]["source"] == SOURCE  # digiwin_e10
+
+        # Customer 无 apply step → source=None(+ 警告)
         cust = next(o for o in body if o["object"] == "Customer")
-        # Customer has digiwin_yifei (enabled), digiwin_e10 (enabled) as bindings
-        # source取自第一个 enabled binding
-        assert cust["materialized"]["source"] == "digiwin_yifei"
+        assert cust["materialized"]["source"] is None
+        assert any("无法可靠确定物化来源" in w for w in cust.get("warnings", []))
 
     # -- quarantine_pending --
 
@@ -485,3 +489,25 @@ class TestTemplateErrorPaths:
                     assert b["enabled"] is False
                 else:
                     assert b["enabled"] is True
+
+    # -- Issue 6: 表结构验证 --
+
+    def test_materialized_unknown_when_structure_broken(self, tmp_path):
+        """创建 obj_SalesOrder 但缺少 _d2a_mapped_at → state=unknown + 警告。"""
+        landing = LandingStore(tmp_path / "landing.sqlite")
+
+        # 创建物化表但缺少 _d2a_mapped_at 列
+        landing.con.execute(
+            'CREATE TABLE IF NOT EXISTS "obj_SalesOrder" '
+            '(id INTEGER PRIMARY KEY, some_data TEXT)')
+        landing.con.commit()
+
+        client = TestClient(create_app(
+            landing.db_path, str(ROOT / "templates")))
+        r = client.get("/api/templates")
+        assert r.status_code == 200
+        so = next(o for o in r.json() if o["object"] == "SalesOrder")
+        assert so["materialized"]["state"] == "unknown"
+        assert so["materialized"]["rows"] is None
+        assert any("_d2a_mapped_at" in w
+                   for w in so["materialized"].get("warnings", []))

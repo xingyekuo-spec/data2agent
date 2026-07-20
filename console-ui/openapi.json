@@ -2440,6 +2440,126 @@
         "title": "RequestValidationErrorItem",
         "type": "object"
       },
+      "RetryActionError": {
+        "description": "重试错误响应(409/500):结构化错误,不含 traceback/SQL/敏感值。",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "detail_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail Path"
+          },
+          "error_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Id"
+          },
+          "executed": {
+            "title": "Executed",
+            "type": "boolean"
+          },
+          "mapped": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapped"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "quarantined": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quarantined"
+          },
+          "reason_code": {
+            "enum": [
+              "circuit_broken",
+              "execution_failed",
+              "observation_failed"
+            ],
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "status": {
+            "enum": [
+              "aborted",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "step_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Step Id"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "detail",
+          "reason_code",
+          "executed",
+          "object",
+          "status"
+        ],
+        "title": "RetryActionError",
+        "type": "object"
+      },
       "RetryActionResult": {
         "description": "重试成功响应(M5 起 status 收窄为 Literal[\"ok\"])。",
         "properties": {
@@ -3942,11 +4062,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HttpError"
+                  "$ref": "#/components/schemas/RetryActionError"
                 }
               }
             },
-            "description": "冲突/未配置/只读/熔断"
+            "description": "熔断(隔离率超阈值)或前置校验冲突(绑定不存在/已禁用)"
           },
           "422": {
             "content": {
@@ -3957,6 +4077,16 @@
               }
             },
             "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RetryActionError"
+                }
+              }
+            },
+            "description": "执行失败或观测写入失败"
           }
         },
         "security": [

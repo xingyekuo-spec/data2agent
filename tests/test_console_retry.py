@@ -489,6 +489,25 @@ class TestRetryEvidence:
         body = r.json()
         assert body["detail_path"] == f"/api/runs/{body['run_id']}"
 
+    # -- Issue 5: OpenAPI schema 包含 RetryActionError --
+
+    def test_retry_action_error_in_openapi_schema(self, env):
+        """RetryActionError 必须出现在 /actions/retry 的 409/500 responses 中。"""
+        landing, cfg_file, _pack = env
+        client = _client(landing, cfg_file)
+        r = client.get("/openapi.json")
+        assert r.status_code == 200
+        schema = r.json()
+        paths = schema["paths"]["/api/actions/retry"]["post"]["responses"]
+        # 409 和 500 应声明 RetryActionError
+        for code in ("409", "500"):
+            assert code in paths, f"responses 缺失 {code}"
+            # FastAPI 自动将 model 转为 $ref
+            content = paths[code].get("content", {}).get("application/json", {})
+            ref = content.get("schema", {}).get("$ref", "")
+            assert "RetryActionError" in ref, \
+                f"{code} response 未声明 RetryActionError, schema={ref}"
+
     def test_success_second_retry_creates_new_run(self, env):
         """两次 retry 各产生独立的 run + step。"""
         landing, cfg_file, pack = env

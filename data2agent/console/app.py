@@ -330,10 +330,14 @@ def _compute_serving_state(
     source: str,
     latest_apply_run_id: int | None,
     step_aborted: bool,
+    binding_tables: list[str] | None = None,
 ) -> str:
     """对象数据新鲜度状态(M5 §6.3 决策矩阵)。
 
     优先级:not_materialized > unavailable > stale > fresh > unknown。
+
+    binding_tables=None 表示无法确定 binding 表集合(未知对象/未加载 pack),
+    此时无法核实 raw 新鲜度证据,不判 fresh。
     """
     if not table_exists:
         return "not_materialized"
@@ -342,30 +346,27 @@ def _compute_serving_state(
     # stale: step 被熔断中止 或 raw 明显新于 mapped_at
     if step_aborted:
         return "stale"
-    if mapped_at is not None:
+    # 按 binding 限定 raw 表,避免无关表的抽取时间污染新鲜度判断
+    if mapped_at is not None and binding_tables:
         try:
-            # Escape _ and % in source name for SQLite LIKE (they are wildcards)
-            escaped = source.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
-            raw_tables = [r[0] for r in db.con.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name LIKE ? ESCAPE '\\'", (f"raw_{escaped}__%",)).fetchall()]
             raw_latest: datetime | None = None
-            for rt in raw_tables:
+            for bt in binding_tables:
+                table_name = f"raw_{source}__{bt}"
                 try:
                     rr = db.con.execute(
-                        f'SELECT MAX("_d2a_extracted_at") AS m FROM "{rt}"'
+                        f'SELECT MAX("_d2a_extracted_at") AS m FROM "{table_name}"'
                     ).fetchone()
                     at = obs.aware(rr["m"])
                     if at is not None and (raw_latest is None or at > raw_latest):
                         raw_latest = at
                 except sqlite3.Error:
-                    pass
+                    pass  # 单表读取失败不阻断其他表
             if raw_latest is not None and raw_latest > mapped_at:
                 return "stale"
         except sqlite3.Error:
             pass
-    # fresh: 最近 apply 成功 + raw <= mapped_at + 时间证据完整
-    if latest_apply_run_id is not None and mapped_at is not None:
+    # fresh: 最近 apply 成功 + mapped_at 存在 + 有 binding 证据可核实
+    if latest_apply_run_id is not None and mapped_at is not None and binding_tables:
         run = db.con.execute(
             "SELECT status FROM d2a_sync_run WHERE id = ?",
             (latest_apply_run_id,)).fetchone()
@@ -998,14 +999,19 @@ def create_app(landing: str | None = None, templates: str = "templates",
             [*params, limit, offset])
         result: list[dict] = []
         now = obs.now_aware()
+        pack = state.get("pack")
         for r in rows:
             warnings: list[str] = []
             keys: dict[str, Any] | None = None
+            keys_json_out: str | None = r["keys_json"]
             if r["keys_json"]:
                 try:
                     parsed = json.loads(r["keys_json"])
                     if isinstance(parsed, dict):
-                        keys = parsed
+                        # 对 keys 做服务端脱敏,与 detail 端点一致
+                        keys, _key_trunc = br._sanitize_object_keys(
+                            pack, r["object"], parsed)
+                        keys_json_out = json.dumps(keys, ensure_ascii=False, default=str)
                     else:
                         warnings.append("keys_json 解析值不是 JSON 对象")
                 except (json.JSONDecodeError, TypeError):
@@ -1021,9 +1027,9 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "id": r["id"],
                 "source": r["source"],
                 "object": r["object"],
-                "keys_json": r["keys_json"],
+                "keys_json": keys_json_out,
                 "keys": keys,
-                "reason": obs.safe_error_summary(r["reason"]) or r["reason"],
+                "reason": obs.safe_error_summary(r["reason"]) or "",
                 "batch_id": r["batch_id"],
                 "created_at": created,
                 "age_seconds": age,
@@ -1069,15 +1075,17 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 tpl = next((o for o in pack.objects if o.object == obj), None)
                 if tpl is not None:
                     display_name = tpl.display_name
-            # quarantine rate from most recent apply object step
+            # quarantine rate from most recent apply object step (按源隔离)
             quarantine_rate = None
             latest_apply_run_id = None
             step_aborted = False
             step = db.con.execute(
                 "SELECT s.id, s.run_id, s.status, s.quarantined, s.rows_in "
                 "FROM d2a_run_step s "
+                "JOIN d2a_sync_run r ON s.run_id = r.id "
                 "WHERE s.kind = 'object' AND s.target = ? "
-                "ORDER BY s.id DESC LIMIT 1", (obj,)).fetchone()
+                "AND r.source = ? AND r.run_type = 'apply' "
+                "ORDER BY s.id DESC LIMIT 1", (obj, src)).fetchone()
             if step is not None:
                 latest_apply_run_id = step["run_id"]
                 step_aborted = step["status"] == "aborted"
@@ -1110,9 +1118,20 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     mapped_at = obs.aware(row["m"])
                 except sqlite3.Error as e:
                     warnings.append(f"对象表查询失败: {e}")
+            # 收集该对象在此源的 binding 表集合(supply serving_state 用)
+            binding_tables: list[str] | None = None
+            if pack is not None:
+                tpl = next((o for o in pack.objects if o.object == obj), None)
+                if tpl is not None:
+                    bt_list: list[str] = []
+                    for binding in tpl.bindings:
+                        if binding.enabled and binding.source == src:
+                            bt_list.extend(binding.tables)
+                    if bt_list:
+                        binding_tables = bt_list
             serving_state = _compute_serving_state(
                 db, table_exists, table_ok, object_rows, mapped_at,
-                src, latest_apply_run_id, step_aborted)
+                src, latest_apply_run_id, step_aborted, binding_tables)
             if serving_state == "unavailable":
                 warnings.append("对象表存在但结构不完整或无法读取")
             result.append({
@@ -1251,7 +1270,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
             "object": object_name,
             "keys_json": keys_json_out,
             "keys": keys,
-            "reason": obs.safe_error_summary(row["reason"]) or row["reason"],
+            "reason": obs.safe_error_summary(row["reason"]) or "",
             "batch_id": row["batch_id"],
             "created_at": created,
             "age_seconds": age,
@@ -1572,8 +1591,15 @@ def create_app(landing: str | None = None, templates: str = "templates",
         responses={
             401: _RESP_HTTP_ERROR[401],
             404: {"model": HttpError},
-            409: _RESP_HTTP_ERROR[409],
+            409: {
+                "model": RetryActionError,
+                "description": "熔断(隔离率超阈值)或前置校验冲突(绑定不存在/已禁用)",
+            },
             422: _RESP_HTTP_ERROR[422],
+            500: {
+                "model": RetryActionError,
+                "description": "执行失败或观测写入失败",
+            },
         },
     )
     def action_retry(body: ActionBody) -> dict:
@@ -2063,44 +2089,63 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
                     (table_name,)).fetchone()
                 if exists:
+                    # 验证表结构:必须含 _d2a_mapped_at 列
+                    struct_ok = False
                     try:
-                        row = db.con.execute(
-                            f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
-                            f'FROM "{table_name}"'
-                        ).fetchone()
-                        rows = row["n"]
-                        mapped_at = obs.aware(row["m"])
-                    except sqlite3.Error as e:
-                        warnings.append(f"物化表查询失败: {e}")
-                        rows = None
-                        mapped_at = None
+                        cols = {r[1] for r in db.con.execute(
+                            f'PRAGMA table_info("{table_name}")')}
+                        if "_d2a_mapped_at" in cols:
+                            struct_ok = True
+                    except sqlite3.Error:
+                        pass
 
-                    # batch_id from most recent apply step for this object
-                    batch_id = None
-                    step = db.con.execute(
-                        "SELECT batch_id FROM d2a_run_step "
-                        "WHERE kind = 'object' AND target = ? "
-                        "ORDER BY id DESC LIMIT 1", (tpl.object,)).fetchone()
-                    if step:
-                        batch_id = step["batch_id"]
+                    if not struct_ok:
+                        materialized = {
+                            "state": "unknown",
+                            "source": None,
+                            "rows": None,
+                            "mapped_at": None,
+                            "batch_id": None,
+                            "warnings": ["物化表缺少 _d2a_mapped_at 列,表结构不完整"],
+                        }
+                    else:
+                        try:
+                            row = db.con.execute(
+                                f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
+                                f'FROM "{table_name}"'
+                            ).fetchone()
+                            rows = row["n"]
+                            mapped_at = obs.aware(row["m"])
+                        except sqlite3.Error as e:
+                            warnings.append(f"物化表查询失败: {e}")
+                            rows = None
+                            mapped_at = None
 
-                    # source from first enabled binding
-                    source = None
-                    for b2 in tpl.bindings:
-                        if b2.enabled:
-                            source = b2.source
-                            break
-                    if source is None and tpl.bindings:
-                        source = tpl.bindings[0].source
+                        # source + batch_id from most recent apply step
+                        # (关联 run 获取真实来源,不从 binding 猜测)
+                        source = None
+                        batch_id = None
+                        step = db.con.execute(
+                            "SELECT s.batch_id, r.source "
+                            "FROM d2a_run_step s "
+                            "JOIN d2a_sync_run r ON s.run_id = r.id "
+                            "WHERE s.kind = 'object' AND s.target = ? "
+                            "AND r.run_type = 'apply' "
+                            "ORDER BY s.id DESC LIMIT 1", (tpl.object,)).fetchone()
+                        if step:
+                            batch_id = step["batch_id"]
+                            source = step["source"]
+                        if source is None:
+                            warnings.append("无法可靠确定物化来源,最近 apply step 缺失")
 
-                    materialized = {
-                        "state": "materialized",
-                        "source": source,
-                        "rows": rows,
-                        "mapped_at": mapped_at,
-                        "batch_id": batch_id,
-                        "warnings": [],
-                    }
+                        materialized = {
+                            "state": "materialized",
+                            "source": source,
+                            "rows": rows,
+                            "mapped_at": mapped_at,
+                            "batch_id": batch_id,
+                            "warnings": [],
+                        }
                 else:
                     materialized = {
                         "state": "not_materialized",

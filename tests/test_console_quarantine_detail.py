@@ -394,3 +394,23 @@ class TestQuarantineDetail:
         body = client.get("/api/quarantine/1", headers=_auth()).json()
         rec = QuarantineDetail.model_validate(body)
         assert rec.created_at.tzinfo is not None
+
+    # ================================================================
+    # Issue 1: known object but no matching enabled binding → all mask
+    # ================================================================
+
+    def test_known_object_no_matching_binding_masks_all_raw(self, db_quarantine_detail):
+        """已知对象但在该源没有已启用 binding → raw 全遮罩为 ***。"""
+        # Customer 在 templates 中只有 digiwin_yifei 和 digiwin_e10 的 binding,
+        # nonexistent 源无任何 binding
+        landing = LandingStore(db_quarantine_detail.db_path)
+        raw_bad = json.dumps({"CUSTOMER_CODE": "C999", "SECRET": "leak"}, ensure_ascii=False)
+        rid = _insert_q(landing, "nonexistent_source", "Customer",
+                        '{"customer_code":"C999"}', "no binding for this source",
+                        raw_json=raw_bad)
+
+        client = _client(db_quarantine_detail)
+        body = client.get(f"/api/quarantine/{rid}", headers=_auth()).json()
+        assert body["raw"] is not None
+        for v in body["raw"].values():
+            assert v == "***", f"无匹配 binding 源 → raw 应全 mask, got {v!r}"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -208,6 +209,55 @@ class TestQuarantineList:
         assert row["keys"] is None
         assert row["warnings"] == []
 
+    # -- 服务端脱敏:keys / reason(M5 P1 fix) --
+
+    def test_unknown_object_keys_are_fully_masked_in_list(self, db):
+        """未知对象(模板中不存在)→ keys 全 mask 为 ***,keys_json 与 keys 一致。"""
+        # 创建一条 keys_json 不为 null 的未知对象记录
+        landing = LandingStore(db.db_path)
+        landing.con.execute(
+            "INSERT INTO d2a_quarantine (source, object, keys_json, reason, "
+            "created_at) VALUES (?, ?, ?, ?, ?)",
+            ("unknown_source", "AnotherUnknown", '{"secret_key":"top-secret"}',
+             "unknown object test", _NOW))
+        landing.con.commit()
+
+        client = _client(db)
+        body = client.get("/api/quarantine", params={"object": "AnotherUnknown"})
+        row = body.json()[0]
+        assert row["keys"] is not None
+        for v in row["keys"].values():
+            assert v == "***", f"未知对象 keys 应全 mask, got {v!r}"
+        # keys_json 应重序列化为 mask 后的一致值
+        assert row["keys_json"] is not None
+        roundtrip = json.loads(row["keys_json"])
+        assert roundtrip == row["keys"]
+
+    def test_reason_is_sanitized_in_list(self, db):
+        """列表 reason 经过 safe_error_summary 处理,不含换行。"""
+        client = _client(db)
+        body = client.get("/api/quarantine", params={"object": "Customer"})
+        for row in body.json():
+            if row["reason"] is None:
+                continue
+            assert isinstance(row["reason"], str)
+            assert "\n" not in row["reason"], f"reason 不应含换行: {row['reason']!r}"
+
+    def test_reason_sanitized_when_empty(self, db):
+        """空/纯空白 reason 经 safe_error_summary 压缩后返回空字符串,不泄露原值。"""
+        # reason 列 NOT NULL,空字符串会被 safe_error_summary 压缩,改用空串兜底
+        landing = LandingStore(db.db_path)
+        landing.con.execute(
+            "INSERT INTO d2a_quarantine (source, object, keys_json, reason, "
+            "created_at) VALUES (?, ?, ?, ?, ?)",
+            (SOURCE, "Customer", '{"customer_code":"C_SANITIZED_REASON"}', "   ", _NOW))
+        landing.con.commit()
+        client = _client(db)
+        body = client.get("/api/quarantine", params={"object": "Customer"})
+        for row in body.json():
+            if row["keys"] and row["keys"].get("customer_code") == "C_SANITIZED_REASON":
+                assert row["reason"] == ""
+
 
 # ============================================================
 # 分组端点测试
@@ -412,6 +462,70 @@ class TestQuarantineGroups:
                    if g["object"] == "UnknownObj")
         assert unk["latest_apply_run_id"] is None
 
+    # -- Issue 3: quarantine_rate 按源隔离 --
+
+    def test_quarantine_rate_source_isolated(self, db):
+        """两个源映射同一对象时各取自的最近 apply step,不交叉。"""
+        landing = LandingStore(db.db_path)
+        # 注册第二个源
+        landing.con.execute(
+            "CREATE TABLE IF NOT EXISTS raw_other_source__SALES_ORDER "
+            "(_d2a_extracted_at TEXT)")
+        # 为 other_source 创建 apply run(不同隔离率)
+        run2 = landing.start_run("other_source", "apply")
+        s2 = landing.add_step(run2, 1, "object", "SalesOrder")
+        landing.update_step(s2, status="ok", rows_in=200, rows_out=190,
+                           quarantined=10)  # rate 5%
+        landing.finish_run(run2, tables=1, rows=200, status="ok")
+        landing.con.commit()
+
+        client = _client(db)
+        # SOURCE (digiwin_e10) 的 SalesOrder rate 仍为 2%
+        sales = next(g for g in client.get("/api/quarantine/groups").json()
+                     if g["object"] == "SalesOrder")
+        # 应在原源(SalesOrder 在 digiwin_e10 的 rate=2/100=0.02)
+        assert sales["quarantine_rate"] == pytest.approx(0.02, abs=0.001)
+
+    # -- Issue 4: serving_state 仅扫描 binding 表,与其他源隔离 --
+
+    def test_serving_state_only_checks_binding_tables(self, db):
+        """只有 binding 内的 raw 表才影响 serving_state,无关表不影响。"""
+        landing = LandingStore(db.db_path)
+        # SalesOrder 的 binding tables:[SALES_ORDER, CURRENCY]
+        # 创建不匹配 binding 的 raw 表(更新于 mapped_at 之后)
+        landing.con.execute(
+            'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__UNRELATED" '
+            '(_d2a_extracted_at TEXT)')
+        landing.con.execute(
+            'INSERT INTO "raw_digiwin_e10__UNRELATED" (_d2a_extracted_at) '
+            'VALUES (?)', ("2026-07-11T12:00:00",))  # newer than mapped_at
+        landing.con.commit()
+
+        client = _client(db)
+        sales = next(g for g in client.get("/api/quarantine/groups").json()
+                     if g["object"] == "SalesOrder")
+        # UNRELATED 不在 binding tables 中,SalesOrder 仍为 fresh
+        assert sales["serving_state"] == "fresh"
+
+    def test_serving_state_unknown_without_binding_tables(self, db):
+        """无 binding 表证据时即使 apply run ok 也不判 fresh。"""
+        landing = LandingStore(db.db_path)
+        # unknown_source 无模板匹配,故 binding_tables=None
+        # 但存在对象表且有 mapped_at
+        landing.con.execute(
+            'CREATE TABLE IF NOT EXISTS "obj_UnknownObj" '
+            '(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT)')
+        landing.con.execute(
+            'INSERT INTO "obj_UnknownObj" (id, _d2a_mapped_at) '
+            'VALUES (?, ?)', (1, "2026-07-10T12:00:00"))
+        landing.con.commit()
+
+        client = _client(db)
+        unk = next(g for g in client.get("/api/quarantine/groups").json()
+                   if g["object"] == "UnknownObj")
+        # binding_tables=None → 无法核实 raw 证据 → unknown
+        assert unk["serving_state"] == "unknown"
+
 
 # ============================================================
 # 决策矩阵表驱动测试 (M5-T04)
@@ -467,7 +581,7 @@ class TestServingStateDecisionMatrix:
              "stale", True, True, 100, _MAPPED_AT, True, None, None),
             ("stale via raw newer than mapped_at",
              "stale", True, True, 100, _MAPPED_AT, False, _RAW_NEWER, None),
-            # P4: fresh — 一切正常
+            # P4: fresh — 一切正常(binding_tables 需对应 raw_ 表名)
             ("fresh",
              "fresh", True, True, 100, _MAPPED_AT, False, None, "ok"),
             # P5: unknown — 无充分证据
@@ -502,9 +616,12 @@ class TestServingStateDecisionMatrix:
             db.finish_run(run_id, tables=1, rows=100, status=apply_run_status)
             db.con.commit()
 
+        # 提供 binding_tables 以匹配 raw 表验证
+        bt = ["test"] if raw_ts is not None or (
+            expected == "fresh") else None
         result = _compute_serving_state(
             db, table_exists, table_ok, object_rows, mapped_at,
-            SOURCE, run_id, step_aborted,
+            SOURCE, run_id, step_aborted, binding_tables=bt,
         )
         assert result == expected, (
             f"{scenario}: expected={expected}, got={result}"
@@ -517,11 +634,12 @@ class TestServingStateStaleByRawTimestamp:
     def test_stale_via_raw_newer_than_mapped(self, db):
         """创建 raw_ 表,时间晚于 obj 的 mapped_at,验证 serving_state=stale。"""
         # 对现有的 SalesOrder (mapped_at=2026-07-10T12:00:00) 创建更新的 raw 数据
+        # 表名必须匹配 binding 中的表名(SalesOrder 的 binding tables: [SALES_ORDER, CURRENCY])
         db.con.execute(
-            'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__salesorder" '
+            'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__SALES_ORDER" '
             '(_d2a_extracted_at TEXT)')
         db.con.execute(
-            'INSERT INTO "raw_digiwin_e10__salesorder" (_d2a_extracted_at) '
+            'INSERT INTO "raw_digiwin_e10__SALES_ORDER" (_d2a_extracted_at) '
             'VALUES (?)', ("2026-07-11T12:00:00",))
         db.con.commit()
 
@@ -534,10 +652,10 @@ class TestServingStateStaleByRawTimestamp:
     def test_stale_not_triggered_when_raw_older(self, db):
         """raw 时间早于 mapped_at 时不触发 stale。"""
         db.con.execute(
-            'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__salesorder2" '
+            'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__SALES_ORDER" '
             '(_d2a_extracted_at TEXT)')
         db.con.execute(
-            'INSERT INTO "raw_digiwin_e10__salesorder2" (_d2a_extracted_at) '
+            'INSERT INTO "raw_digiwin_e10__SALES_ORDER" (_d2a_extracted_at) '
             'VALUES (?)', ("2026-07-09T12:00:00",))
         db.con.commit()
 
