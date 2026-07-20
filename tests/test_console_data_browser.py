@@ -322,3 +322,120 @@ def test_sanitize_reason_none_or_empty():
     assert br._sanitize_quarantine_reason(None, None, "s", "o") == ""
     assert br._sanitize_quarantine_reason("", None, "s", "o") == ""
     assert br._sanitize_quarantine_reason("   ", None, "s", "o") == ""
+
+
+# ---- Issue 1: quote-masking 覆盖 apply_object 全部实际错误格式 ----
+
+def test_sanitize_reason_masks_quoted_value_in_source_not_in_map():
+    """'源码值 'X-SECRET' 未在 map 中声明' → 单引号内容被 mask。"""
+    pack = _make_pack_with_map_binding()
+    # 模拟 apply_object 第122行输出的真实格式
+    reason = "result: 源码值 'X-SECRET' 未在 map 中声明"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "X-SECRET" not in result
+    assert "[masked]" in result
+    assert "源码值" in result
+    assert "未在 map 中声明" in result
+
+
+def test_sanitize_reason_masks_quoted_value_in_coerce_failure():
+    """'类型 int 转换失败,值 'ABC-SECRET'' → 单引号内容被 mask。"""
+    pack = _make_pack_with_map_binding()
+    # 模拟 _coerce 第89行输出的真实格式
+    reason = "payment_days: 类型 int 转换失败,值 'ABC-SECRET'"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "ABC-SECRET" not in result
+    assert "[masked]" in result
+    assert "类型 int 转换失败" in result
+
+
+def test_sanitize_reason_masks_quoted_value_in_enum_mismatch():
+    """'取值 'STATE-SECRET' 不在枚举内' → 单引号内容被 mask。"""
+    pack = _make_pack_with_map_binding()
+    # 模拟 apply_object 第126行输出的真实格式
+    reason = "state: 取值 'STATE-SECRET' 不在枚举 ['active', 'inactive'] 内"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "STATE-SECRET" not in result
+    assert "[masked]" in result
+    assert "不在枚举" in result
+
+
+def test_sanitize_reason_masks_quoted_value_in_derived_enum():
+    """'派生值 'V-SECRET' 不在枚举内' → 单引号内容被 mask。"""
+    pack = _make_pack_with_map_binding()
+    # 模拟 _apply_derived 第186行输出的真实格式
+    reason = "region: 派生值 'V-SECRET' 不在枚举 ['ap-southeast-1'] 内"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "V-SECRET" not in result
+    assert "[masked]" in result
+    assert "派生值" in result
+
+
+# ---- Issue 2: sanitize_quarantine_raw 未映射列默认遮罩 ----
+
+def _make_pack_with_mixed_sensitivity() -> TemplatePack:
+    """构造含敏感/非敏感属性 + 多余原始列的模板。"""
+    obj_tpl = ObjectTemplate(
+        object="TestObj",
+        display_name="测试",
+        domain="销售",
+        keys=["id"],
+        properties=[
+            Property(name="id", type="string", desc="ID"),
+            Property(name="name", type="string", desc="名称"),
+            Property(name="phone", type="string", desc="电话", sensitive=True),
+        ],
+        bindings=[
+            SourceBinding(
+                source="test_source",
+                tables=["T1"],
+                status="verified",
+                key_map={"id": "T1.ID"},
+                field_map={
+                    "id": "T1.ID",
+                    "name": "T1.NAME",
+                    "phone": "T1.PHONE",
+                },
+            ),
+        ],
+    )
+    return TemplatePack(version="1.0", objects=[obj_tpl], metrics=[])
+
+
+def test_sanitize_raw_unmapped_column_masked():
+    """field_map 中未出现的列（如 CONTACT_PHONE）默认遮罩。"""
+    pack = _make_pack_with_mixed_sensitivity()
+    raw = {
+        "ID": "001",
+        "NAME": "张三",
+        "PHONE": "13800138000",
+        "CONTACT_PHONE": "13900139000",  # 未映射列 → 应 mask
+    }
+    sanitized, truncs = br.sanitize_quarantine_raw(raw, pack, "test_source", "TestObj")
+    assert sanitized is not None
+    assert sanitized["CONTACT_PHONE"] == "***"
+    # 映射到非敏感属性的列 → 显示
+    assert sanitized["ID"] == "001"
+    assert sanitized["NAME"] == "张三"
+    # 映射到敏感属性的列 → 遮罩
+    assert sanitized["PHONE"] == "***"
+
+
+def test_sanitize_raw_no_binding_masks_all():
+    """无匹配 binding 时所有列全部遮罩。"""
+    pack = _make_pack_with_mixed_sensitivity()
+    raw = {"ID": "001", "NAME": "张三", "PHONE": "13800138000", "CONTACT_PHONE": "13900139000"}
+    # 使用未知 source → 无匹配 binding
+    sanitized, truncs = br.sanitize_quarantine_raw(raw, pack, "unknown_source", "TestObj")
+    assert sanitized is not None
+    for v in sanitized.values():
+        assert v == "***"
+
+
+def test_sanitize_raw_no_pack_masks_all():
+    """pack=None 时所有列全部遮罩。"""
+    raw = {"ID": "001", "NAME": "张三", "CONTACT_PHONE": "13900139000"}
+    sanitized, truncs = br.sanitize_quarantine_raw(raw, None, "test_source", "TestObj")
+    assert sanitized is not None
+    for v in sanitized.values():
+        assert v == "***"

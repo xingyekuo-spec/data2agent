@@ -479,6 +479,11 @@ def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
             sanitized,
             flags=re.IGNORECASE,
         )
+    # 屏蔽所有剩余单引号内值（覆盖 apply_object 全部实际错误格式:
+    #   "源码值 'X' 未在 map 中声明"、"类型 T 转换失败,值 'ABC'"、
+    #   "取值 'V' 不在枚举 [...] 内"、"派生值 'V' 不在枚举 [...] 内"）
+    # mapping engine 一致使用 !r 格式化源值,单引号内为唯一标记手段。
+    sanitized = re.sub(r"'[^']*'", "'[masked]'", sanitized)
     # 长度预算
     if len(sanitized) > _REASON_MAX_LEN:
         sanitized = sanitized[:_REASON_MAX_LEN] + "..."
@@ -490,25 +495,59 @@ def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
 def sanitize_quarantine_raw(raw_dict: dict[str, Any], pack: TemplatePack | None,
                             source: str, object_name: str,
                             ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    """隔离 raw_json 脱敏:敏感列 → MASKED,其余 json_safe 并跟踪截断。
+    """隔离 raw_json 脱敏:敏感列 → MASKED,未映射列 → MASKED,其余 json_safe。
 
     返回 (sanitized_dict | None, truncations)。
     raw_dict 非 dict 时返回 (None, []),由调用方添加警告。
+
+    分类逻辑:
+    - 无模板/无 binding → 全部 mask
+    - 列名不在 field_map/key_map 中 → 未知列,默认 mask（defense-in-depth）
+    - 列名映射到敏感属性 → mask
+    - 列名映射到非敏感属性 → 显示（json_safe）
     """
     if not isinstance(raw_dict, dict) or not raw_dict:
         return None, []
+    # 从模板中收集: 所有已知列名 + 敏感列名
+    all_mapped_cols: set[str] | None = None
+    sensitive_cols: set[str] = set()
     if pack is not None:
-        sensitive_cols = _quarantine_sensitive_cols(pack, source, object_name)
-    else:
-        sensitive_cols = None  # 无模板 → 完全未知,全部 mask
+        tpl = next((o for o in pack.objects if o.object == object_name), None)
+        if tpl is not None:
+            sensitive_props = {p.name for p in tpl.properties if p.sensitive}
+            binding_found = False
+            for binding in tpl.bindings:
+                if not binding.enabled or binding.source != source:
+                    continue
+                binding_found = True
+                if all_mapped_cols is None:
+                    all_mapped_cols = set()
+                for table in binding.tables:
+                    prefix = f"{table}."
+                    for prop, expr in [*binding.key_map.items(),
+                                       *binding.field_map.items()]:
+                        if not isinstance(expr, str) or not expr.startswith(prefix):
+                            continue
+                        col = expr[len(prefix):].split(" ")[0]
+                        all_mapped_cols.add(col)
+                        if prop in sensitive_props:
+                            sensitive_cols.add(col)
+            if not binding_found:
+                all_mapped_cols = None  # 无匹配 binding → 全量遮罩
     out: dict[str, Any] = {}
     truncated_fields: list[str] = []
     for key, value in raw_dict.items():
-        if sensitive_cols is None:
+        if all_mapped_cols is None:
+            # 无模板或无 binding → 全部遮罩
+            out[key] = MASKED
+        elif key not in all_mapped_cols:
+            # 未在 field_map/key_map 中出现的列 → 未知分类,默认遮罩
             out[key] = MASKED
         elif key in sensitive_cols:
+            # 映射到敏感属性的列 → 遮罩
             out[key] = MASKED
         else:
+            # 仅显式映射到非敏感属性的列 → 显示
             safe, was_truncated = json_safe(value)
             out[key] = safe
             if was_truncated:
