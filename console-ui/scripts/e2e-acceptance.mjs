@@ -408,6 +408,17 @@ else:
 `
     sh(PYTHON, ['-c', ensureQuarantine])
 
+    // M5-4b 夹具:含敏感字段的隔离记录(须在只读基线之前插入)
+    insertQuarantineRecord(
+      landing, SOURCE, 'Customer',
+      { CUSTOMER_CODE: 'C-ALICE' },
+      'customer_code: 源码值未映射',
+      { CUSTOMER_CODE: 'C-ALICE', CUSTOMER_NAME: 'Alice',
+        CONTACT_EMAIL: 'alice.secret@corp.example.com',
+        CONTACT_PHONE: '+1-555-0001' },
+    )
+
+    // 所有夹具插入完成后再取基线;后续只比较只读浏览前后
     const countsBeforeM5Browse = sqliteCounts(landing)
 
     // M5-1: 隔离列表不含 raw(QuarantineRecord 不同于 QuarantineDetail)
@@ -488,15 +499,7 @@ else:
     expect(!rawStr.includes('SELECT ') && !rawStr.includes('INSERT '),
       'M5:raw 预览不含 SQL 片段')
 
-    // M5-4b: 插入含 CONTACT_EMAIL 的隔离记录,验证 raw 详情掩码到 ***
-    insertQuarantineRecord(
-      landing, SOURCE, 'Customer',
-      { CUSTOMER_CODE: 'C-ALICE' },
-      'customer_code: 源码值未映射',
-      { CUSTOMER_CODE: 'C-ALICE', CUSTOMER_NAME: 'Alice',
-        CONTACT_EMAIL: 'alice.secret@corp.example.com',
-        CONTACT_PHONE: '+1-555-0001' },
-    )
+    // M5-4b: 验证含 CONTACT_EMAIL 的夹具 raw 详情已掩码到 ***
     // 获取最新隔离记录的详情(按 id 逆序第一条)
     const qListResp2 = await page.request.get(
       `http://localhost:${CONSOLE_PORT}/api/quarantine?source=${SOURCE}&object=Customer&limit=1`,
@@ -660,6 +663,31 @@ else:
     expect(countsAfterTemplates.raw_CUSTOMER === countsBeforeM5Browse.raw_CUSTOMER,
       'M5:浏览模板不改变 raw 表')
 
+    // M5-12: 浏览隔离页与模板页 UI(须在 API retry 清空隔离之前,否则可能合法空态)
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/quarantine`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(2000)
+    const qPageText = await page.textContent('body')
+    expect(qPageText.includes('隔离') || qPageText.includes('Quarantine'),
+      'M5:隔离页可访问')
+    const hasGroupsTable = await page.locator('[data-testid="quarantine-groups-table"]').count()
+    const hasRecordsTable = await page.locator('[data-testid="quarantine-records-table"]').count()
+    expect(hasGroupsTable > 0 || hasRecordsTable > 0,
+      'M5:隔离页含分组表或记录表')
+
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/templates`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(2000)
+    const tplPageText = await page.textContent('body')
+    expect(tplPageText.includes('模板') || tplPageText.includes('Template'),
+      'M5:模板页可访问')
+    expect(tplPageText.includes('Customer'), 'M5:模板页含 Customer')
+    const soItemPre = page.locator('[data-testid="tpl-item-SalesOrder"]')
+    if (await soItemPre.count() > 0) {
+      await soItemPre.first().click()
+      await page.waitForTimeout(1000)
+      const detailTabs = await page.locator('[data-testid="tpl-detail-tabs"]').count()
+      expect(detailTabs > 0, 'M5:点击 SalesOrder 可打开详情')
+    }
+
     // M5-10: 对象级 retry(POST /api/actions/retry)
     const retryResp = await page.request.post(
       `http://localhost:${CONSOLE_PORT}/api/actions/retry`,
@@ -712,35 +740,6 @@ else:
       expect(!retryStr.includes('e2e-token'), 'M5:retry 错误不含 token')
     }
 
-    // M5-12: 浏览隔离页与模板页 UI
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/quarantine`, { waitUntil: 'networkidle' })
-    await page.waitForTimeout(2000)
-    const qPageText = await page.textContent('body')
-    expect(qPageText.includes('隔离') || qPageText.includes('Quarantine'),
-      'M5:隔离页可访问')
-    // 分组表应可见
-    const hasGroupsTable = await page.locator('[data-testid="quarantine-groups-table"]').count()
-    const hasRecordsTable = await page.locator('[data-testid="quarantine-records-table"]').count()
-    expect(hasGroupsTable > 0 || hasRecordsTable > 0,
-      'M5:隔离页含分组表或记录表')
-
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/templates`, { waitUntil: 'networkidle' })
-    await page.waitForTimeout(2000)
-    const tplPageText = await page.textContent('body')
-    expect(tplPageText.includes('模板') || tplPageText.includes('Template'),
-      'M5:模板页可访问')
-    // 对象列表应包含已知对象名
-    expect(tplPageText.includes('Customer'), 'M5:模板页含 Customer')
-    // 点击 SalesOrder 查看详情
-    const soItem = page.locator('[data-testid="tpl-item-SalesOrder"]')
-    if (await soItem.count() > 0) {
-      await soItem.first().click()
-      await page.waitForTimeout(1000)
-      // 详情 tab 应该可见(含 derived/指标等)
-      const detailTabs = await page.locator('[data-testid="tpl-detail-tabs"]').count()
-      expect(detailTabs > 0, 'M5:点击 SalesOrder 可打开详情')
-    }
-
     // M5-12b: 隔离页 UI retry 流——点击按钮、确认对话框、确认 Runs step
     // 前面的 API retry 可能已 resolve Customer 隔离;重新插入确保按钮可见
     insertQuarantineRecord(
@@ -757,12 +756,14 @@ else:
     // 点击 retry 按钮,应弹出 Element Plus 确认对话框
     await retryBtn.first().click()
     await page.waitForTimeout(1000)
-    // 确认对话框应包含对象名(必须存在)
+    // 确认对话框展示 display_name(有则本地化名),否则技术对象名
     const confirmBox = page.locator('.el-message-box')
     const confirmVisible = await confirmBox.count()
     expect(confirmVisible > 0, 'M5:retry 确认对话框可见')
     const confirmText = await confirmBox.textContent()
-    expect(confirmText.includes('Customer'), 'M5:确认对话框含对象名 Customer')
+    const customerLabel = (customerGroup && customerGroup.display_name) || 'Customer'
+    expect(confirmText.includes(customerLabel),
+      `M5:确认对话框含对象展示名 ${customerLabel}`)
     // 点击确认按钮
     const confirmBtn = confirmBox.locator('.el-button--primary').first()
     await confirmBtn.click()
@@ -857,8 +858,8 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount}")
     await page.locator('[data-testid="raw-catalog"]').waitFor({ state: 'visible' })
     expect(true, 'M5:回归-M4 数据浏览可用')
 
-    // 回归:Jinja2 /v0 仍可访问
-    const v0Chk = await page.request.get(`http://localhost:${REAL_UI_PORT}/v0`)
+    // 回归:Jinja2 /v0 仍可访问(FastAPI 路由,非 Vite)
+    const v0Chk = await page.request.get(`http://localhost:${CONSOLE_PORT}/v0`)
     expect(v0Chk.status() === 200, 'M5:回归-/v0 200')
     // 管道页仍可用
     await page.goto(`http://localhost:${REAL_UI_PORT}/v1/`, { waitUntil: 'networkidle' })

@@ -376,16 +376,28 @@ def test_sanitize_reason_category_derived_no_match():
     assert "Z" not in result
 
 
-def test_sanitize_reason_combined_categories():
-    """多个错误类型同时出现 → 以顿号连接。"""
+def test_sanitize_reason_raw_value_does_not_forge_extra_category():
+    """原始业务值可含另一类关键词时,只认引擎固定前后缀,只返回一个类别。"""
     pack = _make_pack_with_binding()
-    # 模拟包含"未在 map 中声明"和"业务键缺失"两个关键词
-    reason = "name: 源码值 'X' 未在 map 中声明; 业务键缺失:{'code': None}"
+    # 映射引擎每条记录只产生一种 reason;未映射枚举值恰好是「业务键缺失」
+    reason = "name: 源码值 '业务键缺失' 未在 map 中声明"
     result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
-    assert "枚举未映射" in result
-    assert "业务键缺失" in result
-    assert "、" in result  # 顿号连接
-    assert "X" not in result
+    assert result == "映射失败（枚举未映射），详情请查看隔离 raw 预览"
+    assert "业务键缺失" not in result
+    assert "、" not in result
+
+
+def test_sanitize_reason_derived_source_value_does_not_forge_type_category():
+    """派生规则源值可伪造类型转换片段时,仍归类为派生规则无匹配。"""
+    pack = _make_pack_with_binding()
+    reason = (
+        "status: 派生规则无匹配(源值 "
+        "{'season': ': 类型 int 转换失败,值 forged'})"
+    )
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert result == "映射失败（派生规则无匹配），详情请查看隔离 raw 预览"
+    assert "类型转换异常" not in result
+    assert "forged" not in result
 
 
 def test_sanitize_reason_unknown_keyword_fallback():

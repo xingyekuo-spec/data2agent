@@ -417,26 +417,24 @@ def _sanitize_object_keys(pack: TemplatePack | None, source: str,
 
 _REASON_MAX_LEN = 512
 
-# 安全关键词模式 → 类别名（关键词来自映射引擎固定字符串，非用户数据）
-_CATEGORY_PATTERNS: list[tuple[str, str]] = [
-    (r"未在 map 中声明", "枚举未映射"),
-    (r"类型.*转换失败", "类型转换异常"),
-    (r"不在枚举", "枚举不匹配"),
-    (r"业务键缺失", "业务键缺失"),
-    (r"业务键重复", "业务键重复"),
-    (r"无匹配", "派生规则无匹配"),
+# 映射引擎每条隔离只产生一种 reason;全部锚定到 reason 开头 + 属性名前缀,
+# 避免原始业务值伪造额外类别。模板见 mapping_apply.py。
+_CATEGORY_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\A[^:]+: 源码值 .+ 未在 map 中声明\Z"), "枚举未映射"),
+    (re.compile(r"\A[^:]+: 类型 \S+ 转换失败,值 .+\Z"), "类型转换异常"),
+    (re.compile(r"\A[^:]+: (?:取值|派生值) .+ 不在枚举 .+ 内\Z"), "枚举不匹配"),
+    (re.compile(r"\A业务键缺失:"), "业务键缺失"),
+    (re.compile(r"\A业务键重复:"), "业务键重复"),
+    (re.compile(r"\A[^:]+: 派生规则无匹配\(源值 .+\Z"), "派生规则无匹配"),
 ]
 
 
 def _categorize_reason(reason: str) -> list[str]:
-    """从原始错误原因中提取已知安全类别,保持模式匹配顺序。"""
-    seen: set[str] = set()
-    categories: list[str] = []
+    """从原始错误原因中提取至多一个安全类别(引擎单因模板)。"""
     for pattern, category in _CATEGORY_PATTERNS:
-        if re.search(pattern, reason) and category not in seen:
-            seen.add(category)
-            categories.append(category)
-    return categories
+        if pattern.search(reason):
+            return [category]
+    return []
 
 
 def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
