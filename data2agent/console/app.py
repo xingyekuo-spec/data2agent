@@ -347,7 +347,9 @@ def _compute_serving_state(
     if step_aborted:
         return "stale"
     # 按 binding 限定 raw 表,避免无关表的抽取时间污染新鲜度判断
-    has_raw_evidence = False
+    # 逐表跟踪证据:任一表缺失/不可读 → 不能判 fresh;全表完整且 ≤ mapped_at → fresh
+    tables_with_evidence = 0
+    tables_missing = 0
     if mapped_at is not None and binding_tables:
         try:
             raw_latest: datetime | None = None
@@ -359,18 +361,33 @@ def _compute_serving_state(
                     ).fetchone()
                     at = obs.aware(rr["m"])
                     if at is not None:
-                        has_raw_evidence = True
+                        tables_with_evidence += 1
                         if raw_latest is None or at > raw_latest:
                             raw_latest = at
+                    else:
+                        tables_missing += 1
                 except sqlite3.Error:
-                    pass  # 单表读取失败不阻断其他表
-            if raw_latest is not None and raw_latest > mapped_at:
-                return "stale"
+                    tables_missing += 1  # 单表读取失败视为缺失证据
+            # 任一表缺失证据 → 不能判 fresh
+            # fresh 仅在所有表都有证据且 raw 不晚于 mapped_at 时成立
+            if tables_missing == 0 and raw_latest is not None:
+                has_raw_evidence = True
+                if raw_latest > mapped_at:
+                    return "stale"
+            elif tables_with_evidence > 0 and raw_latest is not None:
+                # 部分表有证据、部分缺失:最多判 stale(如果有证据显示过期)
+                has_raw_evidence = True
+                if raw_latest > mapped_at:
+                    return "stale"
+            else:
+                has_raw_evidence = False
         except sqlite3.Error:
-            pass
-    # fresh: 最近 apply 成功 + mapped_at 存在 + raw 证据确认不晚于 mapped_at
+            has_raw_evidence = False
+    else:
+        has_raw_evidence = False
+    # fresh: 最近 apply 成功 + mapped_at 存在 + 所有 binding 表证据完整 + raw 不晚于 mapped_at
     if (latest_apply_run_id is not None and mapped_at is not None
-            and binding_tables and has_raw_evidence):
+            and binding_tables and has_raw_evidence and tables_missing == 0):
         run = db.con.execute(
             "SELECT status FROM d2a_sync_run WHERE id = ?",
             (latest_apply_run_id,)).fetchone()
@@ -1007,7 +1024,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         for r in rows:
             warnings: list[str] = []
             keys: dict[str, Any] | None = None
-            keys_json_out: str | None = r["keys_json"]
+            keys_json_out: str | None = None  # 默认 null:解析失败/非 dict 不回退到原始敏感串
             if r["keys_json"]:
                 try:
                     parsed = json.loads(r["keys_json"])
@@ -1017,8 +1034,12 @@ def create_app(landing: str | None = None, templates: str = "templates",
                             pack, r["source"], r["object"], parsed)
                         keys_json_out = json.dumps(keys, ensure_ascii=False, default=str)
                     else:
+                        keys = None
+                        keys_json_out = None
                         warnings.append("keys_json 解析值不是 JSON 对象")
                 except (json.JSONDecodeError, TypeError):
+                    keys = None
+                    keys_json_out = None
                     warnings.append("keys_json 解析失败")
             created = obs.aware(r["created_at"])
             age = None
@@ -1151,7 +1172,10 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 retry_disabled_reason = "未知数据源"
             else:
                 tpl_b = next((o for o in pack.objects if o.object == obj), None) if pack else None
-                if tpl_b is not None and not any(
+                if tpl_b is None:
+                    retry_allowed = False
+                    retry_disabled_reason = "模板未识别此对象，无法重试"
+                elif not any(
                     b.enabled and b.source == src for b in tpl_b.bindings
                 ):
                     retry_allowed = False
@@ -1243,7 +1267,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         # ---- 解析并脱敏 keys ----
         keys: dict[str, Any] | None = None
         keys_warnings: list[str] = []
-        keys_json_out: str | None = row["keys_json"]
+        keys_json_out: str | None = None  # 默认 null:解析失败/非 dict 不回退到原始敏感串
         if row["keys_json"]:
             try:
                 parsed = json.loads(row["keys_json"])
@@ -1252,8 +1276,12 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         pack, source, object_name, parsed)
                     keys_json_out = json.dumps(keys, ensure_ascii=False, default=str)
                 else:
+                    keys = None
+                    keys_json_out = None
                     keys_warnings.append("keys_json 解析值不是 JSON 对象")
             except (json.JSONDecodeError, TypeError):
+                keys = None
+                keys_json_out = None
                 keys_warnings.append("keys_json 解析失败")
 
         # ---- 脱敏 raw_json ----
@@ -2176,27 +2204,32 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         source = None
                         batch_id = None
                         try:
-                            obj_batch = db.con.execute(
+                            obj_batches = db.con.execute(
                                 f'SELECT DISTINCT "_d2a_batch_id" AS b '
-                                f'FROM "{table_name}" WHERE "_d2a_batch_id" IS NOT NULL '
-                                f'LIMIT 1'
-                            ).fetchone()
-                            if obj_batch and obj_batch["b"]:
-                                batch_id = obj_batch["b"]
-                                # 通过 batch_id 反查 run.source
+                                f'FROM "{table_name}" WHERE "_d2a_batch_id" IS NOT NULL'
+                            ).fetchall()
+                            if not obj_batches:
+                                warnings.append("对象表缺少 _d2a_batch_id,无法确定物化来源")
+                            elif len(obj_batches) > 1:
+                                # 多批次 → 无法确定物化来源
+                                warnings.append(
+                                    "对象表存在多个批次，无法确定物化来源")
+                            elif obj_batches[0]["b"]:
+                                batch_id = obj_batches[0]["b"]
+                                # 通过 batch_id 反查 run.source,限定 object 类型和当前对象
                                 step = db.con.execute(
                                     "SELECT r.source FROM d2a_run_step s "
                                     "JOIN d2a_sync_run r ON s.run_id = r.id "
                                     "WHERE s.batch_id = ? AND r.run_type = 'apply' "
-                                    "LIMIT 1", (batch_id,)).fetchone()
+                                    "AND s.kind = 'object' AND s.target = ? "
+                                    "ORDER BY s.id DESC LIMIT 1",
+                                    (batch_id, tpl.object)).fetchone()
                                 if step:
                                     source = step["source"]
                                 else:
                                     warnings.append(
                                         f"对象表 batch_id={batch_id} 未匹配到 apply step,"
                                         f"可能已被后续 step 覆盖")
-                            else:
-                                warnings.append("对象表缺少 _d2a_batch_id,无法确定物化来源")
                         except sqlite3.Error as e:
                             warnings.append(f"batch_id 查询失败: {e}")
                         if source is None and batch_id is not None:
@@ -2208,7 +2241,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
                             "rows": rows,
                             "mapped_at": mapped_at,
                             "batch_id": batch_id,
-                            "warnings": [],
+                            "warnings": list(warnings),
                         }
                 else:
                     materialized = {

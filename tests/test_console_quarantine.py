@@ -659,17 +659,191 @@ class TestServingStateStaleByRawTimestamp:
         assert sales["serving_state"] == "stale"
 
     def test_stale_not_triggered_when_raw_older(self, db):
-        """raw 时间早于 mapped_at 时不触发 stale。"""
-        db.con.execute(
-            'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__SALES_ORDER" '
-            '(_d2a_extracted_at TEXT)')
-        db.con.execute(
-            'INSERT INTO "raw_digiwin_e10__SALES_ORDER" (_d2a_extracted_at) '
-            'VALUES (?)', ("2026-07-09T12:00:00",))
+        """raw 时间早于 mapped_at 时不触发 stale — 所有 binding 表都需有证据才能判 fresh。"""
+        # SalesOrder binding tables: [SALES_ORDER, CURRENCY] — 两个表都有 timestamp 才能判 fresh
+        for tbl in ["SALES_ORDER", "CURRENCY"]:
+            db.con.execute(
+                f'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__{tbl}" '
+                '(_d2a_extracted_at TEXT)')
+            db.con.execute(
+                f'INSERT INTO "raw_digiwin_e10__{tbl}" (_d2a_extracted_at) '
+                'VALUES (?)', ("2026-07-09T12:00:00",))
         db.con.commit()
 
         client = _client(db)
         sales = next(g for g in client.get("/api/quarantine/groups").json()
                      if g["object"] == "SalesOrder")
-        # raw 比 mapped_at 旧且 apply 成功 → 仍为 fresh
+        # raw 比 mapped_at 旧且 apply 成功且所有 binding 表有证据 → 仍为 fresh
         assert sales["serving_state"] == "fresh"
+
+
+# ============================================================
+# Issue 2 [P1]: keys_json 解析失败不泄露原始值 (list endpoint)
+# ============================================================
+
+class TestKeysJsonSanitizationList:
+    """列表端点 keys_json 解析失败/非 dict 时 keys_json_out 应为 null。"""
+
+    @pytest.fixture()
+    def db(self, tmp_path):
+        landing = LandingStore(tmp_path / "landing.sqlite")
+        # 创建解析失败的记录
+        landing.con.execute(
+            "INSERT INTO d2a_quarantine (source, object, keys_json, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (SOURCE, "SalesOrder", "malformed-secret@example.com-CUSTOMER-007",
+             "bad json", datetime.now().isoformat(timespec="seconds")))
+        # 创建非 dict 的记录
+        landing.con.execute(
+            "INSERT INTO d2a_quarantine (source, object, keys_json, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (SOURCE, "SalesOrder", '["array","not","object"]',
+             "array keys", datetime.now().isoformat(timespec="seconds")))
+        landing.con.commit()
+        return landing
+
+    def test_malformed_keys_json_yields_null(self, db):
+        """解析失败的 keys_json → keys 为 None, keys_json_out 为 null。"""
+        client = _client(db)
+        body = client.get("/api/quarantine", params={"reason": "bad json"}).json()
+        row = body[0]
+        assert row["keys"] is None
+        assert row["keys_json"] is None
+        assert any("json" in w.lower() for w in row["warnings"])
+
+    def test_array_keys_json_yields_null(self, db):
+        """非 dict 的 keys_json → keys 为 None, keys_json_out 为 null。"""
+        client = _client(db)
+        body = client.get("/api/quarantine", params={"reason": "array keys"}).json()
+        row = body[0]
+        assert row["keys"] is None
+        assert row["keys_json"] is None
+        assert any("不是 JSON 对象" in w for w in row["warnings"])
+
+    def test_malformed_keys_json_not_leaking_raw(self, db):
+        """解析失败的原始敏感字符串不应出现在响应中。"""
+        client = _client(db)
+        body = client.get("/api/quarantine", params={"reason": "bad json"}).json()
+        row = body[0]
+        # keys_json 不应包含原始敏感值
+        assert row["keys_json"] is None
+        assert row["keys"] is None
+        # 原始敏感字符串不应泄露在任何字段中
+        row_str = json.dumps(row, ensure_ascii=False)
+        assert "malformed-secret" not in row_str
+        assert "CUSTOMER-007" not in row_str
+
+
+# ============================================================
+# Issue 3 [P1]: 多表 serving state 证据不完整不能判 fresh
+# ============================================================
+
+class TestServingStatePartialEvidence:
+    """逐表跟踪证据:部分表缺失 → 不能判 fresh。"""
+
+    def test_partial_evidence_not_fresh(self, tmp_path):
+        """两个 binding 表,仅一个有时戳 → fresh 条件不满足,返回 unknown。"""
+        db = LandingStore(tmp_path / "serving.sqlite")
+        # 创建一个 raw 表有时戳,另一个没有
+        db.con.execute(
+            'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__A" '
+            '(_d2a_extracted_at TEXT)')
+        db.con.execute(
+            'INSERT INTO "raw_digiwin_e10__A" (_d2a_extracted_at) '
+            'VALUES (?)', ("2026-07-09T12:00:00",))
+        db.con.commit()
+
+        run_id = db.start_run(SOURCE, "apply")
+        db.finish_run(run_id, tables=1, rows=100, status="ok")
+        db.con.commit()
+
+        mapped_at = datetime(2026, 7, 10, 12, 0, 0, tzinfo=timezone.utc)
+        # binding_tables = ["A", "B"] — B 不存在,应视为缺失证据
+        result = _compute_serving_state(
+            db, table_exists=True, table_ok=True, object_rows=100,
+            mapped_at=mapped_at, source=SOURCE,
+            latest_apply_run_id=run_id, step_aborted=False,
+            binding_tables=["A", "B"],
+        )
+        # 仅 A 有证据,B 缺失 → 不能判 fresh,应退为 unknown
+        assert result == "unknown", f"expected unknown, got {result}"
+
+    def test_all_tables_with_evidence_still_fresh(self, tmp_path):
+        """两个 binding 表都有旧于 mapped_at 的时戳 → 仍可判 fresh。"""
+        db = LandingStore(tmp_path / "serving.sqlite")
+        for tbl in ["A", "B"]:
+            db.con.execute(
+                f'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__{tbl}" '
+                '(_d2a_extracted_at TEXT)')
+            db.con.execute(
+                f'INSERT INTO "raw_digiwin_e10__{tbl}" (_d2a_extracted_at) '
+                'VALUES (?)', ("2026-07-09T12:00:00",))
+        db.con.commit()
+
+        run_id = db.start_run(SOURCE, "apply")
+        db.finish_run(run_id, tables=1, rows=100, status="ok")
+        db.con.commit()
+
+        mapped_at = datetime(2026, 7, 10, 12, 0, 0, tzinfo=timezone.utc)
+        result = _compute_serving_state(
+            db, table_exists=True, table_ok=True, object_rows=100,
+            mapped_at=mapped_at, source=SOURCE,
+            latest_apply_run_id=run_id, step_aborted=False,
+            binding_tables=["A", "B"],
+        )
+        assert result == "fresh", f"expected fresh, got {result}"
+
+
+# ============================================================
+# Issue 4 [P2]: 未知对象禁用重试 (quarantine/groups)
+# ============================================================
+
+class TestUnknownObjectRetryGating:
+    """模板未识别的对象 → retry_allowed=False。"""
+
+    @pytest.fixture()
+    def db_with_config(self, tmp_path):
+        """提供 config 的 fixture,避免 '只读模式' 先触发。"""
+        from data2agent.connect.config import ConnectConfig, SourceConfig
+        landing = LandingStore(tmp_path / "landing.sqlite")
+        cfg = ConnectConfig(
+            templates=str(ROOT / "templates"),
+            landing=landing.db_path,
+            sources={"digiwin_e10": SourceConfig(adapter="sqlite_readonly", path=":memory:")},
+        )
+        return landing, cfg
+
+    def test_unknown_object_retry_disallowed(self, db_with_config):
+        """模板中没有的对象在 groups 中 retry_allowed=False。"""
+        landing, cfg = db_with_config
+        _insert_q(landing, SOURCE, "NotInTemplate", '{"k":"v"}', "some reason")
+
+        client = TestClient(create_app(landing.db_path, str(ROOT / "templates"), config=cfg))
+        body = client.get("/api/quarantine/groups").json()
+        for g in body:
+            if g["object"] == "NotInTemplate":
+                assert g["retry_allowed"] is False, (
+                    f"未知对象应禁用 retry, got {g['retry_allowed']}")
+                assert "模板未识别" in (g.get("retry_disabled_reason") or "")
+                break
+        else:
+            assert False, "NotInTemplate 应出现在 groups 中"
+
+    def test_unknown_object_in_group_retry_disabled(self, db_with_config):
+        """隔离记录中存在但模板中没有的对象,groups 中应看到 retry_allowed=False。"""
+        landing, cfg = db_with_config
+
+        # 直接插入隔离记录(确保出现在 groups 中)
+        landing.con.execute(
+            "INSERT INTO d2a_quarantine (source, object, keys_json, reason, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (SOURCE, "FakeObj", '{"k":"v"}', "test unknown",
+             datetime.now().isoformat(timespec="seconds")))
+        landing.con.commit()
+
+        client = TestClient(create_app(landing.db_path, str(ROOT / "templates"), config=cfg))
+        body = client.get("/api/quarantine/groups").json()
+        fake = next((g for g in body if g["object"] == "FakeObj"), None)
+        assert fake is not None, "隔离记录应在 groups 中出现"
+        assert fake["retry_allowed"] is False
+        assert "模板未识别" in fake["retry_disabled_reason"]

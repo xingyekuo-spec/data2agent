@@ -411,29 +411,58 @@ def _sanitize_object_keys(pack: TemplatePack | None, source: str,
 
 
 _EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
+_REASON_MAX_LEN = 512
 
 
 def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
                                  source: str, object_name: str) -> str:
-    """对隔离原因做安全脱敏:屏蔽邮箱地址;无可靠 binding 时返回通用摘要。
+    """对隔离原因做安全脱敏:屏蔽邮箱、源端枚举值、字段名;长度预算 512 字符。
 
     与 safe_error_summary 不同,本函数负责去除映射错误原因中可能泄露的
     业务敏感值(如邮箱地址、来源枚举值)。调用方不应再将返回值传入
     safe_error_summary(已内置空白压缩)。
+
+    无可靠 binding 时(对象不在模板或无已启用绑定)返回固定通用摘要。
     """
-    if not reason or not isinstance(reason, str):
+    if not reason or not isinstance(reason, str) or not reason.strip():
         return ""
     # 检查是否有已启用的 binding 对应此 source+object
-    has_binding = False
+    enabled_binding = None
     if pack is not None:
         tpl = next((o for o in pack.objects if o.object == object_name), None)
         if tpl is not None:
-            has_binding = any(
-                b.enabled and b.source == source for b in tpl.bindings)
-    if not has_binding:
-        return "隔离记录（详情请查看 raw 预览）"
-    # 有可靠 binding:屏蔽常见敏感模式后返回
+            for b in tpl.bindings:
+                if b.enabled and b.source == source:
+                    enabled_binding = b
+                    break
+    if enabled_binding is None:
+        return "映射失败（详情请查看隔离 raw 预览）"
+    # 有可靠 binding:从 field_map/key_map 提取所有源端业务敏感值(枚举值、字段名)
+    sensitive_values: set[str] = set()
+    from ..mapping import parse_field_expr  # noqa: PLC0415 延迟导入避免循环
+    for expr_str in [*enabled_binding.key_map.values(),
+                     *enabled_binding.field_map.values()]:
+        if not isinstance(expr_str, str):
+            continue
+        try:
+            fexpr = parse_field_expr(expr_str)
+            if fexpr.value_map:
+                # source enum values (map 的 key) 是源端业务值,可能出现在错误原因中
+                sensitive_values.update(fexpr.value_map.keys())
+        except ValueError:
+            # 提取列名作为备选
+            if "." in expr_str:
+                col = expr_str.split(".", 1)[1].split(" ", 1)[0].strip()
+                if col and len(col) >= 2:
+                    sensitive_values.add(col)
+    # 屏蔽:邮箱 -> 源端业务值(长优先,避免短串误伤) -> 压缩空白 -> 长度预算
     sanitized = _EMAIL_RE.sub("[email]", reason)
+    for sv in sorted(sensitive_values, key=len, reverse=True):
+        if sv and len(sv) >= 2:
+            sanitized = sanitized.replace(sv, "[masked]")
+    # 长度预算
+    if len(sanitized) > _REASON_MAX_LEN:
+        sanitized = sanitized[:_REASON_MAX_LEN] + "..."
     # 压缩空白(同 safe_error_summary)
     cleaned = " ".join(sanitized.split())
     return cleaned if cleaned else ""

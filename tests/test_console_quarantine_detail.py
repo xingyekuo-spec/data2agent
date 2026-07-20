@@ -414,3 +414,53 @@ class TestQuarantineDetail:
         assert body["raw"] is not None
         for v in body["raw"].values():
             assert v == "***", f"无匹配 binding 源 → raw 应全 mask, got {v!r}"
+
+
+# ============================================================
+# Issue 2 [P1]: keys_json 解析失败不泄露原始值 (detail endpoint)
+# ============================================================
+
+class TestKeysJsonSanitizationDetail:
+    """详情端点 keys_json 解析失败/非 dict 时 keys_json_out 应为 null。"""
+
+    @pytest.fixture()
+    def db_malformed(self, tmp_path):
+        landing = LandingStore(tmp_path / "landing.sqlite")
+        # 插入含解析失败的 keys_json 记录
+        raw_malformed = json.dumps({"CUSTOMER_CODE": "C999"}, ensure_ascii=False)
+        rid1 = _insert_q(landing, SOURCE, "Customer",
+                        "not-valid-json-at-all@@@SECRET",
+                        "bad keys json", raw_json=raw_malformed)
+        rid2 = _insert_q(landing, SOURCE, "Customer",
+                        '["array","not","object"]',
+                        "keys is array", raw_json=raw_malformed)
+        return landing, rid1, rid2
+
+    def test_malformed_keys_json_null_in_detail(self, db_malformed):
+        """解析失败的 keys_json 在 detail 中 keys_json 为 null。"""
+        landing, rid, _ = db_malformed
+        client = _client(landing)
+        body = client.get(f"/api/quarantine/{rid}", headers=_auth()).json()
+        assert body["keys_json"] is None
+        assert body["keys"] is None
+        assert any("json" in w.lower() for w in body.get("warnings", []))
+
+    def test_array_keys_json_null_in_detail(self, db_malformed):
+        """非 dict 的 keys_json 在 detail 中 keys_json 为 null。"""
+        landing, _, rid = db_malformed
+        client = _client(landing)
+        body = client.get(f"/api/quarantine/{rid}", headers=_auth()).json()
+        assert body["keys_json"] is None
+        assert body["keys"] is None
+        assert any("不是 JSON 对象" in w for w in body.get("warnings", []))
+
+    def test_malformed_keys_json_not_leaking_raw_in_detail(self, db_malformed):
+        """原始敏感字符绝不出现在 detail 响应中。"""
+        landing, rid, _ = db_malformed
+        client = _client(landing)
+        body = client.get(f"/api/quarantine/{rid}", headers=_auth()).json()
+        assert body["keys_json"] is None
+        assert body["keys"] is None
+        response_str = json.dumps(body, ensure_ascii=False)
+        assert "not-valid-json-at-all" not in response_str
+        assert "SECRET" not in response_str

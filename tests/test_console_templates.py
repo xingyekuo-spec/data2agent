@@ -512,3 +512,106 @@ class TestTemplateErrorPaths:
         assert so["materialized"]["rows"] is None
         assert any("_d2a_mapped_at" in w
                    for w in so["materialized"].get("warnings", []))
+
+
+# ============================================================
+# Issue 5 [P2]: batch_id 反查防串对象 + 多批次警告
+# ============================================================
+
+class TestBatchIdLookup:
+    """batch_id 反查应限定 kind='object' + target 并处理多批次。"""
+
+    @pytest.fixture()
+    def db(self, tmp_path):
+        landing = LandingStore(tmp_path / "landing.sqlite")
+        return landing
+
+    def test_batch_lookup_filters_by_object_kind_and_target(self, db):
+        """两个对象共用相同 batch_id 时,各自只匹配自己的 step。"""
+        # 创建两个对象的物化表,共用相同 batch_id
+        for obj in ["Customer", "SalesOrder"]:
+            db.con.execute(
+                f'CREATE TABLE IF NOT EXISTS "obj_{obj}" '
+                f'(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)')
+            db.con.execute(
+                f'INSERT INTO "obj_{obj}" (id, _d2a_mapped_at, _d2a_batch_id) '
+                f'VALUES (?, ?, ?)', (1, "2026-07-15T12:00:00", "shared-batch"))
+        db.con.commit()
+
+        # 两条 apply run step,同一个 batch_id 但不同 target
+        run_id = db.start_run(SOURCE, "apply")
+        for target in ["Customer", "SalesOrder"]:
+            step_id = db.add_step(run_id, 1, "object", target)
+            db.update_step(step_id, status="ok", rows_in=10, rows_out=10,
+                          quarantined=0, batch_id="shared-batch")
+        db.finish_run(run_id, tables=1, rows=20, status="ok")
+        db.con.commit()
+
+        client = _client(db)
+        body = client.get("/api/templates").json()
+
+        for obj in body:
+            if obj["object"] in ("Customer", "SalesOrder"):
+                mat = obj["materialized"]
+                # 应有正确的 source
+                assert mat["source"] == SOURCE, (
+                    f"{obj['object']}: expected source={SOURCE}, got {mat['source']}")
+                assert mat["batch_id"] == "shared-batch"
+                # state 应为 materialized
+                assert mat["state"] == "materialized"
+
+    def test_multiple_batches_yields_null_with_warning(self, db):
+        """对象表存在多个不同 batch_id → source=None, batch_id=None + 警告。"""
+        # 创建 Customer 对象表,包含两个不同 batch_id
+        db.con.execute(
+            'CREATE TABLE IF NOT EXISTS "obj_Customer" '
+            '(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)')
+        db.con.execute(
+            'INSERT INTO "obj_Customer" (id, _d2a_mapped_at, _d2a_batch_id) '
+            'VALUES (?, ?, ?)', (1, "2026-07-15T12:00:00", "batch-a"))
+        db.con.execute(
+            'INSERT INTO "obj_Customer" (id, _d2a_mapped_at, _d2a_batch_id) '
+            'VALUES (?, ?, ?)', (2, "2026-07-15T12:00:00", "batch-b"))
+        db.con.commit()
+
+        client = _client(db)
+        body = client.get("/api/templates").json()
+
+        cust = next(o for o in body if o["object"] == "Customer")
+        assert cust["materialized"]["source"] is None
+        assert cust["materialized"]["batch_id"] is None
+        assert any("多个批次" in w
+                   for w in cust["materialized"].get("warnings", []))
+
+    def test_single_batch_deterministic_lookup(self, db):
+        """单批次:使用 ORDER BY s.id DESC 确定性选最新 step。"""
+        db.con.execute(
+            'CREATE TABLE IF NOT EXISTS "obj_SalesOrder" '
+            '(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)')
+        db.con.execute(
+            'INSERT INTO "obj_SalesOrder" (id, _d2a_mapped_at, _d2a_batch_id) '
+            'VALUES (?, ?, ?)', (1, "2026-07-15T12:00:00", "batch-so"))
+        db.con.commit()
+
+        # 两个 apply run,先创建 step_for_other 再创建 step_for_salesorder
+        run1 = db.start_run("other_source", "apply")
+        step1 = db.add_step(run1, 1, "object", "OtherObj")
+        db.update_step(step1, status="ok", rows_in=5, rows_out=5,
+                      quarantined=0, batch_id="batch-so")
+        db.finish_run(run1, tables=1, rows=5, status="ok")
+
+        run2 = db.start_run(SOURCE, "apply")
+        step2 = db.add_step(run2, 1, "object", "SalesOrder")
+        db.update_step(step2, status="ok", rows_in=50, rows_out=50,
+                      quarantined=0, batch_id="batch-so")
+        db.finish_run(run2, tables=1, rows=50, status="ok")
+        db.con.commit()
+
+        client = _client(db)
+        body = client.get("/api/templates").json()
+
+        so = next(o for o in body if o["object"] == "SalesOrder")
+        # 应匹配到 SalesOrder 的 step(不是 OtherObj 的 step),source 应为 SOURCE
+        assert so["materialized"]["source"] == SOURCE, (
+            f"应通过 target='SalesOrder' 过滤,避免串到 OtherObj 的 step")
+        assert so["materialized"]["batch_id"] == "batch-so"

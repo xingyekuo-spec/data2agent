@@ -216,3 +216,76 @@ def test_browse_truncation_marks_fields(tmp_path):
     assert "已截断" in row["big"]
     assert row["bin"]["__blob__"] is True
     assert page["truncations"] == [{"row_index": 0, "fields": ["big", "bin"]}]
+
+
+# ================================================================
+# Issue 1 [P1]: _sanitize_quarantine_reason 源端业务值脱敏
+# ================================================================
+
+from data2agent.metamodel.schema import ObjectTemplate, Property, SourceBinding, TemplatePack
+
+
+def _make_pack_with_map_binding() -> TemplatePack:
+    """构造含 map 表达式的 binding,用于测试源端枚举值脱敏。"""
+    obj_tpl = ObjectTemplate(
+        object="TestObj",
+        display_name="测试对象",
+        domain="销售",
+        keys=["code"],
+        properties=[
+            Property(name="code", type="string", desc="编号"),
+            Property(name="status", type="enum", enum_values=["active", "inactive"],
+                     desc="状态"),
+        ],
+        bindings=[
+            SourceBinding(
+                source="test_source",
+                tables=["T1"],
+                status="verified",
+                key_map={"code": "T1.CODE"},
+                field_map={
+                    "code": "T1.CODE",
+                    "status": "T1.STATUS (map VIP-SECRET→active / C-SECRET→inactive)",
+                },
+            ),
+        ],
+    )
+    return TemplatePack(version="1.0", objects=[obj_tpl], metrics=[])
+
+
+def test_sanitize_reason_masks_source_enum_values():
+    """有已启用 binding 且 field_map 含 map 表达式时,源端枚举值应被脱敏。"""
+    pack = _make_pack_with_map_binding()
+    reason = "Mapping failed: STATUS=VIP-SECRET, customer_code=C-SECRET, email admin@test.com"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "VIP-SECRET" not in result
+    assert "C-SECRET" not in result
+    assert "[masked]" in result
+    assert "[email]" in result
+
+
+def test_sanitize_reason_length_budget():
+    """超过 512 字符的 reason 应被截断并加省略号。"""
+    pack = _make_pack_with_map_binding()
+    long_reason = "x" * 600
+    result = br._sanitize_quarantine_reason(long_reason, pack, "test_source", "TestObj")
+    assert len(result) <= 515  # 512 + "..."
+    assert result.endswith("...")
+
+
+def test_sanitize_reason_no_binding_returns_generic():
+    """无匹配 binding 时返回固定通用摘要,不泄露原始原因。"""
+    pack = _make_pack_with_map_binding()
+    # unknown source → 无匹配 binding
+    result = br._sanitize_quarantine_reason(
+        "SECRET=leaked-value", pack, "unknown_source", "TestObj")
+    assert "leaked-value" not in result
+    assert "映射失败" in result
+    assert "raw 预览" in result
+
+
+def test_sanitize_reason_none_or_empty():
+    """空/None/纯空白 reason 返回空字符串。"""
+    assert br._sanitize_quarantine_reason(None, None, "s", "o") == ""
+    assert br._sanitize_quarantine_reason("", None, "s", "o") == ""
+    assert br._sanitize_quarantine_reason("   ", None, "s", "o") == ""
