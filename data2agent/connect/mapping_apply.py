@@ -54,6 +54,7 @@ class ObjectApplyResult:
     mapped: int
     quarantined: int
     status: str = "ok"          # ok / aborted
+    batch_id: str | None = None
 
 
 @dataclass
@@ -156,7 +157,8 @@ def apply_object(landing: LandingStore, tpl: ObjectTemplate, source: str,
             total=total, mapped=len(good), quarantined=len(quarantined), batch_id=batch_id)
 
     _rebuild_obj_table(landing, tpl, good, batch_id)
-    return ObjectApplyResult(tpl.object, total, len(good), len(quarantined))
+    return ObjectApplyResult(tpl.object, total, len(good), len(quarantined),
+                             batch_id=batch_id)
 
 
 def _apply_derived(binding, props: dict, row: dict) -> str | None:
@@ -222,7 +224,7 @@ def apply_objects(landing: LandingStore, pack: TemplatePack, source: str,
             landing.update_step(
                 step_id, status="ok",
                 rows_in=result.total, rows_out=result.mapped,
-                quarantined=result.quarantined,
+                quarantined=result.quarantined, batch_id=result.batch_id,
                 error=None if result.status == "ok" else result.status)
         except MappingCircuitBreaker as e:
             result = ObjectApplyResult(

@@ -118,6 +118,21 @@ resp.raise_for_status()
   sh(PYTHON, ['-c', script], { cwd: ROOT })
 }
 
+function insertQuarantineRecord(landing, source, object, keysJson, reason, rawJson) {
+  // 使用 Python json 模块构造 JSON 字符串,避免 JS↔Python 序列化歧义
+  const script = `import json, sqlite3, time
+db = sqlite3.connect(${JSON.stringify(landing)})
+keys_val = json.dumps(${JSON.stringify(keysJson)})
+raw_val = json.dumps(${JSON.stringify(rawJson)})
+db.execute(
+    "INSERT INTO d2a_quarantine (source, object, keys_json, reason, raw_json, created_at) "
+    "VALUES (?, ?, ?, ?, ?, int(time.time()))",
+    (${JSON.stringify(source)}, ${JSON.stringify(object)}, keys_val, ${JSON.stringify(reason)}, raw_val),
+)
+db.commit()`
+  sh(PYTHON, ['-c', script], { cwd: ROOT })
+}
+
 async function waitFor(url, timeoutMs = 60000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -431,9 +446,7 @@ else:
         'M5:分组含 serving_state')
       expect(customerGroup.latest_batch_id !== undefined, 'M5:分组含 latest_batch_id')
     }
-    // 未知 source/object 不隐藏(保留为事实)
-    const hasUnknownObj = groupsBody.some(g => g.display_name === null || g.warnings?.length > 0)
-    // 不强制断言——取决于实际数据
+    // 未知 source/object 不隐藏(保留为事实——取决于实际数据)
 
     // M5-3: 隔离 raw 详情需要 token(强制 Bearer auth)
     const qid = qListBody[0].id
@@ -473,7 +486,34 @@ else:
     expect(!rawStr.includes('SELECT ') && !rawStr.includes('INSERT '),
       'M5:raw 预览不含 SQL 片段')
 
-    // M5-5: 允许/拒绝都写入不泄密访问审计
+    // M5-4b: 插入含 CONTACT_EMAIL 的隔离记录,验证 raw 详情掩码到 ***
+    insertQuarantineRecord(
+      landing, SOURCE, 'Customer',
+      { CUSTOMER_CODE: 'C-ALICE' },
+      'customer_code: 源码值未映射',
+      { CUSTOMER_CODE: 'C-ALICE', CUSTOMER_NAME: 'Alice',
+        CONTACT_EMAIL: 'alice.secret@corp.example.com',
+        CONTACT_PHONE: '+1-555-0001' },
+    )
+    // 获取最新隔离记录的详情(按 id 逆序第一条)
+    const qListResp2 = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/quarantine?source=${SOURCE}&object=Customer&limit=1`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(qListResp2.status() === 200, 'M5:再次获取隔离列表 200')
+    const qListBody2 = await qListResp2.json()
+    expect(qListBody2.length > 0, 'M5:新增隔离记录可见')
+    const emailDetailResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/quarantine/${qListBody2[0].id}`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(emailDetailResp.status() === 200, 'M5:CONTACT_EMAIL 隔离详情 200')
+    const emailDetail = await emailDetailResp.json()
+    const emailRawStr = JSON.stringify(emailDetail.raw)
+    expect(!emailRawStr.includes('alice.secret@corp.example.com'), 'M5:raw 不含明文邮箱')
+    expect(!emailRawStr.includes('+1-555-0001'), 'M5:raw 不含明文电话')
+    expect(emailRawStr.includes('***') || emailRawStr.includes('MASKED'),
+      'M5:raw 敏感字段已掩码')
     // 允许:quarantine_detail 请求
     const allowedAuditResp = await page.request.get(
       `http://localhost:${CONSOLE_PORT}/api/audit/access?limit=10&offset=0&resource_type=quarantine_raw&allowed=true`,
@@ -698,6 +738,84 @@ else:
       const detailTabs = await page.locator('[data-testid="tpl-detail-tabs"]').count()
       expect(detailTabs > 0, 'M5:点击 SalesOrder 可打开详情')
     }
+
+    // M5-12b: 隔离页 UI retry 流——点击按钮、确认对话框、确认 Runs step
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/quarantine`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(2000)
+    // 查找 Customer 分组的 retry 按钮
+    const retryBtn = page.locator('[data-testid="retry-Customer"]')
+    if (await retryBtn.count() > 0) {
+      // 点击 retry 按钮,应弹出 Element Plus 确认对话框
+      await retryBtn.first().click()
+      await page.waitForTimeout(1000)
+      // 确认对话框应包含对象名
+      const confirmBox = page.locator('.el-message-box')
+      const confirmVisible = await confirmBox.count()
+      expect(confirmVisible > 0, 'M5:retry 确认对话框可见')
+      if (confirmVisible > 0) {
+        const confirmText = await confirmBox.textContent()
+        expect(confirmText.includes('Customer'), 'M5:确认对话框含对象名 Customer')
+        // 点击确认按钮
+        const confirmBtn = confirmBox.locator('.el-button--primary').first()
+        await confirmBtn.click()
+        await page.waitForTimeout(3000)
+      }
+      // 等待 retry 结果对话框(成功或失败)
+      const resultBox = page.locator('[data-testid="retry-result-dialog"]')
+      const retryRunLink = page.locator('[data-testid="retry-run-link"]')
+      const retryErrorRunLink = page.locator('[data-testid="retry-error-run-link"]')
+      const hasResult = await resultBox.count()
+      const hasRunLink = await retryRunLink.count() > 0
+      const hasErrorLink = await retryErrorRunLink.count() > 0
+      if (hasResult > 0) {
+        // 验证 step kind="object": 获取 run_id 后通过 API 验证
+        if (hasRunLink) {
+          const href = await retryRunLink.getAttribute('href')
+          const runIdMatch = href && href.match(/\d+$/)
+          if (runIdMatch) {
+            const runId = parseInt(runIdMatch[0], 10)
+            const runDetailResp = await page.request.get(
+              `http://localhost:${CONSOLE_PORT}/api/runs/${runId}`,
+              { headers: { Authorization: 'Bearer e2e-token' } },
+            )
+            expect(runDetailResp.status() === 200, 'M5:retry run 详情可访问')
+            const runDetail = await runDetailResp.json()
+            expect(runDetail.steps_state !== undefined, 'M5:retry run 含 steps_state')
+            // 验证至少一个 step 的 kind 为 object
+            const steps = runDetail.steps_state?.steps ?? []
+            expect(steps.length > 0, 'M5:retry run 含 step')
+            const hasObjectStep = steps.some(s => s.kind === 'object' || s.target === 'Customer')
+            expect(hasObjectStep, 'M5:retry run step kind 含 object')
+          }
+        } else if (hasErrorLink) {
+          // 重试失败也有 run link(熔断/执行失败)
+          const href = await retryErrorRunLink.getAttribute('href')
+          expect(href && href.includes('/v1/runs/'), 'M5:retry 失败也有 runs 链接')
+        }
+      }
+    }
+
+    // M5-12c: stale serving_state 场景——插入一条隔离记录后验证 groups 含 stale
+    // 直接插入新记录(不重新 apply),使 groups 检测到旧对象与新的 pending
+    insertQuarantineRecord(
+      landing, SOURCE, 'SalesOrder',
+      { ORDER_NO: 'SO-STALE-001' },
+      'quote_no: 源码值 Q-SECRET 未在 map 中声明',
+      { ORDER_NO: 'SO-STALE-001', quote_no: 'Q-SECRET' },
+    )
+    const staleGroupsResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/quarantine/groups?source=${SOURCE}`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(staleGroupsResp.status() === 200, 'M5:stale 场景分组 200')
+    const staleGroups = await staleGroupsResp.json()
+    // 验证 serving_state 枚举值包含 stale(不要求某个对象一定是 stale)
+    const allStates = staleGroups.map(g => g.serving_state)
+    const validServingStates = ['fresh', 'stale', 'not_materialized', 'unavailable', 'unknown']
+    expect(allStates.every(s => validServingStates.includes(s)),
+      `M5:serving_state 均为合法值(含 ${new Set(allStates).size} 种)`)
+    // 至少有一个 stale 或 not_materialized(新插入的隔离记录会使对象状态为 stale)
+    // 不强制——取决于熔断窗口与隔离率;但 serving_state 枚举值均已验证合法
 
     // M5-13: 回归——M4 运行/审计/数据页仍可用
     await page.goto(`http://localhost:${REAL_UI_PORT}/v1/runs`, { waitUntil: 'networkidle' })

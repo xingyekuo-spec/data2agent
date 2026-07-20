@@ -1797,7 +1797,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
             db.update_step(
                 step_id, status="ok",
                 rows_in=result.total, rows_out=result.mapped,
-                quarantined=result.quarantined)
+                quarantined=result.quarantined, batch_id=result.batch_id)
         except Exception:
             try:
                 db.finish_run(run_id, tables=1, rows=result.mapped,

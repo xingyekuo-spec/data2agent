@@ -416,18 +416,21 @@ _REASON_MAX_LEN = 512
 
 def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
                                  source: str, object_name: str) -> str:
-    """对隔离原因做安全脱敏:屏蔽邮箱、源端枚举值、字段名;长度预算 512 字符。
+    """对隔离原因做安全脱敏:屏蔽邮箱,按 field_map/key_map 字段名正则屏蔽
+    ``FIELD=VALUE`` 模式;长度预算 512 字符。
 
     与 safe_error_summary 不同,本函数负责去除映射错误原因中可能泄露的
-    业务敏感值(如邮箱地址、来源枚举值)。调用方不应再将返回值传入
+    业务敏感值(如邮箱地址、来源字段值)。调用方不应再将返回值传入
     safe_error_summary(已内置空白压缩)。
 
-    无可靠 binding 时(对象不在模板或无已启用绑定)返回固定通用摘要。
+    无可靠 binding(对象不在模板或无已启用绑定,或 binding 无 field_map)
+    返回固定通用摘要。
     """
     if not reason or not isinstance(reason, str) or not reason.strip():
         return ""
     # 检查是否有已启用的 binding 对应此 source+object
     enabled_binding = None
+    tpl = None
     if pack is not None:
         tpl = next((o for o in pack.objects if o.object == object_name), None)
         if tpl is not None:
@@ -435,10 +438,10 @@ def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
                 if b.enabled and b.source == source:
                     enabled_binding = b
                     break
-    if enabled_binding is None:
+    if enabled_binding is None or not enabled_binding.field_map:
         return "映射失败（详情请查看隔离 raw 预览）"
-    # 有可靠 binding:从 field_map/key_map 提取所有源端业务敏感值(枚举值、字段名)
-    sensitive_values: set[str] = set()
+    # 从 field_map/key_map 表达式中提取所有字段名,用于正则屏蔽 FIELD=VALUE 模式
+    field_names: set[str] = set()
     from ..mapping import parse_field_expr  # noqa: PLC0415 延迟导入避免循环
     for expr_str in [*enabled_binding.key_map.values(),
                      *enabled_binding.field_map.values()]:
@@ -446,20 +449,36 @@ def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
             continue
         try:
             fexpr = parse_field_expr(expr_str)
-            if fexpr.value_map:
-                # source enum values (map 的 key) 是源端业务值,可能出现在错误原因中
-                sensitive_values.update(fexpr.value_map.keys())
+            if fexpr.column:
+                field_names.add(fexpr.column.upper())
         except ValueError:
-            # 提取列名作为备选
+            # 解析失败时,尝试从表达式字符串中提取列名作为备选
             if "." in expr_str:
                 col = expr_str.split(".", 1)[1].split(" ", 1)[0].strip()
-                if col and len(col) >= 2:
-                    sensitive_values.add(col)
-    # 屏蔽:邮箱 -> 源端业务值(长优先,避免短串误伤) -> 压缩空白 -> 长度预算
+                if col:
+                    field_names.add(col.upper())
+    # 也添加模板声明的业务键列名
+    if tpl is not None:
+        for k in tpl.keys:
+            field_names.add(k.upper())
+    # 屏蔽: 邮箱 -> FIELD=VALUE 模式(正则,无长度下限,不遗漏单字符枚举值)
     sanitized = _EMAIL_RE.sub("[email]", reason)
-    for sv in sorted(sensitive_values, key=len, reverse=True):
-        if sv and len(sv) >= 2:
-            sanitized = sanitized.replace(sv, "[masked]")
+    if field_names:
+        names_pattern = "|".join(sorted(field_names, key=len, reverse=True))
+        # 屏蔽形如 FIELD=VALUE 或 FIELD = VALUE 的模式
+        sanitized = re.sub(
+            rf'\b({names_pattern})\s*=\s*\S+',
+            r'\1=[masked]',
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+        # 同时屏蔽 dict repr 格式: 'FIELD': 'VALUE' / 'FIELD': VALUE
+        sanitized = re.sub(
+            rf"'({names_pattern})'\s*:\s*'?\S+'?",
+            r"'\1': '[masked]'",
+            sanitized,
+            flags=re.IGNORECASE,
+        )
     # 长度预算
     if len(sanitized) > _REASON_MAX_LEN:
         sanitized = sanitized[:_REASON_MAX_LEN] + "..."

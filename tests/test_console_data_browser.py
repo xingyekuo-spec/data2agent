@@ -253,15 +253,48 @@ def _make_pack_with_map_binding() -> TemplatePack:
     return TemplatePack(version="1.0", objects=[obj_tpl], metrics=[])
 
 
-def test_sanitize_reason_masks_source_enum_values():
-    """有已启用 binding 且 field_map 含 map 表达式时,源端枚举值应被脱敏。"""
+def test_sanitize_reason_masks_field_value_patterns():
+    """有已启用 binding 时,按字段名正则屏蔽 FIELD=VALUE 模式(含单字符值)。"""
     pack = _make_pack_with_map_binding()
-    reason = "Mapping failed: STATUS=VIP-SECRET, customer_code=C-SECRET, email admin@test.com"
+    # STATUS 是 field_map 中的列名,CODE 是 key_map 中的列名
+    reason = "Mapping failed: STATUS=VIP-SECRET, CODE=C-SECRET, email admin@test.com"
     result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
     assert "VIP-SECRET" not in result
     assert "C-SECRET" not in result
     assert "[masked]" in result
     assert "[email]" in result
+    # 验证单字符值不会被遗漏(旧代码有 len>=2 过滤)
+    reason2 = "RESULT=W 未在 map 中声明"
+    # 构造含 RESULT 字段的 binding
+    obj_tpl = ObjectTemplate(
+        object="TestObj2",
+        display_name="测试",
+        domain="销售",
+        keys=["id"],
+        properties=[
+            Property(name="id", type="string", desc="ID"),
+            Property(name="result", type="enum", enum_values=["W", "L"], desc="结果"),
+        ],
+        bindings=[SourceBinding(
+            source="test_source", tables=["T1"], status="verified",
+            key_map={"id": "T1.ID"},
+            field_map={"result": "T1.RESULT (map W→Win / L→Loss)"},
+        )],
+    )
+    pack2 = TemplatePack(version="1.0", objects=[obj_tpl], metrics=[])
+    result2 = br._sanitize_quarantine_reason(reason2, pack2, "test_source", "TestObj2")
+    assert "W" not in result2
+    assert "[masked]" in result2
+
+
+def test_sanitize_reason_masks_dict_repr_format():
+    """dict repr 格式的 'FIELD': 'VALUE' 也应被脱敏。"""
+    pack = _make_pack_with_map_binding()
+    reason = "业务键重复:{'CODE': 'C-SECRET', 'STATUS': 'VIP-SECRET'}"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "C-SECRET" not in result
+    assert "VIP-SECRET" not in result
+    assert "[masked]" in result
 
 
 def test_sanitize_reason_length_budget():
