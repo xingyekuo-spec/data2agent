@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS d2a_console_access_audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,
     subject TEXT NOT NULL,       -- 稳定主体标识(console-admin),不记 Token/指纹
-    resource_type TEXT NOT NULL, -- raw | object
+    resource_type TEXT NOT NULL, -- raw | object | quarantine_raw
     source TEXT,
     resource TEXT NOT NULL,
     allowed INTEGER NOT NULL,    -- 1 允许 / 0 拒绝
@@ -384,7 +384,7 @@ class LandingStore:
 
         只记主体/目标/结果/查询形状/行数;严禁 Token、q 原文、返回值、traceback。
         """
-        if resource_type not in ("raw", "object"):
+        if resource_type not in ("raw", "object", "quarantine_raw"):
             raise ValueError(f"非法 resource_type '{resource_type}'")
         cur = self.con.execute(
             "INSERT INTO d2a_console_access_audit (ts, subject, resource_type, source,"

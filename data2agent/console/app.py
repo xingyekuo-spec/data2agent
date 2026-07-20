@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 import urllib.error
 import urllib.request
 from dataclasses import asdict
@@ -67,6 +68,7 @@ from .contracts import (
     PipelineResponse,
     ProposalRequest,
     ProposalResponse,
+    QuarantineDetail,
     QuarantineGroup,
     QuarantineRecord,
     RawDataPageResponse,
@@ -366,10 +368,19 @@ def create_app(landing: str | None = None, templates: str = "templates",
         state["templates"] = cfg.templates
         state["pack"] = load_pack(cfg.templates)
 
+    def _is_quarantine_detail(path: str) -> bool:
+        # /api/quarantine/{id} where id is numeric; NOT /api/quarantine or /api/quarantine/groups
+        if not path.startswith("/api/quarantine/"):
+            return False
+        id_part = path[len("/api/quarantine/"):]
+        return id_part.isdigit()
+
     def auth(request: Request) -> None:
         path = request.url.path
         if path == "/api/data/raw" or path.startswith("/api/data/raw/"):
             return
+        if _is_quarantine_detail(path):
+            return  # 隔离详情自行做强制 Bearer + 审计
         if needs_setup():
             if path in ("/api/setup", "/api/setup/status") or path.startswith("/api/setup"):
                 if _client_host(request) not in _LOOPBACK:
@@ -429,6 +440,10 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     def _is_raw_api_path(path: str) -> bool:
         return path == "/api/data/raw" or path.startswith("/api/data/raw/")
+
+    def _requires_bearer_only(path: str) -> bool:
+        """需要强制 Bearer 的 API 路径:raw 浏览 + 隔离详情。"""
+        return _is_raw_api_path(path) or path == "/api/quarantine/{id}"
 
     def _raw_audit_target(request: Request) -> tuple[str | None, str]:
         path = request.url.path
@@ -574,11 +589,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
             for method, op in item.items():
                 if method not in ("get", "post", "put", "patch", "delete"):
                     continue
-                # 普通管理 API 的 Token 可按部署关闭;raw 原始数据浏览始终
+                # 普通管理 API 的 Token 可按部署关闭;raw 原始数据浏览与隔离详情始终
                 # 要求显式 Bearer,与运行时强门禁保持一致。
                 op["security"] = (
                     [{"HTTPBearer": []}]
-                    if _is_raw_api_path(path)
+                    if _requires_bearer_only(path)
                     else [{"HTTPBearer": []}, {}]
                 )
                 if path in _SETUP_API_PATHS:
@@ -1118,6 +1133,130 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return result
 
     @api.get(
+        "/quarantine/{id}",
+        response_model=QuarantineDetail,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            403: _RESP_HTTP_ERROR[403],
+            404: {"model": HttpError},
+            409: _RESP_HTTP_ERROR[409],
+            500: _RESP_HTTP_ERROR[500],
+        },
+    )
+    def quarantine_detail(id: int, request: Request) -> dict:
+        """隔离详情(M5-T03):强制 Bearer auth + raw 脱敏预览。
+
+        列表/分组端点从不返回 raw;这是查看隔离原始数据的唯一入口。
+        每次请求(允许/拒绝)均写入不泄密访问审计;审计失败 → 请求失败关闭。
+        已处理记录(resolved_at 非空)返回 404,与不存在记录同语义。
+        """
+        request_id = str(uuid.uuid4())
+        db = store()
+
+        # ---- 强制 Bearer 认证 ----
+        tok = state["token"]
+        if not tok:
+            db.log_access(
+                subject="anonymous", resource_type="quarantine_raw",
+                source=None, resource=str(id), allowed=False,
+                reason_code="token_not_configured", request_id=request_id)
+            raise HTTPException(403, "隔离详情需配置控制台 Token 并显式认证")
+
+        supplied = _auth_supplied(request)
+        if supplied != tok:
+            db.log_access(
+                subject="anonymous", resource_type="quarantine_raw",
+                source=None, resource=str(id), allowed=False,
+                reason_code="unauthorized", request_id=request_id)
+            raise HTTPException(401, "需要有效的管理界面登录密码")
+
+        # ---- 查询(只取未处理记录) ----
+        row = db.con.execute(
+            "SELECT * FROM d2a_quarantine WHERE id = ? AND resolved_at IS NULL",
+            (id,)).fetchone()
+
+        if row is None:
+            exists = db.con.execute(
+                "SELECT 1 FROM d2a_quarantine WHERE id = ?", (id,)).fetchone()
+            reason_code = "resolved" if exists else "not_found"
+            db.log_access(
+                subject="console-admin", resource_type="quarantine_raw",
+                source=None, resource=str(id), allowed=False,
+                reason_code=reason_code, request_id=request_id)
+            raise HTTPException(404, (
+                f"隔离记录 #{id} 已处理" if exists
+                else f"隔离记录 #{id} 不存在"))
+
+        source = row["source"]
+        object_name = row["object"]
+        pack = state.get("pack")
+
+        # ---- 解析并脱敏 keys ----
+        keys: dict[str, Any] | None = None
+        keys_warnings: list[str] = []
+        keys_json_out: str | None = row["keys_json"]
+        if row["keys_json"]:
+            try:
+                parsed = json.loads(row["keys_json"])
+                if isinstance(parsed, dict):
+                    keys, _key_trunc = br._sanitize_object_keys(
+                        pack, object_name, parsed)
+                    keys_json_out = json.dumps(keys, ensure_ascii=False, default=str)
+                else:
+                    keys_warnings.append("keys_json 解析值不是 JSON 对象")
+            except (json.JSONDecodeError, TypeError):
+                keys_warnings.append("keys_json 解析失败")
+
+        # ---- 脱敏 raw_json ----
+        raw_sanitized: dict[str, Any] | None = None
+        raw_truncations: list[dict[str, Any]] = []
+        if row["raw_json"]:
+            try:
+                raw_dict = json.loads(row["raw_json"])
+                raw_sanitized, raw_truncations = br.sanitize_quarantine_raw(
+                    raw_dict, pack, source, object_name)
+                if raw_sanitized is None:
+                    keys_warnings.append("raw_json 解析值不是 JSON 对象")
+            except (json.JSONDecodeError, TypeError):
+                keys_warnings.append("raw_json 解析失败")
+
+        # ---- 时间与年龄 ----
+        now = obs.now_aware()
+        created = obs.aware(row["created_at"])
+        age: int | None = None
+        if created is not None:
+            age = int((now - created).total_seconds())
+        else:
+            keys_warnings.append(f"created_at 解析失败: {row['created_at']!r}")
+            created = now  # 保底值,不影响 wire shape 校验
+
+        # ---- 写允许访问审计(失败) → fail-close ----
+        try:
+            db.log_access(
+                subject="console-admin", resource_type="quarantine_raw",
+                source=source, resource=str(id), allowed=True,
+                reason_code="ok", request_id=request_id,
+                returned_rows=1)
+        except Exception as audit_error:
+            raise HTTPException(500, "隔离详情访问审计写入失败") from audit_error
+
+        return {
+            "id": row["id"],
+            "source": source,
+            "object": object_name,
+            "keys_json": keys_json_out,
+            "keys": keys,
+            "reason": obs.safe_error_summary(row["reason"]) or row["reason"],
+            "batch_id": row["batch_id"],
+            "created_at": created,
+            "age_seconds": age,
+            "warnings": keys_warnings,
+            "raw": raw_sanitized,
+            "truncations": raw_truncations,
+            "request_id": request_id,
+        }
+
+    @api.get(
         "/audit",
         response_model=list[AuditRecord],
         responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409],
@@ -1189,7 +1328,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
         """
         if not 1 <= limit <= 100 or offset < 0:
             raise HTTPException(422, "limit 须为 1..100,offset 须 >= 0")
-        if resource_type is not None and resource_type not in ("raw", "object"):
+        if resource_type is not None and resource_type not in (
+            "raw", "object", "quarantine_raw"):
             raise HTTPException(422, f"未知 resource_type '{resource_type}'")
         from_ = _require_aware_dt(from_, "from")
         to = _require_aware_dt(to, "to")

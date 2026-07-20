@@ -338,6 +338,95 @@ def _search_clause(q: str, key_cols: list[str]) -> tuple[str, list[Any]]:
     return f" AND ({likes})", [f"%{escaped}%"] * len(key_cols)
 
 
+# ---- 隔离 raw 脱敏(M5-T03)----
+
+
+def _quarantine_sensitive_cols(pack: TemplatePack, source: str,
+                               object_name: str) -> set[str] | None:
+    """从模板反查:隔离对象的 raw 字典中,哪些列名对应敏感属性。
+
+    返回 None 表示对象不在模板中(完全未知) —— 调用方应 mask 全部值。
+    """
+    tpl = next((o for o in pack.objects if o.object == object_name), None)
+    if tpl is None:
+        return None
+    sensitive_props = {p.name for p in tpl.properties if p.sensitive}
+    if not sensitive_props:
+        return set()
+    sensitive_cols: set[str] = set()
+    for binding in tpl.bindings:
+        if not binding.enabled or binding.source != source:
+            continue
+        for table in binding.tables:
+            prefix = f"{table}."
+            for prop, expr in [*binding.key_map.items(), *binding.field_map.items()]:
+                if not isinstance(expr, str) or not expr.startswith(prefix):
+                    continue
+                if prop not in sensitive_props:
+                    continue
+                col = expr[len(prefix):].split(" ")[0]
+                sensitive_cols.add(col)
+    return sensitive_cols
+
+
+def _sanitize_object_keys(pack: TemplatePack | None, object_name: str,
+                          keys_dict: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """对隔离记录的 keys 字典做脱敏:敏感键值 → MASKED,其余经过 json_safe。
+
+    pack=None 或对象不在模板中 → 全部 mask。
+    返回 (sanitized_keys, truncated_field_names)。
+    """
+    if pack is not None:
+        tpl = next((o for o in pack.objects if o.object == object_name), None)
+    else:
+        tpl = None
+    if tpl is None:
+        return {k: MASKED for k in keys_dict}, []
+    sensitive_key_names = {p.name for p in tpl.properties
+                           if p.name in tpl.keys and p.sensitive}
+    out: dict[str, Any] = {}
+    truncated: list[str] = []
+    for key, value in keys_dict.items():
+        if key in sensitive_key_names:
+            out[key] = MASKED
+        else:
+            safe, was_truncated = json_safe(value)
+            out[key] = safe
+            if was_truncated:
+                truncated.append(key)
+    return out, truncated
+
+
+def sanitize_quarantine_raw(raw_dict: dict[str, Any], pack: TemplatePack | None,
+                            source: str, object_name: str,
+                            ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """隔离 raw_json 脱敏:敏感列 → MASKED,其余 json_safe 并跟踪截断。
+
+    返回 (sanitized_dict | None, truncations)。
+    raw_dict 非 dict 时返回 (None, []),由调用方添加警告。
+    """
+    if not isinstance(raw_dict, dict) or not raw_dict:
+        return None, []
+    if pack is not None:
+        sensitive_cols = _quarantine_sensitive_cols(pack, source, object_name)
+    else:
+        sensitive_cols = None  # 无模板 → 完全未知,全部 mask
+    out: dict[str, Any] = {}
+    truncated_fields: list[str] = []
+    for key, value in raw_dict.items():
+        if sensitive_cols is None:
+            out[key] = MASKED
+        elif key in sensitive_cols:
+            out[key] = MASKED
+        else:
+            safe, was_truncated = json_safe(value)
+            out[key] = safe
+            if was_truncated:
+                truncated_fields.append(key)
+    truncations = [{"row_index": 0, "fields": truncated_fields}] if truncated_fields else []
+    return out, truncations
+
+
 def browse_table(
     db: LandingStore,
     physical: str,
