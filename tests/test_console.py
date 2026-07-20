@@ -94,7 +94,7 @@ def test_quarantine_view_and_retry(env):
     r = client.post("/api/actions/retry", json={"source": SOURCE, "object": "Quotation"}).json()
     assert r["mapped"] == 179 and r["quarantined"] == 1
     q = client.get("/api/quarantine").json()
-    assert len(q) == 1 and "业务键缺失" in q[0]["reason"]
+    assert len(q) == 1 and "映射失败" in q[0]["reason"]
 
     r = client.post("/api/actions/retry", json={"source": SOURCE})
     assert r.status_code == 422  # 缺 object

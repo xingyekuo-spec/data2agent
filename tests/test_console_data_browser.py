@@ -219,14 +219,16 @@ def test_browse_truncation_marks_fields(tmp_path):
 
 
 # ================================================================
-# Issue 1 [P1]: _sanitize_quarantine_reason 源端业务值脱敏
+# M5-T03: _sanitize_quarantine_reason — 结构化安全摘要
 # ================================================================
+# 不再对原始错误文本做正则脱敏(Python !r 单引号/双引号/数值 repr
+# 无一可全局可靠屏蔽),改为返回结构化安全摘要。
 
 from data2agent.metamodel.schema import ObjectTemplate, Property, SourceBinding, TemplatePack
 
 
-def _make_pack_with_map_binding() -> TemplatePack:
-    """构造含 map 表达式的 binding,用于测试源端枚举值脱敏。"""
+def _make_pack_with_binding() -> TemplatePack:
+    """构造含基本 field_map 的 binding 用于测试。"""
     obj_tpl = ObjectTemplate(
         object="TestObj",
         display_name="测试对象",
@@ -253,68 +255,47 @@ def _make_pack_with_map_binding() -> TemplatePack:
     return TemplatePack(version="1.0", objects=[obj_tpl], metrics=[])
 
 
-def test_sanitize_reason_masks_field_value_patterns():
-    """有已启用 binding 时,按字段名正则屏蔽 FIELD=VALUE 模式(含单字符值)。"""
-    pack = _make_pack_with_map_binding()
-    # STATUS 是 field_map 中的列名,CODE 是 key_map 中的列名
-    reason = "Mapping failed: STATUS=VIP-SECRET, CODE=C-SECRET, email admin@test.com"
+def test_sanitize_reason_with_binding_returns_safe_summary():
+    """有已启用 binding 时返回固定安全摘要,不包含原始错误文本。"""
+    pack = _make_pack_with_binding()
+    reason = "status: 源码值 'VIP-SECRET' 未在 map 中声明"
     result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert result == "映射失败，详情请查看隔离 raw 预览"
     assert "VIP-SECRET" not in result
-    assert "C-SECRET" not in result
-    assert "[masked]" in result
-    assert "[email]" in result
-    # 验证单字符值不会被遗漏(旧代码有 len>=2 过滤)
-    reason2 = "RESULT=W 未在 map 中声明"
-    # 构造含 RESULT 字段的 binding
-    obj_tpl = ObjectTemplate(
-        object="TestObj2",
-        display_name="测试",
-        domain="销售",
-        keys=["id"],
-        properties=[
-            Property(name="id", type="string", desc="ID"),
-            Property(name="result", type="enum", enum_values=["W", "L"], desc="结果"),
-        ],
-        bindings=[SourceBinding(
-            source="test_source", tables=["T1"], status="verified",
-            key_map={"id": "T1.ID"},
-            field_map={"result": "T1.RESULT (map W→Win / L→Loss)"},
-        )],
-    )
-    pack2 = TemplatePack(version="1.0", objects=[obj_tpl], metrics=[])
-    result2 = br._sanitize_quarantine_reason(reason2, pack2, "test_source", "TestObj2")
-    assert "W" not in result2
-    assert "[masked]" in result2
+    assert "源码值" not in result
 
 
-def test_sanitize_reason_masks_dict_repr_format():
-    """dict repr 格式的 'FIELD': 'VALUE' 也应被脱敏。"""
-    pack = _make_pack_with_map_binding()
-    reason = "业务键重复:{'CODE': 'C-SECRET', 'STATUS': 'VIP-SECRET'}"
+def test_sanitize_reason_with_number_value_returns_safe_summary():
+    """数值 repr 无引号(如 987654) → 安全摘要不泄露。"""
+    pack = _make_pack_with_binding()
+    # 模拟 "源码值 987654 未在 map 中声明" 格式(!r of int)
+    reason = "status: 源码值 987654 未在 map 中声明"
     result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
-    assert "C-SECRET" not in result
-    assert "VIP-SECRET" not in result
-    assert "[masked]" in result
+    assert "987654" not in result
+    assert "映射失败" in result
 
 
-def test_sanitize_reason_length_budget():
-    """超过 512 字符的 reason 应被截断并加省略号。"""
-    pack = _make_pack_with_map_binding()
-    long_reason = "x" * 600
-    result = br._sanitize_quarantine_reason(long_reason, pack, "test_source", "TestObj")
-    assert len(result) <= 515  # 512 + "..."
-    assert result.endswith("...")
+def test_sanitize_reason_with_double_quoted_string_returns_safe_summary():
+    """含单引号的字符串 repr 用双引号(如 \"O'Reilly-SECRET\") → 安全摘要不泄露。"""
+    pack = _make_pack_with_binding()
+    # Python repr("O'Reilly-SECRET") → "O'Reilly-SECRET" (双引号)
+    reason = "name: 源码值 \"O'Reilly-SECRET\" 未在 map 中声明"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "O'Reilly" not in result
+    assert "SECRET" not in result
+    assert "映射失败" in result
 
 
 def test_sanitize_reason_no_binding_returns_generic():
     """无匹配 binding 时返回固定通用摘要,不泄露原始原因。"""
-    pack = _make_pack_with_map_binding()
-    # unknown source → 无匹配 binding
+    pack = _make_pack_with_binding()
     result = br._sanitize_quarantine_reason(
         "SECRET=leaked-value", pack, "unknown_source", "TestObj")
     assert "leaked-value" not in result
+    assert "SECRET" not in result
     assert "映射失败" in result
     assert "raw 预览" in result
+    assert "模板未识别此来源" in result
 
 
 def test_sanitize_reason_none_or_empty():
@@ -324,54 +305,17 @@ def test_sanitize_reason_none_or_empty():
     assert br._sanitize_quarantine_reason("   ", None, "s", "o") == ""
 
 
-# ---- Issue 1: quote-masking 覆盖 apply_object 全部实际错误格式 ----
-
-def test_sanitize_reason_masks_quoted_value_in_source_not_in_map():
-    """'源码值 'X-SECRET' 未在 map 中声明' → 单引号内容被 mask。"""
-    pack = _make_pack_with_map_binding()
-    # 模拟 apply_object 第122行输出的真实格式
-    reason = "result: 源码值 'X-SECRET' 未在 map 中声明"
-    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
-    assert "X-SECRET" not in result
-    assert "[masked]" in result
-    assert "源码值" in result
-    assert "未在 map 中声明" in result
+def test_sanitize_reason_length_budget():
+    """安全摘要不超过 _REASON_MAX_LEN 预算。"""
+    pack = _make_pack_with_binding()
+    # 即使传入超长 reason,摘要本身是固定短字符串
+    long_reason = "x" * 600
+    result = br._sanitize_quarantine_reason(long_reason, pack, "test_source", "TestObj")
+    assert len(result) <= 512
+    assert "映射失败" in result
 
 
-def test_sanitize_reason_masks_quoted_value_in_coerce_failure():
-    """'类型 int 转换失败,值 'ABC-SECRET'' → 单引号内容被 mask。"""
-    pack = _make_pack_with_map_binding()
-    # 模拟 _coerce 第89行输出的真实格式
-    reason = "payment_days: 类型 int 转换失败,值 'ABC-SECRET'"
-    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
-    assert "ABC-SECRET" not in result
-    assert "[masked]" in result
-    assert "类型 int 转换失败" in result
-
-
-def test_sanitize_reason_masks_quoted_value_in_enum_mismatch():
-    """'取值 'STATE-SECRET' 不在枚举内' → 单引号内容被 mask。"""
-    pack = _make_pack_with_map_binding()
-    # 模拟 apply_object 第126行输出的真实格式
-    reason = "state: 取值 'STATE-SECRET' 不在枚举 ['active', 'inactive'] 内"
-    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
-    assert "STATE-SECRET" not in result
-    assert "[masked]" in result
-    assert "不在枚举" in result
-
-
-def test_sanitize_reason_masks_quoted_value_in_derived_enum():
-    """'派生值 'V-SECRET' 不在枚举内' → 单引号内容被 mask。"""
-    pack = _make_pack_with_map_binding()
-    # 模拟 _apply_derived 第186行输出的真实格式
-    reason = "region: 派生值 'V-SECRET' 不在枚举 ['ap-southeast-1'] 内"
-    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
-    assert "V-SECRET" not in result
-    assert "[masked]" in result
-    assert "派生值" in result
-
-
-# ---- Issue 2: sanitize_quarantine_raw 未映射列默认遮罩 ----
+# ---- Issue 2: sanitize_quarantine_raw 按属性名匹配 ----
 
 def _make_pack_with_mixed_sensitivity() -> TemplatePack:
     """构造含敏感/非敏感属性 + 多余原始列的模板。"""
@@ -402,30 +346,65 @@ def _make_pack_with_mixed_sensitivity() -> TemplatePack:
     return TemplatePack(version="1.0", objects=[obj_tpl], metrics=[])
 
 
-def test_sanitize_raw_unmapped_column_masked():
-    """field_map 中未出现的列（如 CONTACT_PHONE）默认遮罩。"""
+def test_sanitize_raw_matches_by_property_names():
+    """raw dict 的 key 是属性名(build_select AS 别名),应按属性名匹配。"""
     pack = _make_pack_with_mixed_sensitivity()
+    # raw dict keys 来自 build_select 的 AS "prop" 别名,是属性名(小写)
     raw = {
-        "ID": "001",
-        "NAME": "张三",
-        "PHONE": "13800138000",
-        "CONTACT_PHONE": "13900139000",  # 未映射列 → 应 mask
+        "id": "001",           # 属性名,映射到非敏感属性 id
+        "name": "张三",        # 属性名,映射到非敏感属性 name
+        "phone": "13800138000", # 属性名,映射到敏感属性 phone → MASKED
+        "extra_field": "secret", # 未知属性 → MASKED
     }
     sanitized, truncs = br.sanitize_quarantine_raw(raw, pack, "test_source", "TestObj")
     assert sanitized is not None
-    assert sanitized["CONTACT_PHONE"] == "***"
+    assert sanitized["id"] == "001"
+    assert sanitized["name"] == "张三"
+    assert sanitized["phone"] == "***"
+    assert sanitized["extra_field"] == "***"
+
+
+def test_sanitize_raw_unmapped_column_masked():
+    """field_map 中未出现的列默认遮罩。"""
+    pack = _make_pack_with_mixed_sensitivity()
+    raw = {
+        "id": "001",
+        "name": "张三",
+        "phone": "13800138000",
+        "secret_col": "13900139000",  # 未映射列 → mask
+    }
+    sanitized, truncs = br.sanitize_quarantine_raw(raw, pack, "test_source", "TestObj")
+    assert sanitized is not None
+    assert sanitized["secret_col"] == "***"
     # 映射到非敏感属性的列 → 显示
-    assert sanitized["ID"] == "001"
-    assert sanitized["NAME"] == "张三"
+    assert sanitized["id"] == "001"
+    assert sanitized["name"] == "张三"
     # 映射到敏感属性的列 → 遮罩
-    assert sanitized["PHONE"] == "***"
+    assert sanitized["phone"] == "***"
+
+
+def test_sanitize_raw_non_sensitive_properties_shown():
+    """非敏感属性值完整显示,经过 json_safe。"""
+    pack = _make_pack_with_mixed_sensitivity()
+    raw = {"id": "C001", "name": "Acme Corp", "phone": "555-0001"}
+    sanitized, _truncs = br.sanitize_quarantine_raw(raw, pack, "test_source", "TestObj")
+    assert sanitized["id"] == "C001"
+    assert sanitized["name"] == "Acme Corp"
+    assert sanitized["phone"] == "***"
+
+
+def test_sanitize_raw_sensitive_properties_masked():
+    """敏感属性值替换为 MASKED。"""
+    pack = _make_pack_with_mixed_sensitivity()
+    raw = {"id": "D001", "name": "Beta Ltd", "phone": "confidential-666"}
+    sanitized, _truncs = br.sanitize_quarantine_raw(raw, pack, "test_source", "TestObj")
+    assert sanitized["phone"] == "***"
 
 
 def test_sanitize_raw_no_binding_masks_all():
     """无匹配 binding 时所有列全部遮罩。"""
     pack = _make_pack_with_mixed_sensitivity()
-    raw = {"ID": "001", "NAME": "张三", "PHONE": "13800138000", "CONTACT_PHONE": "13900139000"}
-    # 使用未知 source → 无匹配 binding
+    raw = {"id": "001", "name": "张三", "phone": "13800138000", "secret_col": "13900139000"}
     sanitized, truncs = br.sanitize_quarantine_raw(raw, pack, "unknown_source", "TestObj")
     assert sanitized is not None
     for v in sanitized.values():
@@ -434,7 +413,7 @@ def test_sanitize_raw_no_binding_masks_all():
 
 def test_sanitize_raw_no_pack_masks_all():
     """pack=None 时所有列全部遮罩。"""
-    raw = {"ID": "001", "NAME": "张三", "CONTACT_PHONE": "13900139000"}
+    raw = {"id": "001", "name": "张三", "secret_col": "13900139000"}
     sanitized, truncs = br.sanitize_quarantine_raw(raw, None, "test_source", "TestObj")
     assert sanitized is not None
     for v in sanitized.values():

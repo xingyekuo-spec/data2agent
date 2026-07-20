@@ -170,8 +170,10 @@ class TestQuarantineList:
 
     def test_filter_by_reason_contains(self, db):
         client = _client(db)
+        # 按原始 reason 子串过滤("bad"出现在"bad type"等 fixture 中);
+        # 输出为安全摘要,断言所有结果均含"映射失败"(不检查原始值)
         body = client.get("/api/quarantine", params={"reason": "bad"}).json()
-        assert body and all("bad" in x["reason"].lower() for x in body)
+        assert body and all("映射失败" in x["reason"] for x in body)
 
     def test_filter_combined(self, db):
         client = _client(db)

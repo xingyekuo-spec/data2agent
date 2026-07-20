@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import base64
 import math
-import re
 import sqlite3
 from datetime import datetime
 from typing import Any
@@ -347,6 +346,10 @@ def _quarantine_sensitive_cols(pack: TemplatePack, source: str,
     """从模板反查:隔离对象的 raw 字典中,哪些列名对应敏感属性。
 
     返回 None 表示对象不在模板中(完全未知) —— 调用方应 mask 全部值。
+
+    收集两种名称:属性名(property name, raw dict 中的 key)和源列名
+    (source column name, field_map 表达式解析后的列名),均大写后入集合
+    以便在 sanitize_quarantine_raw 中做 case-insensitive 匹配。
     """
     tpl = next((o for o in pack.objects if o.object == object_name), None)
     if tpl is None:
@@ -368,7 +371,8 @@ def _quarantine_sensitive_cols(pack: TemplatePack, source: str,
                 if prop not in sensitive_props:
                     continue
                 col = expr[len(prefix):].split(" ")[0]
-                sensitive_cols.add(col)
+                sensitive_cols.add(col.upper())
+                sensitive_cols.add(prop.upper())
     if not found_binding:
         return None  # 无可靠 binding → 调用方应全量遮罩
     return sensitive_cols
@@ -410,27 +414,24 @@ def _sanitize_object_keys(pack: TemplatePack | None, source: str,
     return out, truncated
 
 
-_EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
 _REASON_MAX_LEN = 512
 
 
 def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
                                  source: str, object_name: str) -> str:
-    """对隔离原因做安全脱敏:屏蔽邮箱,按 field_map/key_map 字段名正则屏蔽
-    ``FIELD=VALUE`` 模式;长度预算 512 字符。
+    """对隔离原因做安全摘要:不再尝试对原始错误文本做正则脱敏(
+    单引号/数值 repr/Python repr 双引号 无一可全局可靠屏蔽),改为
+    返回结构化安全摘要。
 
-    与 safe_error_summary 不同,本函数负责去除映射错误原因中可能泄露的
-    业务敏感值(如邮箱地址、来源字段值)。调用方不应再将返回值传入
-    safe_error_summary(已内置空白压缩)。
+    有已启用 binding → "映射失败，详情请查看隔离 raw 预览"
+    无可靠 binding(对象不在模板或无已启用绑定) → "映射失败（模板未识别此来源），详情请查看隔离 raw 预览"
 
-    无可靠 binding(对象不在模板或无已启用绑定,或 binding 无 field_map)
-    返回固定通用摘要。
+    长度预算 512 字符;空 reason 返回空字符串。
     """
     if not reason or not isinstance(reason, str) or not reason.strip():
         return ""
     # 检查是否有已启用的 binding 对应此 source+object
     enabled_binding = None
-    tpl = None
     if pack is not None:
         tpl = next((o for o in pack.objects if o.object == object_name), None)
         if tpl is not None:
@@ -438,58 +439,13 @@ def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
                 if b.enabled and b.source == source:
                     enabled_binding = b
                     break
-    if enabled_binding is None or not enabled_binding.field_map:
-        return "映射失败（详情请查看隔离 raw 预览）"
-    # 从 field_map/key_map 表达式中提取所有字段名,用于正则屏蔽 FIELD=VALUE 模式
-    field_names: set[str] = set()
-    from ..mapping import parse_field_expr  # noqa: PLC0415 延迟导入避免循环
-    for expr_str in [*enabled_binding.key_map.values(),
-                     *enabled_binding.field_map.values()]:
-        if not isinstance(expr_str, str):
-            continue
-        try:
-            fexpr = parse_field_expr(expr_str)
-            if fexpr.column:
-                field_names.add(fexpr.column.upper())
-        except ValueError:
-            # 解析失败时,尝试从表达式字符串中提取列名作为备选
-            if "." in expr_str:
-                col = expr_str.split(".", 1)[1].split(" ", 1)[0].strip()
-                if col:
-                    field_names.add(col.upper())
-    # 也添加模板声明的业务键列名
-    if tpl is not None:
-        for k in tpl.keys:
-            field_names.add(k.upper())
-    # 屏蔽: 邮箱 -> FIELD=VALUE 模式(正则,无长度下限,不遗漏单字符枚举值)
-    sanitized = _EMAIL_RE.sub("[email]", reason)
-    if field_names:
-        names_pattern = "|".join(sorted(field_names, key=len, reverse=True))
-        # 屏蔽形如 FIELD=VALUE 或 FIELD = VALUE 的模式
-        sanitized = re.sub(
-            rf'\b({names_pattern})\s*=\s*\S+',
-            r'\1=[masked]',
-            sanitized,
-            flags=re.IGNORECASE,
-        )
-        # 同时屏蔽 dict repr 格式: 'FIELD': 'VALUE' / 'FIELD': VALUE
-        sanitized = re.sub(
-            rf"'({names_pattern})'\s*:\s*'?\S+'?",
-            r"'\1': '[masked]'",
-            sanitized,
-            flags=re.IGNORECASE,
-        )
-    # 屏蔽所有剩余单引号内值（覆盖 apply_object 全部实际错误格式:
-    #   "源码值 'X' 未在 map 中声明"、"类型 T 转换失败,值 'ABC'"、
-    #   "取值 'V' 不在枚举 [...] 内"、"派生值 'V' 不在枚举 [...] 内"）
-    # mapping engine 一致使用 !r 格式化源值,单引号内为唯一标记手段。
-    sanitized = re.sub(r"'[^']*'", "'[masked]'", sanitized)
-    # 长度预算
-    if len(sanitized) > _REASON_MAX_LEN:
-        sanitized = sanitized[:_REASON_MAX_LEN] + "..."
-    # 压缩空白(同 safe_error_summary)
-    cleaned = " ".join(sanitized.split())
-    return cleaned if cleaned else ""
+    if enabled_binding is None:
+        msg = "映射失败（模板未识别此来源），详情请查看隔离 raw 预览"
+    else:
+        msg = "映射失败，详情请查看隔离 raw 预览"
+    if len(msg) > _REASON_MAX_LEN:
+        msg = msg[:_REASON_MAX_LEN] + "..."
+    return msg
 
 
 def sanitize_quarantine_raw(raw_dict: dict[str, Any], pack: TemplatePack | None,
@@ -500,15 +456,17 @@ def sanitize_quarantine_raw(raw_dict: dict[str, Any], pack: TemplatePack | None,
     返回 (sanitized_dict | None, truncations)。
     raw_dict 非 dict 时返回 (None, []),由调用方添加警告。
 
-    分类逻辑:
+    匹配逻辑(case-insensitive):
+    - 对 raw dict 的每个 key,同时比对 属性名 和 源列名(大写后)
+    - key 以 "__" 开头时去除前缀后再比对(对应 derived 决策表列)
     - 无模板/无 binding → 全部 mask
-    - 列名不在 field_map/key_map 中 → 未知列,默认 mask（defense-in-depth）
+    - 列名不在已知集合中 → 未知列,默认 mask（defense-in-depth）
     - 列名映射到敏感属性 → mask
     - 列名映射到非敏感属性 → 显示（json_safe）
     """
     if not isinstance(raw_dict, dict) or not raw_dict:
         return None, []
-    # 从模板中收集: 所有已知列名 + 敏感列名
+    # 从模板中收集: 已知列名(大写属性名 + 大写源列名) + 敏感列名(大写)
     all_mapped_cols: set[str] | None = None
     sensitive_cols: set[str] = set()
     if pack is not None:
@@ -529,21 +487,31 @@ def sanitize_quarantine_raw(raw_dict: dict[str, Any], pack: TemplatePack | None,
                         if not isinstance(expr, str) or not expr.startswith(prefix):
                             continue
                         col = expr[len(prefix):].split(" ")[0]
-                        all_mapped_cols.add(col)
+                        # 源列名(大写) + 属性名(大写) — raw dict key
+                        # 来自 build_select 的 AS 别名,即属性名本身
+                        all_mapped_cols.add(col.upper())
+                        all_mapped_cols.add(prop.upper())
                         if prop in sensitive_props:
-                            sensitive_cols.add(col)
+                            sensitive_cols.add(col.upper())
+                            sensitive_cols.add(prop.upper())
             if not binding_found:
                 all_mapped_cols = None  # 无匹配 binding → 全量遮罩
     out: dict[str, Any] = {}
     truncated_fields: list[str] = []
     for key, value in raw_dict.items():
+        # case-insensitive 比对:raw dict key 可能是属性名(snake_case)
+        # 或 derived __前缀列;全部转大写后比对
+        check_key = key.upper()
+        # derived 决策表列(__前缀) → 去除前缀后再比对
+        if check_key.startswith("__"):
+            check_key = check_key[2:]
         if all_mapped_cols is None:
             # 无模板或无 binding → 全部遮罩
             out[key] = MASKED
-        elif key not in all_mapped_cols:
+        elif check_key not in all_mapped_cols:
             # 未在 field_map/key_map 中出现的列 → 未知分类,默认遮罩
             out[key] = MASKED
-        elif key in sensitive_cols:
+        elif check_key in sensitive_cols:
             # 映射到敏感属性的列 → 遮罩
             out[key] = MASKED
         else:
