@@ -8,7 +8,6 @@ import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import { useQuarantineStore } from '@/stores/quarantine'
-import type { components } from '@/types/api'
 import { formatDateTime } from '@/utils/time'
 
 const store = useQuarantineStore()
@@ -85,23 +84,7 @@ const isDetailAuthError = computed(() => {
   return e.kind === 'http' && (e.status === 401 || e.status === 403)
 })
 
-// ---- retry gating ----
-
-type QuarantineGroup = components['schemas']['QuarantineGroup']
-
-function retryDisabledReason(row: QuarantineGroup): string | null {
-  if (row.rate_state === 'unknown' || row.display_name == null) {
-    return '模板未识别此对象，无法重试'
-  }
-  if (row.serving_state === 'not_materialized') {
-    return '对象尚未物化，无需重试'
-  }
-  return null
-}
-
-function isRetryDisabled(row: QuarantineGroup): boolean {
-  return retryDisabledReason(row) !== null
-}
+// ---- retry gating (backend decides; frontend only reads retry_allowed/retry_disabled_reason) ----
 
 // ---- formatters ----
 
@@ -305,8 +288,8 @@ onMounted(() => {
           <el-table-column label="操作" width="80">
             <template #default="{ row }">
               <el-tooltip
-                v-if="isRetryDisabled(row)"
-                :content="retryDisabledReason(row)!"
+                v-if="!row.retry_allowed"
+                :content="row.retry_disabled_reason ?? '重试暂不可用'"
                 placement="top"
               >
                 <el-button
@@ -530,6 +513,18 @@ onMounted(() => {
         <div class="retry-error" data-testid="retry-error">
           <p class="retry-error__title">重试失败</p>
           <p class="retry-error__detail" data-testid="retry-error-detail">{{ retryError?.message ?? '未知错误' }}</p>
+          <p
+            v-if="retryError?.reason_code"
+            class="retry-error__reason"
+            data-testid="retry-error-reason"
+          >
+            原因码: {{ retryError.reason_code }}
+          </p>
+          <p v-if="retryError?.run_id" class="retry-run-link">
+            <router-link :to="runLink(retryError.run_id)" data-testid="retry-error-run-link">
+              查看运行 #{{ retryError.run_id }}
+            </router-link>
+          </p>
         </div>
       </template>
       <template #footer>

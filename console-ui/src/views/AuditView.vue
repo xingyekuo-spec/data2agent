@@ -316,7 +316,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           </span>
         </div>
         <p class="scope-note" data-testid="access-scope-note">
-          访问审计覆盖 raw 数据浏览、quarantine_raw 访问与 object 浏览(允许与拒绝)。
+          访问审计当前覆盖 raw 数据浏览与 quarantine_raw 隔离详情查看(允许与拒绝)。
         </p>
 
         <div class="d2a-card">

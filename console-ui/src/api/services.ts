@@ -6,6 +6,7 @@
  */
 import { client } from './client'
 import { httpError, toApiError, type ApiError } from './errors'
+import type { components } from '@/types/api'
 
 export type ApiResult<T> =
   | { ok: true; data: T; response: Response }
@@ -201,6 +202,40 @@ export interface RetryBody {
   deep: boolean
 }
 
-export function postRetry(body: RetryBody) {
-  return call(client.POST('/api/actions/retry', { body }))
+/**
+ * retry 失败时的结构化错误,保留后端返回的 reason_code / run_id / step_id / detail_path,
+ * 前端据此展示原因码与可点击的运行链接。
+ */
+export interface RetryApiError extends ApiError {
+  reason_code?: string
+  run_id?: number | null
+  step_id?: number | null
+  detail_path?: string | null
+}
+
+export async function postRetry(body: RetryBody): Promise<ApiResult<components['schemas']['RetryActionResult']>> {
+  try {
+    const { data, error, response } = await client.POST('/api/actions/retry', { body })
+    if (!response.ok) {
+      // 提取完整错误体,保留后端返回的 reason_code / run_id / step_id / detail_path
+      const err = error as Record<string, unknown> | undefined
+      const apiError: RetryApiError = {
+        kind: 'http',
+        status: response.status,
+        message: typeof err?.detail === 'string' ? err.detail : `HTTP ${response.status}`,
+        retriable: response.status >= 500 && response.status !== 501,
+        reason_code: typeof err?.reason_code === 'string' ? err.reason_code : undefined,
+        run_id: typeof err?.run_id === 'number' ? (err.run_id as number) : undefined,
+        step_id: typeof err?.step_id === 'number' ? (err.step_id as number) : undefined,
+        detail_path: typeof err?.detail_path === 'string' ? err.detail_path : undefined,
+      }
+      return { ok: false, error: apiError }
+    }
+    if (data === undefined) {
+      return { ok: false, error: { kind: 'parse', message: '成功响应缺少数据', retriable: false } }
+    }
+    return { ok: true, data, response }
+  } catch (err) {
+    return { ok: false, error: toApiError(err) }
+  }
 }

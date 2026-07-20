@@ -56,7 +56,7 @@ export interface ScenarioFixture {
   templates: TemplateObject[]
   templateMetrics: TemplateMetric[]
   proposal: ProposalResponse
-  retryAction: RetryActionResult | { detail: string }
+  retryAction: RetryActionResult | { detail: string; reason_code?: string; run_id?: number | null; step_id?: number | null; detail_path?: string | null }
   retryActionStatus: number
 }
 

@@ -260,7 +260,7 @@ describe('QuarantineView(M5)', () => {
   // ---- retry error ----
 
   it('retry failure shows error message', async () => {
-    // Override retry handler to return error
+    // Override retry handler to return error with plain detail only (no structured fields)
     server.use(
       http.post('*/api/actions/retry', () =>
         HttpResponse.json(
@@ -276,6 +276,55 @@ describe('QuarantineView(M5)', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="retry-error"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="retry-error-detail"]').text()).toContain('53%')
+  })
+
+  it('retry failure shows structured error with reason_code', async () => {
+    server.use(
+      http.post('*/api/actions/retry', () =>
+        HttpResponse.json(
+          {
+            detail: 'Customer 隔离率 53% 超过熔断阈值 20%,请先处理隔离数据或调整阈值',
+            reason_code: 'circuit_breaker',
+          },
+          { status: 409 },
+        ),
+      ),
+    )
+    const { wrapper } = await mountView()
+    const retryBtn = wrapper.find('[data-testid="retry-Customer"]')
+    await retryBtn.trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="retry-error"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="retry-error-detail"]').text()).toContain('53%')
+    expect(wrapper.find('[data-testid="retry-error-reason"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="retry-error-reason"]').text()).toContain('circuit_breaker')
+  })
+
+  it('retry failure with run_id shows error run link', async () => {
+    server.use(
+      http.post('*/api/actions/retry', () =>
+        HttpResponse.json(
+          {
+            detail: 'Apply 执行失败: step 3 报错',
+            reason_code: 'execution_failed',
+            run_id: 44,
+            step_id: 3,
+          },
+          { status: 500 },
+        ),
+      ),
+    )
+    const { wrapper } = await mountView()
+    const retryBtn = wrapper.find('[data-testid="retry-Customer"]')
+    await retryBtn.trigger('click')
+    await flushPromises()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="retry-error"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="retry-error-reason"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="retry-error-reason"]').text()).toContain('execution_failed')
+    expect(wrapper.find('[data-testid="retry-error-run-link"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="retry-error-run-link"]').text()).toContain('44')
   })
 
   // ---- retry cancelled ----
@@ -355,9 +404,9 @@ describe('QuarantineView(M5)', () => {
     expect(urlParams.get('object')).toBe('Customer')
   })
 
-  // ---- retry button disabled: unknown source (rate_state=unknown) ----
+  // ---- retry button disabled: backend says retry not allowed ----
 
-  it('retry button is disabled with tooltip when rate_state is unknown', async () => {
+  it('retry button is disabled with tooltip when retry_allowed is false', async () => {
     server.use(
       http.get('*/api/quarantine/groups', () =>
         HttpResponse.json([{
@@ -369,6 +418,8 @@ describe('QuarantineView(M5)', () => {
           rate_state: 'unknown',
           serving_state: 'unknown',
           breaker_threshold: 0.2,
+          retry_allowed: false,
+          retry_disabled_reason: '模板未识别此对象，无法重试',
         }]),
       ),
     )
@@ -384,9 +435,9 @@ describe('QuarantineView(M5)', () => {
     expect(tooltip.props('content')).toBe('模板未识别此对象，无法重试')
   })
 
-  // ---- retry button disabled: not_materialized ----
+  // ---- retry button disabled: backend says not_materialized ----
 
-  it('retry button is disabled with tooltip when serving_state is not_materialized', async () => {
+  it('retry button is disabled with tooltip when backend says retry not allowed', async () => {
     server.use(
       http.get('*/api/quarantine/groups', () =>
         HttpResponse.json([{
@@ -398,6 +449,8 @@ describe('QuarantineView(M5)', () => {
           rate_state: 'ok',
           serving_state: 'not_materialized',
           breaker_threshold: 0.2,
+          retry_allowed: false,
+          retry_disabled_reason: '对象尚未物化，无需重试',
         }]),
       ),
     )

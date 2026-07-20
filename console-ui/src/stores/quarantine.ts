@@ -13,6 +13,7 @@ import {
   getQuarantineDetail,
   postRetry,
   type QuarantineQuery,
+  type RetryApiError,
 } from '@/api/services'
 import type { components } from '@/types/api'
 import type { RequestState } from '@/types/state'
@@ -52,7 +53,7 @@ export const useQuarantineStore = defineStore('quarantine', () => {
 
   /** Retry action result */
   const retryResult = ref<RequestState<RetryActionResult> | null>(null)
-  const retryError = ref<ApiError | null>(null)
+  const retryError = ref<RetryApiError | null>(null)
 
   // ---- computed summary from groups ----
 

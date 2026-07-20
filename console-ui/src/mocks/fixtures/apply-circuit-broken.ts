@@ -41,6 +41,8 @@ export const applyCircuitBrokenFixture = {
       rate_state: 'tripped',
       serving_state: 'stale',
       breaker_threshold: 0.2,
+      retry_allowed: false,
+      retry_disabled_reason: '隔离率 53% 超过熔断阈值 20%,请先处理隔离数据或调整阈值',
       mapped_at: '2026-07-17T22:00:00+08:00',
       object_rows: 77,
       latest_created_at: '2026-07-18T09:48:10+08:00',
@@ -79,9 +81,13 @@ export const applyCircuitBrokenFixture = {
       warnings: ['重复键无法自动合并'],
     },
   },
-  // M5: retry returns 409 (circuit broken)
+  // M5: retry returns 409 (circuit broken) with structured error
   retryAction: {
     detail: 'Customer 隔离率 53% 超过熔断阈值 20%,请先处理隔离数据或调整阈值',
+    reason_code: 'circuit_breaker',
+    run_id: null,
+    step_id: null,
+    detail_path: null,
   },
   retryActionStatus: 409,
   overview: {
