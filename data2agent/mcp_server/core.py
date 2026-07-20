@@ -18,6 +18,7 @@ E4 起网关消费完整管道的产物:源系统 → sync(raw_*)→ apply(obj_*
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
@@ -48,24 +49,26 @@ class QueryService:
         self._query_log: OrderedDict[str, dict] = OrderedDict()
         self._query_seq = 0
         self._proposal_seq = 0
+        self._lock = threading.Lock()
 
     def _audit(self, record: dict) -> None:
         if self.audit_sink:
             self.audit_sink(record)
 
     def _log_query(self, tool: str, target: str, detail: str, warnings: list[str]) -> str:
-        self._query_seq += 1
-        qid = f"q{self._query_seq}"
-        entry = {
-            "query_id": qid, "tool": tool, "target": target, "detail": detail,
-            "at": datetime.now().isoformat(timespec="seconds"),
-            "warnings": [w for w in warnings if w],
-        }
-        self._query_log[qid] = entry
-        while len(self._query_log) > _QUERY_LOG_CAP:
-            self._query_log.popitem(last=False)
-        self._audit({k: entry[k] for k in ("query_id", "tool", "target", "detail", "at")})
-        return qid
+        with self._lock:
+            self._query_seq += 1
+            qid = f"q{self._query_seq}"
+            entry = {
+                "query_id": qid, "tool": tool, "target": target, "detail": detail,
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "warnings": [w for w in warnings if w],
+            }
+            self._query_log[qid] = entry
+            while len(self._query_log) > _QUERY_LOG_CAP:
+                self._query_log.popitem(last=False)
+            self._audit({k: entry[k] for k in ("query_id", "tool", "target", "detail", "at")})
+            return qid
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
@@ -206,38 +209,41 @@ class QueryService:
                 "evidence 不能为空:先调用 query_objects / query_metrics 取数,"
                 "再以 [{claim, query_id}] 引用其 meta.query_id")
 
-        cited, caveats = [], []
-        for i, item in enumerate(evidence):
-            claim, qid = item.get("claim", ""), item.get("query_id", "")
-            if not claim or not qid:
-                raise ValueError(f"evidence[{i}] 须同时含 claim 与 query_id")
-            logged = self._query_log.get(qid)
-            if logged is None:
-                raise ValueError(
-                    f"evidence[{i}] 的 query_id '{qid}' 无法溯源:不是本会话的查询;"
-                    "请先实际调用 query_* 工具,引用其返回的 meta.query_id")
-            cited.append({"claim": claim,
-                          "query": {k: logged[k] for k in ("query_id", "tool", "target", "at")}})
-            caveats.extend(logged["warnings"])
+        with self._lock:
+            cited, caveats = [], []
+            for i, item in enumerate(evidence):
+                claim, qid = item.get("claim", ""), item.get("query_id", "")
+                if not claim or not qid:
+                    raise ValueError(f"evidence[{i}] 须同时含 claim 与 query_id")
+                logged = self._query_log.get(qid)
+                if logged is None:
+                    raise ValueError(
+                        f"evidence[{i}] 的 query_id '{qid}' 无法溯源:不是本会话的查询;"
+                        "请先实际调用 query_* 工具,引用其返回的 meta.query_id")
+                cited.append({"claim": claim,
+                              "query": {k: logged[k]
+                                        for k in ("query_id", "tool", "target", "at")}})
+                caveats.extend(logged["warnings"])
 
-        self._proposal_seq += 1
-        self._audit({
-            "tool": "propose_action", "proposal_id": f"p{self._proposal_seq}",
-            "target": f"{object}.{action}", "detail": f"evidence={len(cited)}",
-            "at": datetime.now().isoformat(timespec="seconds"),
-        })
-        return {
-            "proposal_id": f"p{self._proposal_seq}",
-            "at": datetime.now().isoformat(timespec="seconds"),
-            "object": object,
-            "action": act.name,
-            "action_desc": act.desc,
-            "tier": act.tier,
-            "conclusion": conclusion.strip(),
-            "evidence": cited,
-            "caveats": sorted({c for c in caveats if c}),
-            "governance": "「说」档建议卡:未执行任何写操作;落地执行(做档)需审批治理",
-        }
+            self._proposal_seq += 1
+            proposal_id = f"p{self._proposal_seq}"
+            self._audit({
+                "tool": "propose_action", "proposal_id": proposal_id,
+                "target": f"{object}.{action}", "detail": f"evidence={len(cited)}",
+                "at": datetime.now().isoformat(timespec="seconds"),
+            })
+            return {
+                "proposal_id": proposal_id,
+                "at": datetime.now().isoformat(timespec="seconds"),
+                "object": object,
+                "action": act.name,
+                "action_desc": act.desc,
+                "tier": act.tier,
+                "conclusion": conclusion.strip(),
+                "evidence": cited,
+                "caveats": sorted({c for c in caveats if c}),
+                "governance": "「说」档建议卡:未执行任何写操作;落地执行(做档)需审批治理",
+            }
 
     # ---- query_metrics ----
 

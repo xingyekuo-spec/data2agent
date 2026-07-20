@@ -191,3 +191,76 @@ def test_proposal_response_governance_is_say_tier(env):
     })
     assert "说" in sample.governance
     assert "未执行" in sample.governance
+
+
+# ---- M6-T02: 长生命周期 QueryService ----
+
+
+def _client(env):
+    landing, cfg_file = env
+    cfg = load_config(cfg_file)
+    app = create_app(cfg.landing, cfg.templates, cfg)
+    return TestClient(app), app, cfg
+
+
+def test_mcp_call_reuses_query_service_across_requests(env):
+    """同一 Console 进程内连续查询应递增 query_id(共享 QueryService)。"""
+    client, _app, _cfg = _client(env)
+    r1 = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+    r2 = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    q1 = r1.json()["meta"]["query_id"]
+    q2 = r2.json()["meta"]["query_id"]
+    assert q1 == "q1"
+    assert q2 == "q2"
+
+
+def test_shared_query_service_allows_propose_after_mcp_call(env):
+    """mcp-call 写入的 query_id 可被同实例 propose_action 引用。"""
+    client, app, _cfg = _client(env)
+    r = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}})
+    assert r.status_code == 200, r.text
+    qid = r.json()["meta"]["query_id"]
+    svc = app.state.d2a_state["query_service"]
+    assert svc is not None
+    card = svc.propose_action(
+        "Quotation", "quote_review", "需复核报价",
+        [{"claim": "报价行可见", "query_id": qid}])
+    assert card["proposal_id"]
+    assert card["evidence"][0]["query"]["query_id"] == qid
+
+
+def test_query_service_resets_when_config_signature_changes(env, tmp_path):
+    """landing/templates/source/max_tier 签名变化后旧 query 日志清空,ID 重新计数。"""
+    import shutil
+
+    client, app, _cfg = _client(env)
+    r1 = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+    r1b = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+    assert r1.status_code == 200 and r1b.status_code == 200
+    assert r1.json()["meta"]["query_id"] == "q1"
+    assert r1b.json()["meta"]["query_id"] == "q2"
+    old_svc = app.state.d2a_state["query_service"]
+    stale_qid = r1b.json()["meta"]["query_id"]  # 仅存在于旧服务日志
+
+    # 换一套等价 templates 路径 → 配置签名变化 → 原子替换服务并清空日志
+    new_templates = tmp_path / "templates-reloaded"
+    shutil.copytree(ROOT / "templates", new_templates)
+    app.state.d2a_state["templates"] = str(new_templates)
+
+    r2 = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["meta"]["query_id"] == "q1"
+    new_svc = app.state.d2a_state["query_service"]
+    assert new_svc is not old_svc
+    with pytest.raises(ValueError, match="无法溯源"):
+        new_svc.propose_action(
+            "Quotation", "quote_review", "新服务不应看见旧 ID",
+            [{"claim": "x", "query_id": stale_qid}])

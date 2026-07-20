@@ -179,6 +179,19 @@ def test_object_layer_not_materialized_guides_user(tmp_path):
     assert empty  # fixture 保持连接存活
 
 
+def test_concurrent_query_ids_unique(svc):
+    """并发查询不得产生重复 query_id。"""
+    import concurrent.futures
+
+    def once():
+        return svc.query_objects("Customer", limit=1)["meta"]["query_id"]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        ids = list(pool.map(lambda _: once(), range(40)))
+    assert len(ids) == len(set(ids))
+    assert all(i.startswith("q") for i in ids)
+
+
 def test_mcp_tool_wiring(svc):
     """FastMCP 装配冒烟:两个只读工具按名注册(无 mcp 包时跳过)。"""
     pytest.importorskip("mcp")

@@ -18,6 +18,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 import urllib.error
@@ -439,6 +440,10 @@ def create_app(landing: str | None = None, templates: str = "templates",
         "pack": None,
         "config_path": _config_path,
         "log_dir": _log_dir,
+        # M6:进程内长生命周期 QueryService(与 landing/templates/source/max_tier 签名绑定)
+        "query_service": None,
+        "query_service_sig": None,
+        "_query_service_lock": threading.Lock(),
     }
     if state["landing"] and not (
         home_layout is not None and (_config_path is None or not Path(_config_path).is_file())
@@ -451,6 +456,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
         path = state["config_path"]
         return path is None or not Path(path).is_file()
 
+    def _invalidate_query_service() -> None:
+        with state["_query_service_lock"]:
+            state["query_service"] = None
+            state["query_service_sig"] = None
+
     def hydrate_from_disk() -> None:
         path = state["config_path"]
         if path is None or not Path(path).is_file():
@@ -460,6 +470,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         state["landing"] = cfg.landing
         state["templates"] = cfg.templates
         state["pack"] = load_pack(cfg.templates)
+        _invalidate_query_service()
 
     def _is_quarantine_detail(path: str) -> bool:
         # /api/quarantine/{id} where id is numeric; NOT /api/quarantine or /api/quarantine/groups
@@ -579,10 +590,33 @@ def create_app(landing: str | None = None, templates: str = "templates",
         cfg = state["config"]
         return next(iter(cfg.sources), "digiwin_e10") if cfg else "digiwin_e10"
 
-    def _mcp_in_process(tool: str, params: dict[str, Any]) -> dict:
+    def _query_service_max_tier() -> str:
+        return os.environ.get("D2A_MCP_MAX_TIER", "说")
+
+    def _query_service_signature() -> tuple[str, str, str, str]:
+        if needs_setup() or not state["landing"]:
+            raise HTTPException(409, "尚未完成首次配置或落地库不可用")
+        landing = str(Path(state["landing"]).resolve())
+        templates_root = str(Path(state["templates"]).resolve())
+        return (landing, templates_root, default_source(), _query_service_max_tier())
+
+    def get_query_service():
+        """返回与当前配置签名绑定的进程内 QueryService;签名变化时原子替换。"""
         from ..mcp_server.core import QueryService
 
-        svc = QueryService(state["landing"], state["templates"], default_source())
+        sig = _query_service_signature()
+        with state["_query_service_lock"]:
+            svc = state["query_service"]
+            if svc is None or state["query_service_sig"] != sig:
+                svc = QueryService(
+                    sig[0], sig[1], source=sig[2], max_tier=sig[3],
+                )
+                state["query_service"] = svc
+                state["query_service_sig"] = sig
+            return svc
+
+    def _mcp_in_process(tool: str, params: dict[str, Any]) -> dict:
+        svc = get_query_service()
         if tool == "query_objects":
             return svc.query_objects(**params)
         return svc.query_metrics(**params)
@@ -1592,11 +1626,13 @@ def create_app(landing: str | None = None, templates: str = "templates",
     def debug_mcp_call(body: McpCallBody) -> dict:
         if body.tool not in _MCP_TOOLS:
             raise HTTPException(400, f"工具 '{body.tool}' 不在白名单,可用:{sorted(_MCP_TOOLS)}")
+        # model_dump 解开 JsonValue RootModel,避免 object=root='Customer' 一类参数污染
+        params = body.model_dump().get("params") or {}
         try:
-            return _mcp_in_process(body.tool, body.params)
+            return _mcp_in_process(body.tool, params)
         except Exception as inproc_err:
             try:
-                return _mcp_http(body.tool, body.params)
+                return _mcp_http(body.tool, params)
             except HTTPException:
                 raise
             except Exception:
@@ -2366,4 +2402,5 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     if _ADMIN_STATIC.is_dir():
         app.mount("/static", StaticFiles(directory=_ADMIN_STATIC), name="static")
+    app.state.d2a_state = state
     return app
