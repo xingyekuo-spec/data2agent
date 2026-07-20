@@ -16,6 +16,7 @@ type AuditRecord = components['schemas']['AuditRecord']
 type AccessAuditPage = components['schemas']['AccessAuditPage']
 type RawDataPageResponse = components['schemas']['RawDataPageResponse']
 type ObjectRowsPageResponse = components['schemas']['ObjectRowsPageResponse']
+type QuarantineRecord = components['schemas']['QuarantineRecord']
 
 /**
  * 未匹配请求策略:
@@ -73,7 +74,7 @@ function respond<T>(
 function pageParams(request: Request): { limit: number; offset: number } {
   const url = new URL(request.url)
   return {
-    limit: Number(url.searchParams.get('limit') ?? 50),
+    limit: Math.min(Number(url.searchParams.get('limit') ?? 50), 100),
     offset: Number(url.searchParams.get('offset') ?? 0),
   }
 }
@@ -162,6 +163,30 @@ function dataPage<T extends RawDataPageResponse | ObjectRowsPageResponse>(
   }
 }
 
+/** M5: quarantine list with pagination + filtering */
+function quarantineList(fixture: ScenarioFixture, request: Request): { items: QuarantineRecord[]; total: number } {
+  const url = new URL(request.url)
+  const source = url.searchParams.get('source')
+  const object = url.searchParams.get('object')
+  const reason = url.searchParams.get('reason')
+  const filtered = fixture.quarantine.filter((r) =>
+    (source === null || r.source === source)
+    && (object === null || r.object === object)
+    && (reason === null || r.reason.includes(reason)),
+  )
+  return page(filtered, request)
+}
+
+/** M5: check Bearer auth for quarantine detail (simplified: checks Authorization header presence) */
+function authCheck(request: Request): HttpResponse<string> | null {
+  const auth = request.headers.get('Authorization')
+  if (!auth || !auth.startsWith('Bearer ')) {
+    const body: HttpError = { detail: '缺少或无效的 Bearer Token' }
+    return json(body, 401)
+  }
+  return null
+}
+
 export function buildHandlers(): HttpHandler[] {
   return [
     http.get('*/api/setup/status', () => respond((f) => f.setupStatus)),
@@ -171,7 +196,34 @@ export function buildHandlers(): HttpHandler[] {
       return respond(() => result.items, () => ({ 'X-Total-Count': String(result.total) }))
     }),
     http.get('*/api/runs/:runId', () => respond((f) => f.runDetail)),
-    http.get('*/api/quarantine', () => respond((f) => f.quarantine)),
+
+    // ---- M5: quarantine list (paginated, X-Total-Count) ----
+    http.get('*/api/quarantine', ({ request }) => {
+      const result = quarantineList(scenarioFixtures[getScenario()], request)
+      return respond(() => result.items, () => ({ 'X-Total-Count': String(result.total) }))
+    }),
+
+    // ---- M5: quarantine groups ----
+    http.get('*/api/quarantine/groups', () => respond((f) => f.quarantineGroups)),
+
+    // ---- M5: quarantine detail (requires Bearer auth) ----
+    http.get('*/api/quarantine/:id', ({ request, params }) => {
+      const authFail = authCheck(request)
+      if (authFail) return authFail
+
+      const fail = transportFailure()
+      if (fail) return fail
+
+      const fixture = scenarioFixtures[getScenario()]
+      const id = Number(params.id)
+      const detail = fixture.quarantineDetail?.[id]
+      if (!detail) {
+        const body: HttpError = { detail: `隔离记录 ${id} 不存在或已处理` }
+        return json(body, 404)
+      }
+      return json(detail, 200)
+    }),
+
     http.get('*/api/audit', ({ request }) => {
       const result = auditFor(scenarioFixtures[getScenario()], request)
       return respond(() => result.items, () => ({ 'X-Total-Count': String(result.total) }))
@@ -208,8 +260,27 @@ export function buildHandlers(): HttpHandler[] {
       }
       return json(dataPage(fixture.objectRows, request))
     }),
+
+    // ---- M5: templates (real data, no longer 501) ----
     http.get('*/api/templates', () => respond((f) => f.templates)),
+
+    // ---- M5: templates metrics ----
+    http.get('*/api/templates/metrics', () => respond((f) => f.templateMetrics)),
+
     http.post('*/api/debug/mcp-call', () => respond((f) => f.mcpCall)),
     http.post('*/api/gateway/proposals', () => respond((f) => f.proposal)),
+
+    // ---- M5: retry action (structured RetryActionResult / RetryActionError) ----
+    http.post('*/api/actions/retry', ({ request }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+
+      // Check auth
+      const authFail = authCheck(request)
+      if (authFail) return authFail
+
+      const fixture = scenarioFixtures[getScenario()]
+      return json(fixture.retryAction, fixture.retryActionStatus ?? 200)
+    }),
   ]
 }

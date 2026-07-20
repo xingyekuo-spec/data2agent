@@ -160,3 +160,47 @@ export function getObjectRows(object: string, query: BrowseQuery) {
     }),
   )
 }
+
+// ---- M5:隔离列表 / 分组 / 详情 ----
+
+export interface QuarantineQuery {
+  limit: number
+  offset: number
+  source?: string
+  object?: string
+  reason?: string
+}
+
+export async function getQuarantineList(query: QuarantineQuery) {
+  return pageOf(await call(client.GET('/api/quarantine', { params: { query } })))
+}
+
+export function getQuarantineGroups(source?: string) {
+  return call(client.GET('/api/quarantine/groups', { params: { query: { source: source ?? null } } }))
+}
+
+export function getQuarantineDetail(id: number) {
+  return call(client.GET('/api/quarantine/{id}', { params: { path: { id } } }))
+}
+
+// ---- M5:模板 / 模板指标 ----
+
+export function getTemplates() {
+  return call(client.GET('/api/templates'))
+}
+
+export function getTemplateMetrics() {
+  return call(client.GET('/api/templates/metrics'))
+}
+
+// ---- M5:操作(retry) ----
+
+export interface RetryBody {
+  source: string
+  object?: string | null
+  deep: boolean
+}
+
+export function postRetry(body: RetryBody) {
+  return call(client.POST('/api/actions/retry', { body }))
+}

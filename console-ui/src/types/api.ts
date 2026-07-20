@@ -372,8 +372,61 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Quarantine */
+        /**
+         * Quarantine
+         * @description 隔离列表:数组 wire shape + X-Total-Count 响应头(M5)。
+         *
+         *     支持 source/object 精确匹配、reason 子串搜索;分页(默认 50,上限 100);
+         *     排序固定 id DESC;不含 raw_json;created_at 规范化为带时区 datetime。
+         */
         get: operations["quarantine_api_quarantine_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/quarantine/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Quarantine Groups
+         * @description 隔离分组摘要:按 (source, object) 聚合未处理隔离(M5)。
+         *
+         *     包含模板显示名、隔离率、熔断/数据新鲜度状态;未知 source/object 不省略,
+         *     以 display_name=null + 警告保留为事实。
+         */
+        get: operations["quarantine_groups_api_quarantine_groups_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/quarantine/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Quarantine Detail
+         * @description 隔离详情(M5-T03):强制 Bearer auth + raw 脱敏预览。
+         *
+         *     列表/分组端点从不返回 raw;这是查看隔离原始数据的唯一入口。
+         *     每次请求(允许/拒绝)均写入不泄密访问审计;审计失败 → 请求失败关闭。
+         *     已处理记录(resolved_at 非空)返回 404,与不存在记录同语义。
+         */
+        get: operations["quarantine_detail_api_quarantine__id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -489,8 +542,38 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Templates View */
+        /**
+         * Templates View
+         * @description 模板只读展示:对象模板、属性、绑定、物化状态与隔离计数。
+         *
+         *     枚举映射从 binding field_map 表达式中解析;派生决策表原样透出。
+         *     物化状态按 obj_* 表是否存在、COUNT、MAX(_d2a_mapped_at) 判定;
+         *     查询失败返回 state=unknown + 警告,不伪装为未物化。
+         */
         get: operations["templates_view_api_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/templates/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Templates Metrics
+         * @description 指标只读展示:模板包内所有指标定义。
+         *
+         *     calibration_state 按 status 映射:certified→calibrated, draft→uncalibrated,
+         *     deprecated→deprecated。draft 指标表示"模板未声明完成现场校准"。
+         */
+        get: operations["templates_metrics_api_templates_metrics_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -594,7 +677,7 @@ export interface components {
              * Resource Type
              * @enum {string}
              */
-            resource_type: "raw" | "object";
+            resource_type: "raw" | "object" | "quarantine_raw";
             /** Returned Rows */
             returned_rows?: number | null;
             /** Source */
@@ -764,6 +847,28 @@ export interface components {
             semantics: string;
             /** Source */
             source: string;
+        };
+        /**
+         * DeriveRule
+         * @description 模板派生规则:when 条件匹配时使用 value。
+         */
+        DeriveRule: {
+            /** Value */
+            value: string;
+            /** When */
+            when: {
+                [key: string]: string | null;
+            };
+        };
+        /**
+         * DerivedField
+         * @description 模板派生字段:有序规则列表 + 默认值。
+         */
+        DerivedField: {
+            /** Default */
+            default?: string | null;
+            /** Rules */
+            rules?: components["schemas"]["DeriveRule"][];
         };
         /** FieldError */
         FieldError: {
@@ -1241,15 +1346,109 @@ export interface components {
             /** Tier */
             tier: string;
         };
-        /** QuarantineRecord */
-        QuarantineRecord: {
+        /**
+         * QuarantineDetail
+         * @description 隔离详情:仅由 GET /api/quarantine/{id} 返回(强制 Bearer auth)。
+         */
+        QuarantineDetail: {
+            /** Age Seconds */
+            age_seconds?: number | null;
+            /** Batch Id */
+            batch_id?: string | null;
             /**
              * Created At
-             * @description legacy local ISO text from SQLite; offset/timezone not guaranteed in M1
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
              */
             created_at: string;
             /** Id */
             id: number;
+            /** Keys */
+            keys?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            } | null;
+            /** Keys Json */
+            keys_json?: string | null;
+            /** Object */
+            object: string;
+            /** Raw */
+            raw?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            } | null;
+            /** Reason */
+            reason: string;
+            /** Request Id */
+            request_id: string;
+            /** Source */
+            source: string;
+            /** Truncations */
+            truncations?: components["schemas"]["FieldTruncation"][];
+            /** Warnings */
+            warnings?: string[];
+        };
+        /**
+         * QuarantineGroup
+         * @description 隔离分组摘要(按 source+object 聚合)。
+         */
+        QuarantineGroup: {
+            /** Breaker Threshold */
+            breaker_threshold: number;
+            /** Display Name */
+            display_name?: string | null;
+            /** Latest Apply Run Id */
+            latest_apply_run_id?: number | null;
+            /** Latest Batch Id */
+            latest_batch_id?: string | null;
+            /** Latest Created At */
+            latest_created_at?: string | null;
+            /** Latest Reason */
+            latest_reason?: string | null;
+            /** Mapped At */
+            mapped_at?: string | null;
+            /** Object */
+            object: string;
+            /** Object Rows */
+            object_rows?: number | null;
+            /** Pending */
+            pending: number;
+            /** Quarantine Rate */
+            quarantine_rate?: number | null;
+            /**
+             * Rate State
+             * @enum {string}
+             */
+            rate_state: "ok" | "warning" | "tripped" | "unknown";
+            /**
+             * Serving State
+             * @enum {string}
+             */
+            serving_state: "fresh" | "stale" | "not_materialized" | "unavailable" | "unknown";
+            /** Source */
+            source: string;
+            /** Warnings */
+            warnings?: string[];
+        };
+        /**
+         * QuarantineRecord
+         * @description 隔离记录(列表视图)。M5 起 created_at 改为带时区 datetime。
+         */
+        QuarantineRecord: {
+            /** Age Seconds */
+            age_seconds?: number | null;
+            /** Batch Id */
+            batch_id?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            created_at: string;
+            /** Id */
+            id: number;
+            /** Keys */
+            keys?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            } | null;
             /** Keys Json */
             keys_json?: string | null;
             /** Object */
@@ -1258,6 +1457,8 @@ export interface components {
             reason: string;
             /** Source */
             source: string;
+            /** Warnings */
+            warnings?: string[];
         };
         /** RawDataPageResponse */
         RawDataPageResponse: {
@@ -1409,8 +1610,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** RetryActionResult */
+        /**
+         * RetryActionResult
+         * @description 重试成功响应(M5 起 status 收窄为 Literal["ok"])。
+         */
         RetryActionResult: {
+            /** Detail Path */
+            detail_path: string;
             /** Executed */
             executed: boolean;
             /** Mapped */
@@ -1419,8 +1625,15 @@ export interface components {
             object: string;
             /** Quarantined */
             quarantined: number;
-            /** Status */
-            status: string;
+            /** Run Id */
+            run_id: number;
+            /**
+             * Status
+             * @constant
+             */
+            status: "ok";
+            /** Step Id */
+            step_id: number;
             /** Total */
             total: number;
         };
@@ -1677,6 +1890,21 @@ export interface components {
         };
         /** TemplateBinding */
         TemplateBinding: {
+            /** Derived */
+            derived?: {
+                [key: string]: components["schemas"]["DerivedField"];
+            };
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /** Enum Map */
+            enum_map?: {
+                [key: string]: {
+                    [key: string]: string;
+                };
+            };
             /** Field Map */
             field_map?: {
                 [key: string]: string;
@@ -1699,6 +1927,64 @@ export interface components {
             /** Watermark */
             watermark?: string | null;
         };
+        /**
+         * TemplateMaterialization
+         * @description 模板对象物化状态。
+         */
+        TemplateMaterialization: {
+            /** Batch Id */
+            batch_id?: string | null;
+            /** Mapped At */
+            mapped_at?: string | null;
+            /** Rows */
+            rows?: number | null;
+            /** Source */
+            source?: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "materialized" | "not_materialized" | "unknown";
+            /** Warnings */
+            warnings?: string[];
+        };
+        /**
+         * TemplateMetric
+         * @description 模板指标定义。
+         */
+        TemplateMetric: {
+            /**
+             * Calibration State
+             * @default uncalibrated
+             * @enum {string}
+             */
+            calibration_state: "calibrated" | "uncalibrated" | "deprecated";
+            /**
+             * Caveats
+             * @default
+             */
+            caveats: string;
+            /** Dimensions */
+            dimensions?: string[];
+            /** Display Name */
+            display_name: string;
+            /** Formula */
+            formula: string;
+            /**
+             * Freshness Sla
+             * @default T+1
+             */
+            freshness_sla: string;
+            /** Grain */
+            grain?: string[];
+            /** Metric */
+            metric: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "certified" | "draft" | "deprecated";
+        };
         /** TemplateObject */
         TemplateObject: {
             /** Bindings */
@@ -1711,17 +1997,33 @@ export interface components {
             domain?: string | null;
             /** Keys */
             keys: string[];
+            /** Knowledge Refs */
+            knowledge_refs?: string[];
+            materialized?: components["schemas"]["TemplateMaterialization"] | null;
             /** Object */
             object: string;
             /** Properties */
             properties: components["schemas"]["TemplateProperty"][];
+            /**
+             * Quarantine Pending
+             * @default 0
+             */
+            quarantine_pending: number;
+            /** Source Of Truth */
+            source_of_truth: string;
+            /** Warnings */
+            warnings?: string[];
         };
         /** TemplateProperty */
         TemplateProperty: {
             /** Desc */
             desc?: string | null;
+            /** Enum Values */
+            enum_values?: string[];
             /** Name */
             name: string;
+            /** Ref */
+            ref?: string | null;
             /**
              * Sensitive
              * @default false
@@ -2819,7 +3121,62 @@ export interface operations {
     quarantine_api_quarantine_get: {
         parameters: {
             query?: {
+                source?: string | null;
                 object?: string | null;
+                reason?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description 当前筛选条件下的总数(分页用) */
+                    "X-Total-Count"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuarantineRecord"][];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestError"];
+                };
+            };
+        };
+    };
+    quarantine_groups_api_quarantine_groups_get: {
+        parameters: {
+            query?: {
+                source?: string | null;
             };
             header?: never;
             path?: never;
@@ -2833,7 +3190,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["QuarantineRecord"][];
+                    "application/json": components["schemas"]["QuarantineGroup"][];
                 };
             };
             /** @description 缺少或无效的 Bearer Token */
@@ -2861,6 +3218,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    quarantine_detail_api_quarantine__id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuarantineDetail"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 禁止访问 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 未处理异常 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
                 };
             };
         };
@@ -3113,8 +3546,46 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
-            501: {
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    templates_metrics_api_templates_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateMetric"][];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1689,6 +1689,122 @@
         "title": "ProposalResponse",
         "type": "object"
       },
+      "QuarantineDetail": {
+        "description": "隔离详情:仅由 GET /api/quarantine/{id} 返回(强制 Bearer auth)。",
+        "properties": {
+          "age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Seconds"
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "created_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "keys": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keys"
+          },
+          "keys_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keys Json"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "raw": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "truncations": {
+            "items": {
+              "$ref": "#/components/schemas/FieldTruncation"
+            },
+            "title": "Truncations",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "source",
+          "object",
+          "reason",
+          "created_at",
+          "request_id"
+        ],
+        "title": "QuarantineDetail",
+        "type": "object"
+      },
       "QuarantineGroup": {
         "description": "隔离分组摘要(按 source+object 聚合)。",
         "properties": {
@@ -3317,6 +3433,74 @@
           "state"
         ],
         "title": "TemplateMaterialization",
+        "type": "object"
+      },
+      "TemplateMetric": {
+        "description": "模板指标定义。",
+        "properties": {
+          "calibration_state": {
+            "default": "uncalibrated",
+            "enum": [
+              "calibrated",
+              "uncalibrated",
+              "deprecated"
+            ],
+            "title": "Calibration State",
+            "type": "string"
+          },
+          "caveats": {
+            "default": "",
+            "title": "Caveats",
+            "type": "string"
+          },
+          "dimensions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Dimensions",
+            "type": "array"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "formula": {
+            "title": "Formula",
+            "type": "string"
+          },
+          "freshness_sla": {
+            "default": "T+1",
+            "title": "Freshness Sla",
+            "type": "string"
+          },
+          "grain": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Grain",
+            "type": "array"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "certified",
+              "draft",
+              "deprecated"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "metric",
+          "display_name",
+          "status",
+          "formula"
+        ],
+        "title": "TemplateMetric",
         "type": "object"
       },
       "TemplateObject": {
@@ -5218,7 +5402,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Total-Count": {
+                "description": "当前筛选条件下的总数(分页用)",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -5335,6 +5527,101 @@
           {}
         ],
         "summary": "Quarantine Groups"
+      }
+    },
+    "/api/quarantine/{id}": {
+      "get": {
+        "description": "隔离详情(M5-T03):强制 Bearer auth + raw 脱敏预览。\n\n列表/分组端点从不返回 raw;这是查看隔离原始数据的唯一入口。\n每次请求(允许/拒绝)均写入不泄密访问审计;审计失败 → 请求失败关闭。\n已处理记录(resolved_at 非空)返回 404,与不存在记录同语义。",
+        "operationId": "quarantine_detail_api_quarantine__id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuarantineDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "禁止访问"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "未处理异常"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Quarantine Detail"
       }
     },
     "/api/runs": {
@@ -5692,6 +5979,7 @@
     },
     "/api/templates": {
       "get": {
+        "description": "模板只读展示:对象模板、属性、绑定、物化状态与隔离计数。\n\n枚举映射从 binding field_map 表达式中解析;派生决策表原样透出。\n物化状态按 obj_* 表是否存在、COUNT、MAX(_d2a_mapped_at) 判定;\n查询失败返回 state=unknown + 警告,不伪装为未物化。",
         "operationId": "templates_view_api_templates_get",
         "responses": {
           "200": {
@@ -5718,7 +6006,7 @@
             },
             "description": "缺少或无效的 Bearer Token"
           },
-          "501": {
+          "409": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5726,7 +6014,7 @@
                 }
               }
             },
-            "description": "契约桩:端点在所属里程碑实现前返回 501"
+            "description": "冲突/未配置/只读/熔断"
           }
         },
         "security": [
@@ -5735,10 +6023,56 @@
           },
           {}
         ],
-        "summary": "Templates View",
-        "tags": [
-          "v0.2-stub"
-        ]
+        "summary": "Templates View"
+      }
+    },
+    "/api/templates/metrics": {
+      "get": {
+        "description": "指标只读展示:模板包内所有指标定义。\n\ncalibration_state 按 status 映射:certified→calibrated, draft→uncalibrated,\ndeprecated→deprecated。draft 指标表示\"模板未声明完成现场校准\"。",
+        "operationId": "templates_metrics_api_templates_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TemplateMetric"
+                  },
+                  "title": "Response Templates Metrics Api Templates Metrics Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Templates Metrics"
       }
     },
     "/config": {

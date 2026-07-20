@@ -1,8 +1,89 @@
 import { baseFixture, pipelineNode, type ScenarioFixture } from './base'
 
-/** apply 熔断:映射 failed、对象层 stale(继续服务上一稳定版本),双重语义。 */
+const T = '2026-07-18T09:50:00+08:00'
+
+/** apply 熔断:映射 failed、对象层 stale(继续服务上一稳定版本),隔离率达到阈值。
+ *  M5: 包含 rate_state=tripped, quarantine 分组, retry 409(熔断阻止)。 */
 export const applyCircuitBrokenFixture = {
   ...baseFixture,
+  quarantine: [
+    {
+      id: 105,
+      source: 'digiwin_e10',
+      object: 'Customer',
+      keys_json: '{"customer_code": "C-DUP-01"}',
+      reason: '业务键重复:customer_code=C-DUP-01 已存在对象行中',
+      created_at: '2026-07-18T09:48:10+08:00',
+      age_seconds: 120,
+      batch_id: 'b-20260718-0948',
+      keys: { customer_code: 'C-DUP-01' },
+      warnings: ['重复键无法自动合并'],
+    },
+    {
+      id: 104,
+      source: 'digiwin_e10',
+      object: 'Customer',
+      keys_json: '{"customer_code": "C-BAD-01"}',
+      reason: '外键引用无效:payment_terms=P999 不存在于 PAYMENT_TERMS 枚举',
+      created_at: '2026-07-18T09:48:05+08:00',
+      age_seconds: 125,
+      batch_id: 'b-20260718-0948',
+      keys: { customer_code: 'C-BAD-01' },
+    },
+  ],
+  quarantineGroups: [
+    {
+      source: 'digiwin_e10',
+      object: 'Customer',
+      display_name: '客户',
+      pending: 41,
+      quarantine_rate: 0.53,
+      rate_state: 'tripped',
+      serving_state: 'stale',
+      breaker_threshold: 0.2,
+      mapped_at: '2026-07-17T22:00:00+08:00',
+      object_rows: 77,
+      latest_created_at: '2026-07-18T09:48:10+08:00',
+      latest_reason: '业务键重复:customer_code=C-DUP-01 已存在对象行中',
+      latest_batch_id: 'b-20260718-0948',
+      latest_apply_run_id: 44,
+      warnings: ['隔离率 53% 超过熔断阈值 20%'],
+    },
+  ],
+  quarantineDetail: {
+    104: {
+      id: 104,
+      source: 'digiwin_e10',
+      object: 'Customer',
+      reason: '外键引用无效:payment_terms=P999 不存在于 PAYMENT_TERMS 枚举',
+      created_at: '2026-07-18T09:48:05+08:00',
+      age_seconds: 125,
+      batch_id: 'b-20260718-0948',
+      keys: { customer_code: 'C-BAD-01' },
+      keys_json: '{"customer_code": "C-BAD-01"}',
+      raw: { CUSTOMER_CODE: 'C-BAD-01', CUSTOMER_NAME: '问题客户', PAYMENT_TERM_DAYS: 'P999', LAST_MODIFIED_DATE: '2026-07-18 09:40:00' },
+      request_id: 'req-104',
+    },
+    105: {
+      id: 105,
+      source: 'digiwin_e10',
+      object: 'Customer',
+      reason: '业务键重复:customer_code=C-DUP-01 已存在对象行中',
+      created_at: '2026-07-18T09:48:10+08:00',
+      age_seconds: 120,
+      batch_id: 'b-20260718-0948',
+      keys: { customer_code: 'C-DUP-01' },
+      keys_json: '{"customer_code": "C-DUP-01"}',
+      raw: { CUSTOMER_CODE: 'C-DUP-01', CUSTOMER_NAME: '重复客户', PAYMENT_TERM_DAYS: 30, LAST_MODIFIED_DATE: '2026-07-18 09:42:00' },
+      request_id: 'req-105',
+      warnings: ['重复键无法自动合并'],
+    },
+  },
+  // M5: retry returns 409 (circuit broken)
+  retryAction: {
+    detail: 'Customer 隔离率 53% 超过熔断阈值 20%,请先处理隔离数据或调整阈值',
+  },
+  retryActionStatus: 409,
   overview: {
     ...baseFixture.overview,
     objects: [
@@ -47,7 +128,7 @@ export const applyCircuitBrokenFixture = {
     ],
   },
   pipeline: {
-    generated_at: '2026-07-18T09:50:00+08:00',
+    generated_at: T,
     overall_status: 'failed',
     nodes: [
       pipelineNode({ node: 'erp', status: 'healthy', last_success_at: '2026-07-18T09:10:00+08:00' }),

@@ -66,7 +66,7 @@ describe('DashboardView(M3)', () => {
     setScenario('quarantine-pending')
     const { wrapper } = await mountDashboard()
     const cards = wrapper.findAll('[data-testid="stat-value"]')
-    expect(cards[2]?.text()).toBe('5')
+    expect(cards[2]?.text()).toBe('4')
     const alerts = wrapper.find('[data-testid="alerts"]')
     expect(alerts.text()).toContain('存在未处理隔离')
   })

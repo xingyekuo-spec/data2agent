@@ -26,6 +26,10 @@ export type RawDataPageResponse = components['schemas']['RawDataPageResponse']
 export type ObjectSummary = components['schemas']['ObjectSummary']
 export type ObjectRowsPageResponse = components['schemas']['ObjectRowsPageResponse']
 export type TemplateObject = components['schemas']['TemplateObject']
+export type TemplateMetric = components['schemas']['TemplateMetric']
+export type QuarantineGroup = components['schemas']['QuarantineGroup']
+export type QuarantineDetail = components['schemas']['QuarantineDetail']
+export type RetryActionResult = components['schemas']['RetryActionResult']
 export type ProposalResponse = components['schemas']['ProposalResponse']
 
 /** 场景在各端点的 200 响应体;401/500 等传输级场景由 handler 统一短路 */
@@ -34,6 +38,8 @@ export interface ScenarioFixture {
   overview: OverviewResponse
   runs: RunSummary[]
   quarantine: QuarantineRecord[]
+  quarantineGroups: QuarantineGroup[]
+  quarantineDetail: Record<number, QuarantineDetail>
   audit: AuditRecord[]
   accessAudit: AccessAuditPage
   rawCatalog: RawTableCatalogResponse
@@ -48,7 +54,10 @@ export interface ScenarioFixture {
   objects: ObjectSummary[]
   objectRows: ObjectRowsPageResponse
   templates: TemplateObject[]
+  templateMetrics: TemplateMetric[]
   proposal: ProposalResponse
+  retryAction: RetryActionResult | { detail: string }
+  retryActionStatus: number
 }
 
 const T = '2026-07-18T09:12:00+08:00'
@@ -235,11 +244,14 @@ const baseTemplates: TemplateObject[] = [
       { name: 'payment_days', type: 'int', desc: '账期(天)', sensitive: false },
       { name: 'contact', type: 'string', desc: '联系方式', sensitive: true },
     ],
+    source_of_truth: 'digiwin_e10',
+    quarantine_pending: 0,
     bindings: [
       {
         source: 'digiwin_e10',
         tables: ['CUSTOMER', 'CURRENCY'],
         status: 'verified',
+        enabled: true,
         key_map: { customer_code: 'CUSTOMER.CUSTOMER_CODE' },
         field_map: {
           customer_code: 'CUSTOMER.CUSTOMER_CODE',
@@ -251,6 +263,13 @@ const baseTemplates: TemplateObject[] = [
         notes: '展厅模拟表形;真实环境以现场字典核对为准',
       },
     ],
+    materialized: {
+      state: 'materialized',
+      source: 'digiwin_e10',
+      rows: 36,
+      mapped_at: T,
+      batch_id: 'b-20260718-0910',
+    },
   },
   {
     object: 'SalesOrder',
@@ -263,11 +282,14 @@ const baseTemplates: TemplateObject[] = [
       { name: 'customer', type: 'ref', desc: '客户', sensitive: false },
       { name: 'total_amount', type: 'money', desc: '订单金额', sensitive: false },
     ],
+    source_of_truth: 'digiwin_e10',
+    quarantine_pending: 0,
     bindings: [
       {
         source: 'digiwin_e10',
         tables: ['SALES_ORDER'],
         status: 'verified',
+        enabled: true,
         key_map: { order_no: 'SALES_ORDER.ORDER_NO' },
         field_map: {
           order_no: 'SALES_ORDER.ORDER_NO',
@@ -277,6 +299,13 @@ const baseTemplates: TemplateObject[] = [
         watermark: 'SALES_ORDER.LAST_MODIFIED_DATE',
       },
     ],
+    materialized: {
+      state: 'materialized',
+      source: 'digiwin_e10',
+      rows: 52,
+      mapped_at: T,
+      batch_id: 'b-20260718-0910',
+    },
   },
 ]
 
@@ -578,4 +607,48 @@ export const baseFixture: ScenarioFixture = {
     caveats: ['指标口径:毛利率按不含税金额计算'],
     governance: '「说」档建议卡:未执行任何写操作;落地执行(做档)需审批治理',
   },
+
+  // ---- M5: quarantine groups ----
+  quarantineGroups: [],
+
+  // ---- M5: quarantine detail (keyed by id) ----
+  quarantineDetail: {},
+
+  // ---- M5: template metrics ----
+  templateMetrics: [
+    {
+      metric: 'gross_margin_pct',
+      display_name: '毛利率',
+      formula: 'sum(revenue - cost) * 100.0 / sum(revenue)',
+      status: 'certified',
+      calibration_state: 'calibrated',
+      freshness_sla: 'T+1',
+      caveats: '',
+      dimensions: ['Customer', 'Material'],
+      grain: ['SalesOrder'],
+    },
+    {
+      metric: 'avg_payment_days',
+      display_name: '平均账期',
+      formula: 'avg(payment_days)',
+      status: 'draft',
+      calibration_state: 'uncalibrated',
+      freshness_sla: 'T+1',
+      caveats: '指标口径待现场校准',
+    },
+  ],
+
+  // ---- M5: retry action (healthy → success) ----
+  retryAction: {
+    executed: true,
+    object: 'Customer',
+    status: 'ok',
+    mapped: 36,
+    quarantined: 0,
+    total: 36,
+    run_id: 42,
+    step_id: 1,
+    detail_path: '/runs/42',
+  },
+  retryActionStatus: 200,
 }
