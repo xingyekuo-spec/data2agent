@@ -588,8 +588,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         + "Auth: skipped only while needs_setup=true (first-time bootstrap). "
                         "After configuration, Bearer is required when D2A_CONSOLE_TOKEN is set."
                     ).strip()
-        # M4:运行/审计列表的总数响应头显式声明(类型层必须可见)
-        for path in ("/api/runs", "/api/audit"):
+        # M4/M5:列表总数响应头显式声明(类型层必须可见)
+        for path in ("/api/runs", "/api/audit", "/api/quarantine"):
             get_op = schema.get("paths", {}).get(path, {}).get("get")
             if get_op is not None:
                 get_op.setdefault("responses", {}).setdefault("200", {}) \
@@ -905,9 +905,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
             return "stale"
         if mapped_at is not None:
             try:
+                # Escape _ and % in source name for SQLite LIKE (they are wildcards)
+                escaped = source.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
                 raw_tables = [r[0] for r in db.con.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' "
-                    "AND name LIKE ?", (f"raw_{source}__%",)).fetchall()]
+                    "AND name LIKE ? ESCAPE '\\'", (f"raw_{escaped}__%",)).fetchall()]
                 raw_latest: datetime | None = None
                 for rt in raw_tables:
                     try:
