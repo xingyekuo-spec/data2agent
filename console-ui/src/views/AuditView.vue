@@ -62,8 +62,10 @@ function applyRouteQuery(query: LocationQuery, refresh: boolean): void {
   if (activeTab.value === 'access') {
     const nextAllowed = firstString(query.allowed)
     const nextResourceType = firstString(query.resource_type)
-    const resourceType: '' | 'raw' | 'object' =
-      nextResourceType === 'raw' || nextResourceType === 'object' ? nextResourceType : ''
+    const resourceType: '' | 'raw' | 'object' | 'quarantine_raw' =
+      nextResourceType === 'raw' || nextResourceType === 'object' || nextResourceType === 'quarantine_raw'
+        ? nextResourceType
+        : ''
     const allowed: '' | 'true' | 'false' =
       nextAllowed === 'true' || nextAllowed === 'false' ? nextAllowed : ''
     const values = {
@@ -274,6 +276,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           >
             <el-option label="raw" value="raw" />
             <el-option label="object" value="object" />
+            <el-option label="quarantine_raw" value="quarantine_raw" />
           </el-select>
           <el-select
             v-model="accessFilters.allowed"
@@ -313,7 +316,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           </span>
         </div>
         <p class="scope-note" data-testid="access-scope-note">
-          访问审计当前仅覆盖 raw 数据浏览(允许与拒绝);对象浏览未接入审计。
+          访问审计覆盖 raw 数据浏览、quarantine_raw 访问与 object 浏览(允许与拒绝)。
         </p>
 
         <div class="d2a-card">

@@ -326,4 +326,98 @@ describe('QuarantineView(M5)', () => {
     const { wrapper } = await mountView()
     expect(wrapper.find('[data-testid="quarantine-pager"]').exists()).toBe(true)
   })
+
+  // ---- source+object pair in group selection ----
+
+  it('group selection passes both source and object to record query', async () => {
+    // intercept quarantine list and capture query params
+    let capturedUrl = ''
+    server.use(
+      http.get('*/api/quarantine', ({ request }) => {
+        capturedUrl = request.url
+        const result = { items: quarantinePendingFixture.quarantine.filter(
+          (r) => r.source === 'digiwin_e10' && r.object === 'Customer',
+        ), total: 2 }
+        return new HttpResponse(JSON.stringify(result.items), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json', 'X-Total-Count': '2' },
+        })
+      }),
+    )
+    const { wrapper } = await mountView()
+    // Click on Customer row
+    const rows = wrapper.find('[data-testid="quarantine-groups-table"]').findAll('tbody tr')
+    await rows[0]!.trigger('click')
+    await flushPromises()
+    // query should include both source and object
+    const urlParams = new URL(capturedUrl).searchParams
+    expect(urlParams.get('source')).toBe('digiwin_e10')
+    expect(urlParams.get('object')).toBe('Customer')
+  })
+
+  // ---- retry button disabled: unknown source (rate_state=unknown) ----
+
+  it('retry button is disabled with tooltip when rate_state is unknown', async () => {
+    server.use(
+      http.get('*/api/quarantine/groups', () =>
+        HttpResponse.json([{
+          source: 'unknown_source',
+          object: 'MysteryObj',
+          display_name: null,
+          pending: 5,
+          quarantine_rate: 0.0,
+          rate_state: 'unknown',
+          serving_state: 'unknown',
+          breaker_threshold: 0.2,
+        }]),
+      ),
+    )
+    const { wrapper } = await mountView()
+    await flushPromises()
+    const retryBtn = wrapper.find('[data-testid="retry-MysteryObj"]')
+    expect(retryBtn.exists()).toBe(true)
+    // button should be disabled
+    expect(retryBtn.attributes('disabled')).toBeDefined()
+    // el-tooltip wraps the button and has the content prop (teleported, not in HTML)
+    const tooltip = wrapper.findComponent({ name: 'ElTooltip' })
+    expect(tooltip.exists()).toBe(true)
+    expect(tooltip.props('content')).toBe('模板未识别此对象，无法重试')
+  })
+
+  // ---- retry button disabled: not_materialized ----
+
+  it('retry button is disabled with tooltip when serving_state is not_materialized', async () => {
+    server.use(
+      http.get('*/api/quarantine/groups', () =>
+        HttpResponse.json([{
+          source: 'demo',
+          object: 'EmptyObj',
+          display_name: '空对象',
+          pending: 3,
+          quarantine_rate: 0.0,
+          rate_state: 'ok',
+          serving_state: 'not_materialized',
+          breaker_threshold: 0.2,
+        }]),
+      ),
+    )
+    const { wrapper } = await mountView()
+    await flushPromises()
+    const retryBtn = wrapper.find('[data-testid="retry-EmptyObj"]')
+    expect(retryBtn.exists()).toBe(true)
+    expect(retryBtn.attributes('disabled')).toBeDefined()
+    const tooltip = wrapper.findComponent({ name: 'ElTooltip' })
+    expect(tooltip.exists()).toBe(true)
+    expect(tooltip.props('content')).toBe('对象尚未物化，无需重试')
+  })
+
+  // ---- retry button enabled for normal group ----
+
+  it('retry button is enabled for a normal group with known source', async () => {
+    setScenario('quarantine-pending')
+    const { wrapper } = await mountView()
+    const retryBtn = wrapper.find('[data-testid="retry-Customer"]')
+    expect(retryBtn.exists()).toBe(true)
+    expect(retryBtn.attributes('disabled')).toBeUndefined()
+  })
 })

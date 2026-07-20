@@ -32,8 +32,10 @@ export const useQuarantineStore = defineStore('quarantine', () => {
   const groupsRefreshError = ref<ApiError | null>(null)
   let groupsGen = 0
 
-  /** Selected object filter (null = all) */
-  const selectedObject = ref<string | null>(null)
+  /** Selected group filter: source+object pair (null = all).
+   *  Backend groups by source+object; using only object would mix records
+   *  from different sources when the same object name appears in multiple sources. */
+  const selectedGroup = ref<{ source: string; object: string } | null>(null)
 
   /** Record list (paginated, filtered by selected object) */
   const page = reactive({ limit: 50, offset: 0 })
@@ -93,8 +95,8 @@ export const useQuarantineStore = defineStore('quarantine', () => {
 
   // ---- records ----
 
-  function selectGroup(object: string | null): void {
-    selectedObject.value = object
+  function selectGroup(group: { source: string; object: string } | null): void {
+    selectedGroup.value = group
     page.offset = 0
     void fetchRecords()
   }
@@ -109,8 +111,9 @@ export const useQuarantineStore = defineStore('quarantine', () => {
       limit: page.limit,
       offset: page.offset,
     }
-    if (selectedObject.value) {
-      query.object = selectedObject.value
+    if (selectedGroup.value) {
+      query.source = selectedGroup.value.source
+      query.object = selectedGroup.value.object
     }
     const result = await getQuarantineList(query)
     if (gen !== recordsGen) return
@@ -182,7 +185,7 @@ export const useQuarantineStore = defineStore('quarantine', () => {
 
   return {
     groups, groupsRefreshError,
-    selectedObject,
+    selectedGroup,
     page, records, recordsTotal, recordsRefreshError,
     detail, detailId, detailRefreshError,
     retryResult, retryError,

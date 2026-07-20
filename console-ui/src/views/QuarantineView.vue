@@ -8,13 +8,14 @@ import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import { useQuarantineStore } from '@/stores/quarantine'
+import type { components } from '@/types/api'
 import { formatDateTime } from '@/utils/time'
 
 const store = useQuarantineStore()
 const {
   groups,
   groupsRefreshError,
-  selectedObject,
+  selectedGroup,
   records,
   recordsTotal,
   recordsRefreshError,
@@ -71,9 +72,11 @@ const servingStateLabel: Record<string, string> = {
 // ---- computed ----
 
 const selectedGroupName = computed(() => {
-  if (!selectedObject.value || groups.value.status !== 'success') return ''
-  const g = groups.value.data.find((x) => x.object === selectedObject.value)
-  return g?.display_name ?? selectedObject.value
+  if (!selectedGroup.value || groups.value.status !== 'success') return ''
+  const g = groups.value.data.find(
+    (x) => x.source === selectedGroup.value!.source && x.object === selectedGroup.value!.object,
+  )
+  return g?.display_name ?? selectedGroup.value.object
 })
 
 const isDetailAuthError = computed(() => {
@@ -81,6 +84,24 @@ const isDetailAuthError = computed(() => {
   const e = detail.value.error
   return e.kind === 'http' && (e.status === 401 || e.status === 403)
 })
+
+// ---- retry gating ----
+
+type QuarantineGroup = components['schemas']['QuarantineGroup']
+
+function retryDisabledReason(row: QuarantineGroup): string | null {
+  if (row.rate_state === 'unknown' || row.display_name == null) {
+    return '模板未识别此对象，无法重试'
+  }
+  if (row.serving_state === 'not_materialized') {
+    return '对象尚未物化，无需重试'
+  }
+  return null
+}
+
+function isRetryDisabled(row: QuarantineGroup): boolean {
+  return retryDisabledReason(row) !== null
+}
 
 // ---- formatters ----
 
@@ -119,8 +140,8 @@ function runLink(runId: number | null | undefined): string {
 
 // ---- group table ----
 
-function onGroupClick(row: { object: string }): void {
-  store.selectGroup(row.object)
+function onGroupClick(row: { source: string; object: string }): void {
+  store.selectGroup({ source: row.source, object: row.object })
 }
 
 function onClearGroup(): void {
@@ -283,7 +304,23 @@ onMounted(() => {
           </el-table-column>
           <el-table-column label="操作" width="80">
             <template #default="{ row }">
+              <el-tooltip
+                v-if="isRetryDisabled(row)"
+                :content="retryDisabledReason(row)!"
+                placement="top"
+              >
+                <el-button
+                  size="small"
+                  text
+                  type="warning"
+                  disabled
+                  :data-testid="`retry-${row.object}`"
+                >
+                  重试
+                </el-button>
+              </el-tooltip>
               <el-button
+                v-else
                 size="small"
                 text
                 type="warning"
@@ -302,11 +339,11 @@ onMounted(() => {
     <div class="d2a-card">
       <div class="toolbar">
         <h3 class="card-title">
-          <template v-if="selectedObject">隔离记录:{{ selectedGroupName }}</template>
+          <template v-if="selectedGroup">隔离记录:{{ selectedGroupName }}</template>
           <template v-else>所有隔离记录</template>
         </h3>
         <el-button
-          v-if="selectedObject"
+          v-if="selectedGroup"
           size="small"
           data-testid="clear-group-filter"
           @click="onClearGroup"

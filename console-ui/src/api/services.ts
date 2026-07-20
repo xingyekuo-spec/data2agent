@@ -119,7 +119,7 @@ export interface AccessAuditQuery {
   limit: number
   offset: number
   subject?: string
-  resource_type?: 'raw' | 'object'
+  resource_type?: 'raw' | 'object' | 'quarantine_raw'
   allowed?: boolean
   from?: string
   to?: string

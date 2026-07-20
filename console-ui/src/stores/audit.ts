@@ -16,7 +16,7 @@ export const useAuditStore = defineStore('audit', () => {
   const sqlFilters = reactive({ source: '', action: '', from: '', to: '' })
   const accessFilters = reactive({
     subject: '',
-    resource_type: '' as '' | 'raw' | 'object',
+    resource_type: '' as '' | 'raw' | 'object' | 'quarantine_raw',
     allowed: '' as '' | 'true' | 'false',
     from: '',
     to: '',

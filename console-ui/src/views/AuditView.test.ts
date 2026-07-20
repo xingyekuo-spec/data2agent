@@ -60,7 +60,7 @@ describe('AuditView(M4)', () => {
     await accessTab?.trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-testid="access-scope-note"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('仅覆盖 raw')
+    expect(wrapper.text()).toContain('quarantine_raw')
     const table = wrapper.find('[data-testid="access-table"]')
     expect(table.exists()).toBe(true)
     expect(table.text()).toContain('console-admin')
@@ -87,6 +87,21 @@ describe('AuditView(M4)', () => {
     expect(table.exists()).toBe(true)
     expect(table.text()).toContain('console-admin')
     expect(table.text()).not.toContain('anonymous')
+  })
+
+  it('资源类型下拉包含 quarantine_raw 选项', async () => {
+    const wrapper = await mountView()
+    const panes = wrapper.findAll('.el-tabs__item')
+    const accessTab = panes.find((p) => p.text().includes('数据访问'))
+    await accessTab?.trigger('click')
+    await flushPromises()
+    const select = wrapper.find('[data-testid="filter-resource-type"]')
+    expect(select.exists()).toBe(true)
+    // click to open dropdown
+    await select.find('.el-select__wrapper').trigger('click')
+    await flushPromises()
+    // the dropdown should contain quarantine_raw option
+    expect(document.body.textContent).toContain('quarantine_raw')
   })
 
   it('刷新失败保留上一次 SQL 审计数据并标记失败', async () => {
