@@ -120,14 +120,16 @@ resp.raise_for_status()
 
 function insertQuarantineRecord(landing, source, object, keysJson, reason, rawJson) {
   // 使用 Python json 模块构造 JSON 字符串,避免 JS↔Python 序列化歧义
-  const script = `import json, sqlite3, time
+  const script = `import json, sqlite3
+from datetime import datetime, timezone
 db = sqlite3.connect(${JSON.stringify(landing)})
 keys_val = json.dumps(${JSON.stringify(keysJson)})
 raw_val = json.dumps(${JSON.stringify(rawJson)})
+created_at = datetime.now(timezone.utc).isoformat()
 db.execute(
     "INSERT INTO d2a_quarantine (source, object, keys_json, reason, raw_json, created_at) "
-    "VALUES (?, ?, ?, ?, ?, int(time.time()))",
-    (${JSON.stringify(source)}, ${JSON.stringify(object)}, keys_val, ${JSON.stringify(reason)}, raw_val),
+    "VALUES (?, ?, ?, ?, ?, ?)",
+    (${JSON.stringify(source)}, ${JSON.stringify(object)}, keys_val, ${JSON.stringify(reason)}, raw_val, created_at),
 )
 db.commit()`
   sh(PYTHON, ['-c', script], { cwd: ROOT })

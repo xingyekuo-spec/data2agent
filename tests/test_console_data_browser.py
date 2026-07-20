@@ -256,33 +256,37 @@ def _make_pack_with_binding() -> TemplatePack:
 
 
 def test_sanitize_reason_with_binding_returns_safe_summary():
-    """有已启用 binding 时返回固定安全摘要,不包含原始错误文本。"""
+    """有已启用 binding 时返回分类安全摘要,不包含原始错误文本。"""
     pack = _make_pack_with_binding()
     reason = "status: 源码值 'VIP-SECRET' 未在 map 中声明"
     result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
-    assert result == "映射失败，详情请查看隔离 raw 预览"
+    assert "枚举未映射" in result
+    assert "映射失败" in result
+    assert "raw 预览" in result
     assert "VIP-SECRET" not in result
     assert "源码值" not in result
 
 
 def test_sanitize_reason_with_number_value_returns_safe_summary():
-    """数值 repr 无引号(如 987654) → 安全摘要不泄露。"""
+    """数值 repr 无引号(如 987654) → 分类安全摘要不泄露。"""
     pack = _make_pack_with_binding()
     # 模拟 "源码值 987654 未在 map 中声明" 格式(!r of int)
     reason = "status: 源码值 987654 未在 map 中声明"
     result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
     assert "987654" not in result
+    assert "枚举未映射" in result
     assert "映射失败" in result
 
 
 def test_sanitize_reason_with_double_quoted_string_returns_safe_summary():
-    """含单引号的字符串 repr 用双引号(如 \"O'Reilly-SECRET\") → 安全摘要不泄露。"""
+    """含单引号的字符串 repr 用双引号(如 \"O'Reilly-SECRET\") → 分类安全摘要不泄露。"""
     pack = _make_pack_with_binding()
     # Python repr("O'Reilly-SECRET") → "O'Reilly-SECRET" (双引号)
     reason = "name: 源码值 \"O'Reilly-SECRET\" 未在 map 中声明"
     result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
     assert "O'Reilly" not in result
     assert "SECRET" not in result
+    assert "枚举未映射" in result
     assert "映射失败" in result
 
 
@@ -313,6 +317,83 @@ def test_sanitize_reason_length_budget():
     result = br._sanitize_quarantine_reason(long_reason, pack, "test_source", "TestObj")
     assert len(result) <= 512
     assert "映射失败" in result
+
+
+# ---- Issue 1 (M5 seventh review): reason 分类摘要 ----
+
+def test_sanitize_reason_category_enum_unmapped():
+    """'未在 map 中声明' → 枚举未映射。"""
+    pack = _make_pack_with_binding()
+    reason = "status: 源码值 'UNKNOWN' 未在 map 中声明"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "映射失败（枚举未映射）" in result
+    assert "UNKNOWN" not in result
+
+
+def test_sanitize_reason_category_type_conversion():
+    """'类型.*转换失败' → 类型转换异常。"""
+    pack = _make_pack_with_binding()
+    reason = "amount: 类型 decimal 转换失败,值 'abc'"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "类型转换异常" in result
+    assert "abc" not in result
+
+
+def test_sanitize_reason_category_enum_mismatch():
+    """'不在枚举' → 枚举不匹配。"""
+    pack = _make_pack_with_binding()
+    reason = "status: 取值 'UNKNOWN' 不在枚举 ['active', 'inactive'] 内"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "枚举不匹配" in result
+    assert "UNKNOWN" not in result
+
+
+def test_sanitize_reason_category_business_key_missing():
+    """'业务键缺失' → 业务键缺失。"""
+    pack = _make_pack_with_binding()
+    reason = "业务键缺失:{'code': None, 'name': 'X'}"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "业务键缺失" in result
+    assert "X" not in result
+
+
+def test_sanitize_reason_category_business_key_duplicate():
+    """'业务键重复' → 业务键重复。"""
+    pack = _make_pack_with_binding()
+    reason = "业务键重复:{'code': 'DUP001'}"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "业务键重复" in result
+    assert "DUP001" not in result
+
+
+def test_sanitize_reason_category_derived_no_match():
+    """'无匹配' → 派生规则无匹配。"""
+    pack = _make_pack_with_binding()
+    reason = "status: 派生规则无匹配(源值 {'season': 'fall', 'type': 'Z'})"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "派生规则无匹配" in result
+    assert "fall" not in result
+    assert "Z" not in result
+
+
+def test_sanitize_reason_combined_categories():
+    """多个错误类型同时出现 → 以顿号连接。"""
+    pack = _make_pack_with_binding()
+    # 模拟包含"未在 map 中声明"和"业务键缺失"两个关键词
+    reason = "name: 源码值 'X' 未在 map 中声明; 业务键缺失:{'code': None}"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert "枚举未映射" in result
+    assert "业务键缺失" in result
+    assert "、" in result  # 顿号连接
+    assert "X" not in result
+
+
+def test_sanitize_reason_unknown_keyword_fallback():
+    """无已知关键词 → 回退到通用摘要。"""
+    pack = _make_pack_with_binding()
+    reason = "未知错误: something went wrong internally"
+    result = br._sanitize_quarantine_reason(reason, pack, "test_source", "TestObj")
+    assert result == "映射失败，详情请查看隔离 raw 预览"
 
 
 # ---- Issue 2: sanitize_quarantine_raw 按属性名匹配 ----

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import math
+import re
 import sqlite3
 from datetime import datetime
 from typing import Any
@@ -416,6 +417,27 @@ def _sanitize_object_keys(pack: TemplatePack | None, source: str,
 
 _REASON_MAX_LEN = 512
 
+# 安全关键词模式 → 类别名（关键词来自映射引擎固定字符串，非用户数据）
+_CATEGORY_PATTERNS: list[tuple[str, str]] = [
+    (r"未在 map 中声明", "枚举未映射"),
+    (r"类型.*转换失败", "类型转换异常"),
+    (r"不在枚举", "枚举不匹配"),
+    (r"业务键缺失", "业务键缺失"),
+    (r"业务键重复", "业务键重复"),
+    (r"无匹配", "派生规则无匹配"),
+]
+
+
+def _categorize_reason(reason: str) -> list[str]:
+    """从原始错误原因中提取已知安全类别,保持模式匹配顺序。"""
+    seen: set[str] = set()
+    categories: list[str] = []
+    for pattern, category in _CATEGORY_PATTERNS:
+        if re.search(pattern, reason) and category not in seen:
+            seen.add(category)
+            categories.append(category)
+    return categories
+
 
 def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
                                  source: str, object_name: str) -> str:
@@ -423,7 +445,7 @@ def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
     单引号/数值 repr/Python repr 双引号 无一可全局可靠屏蔽),改为
     返回结构化安全摘要。
 
-    有已启用 binding → "映射失败，详情请查看隔离 raw 预览"
+    有已启用 binding → 基于固定关键词生成分类摘要,无匹配关键词时回退到通用摘要
     无可靠 binding(对象不在模板或无已启用绑定) → "映射失败（模板未识别此来源），详情请查看隔离 raw 预览"
 
     长度预算 512 字符;空 reason 返回空字符串。
@@ -442,7 +464,12 @@ def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
     if enabled_binding is None:
         msg = "映射失败（模板未识别此来源），详情请查看隔离 raw 预览"
     else:
-        msg = "映射失败，详情请查看隔离 raw 预览"
+        categories = _categorize_reason(reason)
+        if categories:
+            cat_str = "、".join(categories)
+            msg = f"映射失败（{cat_str}），详情请查看隔离 raw 预览"
+        else:
+            msg = "映射失败，详情请查看隔离 raw 预览"
     if len(msg) > _REASON_MAX_LEN:
         msg = msg[:_REASON_MAX_LEN] + "..."
     return msg
