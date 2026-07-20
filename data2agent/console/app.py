@@ -1211,7 +1211,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
             raise HTTPException(409, f"重试触发熔断:{e}") from e
         return {
             "executed": True, **asdict(result),
-            # M5: new required fields (T06 实现前用占位值保持 wire 兼容)
+            # M5: new required fields (M5-T06 retry 实现前用占位值保持 wire 兼容)
             "run_id": 0,
             "step_id": 0,
             "detail_path": "",

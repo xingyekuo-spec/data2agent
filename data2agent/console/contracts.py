@@ -605,11 +605,12 @@ class TemplateMetric(BaseModel):
     metric: str
     display_name: str
     status: Literal["certified", "draft", "deprecated"]
-    calibration_state: Literal["calibrated", "uncalibrated", "deprecated"]
+    calibration_state: Literal["calibrated", "uncalibrated", "deprecated"] = "uncalibrated"
     formula: str
     grain: list[str] = Field(default_factory=list)
     dimensions: list[str] = Field(default_factory=list)
     caveats: str = ""
+    freshness_sla: str = "T+1"
 
 
 class ProposalEvidenceInput(BaseModel):
