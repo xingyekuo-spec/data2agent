@@ -613,7 +613,7 @@ def test_m4_browse_and_audit_shapes(tmp_path):
     assert set(col_props["role"]["enum"]) == {"business_key", "data", "metadata"}
     assert set(col_props["classification"]["enum"]) == {"normal", "sensitive", "unknown"}
     assert set(schemas["AccessAuditItem"]["properties"]["resource_type"]["enum"]) == {
-        "raw", "object"}
+        "raw", "object", "quarantine_raw"}
     obj_props = schemas["ObjectSummary"]["properties"]
     assert "searchable" in obj_props and "warning" in obj_props
     audit_props = schemas["AuditRecord"]["properties"]

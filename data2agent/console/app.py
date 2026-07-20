@@ -1209,7 +1209,13 @@ def create_app(landing: str | None = None, templates: str = "templates",
             result = apply_object(store(), tpl, body.source)
         except MappingCircuitBreaker as e:
             raise HTTPException(409, f"重试触发熔断:{e}") from e
-        return {"executed": True, **asdict(result)}
+        return {
+            "executed": True, **asdict(result),
+            # M5: new required fields (T06 实现前用占位值保持 wire 兼容)
+            "run_id": 0,
+            "step_id": 0,
+            "detail_path": "",
+        }
 
     # ---- v0.2 M3:真实观测端点 ----
 

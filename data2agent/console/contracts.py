@@ -42,6 +42,10 @@ class JsonValue(RootModel[
     """
 
 
+JsonObject = dict[str, JsonValue]
+"""Bounded JSON object (string keys, JsonValue values) for keys/params fields."""
+
+
 class HttpError(BaseModel):
     """HTTPException-style error body: detail is always a string."""
 
@@ -206,12 +210,48 @@ class RunSummary(BaseModel):
 
 
 class QuarantineRecord(BaseModel):
+    """隔离记录(列表视图)。M5 起 created_at 改为带时区 datetime。"""
+
     id: int
     source: str
     object: str
-    keys_json: str | None = None
-    reason: str
-    created_at: str = Field(description=LEGACY_TIME_DESC)
+    keys_json: str | None = None  # legacy, keep for wire compatibility
+    keys: JsonObject | None = None  # parsed keys, null + warning on parse failure
+    reason: str  # must be sanitized (no traceback/SQL/sensitive values)
+    batch_id: str | None = None
+    created_at: datetime = Field(description=TZ_TIME_DESC)
+    age_seconds: int | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
+class QuarantineDetail(QuarantineRecord):
+    """隔离详情:仅由 GET /api/quarantine/{id} 返回(强制 Bearer auth)。"""
+
+    raw: JsonValue | None = None  # sanitized, truncated, JSON-safe
+    truncations: list[FieldTruncation] = Field(default_factory=list)
+    request_id: str
+
+
+class QuarantineGroup(BaseModel):
+    """隔离分组摘要(按 source+object 聚合)。"""
+
+    source: str
+    object: str
+    display_name: str | None = None
+    pending: int
+    latest_created_at: datetime | None = None
+    latest_batch_id: str | None = None
+    latest_reason: str | None = None  # sanitized
+    quarantine_rate: float | None = None
+    breaker_threshold: float  # DEFAULT_BREAKER_THRESHOLD (0.05) or config override
+    rate_state: Literal["ok", "warning", "tripped", "unknown"]
+    serving_state: Literal[
+        "fresh", "stale", "not_materialized", "unavailable", "unknown"
+    ]
+    latest_apply_run_id: int | None = None
+    object_rows: int | None = None
+    mapped_at: datetime | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AuditRecord(BaseModel):
@@ -279,12 +319,36 @@ class ApplyActionResult(BaseModel):
 
 
 class RetryActionResult(BaseModel):
-    executed: bool
+    """重试成功响应(M5 起 status 收窄为 Literal["ok"])。"""
+
+    executed: bool  # always True for success
     object: str
     total: int
     mapped: int
     quarantined: int
-    status: str
+    status: Literal["ok"]
+    run_id: int
+    step_id: int
+    detail_path: str
+
+
+class RetryActionError(BaseModel):
+    """重试错误响应(409/500):结构化错误,不含 traceback/SQL/敏感值。"""
+
+    detail: str  # safe summary, no traceback/SQL/sensitive values
+    reason_code: Literal[
+        "circuit_broken", "execution_failed", "observation_failed"
+    ]
+    executed: bool  # whether apply_object started executing
+    object: str
+    total: int | None = None
+    mapped: int | None = None
+    quarantined: int | None = None
+    status: Literal["aborted", "failed"]
+    run_id: int | None = None
+    step_id: int | None = None
+    detail_path: str | None = None
+    error_id: str | None = None
 
 
 # ---- v0.2 契约桩(M2):schema 先行,运行时在所属里程碑实现前返回 501 ----
@@ -450,7 +514,7 @@ class AccessAuditItem(BaseModel):
     id: int
     ts: datetime = Field(description=TZ_TIME_DESC)
     subject: str
-    resource_type: Literal["raw", "object"]
+    resource_type: Literal["raw", "object", "quarantine_raw"]
     source: str | None
     resource: str
     allowed: bool
@@ -472,11 +536,38 @@ class AccessAuditPage(BaseModel):
 BindingStatus = Literal["draft", "verified", "disabled"]
 
 
+class DeriveRule(BaseModel):
+    """模板派生规则:when 条件匹配时使用 value。"""
+
+    when: dict[str, str | None]  # condition: field -> value (None = "any")
+    value: str
+
+
+class DerivedField(BaseModel):
+    """模板派生字段:有序规则列表 + 默认值。"""
+
+    rules: list[DeriveRule] = Field(default_factory=list)
+    default: str | None = None
+
+
+class TemplateMaterialization(BaseModel):
+    """模板对象物化状态。"""
+
+    state: Literal["materialized", "not_materialized", "unknown"]
+    source: str | None = None
+    rows: int | None = None
+    mapped_at: datetime | None = None
+    batch_id: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+
+
 class TemplateProperty(BaseModel):
     name: str
     type: str
     desc: str | None = None
     sensitive: bool = False
+    ref: str | None = None
+    enum_values: list[str] = Field(default_factory=list)
 
 
 class TemplateBinding(BaseModel):
@@ -487,6 +578,9 @@ class TemplateBinding(BaseModel):
     field_map: dict[str, str] = Field(default_factory=dict)
     watermark: str | None = None
     notes: str | None = None
+    enabled: bool = True
+    enum_map: dict[str, dict[str, str]] = Field(default_factory=dict)
+    derived: dict[str, DerivedField] = Field(default_factory=dict)
 
 
 class TemplateObject(BaseModel):
@@ -497,6 +591,25 @@ class TemplateObject(BaseModel):
     keys: list[str]
     properties: list[TemplateProperty]
     bindings: list[TemplateBinding]
+    # ---- M5 追加 ----
+    source_of_truth: str
+    knowledge_refs: list[str] = Field(default_factory=list)
+    materialized: TemplateMaterialization | None = None
+    quarantine_pending: int = 0
+    warnings: list[str] = Field(default_factory=list)
+
+
+class TemplateMetric(BaseModel):
+    """模板指标定义。"""
+
+    metric: str
+    display_name: str
+    status: Literal["certified", "draft", "deprecated"]
+    calibration_state: Literal["calibrated", "uncalibrated", "deprecated"]
+    formula: str
+    grain: list[str] = Field(default_factory=list)
+    dimensions: list[str] = Field(default_factory=list)
+    caveats: str = ""
 
 
 class ProposalEvidenceInput(BaseModel):
