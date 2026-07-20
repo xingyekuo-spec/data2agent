@@ -148,6 +148,12 @@ class TestRetryPreflight:
         client = _client_no_config(landing)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
         assert r.status_code == 409
+        body = r.json()
+        error = RetryActionError.model_validate(body)
+        assert error.reason_code == "preflight_failed"
+        assert error.executed is False
+        assert error.object == obj
+        assert error.status == "aborted"
         assert self._run_count(landing) == before
 
     def test_unknown_source_returns_404_no_run(self, env):
@@ -176,6 +182,10 @@ class TestRetryPreflight:
         r = client.post("/api/actions/retry",
                        json={"source": "other_source", "object": obj})
         assert r.status_code == 409
+        body = r.json()
+        error = RetryActionError.model_validate(body)
+        assert error.reason_code == "preflight_failed"
+        assert error.executed is False
         assert self._run_count(landing) == before
 
     def test_disabled_binding_returns_409_no_run(self, env, monkeypatch):
@@ -194,6 +204,10 @@ class TestRetryPreflight:
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
         assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text}"
+        body = r.json()
+        error = RetryActionError.model_validate(body)
+        assert error.reason_code == "preflight_failed"
+        assert error.executed is False
         assert self._run_count(landing) == before
 
     def test_unknown_object_returns_404_no_run(self, env):

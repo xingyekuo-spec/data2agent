@@ -1419,6 +1419,13 @@ export interface components {
              */
             rate_state: "ok" | "warning" | "tripped" | "unknown";
             /**
+             * Retry Allowed
+             * @default true
+             */
+            retry_allowed: boolean;
+            /** Retry Disabled Reason */
+            retry_disabled_reason?: string | null;
+            /**
              * Serving State
              * @enum {string}
              */
@@ -1609,6 +1616,42 @@ export interface components {
             type: string;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * RetryActionError
+         * @description 重试错误响应(409/500):结构化错误,不含 traceback/SQL/敏感值。
+         */
+        RetryActionError: {
+            /** Detail */
+            detail: string;
+            /** Detail Path */
+            detail_path?: string | null;
+            /** Error Id */
+            error_id?: string | null;
+            /** Executed */
+            executed: boolean;
+            /** Mapped */
+            mapped?: number | null;
+            /** Object */
+            object: string;
+            /** Quarantined */
+            quarantined?: number | null;
+            /**
+             * Reason Code
+             * @enum {string}
+             */
+            reason_code: "circuit_broken" | "execution_failed" | "observation_failed" | "preflight_failed";
+            /** Run Id */
+            run_id?: number | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "aborted" | "failed";
+            /** Step Id */
+            step_id?: number | null;
+            /** Total */
+            total?: number | null;
         };
         /**
          * RetryActionResult
@@ -2234,13 +2277,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description 冲突/未配置/只读/熔断 */
+            /** @description 熔断(隔离率超阈值)或前置校验冲突(绑定不存在/已禁用) */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HttpError"];
+                    "application/json": components["schemas"]["RetryActionError"];
                 };
             };
             /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
@@ -2250,6 +2293,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestError"];
+                };
+            };
+            /** @description 执行失败或观测写入失败 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RetryActionError"];
                 };
             };
         };

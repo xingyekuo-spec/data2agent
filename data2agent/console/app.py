@@ -347,6 +347,7 @@ def _compute_serving_state(
     if step_aborted:
         return "stale"
     # 按 binding 限定 raw 表,避免无关表的抽取时间污染新鲜度判断
+    has_raw_evidence = False
     if mapped_at is not None and binding_tables:
         try:
             raw_latest: datetime | None = None
@@ -357,16 +358,19 @@ def _compute_serving_state(
                         f'SELECT MAX("_d2a_extracted_at") AS m FROM "{table_name}"'
                     ).fetchone()
                     at = obs.aware(rr["m"])
-                    if at is not None and (raw_latest is None or at > raw_latest):
-                        raw_latest = at
+                    if at is not None:
+                        has_raw_evidence = True
+                        if raw_latest is None or at > raw_latest:
+                            raw_latest = at
                 except sqlite3.Error:
                     pass  # 单表读取失败不阻断其他表
             if raw_latest is not None and raw_latest > mapped_at:
                 return "stale"
         except sqlite3.Error:
             pass
-    # fresh: 最近 apply 成功 + mapped_at 存在 + 有 binding 证据可核实
-    if latest_apply_run_id is not None and mapped_at is not None and binding_tables:
+    # fresh: 最近 apply 成功 + mapped_at 存在 + raw 证据确认不晚于 mapped_at
+    if (latest_apply_run_id is not None and mapped_at is not None
+            and binding_tables and has_raw_evidence):
         run = db.con.execute(
             "SELECT status FROM d2a_sync_run WHERE id = ?",
             (latest_apply_run_id,)).fetchone()
@@ -1010,7 +1014,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     if isinstance(parsed, dict):
                         # 对 keys 做服务端脱敏,与 detail 端点一致
                         keys, _key_trunc = br._sanitize_object_keys(
-                            pack, r["object"], parsed)
+                            pack, r["source"], r["object"], parsed)
                         keys_json_out = json.dumps(keys, ensure_ascii=False, default=str)
                     else:
                         warnings.append("keys_json 解析值不是 JSON 对象")
@@ -1029,7 +1033,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "object": r["object"],
                 "keys_json": keys_json_out,
                 "keys": keys,
-                "reason": obs.safe_error_summary(r["reason"]) or "",
+                "reason": br._sanitize_quarantine_reason(
+                    r["reason"], pack, r["source"], r["object"]) or "",
                 "batch_id": r["batch_id"],
                 "created_at": created,
                 "age_seconds": age,
@@ -1134,6 +1139,23 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 src, latest_apply_run_id, step_aborted, binding_tables)
             if serving_state == "unavailable":
                 warnings.append("对象表存在但结构不完整或无法读取")
+            # ---- retry_allowed 条件 ----
+            retry_allowed: bool = True
+            retry_disabled_reason: str | None = None
+            cfg = state.get("config")
+            if cfg is None:
+                retry_allowed = False
+                retry_disabled_reason = "只读模式"
+            elif src not in cfg.sources:
+                retry_allowed = False
+                retry_disabled_reason = "未知数据源"
+            else:
+                tpl_b = next((o for o in pack.objects if o.object == obj), None) if pack else None
+                if tpl_b is not None and not any(
+                    b.enabled and b.source == src for b in tpl_b.bindings
+                ):
+                    retry_allowed = False
+                    retry_disabled_reason = "无启用的映射绑定"
             result.append({
                 "source": src,
                 "object": obj,
@@ -1142,7 +1164,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "latest_created_at": obs.aware(g["latest_created_at"]),
                 "latest_batch_id": latest["batch_id"] if latest else None,
                 "latest_reason": (
-                    obs.safe_error_summary(latest["reason"])
+                    br._sanitize_quarantine_reason(
+                        latest["reason"], pack, src, obj)
                     if latest and latest["reason"] else None
                 ),
                 "quarantine_rate": quarantine_rate,
@@ -1152,6 +1175,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "latest_apply_run_id": latest_apply_run_id,
                 "object_rows": object_rows,
                 "mapped_at": mapped_at,
+                "retry_allowed": retry_allowed,
+                "retry_disabled_reason": retry_disabled_reason,
                 "warnings": warnings,
             })
         return result
@@ -1224,7 +1249,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 parsed = json.loads(row["keys_json"])
                 if isinstance(parsed, dict):
                     keys, _key_trunc = br._sanitize_object_keys(
-                        pack, object_name, parsed)
+                        pack, source, object_name, parsed)
                     keys_json_out = json.dumps(keys, ensure_ascii=False, default=str)
                 else:
                     keys_warnings.append("keys_json 解析值不是 JSON 对象")
@@ -1270,7 +1295,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
             "object": object_name,
             "keys_json": keys_json_out,
             "keys": keys,
-            "reason": obs.safe_error_summary(row["reason"]) or "",
+            "reason": br._sanitize_quarantine_reason(
+                row["reason"], pack, source, object_name) or "",
             "batch_id": row["batch_id"],
             "created_at": created,
             "age_seconds": age,
@@ -1611,18 +1637,42 @@ def create_app(landing: str | None = None, templates: str = "templates",
             raise HTTPException(404, f"未知对象 '{body.object}'")
 
         # ---- 前置校验(before creating Run)----
-        cfg = require_config()
+        cfg = state["config"]
+        if cfg is None:
+            return JSONResponse(
+                status_code=409,
+                content=RetryActionError(
+                    detail="只读模式，重试不可用",
+                    reason_code="preflight_failed",
+                    executed=False,
+                    object=body.object,
+                    status="aborted",
+                ).model_dump())
         if body.source not in cfg.sources:
             raise HTTPException(
                 404, f"配置中没有源 '{body.source}',可用:{sorted(cfg.sources)}")
 
         bindings = [b for b in tpl.bindings if b.source == body.source]
         if not bindings:
-            raise HTTPException(
-                409, f"对象 '{body.object}' 在源 '{body.source}' 没有绑定")
+            return JSONResponse(
+                status_code=409,
+                content=RetryActionError(
+                    detail=f"对象 '{body.object}' 在源 '{body.source}' 没有绑定",
+                    reason_code="preflight_failed",
+                    executed=False,
+                    object=body.object,
+                    status="aborted",
+                ).model_dump())
         if not any(b.enabled for b in bindings):
-            raise HTTPException(
-                409, f"对象 '{body.object}' 在源 '{body.source}' 的绑定已禁用")
+            return JSONResponse(
+                status_code=409,
+                content=RetryActionError(
+                    detail=f"对象 '{body.object}' 在源 '{body.source}' 的绑定已禁用",
+                    reason_code="preflight_failed",
+                    executed=False,
+                    object=body.object,
+                    status="aborted",
+                ).model_dump())
 
         # ---- 创建 Run + step ----
         db = store()
@@ -2121,22 +2171,36 @@ def create_app(landing: str | None = None, templates: str = "templates",
                             rows = None
                             mapped_at = None
 
-                        # source + batch_id from most recent apply step
-                        # (关联 run 获取真实来源,不从 binding 猜测)
+                        # batch_id 取自对象表的 _d2a_batch_id (物化数据来源)
+                        # source 通过 batch_id 匹配 d2a_run_step 反查 run.source
                         source = None
                         batch_id = None
-                        step = db.con.execute(
-                            "SELECT s.batch_id, r.source "
-                            "FROM d2a_run_step s "
-                            "JOIN d2a_sync_run r ON s.run_id = r.id "
-                            "WHERE s.kind = 'object' AND s.target = ? "
-                            "AND r.run_type = 'apply' "
-                            "ORDER BY s.id DESC LIMIT 1", (tpl.object,)).fetchone()
-                        if step:
-                            batch_id = step["batch_id"]
-                            source = step["source"]
-                        if source is None:
-                            warnings.append("无法可靠确定物化来源,最近 apply step 缺失")
+                        try:
+                            obj_batch = db.con.execute(
+                                f'SELECT DISTINCT "_d2a_batch_id" AS b '
+                                f'FROM "{table_name}" WHERE "_d2a_batch_id" IS NOT NULL '
+                                f'LIMIT 1'
+                            ).fetchone()
+                            if obj_batch and obj_batch["b"]:
+                                batch_id = obj_batch["b"]
+                                # 通过 batch_id 反查 run.source
+                                step = db.con.execute(
+                                    "SELECT r.source FROM d2a_run_step s "
+                                    "JOIN d2a_sync_run r ON s.run_id = r.id "
+                                    "WHERE s.batch_id = ? AND r.run_type = 'apply' "
+                                    "LIMIT 1", (batch_id,)).fetchone()
+                                if step:
+                                    source = step["source"]
+                                else:
+                                    warnings.append(
+                                        f"对象表 batch_id={batch_id} 未匹配到 apply step,"
+                                        f"可能已被后续 step 覆盖")
+                            else:
+                                warnings.append("对象表缺少 _d2a_batch_id,无法确定物化来源")
+                        except sqlite3.Error as e:
+                            warnings.append(f"batch_id 查询失败: {e}")
+                        if source is None and batch_id is not None:
+                            warnings.append("无法可靠确定物化来源(batch_id 存在但无匹配 step)")
 
                         materialized = {
                             "state": "materialized",

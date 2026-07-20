@@ -254,6 +254,8 @@ class QuarantineGroup(BaseModel):
     latest_apply_run_id: int | None = None
     object_rows: int | None = None
     mapped_at: datetime | None = None
+    retry_allowed: bool = True
+    retry_disabled_reason: str | None = None
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -340,7 +342,8 @@ class RetryActionError(BaseModel):
 
     detail: str  # safe summary, no traceback/SQL/sensitive values
     reason_code: Literal[
-        "circuit_broken", "execution_failed", "observation_failed"
+        "circuit_broken", "execution_failed", "observation_failed",
+        "preflight_failed",
     ]
     executed: bool  # whether apply_object started executing
     object: str

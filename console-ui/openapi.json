@@ -1920,6 +1920,22 @@
             "title": "Rate State",
             "type": "string"
           },
+          "retry_allowed": {
+            "default": true,
+            "title": "Retry Allowed",
+            "type": "boolean"
+          },
+          "retry_disabled_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Disabled Reason"
+          },
           "serving_state": {
             "enum": [
               "fresh",
@@ -2503,7 +2519,8 @@
             "enum": [
               "circuit_broken",
               "execution_failed",
-              "observation_failed"
+              "observation_failed",
+              "preflight_failed"
             ],
             "title": "Reason Code",
             "type": "string"

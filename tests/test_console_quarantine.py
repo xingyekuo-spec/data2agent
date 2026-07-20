@@ -73,6 +73,15 @@ def db(tmp_path):
             landing.con.execute(
                 f'INSERT INTO "obj_{obj}" (id, _d2a_mapped_at, _d2a_batch_id) '
                 f'VALUES (?, ?, ?)', (j + 1, "2026-07-10T12:00:00", "batch-1"))
+    # Raw tables for SalesOrder's binding tables (SALES_ORDER, CURRENCY)
+    # needed for has_raw_evidence check in serving_state
+    for bt in ["SALES_ORDER", "CURRENCY"]:
+        landing.con.execute(
+            f'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__{bt}" '
+            f'(_d2a_extracted_at TEXT)')
+        landing.con.execute(
+            f'INSERT INTO "raw_digiwin_e10__{bt}" (_d2a_extracted_at) '
+            f'VALUES (?)', ("2026-07-09T12:00:00",))  # older than mapped_at
     landing.con.commit()
     return landing
 
@@ -581,9 +590,9 @@ class TestServingStateDecisionMatrix:
              "stale", True, True, 100, _MAPPED_AT, True, None, None),
             ("stale via raw newer than mapped_at",
              "stale", True, True, 100, _MAPPED_AT, False, _RAW_NEWER, None),
-            # P4: fresh — 一切正常(binding_tables 需对应 raw_ 表名)
+            # P4: fresh — 一切正常(需要 raw 证据确认不新于 mapped_at)
             ("fresh",
-             "fresh", True, True, 100, _MAPPED_AT, False, None, "ok"),
+             "fresh", True, True, 100, _MAPPED_AT, False, _RAW_OLDER, "ok"),
             # P5: unknown — 无充分证据
             ("unknown (no apply run, no raw)",
              "unknown", True, True, 100, _MAPPED_AT, False, None, None),

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import math
+import re
 import sqlite3
 from datetime import datetime
 from typing import Any
@@ -373,11 +374,13 @@ def _quarantine_sensitive_cols(pack: TemplatePack, source: str,
     return sensitive_cols
 
 
-def _sanitize_object_keys(pack: TemplatePack | None, object_name: str,
+def _sanitize_object_keys(pack: TemplatePack | None, source: str,
+                          object_name: str,
                           keys_dict: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """对隔离记录的 keys 字典做脱敏:敏感键值 → MASKED,其余经过 json_safe。
 
     pack=None 或对象不在模板中 → 全部 mask。
+    对象已知但 source 无已启用 binding → 全部 mask(与 raw 脱敏一致,防止未知来源泄露业务键)。
     返回 (sanitized_keys, truncated_field_names)。
     """
     if pack is not None:
@@ -385,6 +388,12 @@ def _sanitize_object_keys(pack: TemplatePack | None, object_name: str,
     else:
         tpl = None
     if tpl is None:
+        return {k: MASKED for k in keys_dict}, []
+    # 检查是否有已启用的 binding 对应此 source
+    has_binding = any(
+        b.enabled and b.source == source for b in tpl.bindings)
+    if not has_binding:
+        # 已知对象但来源无可靠 binding → 全量遮罩
         return {k: MASKED for k in keys_dict}, []
     sensitive_key_names = {p.name for p in tpl.properties
                            if p.name in tpl.keys and p.sensitive}
@@ -399,6 +408,35 @@ def _sanitize_object_keys(pack: TemplatePack | None, object_name: str,
             if was_truncated:
                 truncated.append(key)
     return out, truncated
+
+
+_EMAIL_RE = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
+
+
+def _sanitize_quarantine_reason(reason: str | None, pack: TemplatePack | None,
+                                 source: str, object_name: str) -> str:
+    """对隔离原因做安全脱敏:屏蔽邮箱地址;无可靠 binding 时返回通用摘要。
+
+    与 safe_error_summary 不同,本函数负责去除映射错误原因中可能泄露的
+    业务敏感值(如邮箱地址、来源枚举值)。调用方不应再将返回值传入
+    safe_error_summary(已内置空白压缩)。
+    """
+    if not reason or not isinstance(reason, str):
+        return ""
+    # 检查是否有已启用的 binding 对应此 source+object
+    has_binding = False
+    if pack is not None:
+        tpl = next((o for o in pack.objects if o.object == object_name), None)
+        if tpl is not None:
+            has_binding = any(
+                b.enabled and b.source == source for b in tpl.bindings)
+    if not has_binding:
+        return "隔离记录（详情请查看 raw 预览）"
+    # 有可靠 binding:屏蔽常见敏感模式后返回
+    sanitized = _EMAIL_RE.sub("[email]", reason)
+    # 压缩空白(同 safe_error_summary)
+    cleaned = " ".join(sanitized.split())
+    return cleaned if cleaned else ""
 
 
 def sanitize_quarantine_raw(raw_dict: dict[str, Any], pack: TemplatePack | None,

@@ -31,23 +31,24 @@ class TestTemplatesList:
     def db(self, tmp_path):
         landing = LandingStore(tmp_path / "landing.sqlite")
 
-        # Materialize Customer, SalesOrder
-        for obj, rows in [("Customer", 100), ("SalesOrder", 50)]:
+        # Materialize Customer, SalesOrder (各自使用不同 batch_id)
+        for obj, rows, batch in [("Customer", 100, "batch-cust"),
+                                  ("SalesOrder", 50, "batch-so")]:
             landing.con.execute(
                 f'CREATE TABLE IF NOT EXISTS "obj_{obj}" '
                 f'(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)')
             for j in range(rows):
                 landing.con.execute(
                     f'INSERT INTO "obj_{obj}" (id, _d2a_mapped_at, _d2a_batch_id) '
-                    f'VALUES (?, ?, ?)', (j + 1, "2026-07-15T12:00:00", "batch-1"))
+                    f'VALUES (?, ?, ?)', (j + 1, "2026-07-15T12:00:00", batch))
         landing.con.commit()
 
-        # Add an apply run with a step for SalesOrder (batch_id lookup)
+        # Add an apply run with steps for SalesOrder (batch_id lookup)
         run_id = landing.start_run(SOURCE, "apply")
         step_id = landing.add_step(run_id, 1, "object", "SalesOrder")
         landing.update_step(
             step_id, status="ok", rows_in=50, rows_out=50, quarantined=0,
-            batch_id="batch-1")
+            batch_id="batch-so")
         landing.finish_run(run_id, tables=1, rows=50, status="ok")
         landing.con.commit()
 
@@ -218,26 +219,26 @@ class TestTemplatesList:
         assert mat["materialized"]["state"] == "not_materialized"
         assert mat["materialized"]["rows"] is None
 
-    def test_batch_id_from_apply_step(self, db):
-        """materialized.batch_id 来自最近一次 apply step。"""
+    def test_batch_id_from_object_table(self, db):
+        """materialized.batch_id 来自对象表的 _d2a_batch_id。"""
         client = _client(db)
         body = client.get("/api/templates").json()
         so = next(o for o in body if o["object"] == "SalesOrder")
         assert so["materialized"] is not None
-        assert so["materialized"]["batch_id"] == "batch-1"
+        assert so["materialized"]["batch_id"] == "batch-so"
 
     def test_materialized_source_from_apply_step(self, db):
-        """materialized.source 来自最近一次 apply step 的关联 run(不从 binding 猜测)。"""
+        """materialized.source 通过 batch_id 匹配 step 反查 run.source。"""
         client = _client(db)
         body = client.get("/api/templates").json()
-        # SalesOrder 有 apply step(run_id 的 source=digiwin_e10)
+        # SalesOrder 有匹配的 apply step(batch-so → source=digiwin_e10)
         so = next(o for o in body if o["object"] == "SalesOrder")
         assert so["materialized"]["source"] == SOURCE  # digiwin_e10
 
-        # Customer 无 apply step → source=None(+ 警告)
+        # Customer 的 batch-cust 无匹配 step → source=None(+ 警告)
         cust = next(o for o in body if o["object"] == "Customer")
         assert cust["materialized"]["source"] is None
-        assert any("无法可靠确定物化来源" in w for w in cust.get("warnings", []))
+        assert any("未匹配到 apply step" in w for w in cust.get("warnings", []))
 
     # -- quarantine_pending --
 
