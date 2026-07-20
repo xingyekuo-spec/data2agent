@@ -795,7 +795,7 @@ else:
     } else if (hasErrorLink) {
       // 重试失败也有 run link(熔断/执行失败)
       const href = await retryErrorRunLink.getAttribute('href')
-      expect(href && href.includes('/v1/runs/'), 'M5:retry 失败也有 runs 链接')
+      expect(href && href.includes('/runs?run_id='), 'M5:retry 失败也有 runs 链接')
     }
 
     // M5-12c: stale serving_state —— 创建真实 stale 场景
@@ -813,7 +813,7 @@ from datetime import datetime, timezone, timedelta
 db = sqlite3.connect(${JSON.stringify(landing)})
 # 确认 obj_Customer 有 _d2a_mapped_at
 row = db.execute('SELECT MAX("_d2a_mapped_at") AS m FROM "obj_Customer"').fetchone()
-mapped_at = row["m"]
+mapped_at = row[0]
 assert mapped_at is not None, "obj_Customer 缺少 _d2a_mapped_at,无法构造 stale"
 # 将 raw 表的 _d2a_extracted_at 设为未来时间,使其明显晚于 mapped_at
 future = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
