@@ -56,7 +56,8 @@
           "resource_type": {
             "enum": [
               "raw",
-              "object"
+              "object",
+              "quarantine_raw"
             ],
             "title": "Resource Type",
             "type": "string"
@@ -455,6 +456,60 @@
           "source"
         ],
         "title": "CountNote",
+        "type": "object"
+      },
+      "DeriveRule": {
+        "description": "模板派生规则:when 条件匹配时使用 value。",
+        "properties": {
+          "value": {
+            "title": "Value",
+            "type": "string"
+          },
+          "when": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "When",
+            "type": "object"
+          }
+        },
+        "required": [
+          "when",
+          "value"
+        ],
+        "title": "DeriveRule",
+        "type": "object"
+      },
+      "DerivedField": {
+        "description": "模板派生字段:有序规则列表 + 默认值。",
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/DeriveRule"
+            },
+            "title": "Rules",
+            "type": "array"
+          }
+        },
+        "title": "DerivedField",
         "type": "object"
       },
       "FieldError": {
@@ -1634,16 +1689,203 @@
         "title": "ProposalResponse",
         "type": "object"
       },
-      "QuarantineRecord": {
+      "QuarantineGroup": {
+        "description": "隔离分组摘要(按 source+object 聚合)。",
         "properties": {
+          "breaker_threshold": {
+            "title": "Breaker Threshold",
+            "type": "number"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "latest_apply_run_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Apply Run Id"
+          },
+          "latest_batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Batch Id"
+          },
+          "latest_created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Created At"
+          },
+          "latest_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Reason"
+          },
+          "mapped_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapped At"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "object_rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object Rows"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "integer"
+          },
+          "quarantine_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quarantine Rate"
+          },
+          "rate_state": {
+            "enum": [
+              "ok",
+              "warning",
+              "tripped",
+              "unknown"
+            ],
+            "title": "Rate State",
+            "type": "string"
+          },
+          "serving_state": {
+            "enum": [
+              "fresh",
+              "stale",
+              "not_materialized",
+              "unavailable",
+              "unknown"
+            ],
+            "title": "Serving State",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "source",
+          "object",
+          "pending",
+          "breaker_threshold",
+          "rate_state",
+          "serving_state"
+        ],
+        "title": "QuarantineGroup",
+        "type": "object"
+      },
+      "QuarantineRecord": {
+        "description": "隔离记录(列表视图)。M5 起 created_at 改为带时区 datetime。",
+        "properties": {
+          "age_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Age Seconds"
+          },
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
           "created_at": {
-            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
             "title": "Created At",
             "type": "string"
           },
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "keys": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keys"
           },
           "keys_json": {
             "anyOf": [
@@ -1667,6 +1909,13 @@
           "source": {
             "title": "Source",
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -2076,7 +2325,12 @@
         "type": "object"
       },
       "RetryActionResult": {
+        "description": "重试成功响应(M5 起 status 收窄为 Literal[\"ok\"])。",
         "properties": {
+          "detail_path": {
+            "title": "Detail Path",
+            "type": "string"
+          },
           "executed": {
             "title": "Executed",
             "type": "boolean"
@@ -2093,9 +2347,18 @@
             "title": "Quarantined",
             "type": "integer"
           },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
           "status": {
+            "const": "ok",
             "title": "Status",
             "type": "string"
+          },
+          "step_id": {
+            "title": "Step Id",
+            "type": "integer"
           },
           "total": {
             "title": "Total",
@@ -2108,7 +2371,10 @@
           "total",
           "mapped",
           "quarantined",
-          "status"
+          "status",
+          "run_id",
+          "step_id",
+          "detail_path"
         ],
         "title": "RetryActionResult",
         "type": "object"
@@ -2895,6 +3161,28 @@
       },
       "TemplateBinding": {
         "properties": {
+          "derived": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DerivedField"
+            },
+            "title": "Derived",
+            "type": "object"
+          },
+          "enabled": {
+            "default": true,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "enum_map": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Enum Map",
+            "type": "object"
+          },
           "field_map": {
             "additionalProperties": {
               "type": "string"
@@ -2960,6 +3248,77 @@
         "title": "TemplateBinding",
         "type": "object"
       },
+      "TemplateMaterialization": {
+        "description": "模板对象物化状态。",
+        "properties": {
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "mapped_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mapped At"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "state": {
+            "enum": [
+              "materialized",
+              "not_materialized",
+              "unknown"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "TemplateMaterialization",
+        "type": "object"
+      },
       "TemplateObject": {
         "properties": {
           "bindings": {
@@ -3002,6 +3361,23 @@
             "title": "Keys",
             "type": "array"
           },
+          "knowledge_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Knowledge Refs",
+            "type": "array"
+          },
+          "materialized": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TemplateMaterialization"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "object": {
             "title": "Object",
             "type": "string"
@@ -3012,6 +3388,22 @@
             },
             "title": "Properties",
             "type": "array"
+          },
+          "quarantine_pending": {
+            "default": 0,
+            "title": "Quarantine Pending",
+            "type": "integer"
+          },
+          "source_of_truth": {
+            "title": "Source Of Truth",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -3019,7 +3411,8 @@
           "display_name",
           "keys",
           "properties",
-          "bindings"
+          "bindings",
+          "source_of_truth"
         ],
         "title": "TemplateObject",
         "type": "object"
@@ -3037,9 +3430,27 @@
             ],
             "title": "Desc"
           },
+          "enum_values": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Enum Values",
+            "type": "array"
+          },
           "name": {
             "title": "Name",
             "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
           },
           "sensitive": {
             "default": false,
@@ -4722,8 +5133,25 @@
     },
     "/api/quarantine": {
       "get": {
+        "description": "隔离列表:数组 wire shape + X-Total-Count 响应头(M5)。\n\n支持 source/object 精确匹配、reason 子串搜索;分页(默认 50,上限 100);\n排序固定 id DESC;不含 raw_json;created_at 规范化为带时区 datetime。",
         "operationId": "quarantine_api_quarantine_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
           {
             "in": "query",
             "name": "object",
@@ -4739,6 +5167,42 @@
               ],
               "title": "Object"
             }
+          },
+          {
+            "in": "query",
+            "name": "reason",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Reason"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -4750,6 +5214,83 @@
                     "$ref": "#/components/schemas/QuarantineRecord"
                   },
                   "title": "Response Quarantine Api Quarantine Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Quarantine"
+      }
+    },
+    "/api/quarantine/groups": {
+      "get": {
+        "description": "隔离分组摘要:按 (source, object) 聚合未处理隔离(M5)。\n\n包含模板显示名、隔离率、熔断/数据新鲜度状态;未知 source/object 不省略,\n以 display_name=null + 警告保留为事实。",
+        "operationId": "quarantine_groups_api_quarantine_groups_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/QuarantineGroup"
+                  },
+                  "title": "Response Quarantine Groups Api Quarantine Groups Get",
                   "type": "array"
                 }
               }
@@ -4793,7 +5334,7 @@
           },
           {}
         ],
-        "summary": "Quarantine"
+        "summary": "Quarantine Groups"
       }
     },
     "/api/runs": {

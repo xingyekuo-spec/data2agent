@@ -48,6 +48,7 @@ from ..metamodel.loader import load_pack
 from . import data_browser as br
 from . import observability as obs
 from .contracts import (
+    DEFAULT_BREAKER_THRESHOLD,
     AccessAuditPage,
     ActionBody,
     ActionExecutionResult,
@@ -66,6 +67,7 @@ from .contracts import (
     PipelineResponse,
     ProposalRequest,
     ProposalResponse,
+    QuarantineGroup,
     QuarantineRecord,
     RawDataPageResponse,
     RawTableCatalogResponse,
@@ -870,19 +872,248 @@ def create_app(landing: str | None = None, templates: str = "templates",
             "steps": [_map_step(s) for s in steps],
         }
 
+    def _compute_rate_state(rate: float | None, threshold: float) -> str:
+        """隔离率状态:无证据 → unknown;0% → ok;低于阈值 → warning;达到阈值 → tripped。"""
+        if rate is None:
+            return "unknown"
+        if rate == 0.0:
+            return "ok"
+        if rate >= threshold:
+            return "tripped"
+        return "warning"
+
+    def _compute_serving_state(
+        db: LandingStore,
+        table_exists: bool,
+        table_ok: bool,
+        object_rows: int | None,
+        mapped_at: datetime | None,
+        source: str,
+        latest_apply_run_id: int | None,
+        step_aborted: bool,
+    ) -> str:
+        """对象数据新鲜度状态(M5 §6.3 决策矩阵)。
+
+        优先级:not_materialized > unavailable > stale > fresh > unknown。
+        """
+        if not table_exists:
+            return "not_materialized"
+        if not table_ok or object_rows is None:
+            return "unavailable"
+        # stale: step 被熔断中止 或 raw 明显新于 mapped_at
+        if step_aborted:
+            return "stale"
+        if mapped_at is not None:
+            try:
+                raw_tables = [r[0] for r in db.con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name LIKE ?", (f"raw_{source}__%",)).fetchall()]
+                raw_latest: datetime | None = None
+                for rt in raw_tables:
+                    try:
+                        rr = db.con.execute(
+                            f'SELECT MAX("_d2a_extracted_at") AS m FROM "{rt}"'
+                        ).fetchone()
+                        at = obs.aware(rr["m"])
+                        if at is not None and (raw_latest is None or at > raw_latest):
+                            raw_latest = at
+                    except sqlite3.Error:
+                        pass
+                if raw_latest is not None and raw_latest > mapped_at:
+                    return "stale"
+            except sqlite3.Error:
+                pass
+        # fresh: 最近 apply 成功 + raw <= mapped_at + 时间证据完整
+        if latest_apply_run_id is not None and mapped_at is not None:
+            run = db.con.execute(
+                "SELECT status FROM d2a_sync_run WHERE id = ?",
+                (latest_apply_run_id,)).fetchone()
+            if run and run["status"] == "ok":
+                return "fresh"
+        return "unknown"
+
     @api.get(
         "/quarantine",
         response_model=list[QuarantineRecord],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409],
+                   422: _RESP_HTTP_ERROR[422]},
+    )
+    def quarantine(
+        response: Response,
+        source: str | None = None,
+        object: str | None = None,
+        reason: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """隔离列表:数组 wire shape + X-Total-Count 响应头(M5)。
+
+        支持 source/object 精确匹配、reason 子串搜索;分页(默认 50,上限 100);
+        排序固定 id DESC;不含 raw_json;created_at 规范化为带时区 datetime。
+        """
+        if not 1 <= limit <= 100 or offset < 0:
+            raise HTTPException(422, "limit 须为 1..100,offset 须 >= 0")
+        where = ["resolved_at IS NULL"]
+        params: list[Any] = []
+        if source is not None:
+            where.append("source = ?")
+            params.append(source)
+        if object is not None:
+            where.append("object = ?")
+            params.append(object)
+        if reason is not None:
+            reason_clean = str(reason).strip()[:200]
+            where.append("reason LIKE ?")
+            params.append(f"%{reason_clean}%")
+        wsql = " WHERE " + " AND ".join(where)
+        db = store()
+        (total,) = db.con.execute(
+            f"SELECT COUNT(*) FROM d2a_quarantine{wsql}", params).fetchone()
+        response.headers["X-Total-Count"] = str(total)
+        rows = db.con.execute(
+            f"SELECT id, source, object, keys_json, reason, batch_id, created_at "
+            f"FROM d2a_quarantine{wsql} ORDER BY id DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset])
+        result: list[dict] = []
+        now = obs.now_aware()
+        for r in rows:
+            warnings: list[str] = []
+            keys: dict[str, Any] | None = None
+            if r["keys_json"]:
+                try:
+                    parsed = json.loads(r["keys_json"])
+                    if isinstance(parsed, dict):
+                        keys = parsed
+                    else:
+                        warnings.append("keys_json 解析值不是 JSON 对象")
+                except (json.JSONDecodeError, TypeError):
+                    warnings.append("keys_json 解析失败")
+            created = obs.aware(r["created_at"])
+            age = None
+            if created is not None:
+                age = int((now - created).total_seconds())
+            else:
+                warnings.append(f"created_at 解析失败: {r['created_at']!r}")
+                created = now  # 保底值,不影响 wire shape 校验
+            result.append({
+                "id": r["id"],
+                "source": r["source"],
+                "object": r["object"],
+                "keys_json": r["keys_json"],
+                "keys": keys,
+                "reason": obs.safe_error_summary(r["reason"]) or r["reason"],
+                "batch_id": r["batch_id"],
+                "created_at": created,
+                "age_seconds": age,
+                "warnings": warnings,
+            })
+        return result
+
+    @api.get(
+        "/quarantine/groups",
+        response_model=list[QuarantineGroup],
         responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
     )
-    def quarantine(object: str | None = None) -> list[dict]:
-        where, params = "resolved_at IS NULL", []
-        if object:
-            where += " AND object = ?"
-            params.append(object)
-        return [dict(r) for r in store().con.execute(
-            f"SELECT id, source, object, keys_json, reason, created_at "
-            f"FROM d2a_quarantine WHERE {where} ORDER BY id DESC LIMIT 200", params)]
+    def quarantine_groups(source: str | None = None) -> list[dict]:
+        """隔离分组摘要:按 (source, object) 聚合未处理隔离(M5)。
+
+        包含模板显示名、隔离率、熔断/数据新鲜度状态;未知 source/object 不省略,
+        以 display_name=null + 警告保留为事实。
+        """
+        db = store()
+        pack = state.get("pack")
+        where = "WHERE resolved_at IS NULL"
+        gparams: list[Any] = []
+        if source is not None:
+            where += " AND source = ?"
+            gparams.append(source)
+        groups = db.con.execute(
+            f"SELECT source, object, COUNT(*) AS pending, MAX(created_at) AS latest_created_at "
+            f"FROM d2a_quarantine {where} "
+            f"GROUP BY source, object ORDER BY source, object", gparams).fetchall()
+        result: list[dict] = []
+        for g in groups:
+            src = g["source"]
+            obj = g["object"]
+            warnings: list[str] = []
+            # latest record (batch_id, reason)
+            latest = db.con.execute(
+                "SELECT batch_id, reason FROM d2a_quarantine "
+                "WHERE source = ? AND object = ? AND resolved_at IS NULL "
+                "ORDER BY id DESC LIMIT 1", (src, obj)).fetchone()
+            # display_name from template pack
+            display_name = None
+            if pack is not None:
+                tpl = next((o for o in pack.objects if o.object == obj), None)
+                if tpl is not None:
+                    display_name = tpl.display_name
+            # quarantine rate from most recent apply object step
+            quarantine_rate = None
+            latest_apply_run_id = None
+            step_aborted = False
+            step = db.con.execute(
+                "SELECT s.id, s.run_id, s.status, s.quarantined, s.rows_in "
+                "FROM d2a_run_step s "
+                "WHERE s.kind = 'object' AND s.target = ? "
+                "ORDER BY s.id DESC LIMIT 1", (obj,)).fetchone()
+            if step is not None:
+                latest_apply_run_id = step["run_id"]
+                step_aborted = step["status"] == "aborted"
+                if step["rows_in"] and step["rows_in"] > 0:
+                    quarantine_rate = (step["quarantined"] or 0) / step["rows_in"]
+            rate_state = _compute_rate_state(quarantine_rate, DEFAULT_BREAKER_THRESHOLD)
+            # object table info
+            object_rows = None
+            mapped_at = None
+            table_name = f"obj_{obj}"
+            table_exists = db.con.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,)).fetchone()[0] > 0
+            table_ok = False  # table exists AND has expected structure
+            if table_exists:
+                try:
+                    cols = {r[1] for r in db.con.execute(
+                        f'PRAGMA table_info("{table_name}")')}
+                    if "_d2a_mapped_at" in cols:
+                        table_ok = True
+                except sqlite3.Error:
+                    pass
+            if table_ok:
+                try:
+                    row = db.con.execute(
+                        f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
+                        f'FROM "{table_name}"'
+                    ).fetchone()
+                    object_rows = row["n"]
+                    mapped_at = obs.aware(row["m"])
+                except sqlite3.Error as e:
+                    warnings.append(f"对象表查询失败: {e}")
+            serving_state = _compute_serving_state(
+                db, table_exists, table_ok, object_rows, mapped_at,
+                src, latest_apply_run_id, step_aborted)
+            if serving_state == "unavailable":
+                warnings.append("对象表存在但结构不完整或无法读取")
+            result.append({
+                "source": src,
+                "object": obj,
+                "display_name": display_name,
+                "pending": g["pending"],
+                "latest_created_at": obs.aware(g["latest_created_at"]),
+                "latest_batch_id": latest["batch_id"] if latest else None,
+                "latest_reason": (
+                    obs.safe_error_summary(latest["reason"])
+                    if latest and latest["reason"] else None
+                ),
+                "quarantine_rate": quarantine_rate,
+                "breaker_threshold": DEFAULT_BREAKER_THRESHOLD,
+                "rate_state": rate_state,
+                "serving_state": serving_state,
+                "latest_apply_run_id": latest_apply_run_id,
+                "object_rows": object_rows,
+                "mapped_at": mapped_at,
+                "warnings": warnings,
+            })
+        return result
 
     @api.get(
         "/audit",

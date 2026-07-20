@@ -25,6 +25,9 @@ TZ_TIME_DESC = (
     "convert legacy local text to an offset-bearing value"
 )
 
+DEFAULT_BREAKER_THRESHOLD = 0.05
+"""默认熔断阈值:单对象隔离率 >= 5% 触发熔断,保留旧数据并中止。"""
+
 # 统一运行模型(M3 起):validation 属 v0.3,但进入同一 Run 模型,避免另造验收记录。
 RunType = Literal["sync", "apply", "reconcile", "ingest", "validation"]
 RunStatus = Literal["running", "ok", "paused", "failed", "aborted"]
