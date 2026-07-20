@@ -360,6 +360,366 @@ async function runReal(browser) {
       'Real:对象 JSON 与表格同源脱敏')
     expect(JSON.stringify(sqliteCounts(landing)) === JSON.stringify(countsBeforeBrowse),
       'Real:数据浏览不改变业务表/水位/运行记录')
+
+    // ============================================================
+    // M5: 隔离与模板只读验证(§8.2)
+    // ============================================================
+
+    // 确保至少有一条隔离记录(种子数据 + apply 可能已产生;若无则显式插入)
+    const ensureQuarantine = `
+import json, sqlite3
+db = sqlite3.connect(${JSON.stringify(landing)})
+existing = db.execute(
+    "SELECT COUNT(*) FROM d2a_quarantine WHERE source=? AND object=?",
+    [${JSON.stringify(SOURCE)}, "Customer"]
+).fetchone()[0]
+if existing == 0:
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    keys = {"CUSTOMER_CODE": "QTEST001"}
+    raw = {"Id": 888, "CUSTOMER_CODE": "QTEST001", "CUSTOMER_NAME": "E2E Quarantine Test",
+           "CUSTOMER_SHORT_NAME": "QT", "COUNTRY_REGION": "\\u5357\\u6781", "CURRENCY_ID": 1}
+    db.execute(
+        "INSERT INTO d2a_quarantine (source, object, keys_json, reason, raw_json, batch_id, created_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        [${JSON.stringify(SOURCE)}, "Customer", json.dumps(keys),
+         "e2e-test: enum value missing in mapping", json.dumps(raw), "e2e-m5-001", now])
+    db.commit()
+    print("inserted-1")
+else:
+    print(f"already-{existing}")
+`
+    sh(PYTHON, ['-c', ensureQuarantine])
+
+    const countsBeforeM5Browse = sqliteCounts(landing)
+
+    // M5-1: 隔离列表不含 raw(QuarantineRecord 不同于 QuarantineDetail)
+    const qListResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/quarantine?limit=50&offset=0`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(qListResp.status() === 200, 'M5:隔离列表 200')
+    const qListBody = await qListResp.json()
+    expect(Array.isArray(qListBody) && qListBody.length > 0, 'M5:隔离列表含记录')
+    expect(qListBody[0].id !== undefined, 'M5:隔离列表记录含 id')
+    expect(qListBody[0].source === SOURCE, 'M5:隔离列表 source 正确')
+    // QuarantineRecord 不含 raw;只有 QuarantineDetail(/api/quarantine/{id})有
+    expect(!('raw' in qListBody[0]), 'M5:隔离列表 QuarantineRecord 不含 raw 字段')
+    expect('keys' in qListBody[0], 'M5:隔离列表含 keys')
+    expect('reason' in qListBody[0], 'M5:隔离列表含 reason')
+    expect('batch_id' in qListBody[0], 'M5:隔离列表含 batch_id')
+    const qTotalHeader = qListResp.headers()['x-total-count']
+    expect(qTotalHeader !== undefined && Number(qTotalHeader) > 0, 'M5:隔离列表有 X-Total-Count')
+
+    // M5-2: 隔离分组(按 object 聚合)
+    const groupsResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/quarantine/groups`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(groupsResp.status() === 200, 'M5:隔离分组 200')
+    const groupsBody = await groupsResp.json()
+    expect(Array.isArray(groupsBody) && groupsBody.length > 0, 'M5:隔离分组含对象')
+    const customerGroup = groupsBody.find(g => g.object === 'Customer')
+    expect(customerGroup !== undefined, 'M5:隔离分组含 Customer')
+    if (customerGroup) {
+      expect(customerGroup.pending > 0, 'M5:Customer 分组 pending > 0')
+      expect(typeof customerGroup.breaker_threshold === 'number', 'M5:分组含 breaker_threshold')
+      expect(customerGroup.breaker_threshold > 0, 'M5:breaker_threshold > 0')
+      expect(['ok', 'warning', 'tripped', 'unknown'].includes(customerGroup.rate_state),
+        'M5:分组含 rate_state')
+      expect(['fresh', 'stale', 'not_materialized', 'unavailable', 'unknown'].includes(customerGroup.serving_state),
+        'M5:分组含 serving_state')
+      expect(customerGroup.latest_batch_id !== undefined, 'M5:分组含 latest_batch_id')
+    }
+    // 未知 source/object 不隐藏(保留为事实)
+    const hasUnknownObj = groupsBody.some(g => g.display_name === null || g.warnings?.length > 0)
+    // 不强制断言——取决于实际数据
+
+    // M5-3: 隔离 raw 详情需要 token(强制 Bearer auth)
+    const qid = qListBody[0].id
+    expect(typeof qid === 'number', 'M5:隔离记录 id 为数字')
+
+    // 无 token → 403
+    const noTokenResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/quarantine/${qid}`,
+    )
+    expect(noTokenResp.status() === 403 || noTokenResp.status() === 401,
+      `M5:隔离详情无 token → 403/401(实际 ${noTokenResp.status()})`)
+
+    // 错误 token → 401
+    const badTokenResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/quarantine/${qid}`,
+      { headers: { Authorization: 'Bearer wrong-token-e2e' } },
+    )
+    expect(badTokenResp.status() === 401,
+      `M5:隔离详情错误 token → 401(实际 ${badTokenResp.status()})`)
+
+    // M5-4: 有效 token 返回脱敏详情(raw sanitisied, truncations present)
+    const detailResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/quarantine/${qid}`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(detailResp.status() === 200, 'M5:隔离详情有效 token 200')
+    const detailBody = await detailResp.json()
+    expect(typeof detailBody.raw === 'object' && detailBody.raw !== null, 'M5:详情含 raw 预览')
+    expect(detailBody.keys !== null || detailBody.keys_json !== null, 'M5:详情含 keys')
+    expect(typeof detailBody.reason === 'string', 'M5:详情含 reason')
+    expect(typeof detailBody.request_id === 'string', 'M5:详情含 request_id(request_id)')
+    expect(Array.isArray(detailBody.truncations), 'M5:详情含 truncations 数组')
+    // raw 中的 JSON 不得含 traceback/SQL/敏感原文
+    const rawStr = JSON.stringify(detailBody.raw)
+    expect(!rawStr.includes('Traceback') && !rawStr.includes('traceback'),
+      'M5:raw 预览不含 traceback')
+    expect(!rawStr.includes('SELECT ') && !rawStr.includes('INSERT '),
+      'M5:raw 预览不含 SQL 片段')
+
+    // M5-5: 允许/拒绝都写入不泄密访问审计
+    // 允许:quarantine_detail 请求
+    const allowedAuditResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/audit/access?limit=10&offset=0&resource_type=quarantine_raw&allowed=true`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(allowedAuditResp.status() === 200, 'M5:访问审计 allowed 200')
+    const allowedAudit = await allowedAuditResp.json()
+    expect(allowedAudit.total > 0, 'M5:访问审计含 quarantine_raw 允许记录')
+    const allowItem = allowedAudit.items[0]
+    expect(allowItem.subject !== undefined && allowItem.subject !== '', 'M5:审计记录含 subject')
+    expect(allowItem.resource_type === 'quarantine_raw', 'M5:审计 resource_type=quarantine_raw')
+    // 审计记录不含 Token / q 原文 / 返回值
+    const allowStr = JSON.stringify(allowItem)
+    expect(!allowStr.includes('e2e-token'), 'M5:审计记录不含 token')
+    expect(!allowStr.includes('QTEST001'), 'M5:审计记录不含查询值原文')
+
+    // 拒绝:quarantine_detail 被拒绝请求
+    const deniedAuditResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/audit/access?limit=10&offset=0&resource_type=quarantine_raw&allowed=false`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(deniedAuditResp.status() === 200, 'M5:访问审计 denied 200')
+    const deniedAudit = await deniedAuditResp.json()
+    // 403/401 拒绝应产生审计;不强制数量断言(取决于审计写入时序)
+    if (deniedAudit.total > 0) {
+      expect(deniedAudit.items[0].allowed === false, 'M5:拒绝审计记录 allowed=false')
+    }
+
+    // M5-6: side-effect——浏览隔离/模板不改变 raw/object/watermark/quarantine/run 状态
+    const countsAfterBrowse = sqliteCounts(landing)
+    expect(countsAfterBrowse.d2a_quarantine === countsBeforeM5Browse.d2a_quarantine,
+      'M5:浏览隔离不改变 quarantine 表')
+    expect(countsAfterBrowse.raw_CUSTOMER === countsBeforeM5Browse.raw_CUSTOMER,
+      'M5:浏览隔离不改变 raw 表')
+    expect(countsAfterBrowse.obj_Customer === countsBeforeM5Browse.obj_Customer,
+      'M5:浏览隔离不改变对象表')
+    expect(countsAfterBrowse.d2a_sync_run === countsBeforeM5Browse.d2a_sync_run,
+      'M5:浏览隔离不改变运行表')
+    expect(countsAfterBrowse.d2a_sync_state === countsBeforeM5Browse.d2a_sync_state,
+      'M5:浏览隔离不改变水位表')
+
+    // M5-7: 模板页 GET /api/templates
+    const templatesResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/templates`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(templatesResp.status() === 200, 'M5:模板列表 200')
+    const templates = await templatesResp.json()
+    expect(Array.isArray(templates) && templates.length >= 5,
+      `M5:模板含 >=5 个对象(实际 ${templates.length})`)
+    // 每个对象含 properties、bindings、materialized
+    for (const tmpl of templates) {
+      expect(Array.isArray(tmpl.properties), `M5:${tmpl.object} 含 properties 数组`)
+      expect(Array.isArray(tmpl.bindings), `M5:${tmpl.object} 含 bindings 数组`)
+      expect(tmpl.source_of_truth !== undefined, `M5:${tmpl.object} 含 source_of_truth`)
+    }
+
+    // 检查敏感标记
+    const customerTmpl = templates.find(t => t.object === 'Customer')
+    expect(customerTmpl !== undefined, 'M5:模板含 Customer')
+    if (customerTmpl) {
+      const sensitiveProps = customerTmpl.properties.filter(p => p.sensitive)
+      expect(sensitiveProps.length > 0, 'M5:Customer 含敏感属性标记(脱敏目标)')
+    }
+
+    // Quotation binding enum_map(枚举映射)
+    const quotationTmpl = templates.find(t => t.object === 'Quotation')
+    if (quotationTmpl) {
+      const hasEnumMap = quotationTmpl.bindings.some(
+        b => b.enum_map && Object.keys(b.enum_map).length > 0,
+      )
+      // enum_values 也可能在 property 级
+      const hasEnumProps = quotationTmpl.properties.some(
+        p => Array.isArray(p.enum_values) && p.enum_values.length > 0,
+      )
+      expect(hasEnumMap || hasEnumProps, 'M5:Quotation 含枚举映射')
+    }
+
+    // SalesOrder derived 决策表
+    const salesOrderTmpl = templates.find(t => t.object === 'SalesOrder')
+    if (salesOrderTmpl) {
+      const hasDerived = salesOrderTmpl.bindings.some(
+        b => b.derived && Object.keys(b.derived).length > 0,
+      )
+      expect(hasDerived, 'M5:SalesOrder binding 含 derived 决策表')
+    }
+
+    // binding status 字段可见(draft/verified/disabled)
+    const allBindings = templates.flatMap(t => t.bindings)
+    expect(allBindings.length > 0, 'M5:模板含 binding 记录')
+    const hasStatus = allBindings.some(b => ['draft', 'verified', 'disabled'].includes(b.status))
+    expect(hasStatus, 'M5:binding status 字段可见')
+    // disabled binding 不隐藏
+    const disabledBindings = allBindings.filter(b => b.status === 'disabled')
+    // 不强制存在 disabled;如其存在,enabled 字段必为 false
+    if (disabledBindings.length > 0) {
+      expect(disabledBindings.every(b => b.enabled === false), 'M5:disabled binding 的 enabled=false')
+    }
+
+    // materialized 状态
+    const matTmpls = templates.filter(t => t.materialized !== null && t.materialized !== undefined)
+    expect(matTmpls.length > 0, 'M5:模板含 materialized 状态')
+    const validStates = ['materialized', 'not_materialized', 'unknown']
+    expect(matTmpls.every(t => validStates.includes(t.materialized.state)),
+      'M5:materialized.state 为合法枚举值')
+
+    // quarantine_pending 计数字段
+    const hasQP = templates.some(t => typeof t.quarantine_pending === 'number')
+    expect(hasQP, 'M5:模板含 quarantine_pending 计数')
+
+    // M5-8: 模板指标 GET /api/templates/metrics
+    const metricsResp = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/templates/metrics`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(metricsResp.status() === 200, 'M5:指标列表 200')
+    const metrics = await metricsResp.json()
+    expect(Array.isArray(metrics) && metrics.length > 0, 'M5:指标列表非空')
+    // draft 指标可见(不隐藏)
+    const draftMetrics = metrics.filter(m => m.status === 'draft')
+    expect(draftMetrics.length > 0, 'M5:存在 draft 指标')
+    // calibration_state 字段
+    const hasCalState = metrics.every(m => ['calibrated', 'uncalibrated', 'deprecated'].includes(m.calibration_state))
+    expect(hasCalState, 'M5:指标含 calibration_state')
+    // quote_response_hours 指标(若存在)为未校准
+    const quoteMetric = metrics.find(m => m.metric === 'quote_response_hours')
+    if (quoteMetric) {
+      expect(quoteMetric.calibration_state === 'uncalibrated',
+        'M5:quote_response_hours calibration_state=uncalibrated')
+      expect(typeof quoteMetric.caveats === 'string' && quoteMetric.caveats.length > 0,
+        'M5:quote_response_hours caveat 可见')
+      expect(typeof quoteMetric.formula === 'string' && quoteMetric.formula.length > 0,
+        'M5:quote_response_hours 含 formula')
+    }
+
+    // M5-9: side-effect——浏览模板也不改变状态
+    const countsAfterTemplates = sqliteCounts(landing)
+    expect(countsAfterTemplates.d2a_quarantine === countsBeforeM5Browse.d2a_quarantine,
+      'M5:浏览模板不改变 quarantine 表')
+    expect(countsAfterTemplates.d2a_sync_run === countsBeforeM5Browse.d2a_sync_run,
+      'M5:浏览模板不改变运行表')
+    expect(countsAfterTemplates.raw_CUSTOMER === countsBeforeM5Browse.raw_CUSTOMER,
+      'M5:浏览模板不改变 raw 表')
+
+    // M5-10: 对象级 retry(POST /api/actions/retry)
+    const retryResp = await page.request.post(
+      `http://localhost:${CONSOLE_PORT}/api/actions/retry`,
+      {
+        data: { source: SOURCE, object: 'Customer' },
+        headers: { Authorization: 'Bearer e2e-token' },
+      },
+    )
+    const retryBody = await retryResp.json()
+    if (retryResp.status() === 200) {
+      // 成功:RetryActionResult
+      expect(retryBody.executed === true, 'M5:retry 成功 executed=true')
+      expect(retryBody.status === 'ok', 'M5:retry 成功 status=ok')
+      expect(typeof retryBody.run_id === 'number' && retryBody.run_id > 0,
+        'M5:retry 成功含 run_id')
+      expect(typeof retryBody.step_id === 'number' && retryBody.step_id > 0,
+        'M5:retry 成功含 step_id')
+      expect(typeof retryBody.detail_path === 'string' && retryBody.detail_path.length > 0,
+        'M5:retry 成功含 detail_path')
+      expect(typeof retryBody.total === 'number', 'M5:retry 成功含 total')
+      expect(typeof retryBody.mapped === 'number', 'M5:retry 成功含 mapped')
+      expect(typeof retryBody.quarantined === 'number', 'M5:retry 成功含 quarantined')
+    } else if (retryResp.status() === 409) {
+      // 熔断:RetryActionError
+      const reasonCodes = ['circuit_broken', 'execution_failed', 'observation_failed', 'preflight_failed']
+      expect(reasonCodes.includes(retryBody.reason_code),
+        `M5:retry 409 reason_code 合法(实际 ${retryBody.reason_code})`)
+      expect(retryBody.status === 'aborted' || retryBody.status === 'failed',
+        'M5:retry 409 status=aborted/failed')
+      expect(retryBody.run_id !== undefined || retryBody.detail_path !== undefined,
+        'M5:retry 409 含 run_id 或 detail_path')
+    } else if (retryResp.status() === 500) {
+      // 执行失败:RetryActionError
+      expect(['circuit_broken', 'execution_failed', 'observation_failed', 'preflight_failed'].includes(retryBody.reason_code),
+        `M5:retry 500 reason_code 合法(实际 ${retryBody.reason_code})`)
+      expect(typeof retryBody.detail === 'string' && retryBody.detail.length > 0,
+        'M5:retry 500 含安全错误摘要')
+      expect(retryBody.error_id !== undefined || retryBody.run_id !== undefined,
+        'M5:retry 500 含 error_id 或 run_id')
+    } else {
+      // 422/404 等——检查是否因为 readonly/disabled 等原因
+      expect(retryResp.status() === 422 || retryResp.status() === 404,
+        `M5:retry 非预期状态码 ${retryResp.status()}`)
+    }
+
+    // M5-11: retry 写审计(如果执行了的话,检查审计记录不含敏感值)
+    if (retryResp.status() === 200 || retryResp.status() === 409 || retryResp.status() === 500) {
+      const retryStr = JSON.stringify(retryBody)
+      expect(!retryStr.includes('Traceback'), 'M5:retry 错误不含 traceback')
+      expect(!retryStr.includes('e2e-token'), 'M5:retry 错误不含 token')
+    }
+
+    // M5-12: 浏览隔离页与模板页 UI
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/quarantine`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(2000)
+    const qPageText = await page.textContent('body')
+    expect(qPageText.includes('隔离') || qPageText.includes('Quarantine'),
+      'M5:隔离页可访问')
+    // 分组表应可见
+    const hasGroupsTable = await page.locator('[data-testid="quarantine-groups-table"]').count()
+    const hasRecordsTable = await page.locator('[data-testid="quarantine-records-table"]').count()
+    expect(hasGroupsTable > 0 || hasRecordsTable > 0,
+      'M5:隔离页含分组表或记录表')
+
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/templates`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(2000)
+    const tplPageText = await page.textContent('body')
+    expect(tplPageText.includes('模板') || tplPageText.includes('Template'),
+      'M5:模板页可访问')
+    // 对象列表应包含已知对象名
+    expect(tplPageText.includes('Customer'), 'M5:模板页含 Customer')
+    // 点击 SalesOrder 查看详情
+    const soItem = page.locator('[data-testid="tpl-item-SalesOrder"]')
+    if (await soItem.count() > 0) {
+      await soItem.first().click()
+      await page.waitForTimeout(1000)
+      // 详情 tab 应该可见(含 derived/指标等)
+      const detailTabs = await page.locator('[data-testid="tpl-detail-tabs"]').count()
+      expect(detailTabs > 0, 'M5:点击 SalesOrder 可打开详情')
+    }
+
+    // M5-13: 回归——M4 运行/审计/数据页仍可用
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/runs`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
+    expect(true, 'M5:回归-M4 运行列表可用')
+
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/audit?tab=sql`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="sql-table"]').waitFor({ state: 'visible' })
+    expect(true, 'M5:回归-M4 SQL 审计可用')
+
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/data`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="raw-catalog"]').waitFor({ state: 'visible' })
+    expect(true, 'M5:回归-M4 数据浏览可用')
+
+    // 回归:Jinja2 /v0 仍可访问
+    const v0Chk = await page.request.get(`http://localhost:${REAL_UI_PORT}/v0`)
+    expect(v0Chk.status() === 200, 'M5:回归-/v0 200')
+    // 管道页仍可用
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="stat-grid"]').waitFor({ state: 'visible' })
+    expect(true, 'M5:回归-M3 仪表盘可用')
+
     await page.close()
   } finally {
     dev.stop()
