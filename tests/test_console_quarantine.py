@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from data2agent.connect.landing import LandingStore
-from data2agent.console.app import create_app
+from data2agent.console.app import _compute_rate_state, _compute_serving_state, create_app
 from data2agent.console.contracts import (
     DEFAULT_BREAKER_THRESHOLD,
     QuarantineGroup,
@@ -411,3 +411,138 @@ class TestQuarantineGroups:
         unk = next(g for g in client.get("/api/quarantine/groups").json()
                    if g["object"] == "UnknownObj")
         assert unk["latest_apply_run_id"] is None
+
+
+# ============================================================
+# 决策矩阵表驱动测试 (M5-T04)
+# ============================================================
+
+_MAPPED_AT = datetime(2026, 7, 10, 12, 0, 0, tzinfo=timezone.utc)
+_RAW_NEWER = datetime(2026, 7, 11, 12, 0, 0, tzinfo=timezone.utc)
+_RAW_OLDER = datetime(2026, 7, 9, 12, 0, 0, tzinfo=timezone.utc)
+
+
+class TestRateStateDecisionMatrix:
+    """_compute_rate_state 表驱动测试。"""
+
+    @pytest.mark.parametrize("rate,threshold,expected", [
+        (None, 0.05, "unknown"),
+        (0.0, 0.05, "ok"),
+        (0.01, 0.05, "warning"),
+        (0.049, 0.05, "warning"),
+        (0.05, 0.05, "tripped"),
+        (0.10, 0.05, "tripped"),
+        (0.0, 0.10, "ok"),
+        (0.05, 0.10, "warning"),
+        (0.10, 0.10, "tripped"),
+    ])
+    def test_decision_matrix(self, rate, threshold, expected):
+        assert _compute_rate_state(rate, threshold) == expected
+
+
+class TestServingStateDecisionMatrix:
+    """_compute_serving_state 表驱动测试:验证 §6.3 优先级互斥。"""
+
+    @pytest.mark.parametrize(
+        "scenario,expected,table_exists,table_ok,object_rows,mapped_at,"
+        "step_aborted,raw_ts,apply_run_status", [
+            # P1: not_materialized — 表不存在,优先级最高
+            ("not_materialized",
+             "not_materialized", False, False, None, None, False, None, None),
+            ("not_materialized beats step_aborted",
+             "not_materialized", False, False, None, _MAPPED_AT, True, None, "ok"),
+            ("not_materialized beats raw_newer",
+             "not_materialized", False, False, None, _MAPPED_AT, False, _RAW_NEWER, "ok"),
+            # P2: unavailable — 表存在但不可读
+            ("unavailable (table_ok=False)",
+             "unavailable", True, False, None, None, False, None, None),
+            ("unavailable (object_rows=None even if table_ok=True)",
+             "unavailable", True, True, None, _MAPPED_AT, False, None, None),
+            ("unavailable beats step_aborted",
+             "unavailable", True, False, None, _MAPPED_AT, True, None, None),
+            ("unavailable beats raw_newer",
+             "unavailable", True, True, None, _MAPPED_AT, False, _RAW_NEWER, None),
+            # P3: stale
+            ("stale via aborted step",
+             "stale", True, True, 100, _MAPPED_AT, True, None, None),
+            ("stale via raw newer than mapped_at",
+             "stale", True, True, 100, _MAPPED_AT, False, _RAW_NEWER, None),
+            # P4: fresh — 一切正常
+            ("fresh",
+             "fresh", True, True, 100, _MAPPED_AT, False, None, "ok"),
+            # P5: unknown — 无充分证据
+            ("unknown (no apply run, no raw)",
+             "unknown", True, True, 100, _MAPPED_AT, False, None, None),
+            ("unknown (apply run exists but not ok)",
+             "unknown", True, True, 100, _MAPPED_AT, False, None, "aborted"),
+            ("unknown (no mapped_at, has apply run)",
+             "unknown", True, True, 100, None, False, None, "ok"),
+        ])
+    def test_decision_matrix(
+        self, tmp_path, scenario, expected, table_exists, table_ok,
+        object_rows, mapped_at, step_aborted, raw_ts, apply_run_status,
+    ):
+        """穿透 _compute_serving_state 直接验证决策矩阵优先级。"""
+        db = LandingStore(tmp_path / "serving.sqlite")
+
+        # 按需创建 raw_* 表
+        if raw_ts is not None:
+            db.con.execute(
+                'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__test" '
+                '(_d2a_extracted_at TEXT)')
+            db.con.execute(
+                'INSERT INTO "raw_digiwin_e10__test" (_d2a_extracted_at) '
+                'VALUES (?)', (raw_ts.isoformat(),))
+            db.con.commit()
+
+        # 按需创建 apply run
+        run_id = None
+        if apply_run_status is not None:
+            run_id = db.start_run(SOURCE, "apply")
+            db.finish_run(run_id, tables=1, rows=100, status=apply_run_status)
+            db.con.commit()
+
+        result = _compute_serving_state(
+            db, table_exists, table_ok, object_rows, mapped_at,
+            SOURCE, run_id, step_aborted,
+        )
+        assert result == expected, (
+            f"{scenario}: expected={expected}, got={result}"
+        )
+
+
+class TestServingStateStaleByRawTimestamp:
+    """stale 由 raw 时间戳触发(M5-T04 追加缺失用例)。"""
+
+    def test_stale_via_raw_newer_than_mapped(self, db):
+        """创建 raw_ 表,时间晚于 obj 的 mapped_at,验证 serving_state=stale。"""
+        # 对现有的 SalesOrder (mapped_at=2026-07-10T12:00:00) 创建更新的 raw 数据
+        db.con.execute(
+            'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__salesorder" '
+            '(_d2a_extracted_at TEXT)')
+        db.con.execute(
+            'INSERT INTO "raw_digiwin_e10__salesorder" (_d2a_extracted_at) '
+            'VALUES (?)', ("2026-07-11T12:00:00",))
+        db.con.commit()
+
+        client = _client(db)
+        sales = next(g for g in client.get("/api/quarantine/groups").json()
+                     if g["object"] == "SalesOrder")
+        # raw 更新于 mapped_at → stale
+        assert sales["serving_state"] == "stale"
+
+    def test_stale_not_triggered_when_raw_older(self, db):
+        """raw 时间早于 mapped_at 时不触发 stale。"""
+        db.con.execute(
+            'CREATE TABLE IF NOT EXISTS "raw_digiwin_e10__salesorder2" '
+            '(_d2a_extracted_at TEXT)')
+        db.con.execute(
+            'INSERT INTO "raw_digiwin_e10__salesorder2" (_d2a_extracted_at) '
+            'VALUES (?)', ("2026-07-09T12:00:00",))
+        db.con.commit()
+
+        client = _client(db)
+        sales = next(g for g in client.get("/api/quarantine/groups").json()
+                     if g["object"] == "SalesOrder")
+        # raw 比 mapped_at 旧且 apply 成功 → 仍为 fresh
+        assert sales["serving_state"] == "fresh"

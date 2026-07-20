@@ -307,6 +307,70 @@ def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict
         tmp_path.unlink(missing_ok=True)
 
 
+def _compute_rate_state(rate: float | None, threshold: float) -> str:
+    """隔离率状态:无证据 → unknown;0% → ok;低于阈值 → warning;达到阈值 → tripped。"""
+    if rate is None:
+        return "unknown"
+    if rate == 0.0:
+        return "ok"
+    if rate >= threshold:
+        return "tripped"
+    return "warning"
+
+
+def _compute_serving_state(
+    db: LandingStore,
+    table_exists: bool,
+    table_ok: bool,
+    object_rows: int | None,
+    mapped_at: datetime | None,
+    source: str,
+    latest_apply_run_id: int | None,
+    step_aborted: bool,
+) -> str:
+    """对象数据新鲜度状态(M5 §6.3 决策矩阵)。
+
+    优先级:not_materialized > unavailable > stale > fresh > unknown。
+    """
+    if not table_exists:
+        return "not_materialized"
+    if not table_ok or object_rows is None:
+        return "unavailable"
+    # stale: step 被熔断中止 或 raw 明显新于 mapped_at
+    if step_aborted:
+        return "stale"
+    if mapped_at is not None:
+        try:
+            # Escape _ and % in source name for SQLite LIKE (they are wildcards)
+            escaped = source.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
+            raw_tables = [r[0] for r in db.con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name LIKE ? ESCAPE '\\'", (f"raw_{escaped}__%",)).fetchall()]
+            raw_latest: datetime | None = None
+            for rt in raw_tables:
+                try:
+                    rr = db.con.execute(
+                        f'SELECT MAX("_d2a_extracted_at") AS m FROM "{rt}"'
+                    ).fetchone()
+                    at = obs.aware(rr["m"])
+                    if at is not None and (raw_latest is None or at > raw_latest):
+                        raw_latest = at
+                except sqlite3.Error:
+                    pass
+            if raw_latest is not None and raw_latest > mapped_at:
+                return "stale"
+        except sqlite3.Error:
+            pass
+    # fresh: 最近 apply 成功 + raw <= mapped_at + 时间证据完整
+    if latest_apply_run_id is not None and mapped_at is not None:
+        run = db.con.execute(
+            "SELECT status FROM d2a_sync_run WHERE id = ?",
+            (latest_apply_run_id,)).fetchone()
+        if run and run["status"] == "ok":
+            return "fresh"
+    return "unknown"
+
+
 def create_app(landing: str | None = None, templates: str = "templates",
                config: ConnectConfig | None = None, token: str | None = None,
                config_path: str | Path | None = None,
@@ -886,68 +950,6 @@ def create_app(landing: str | None = None, templates: str = "templates",
             "steps_state": steps_state,
             "steps": [_map_step(s) for s in steps],
         }
-
-    def _compute_rate_state(rate: float | None, threshold: float) -> str:
-        """隔离率状态:无证据 → unknown;0% → ok;低于阈值 → warning;达到阈值 → tripped。"""
-        if rate is None:
-            return "unknown"
-        if rate == 0.0:
-            return "ok"
-        if rate >= threshold:
-            return "tripped"
-        return "warning"
-
-    def _compute_serving_state(
-        db: LandingStore,
-        table_exists: bool,
-        table_ok: bool,
-        object_rows: int | None,
-        mapped_at: datetime | None,
-        source: str,
-        latest_apply_run_id: int | None,
-        step_aborted: bool,
-    ) -> str:
-        """对象数据新鲜度状态(M5 §6.3 决策矩阵)。
-
-        优先级:not_materialized > unavailable > stale > fresh > unknown。
-        """
-        if not table_exists:
-            return "not_materialized"
-        if not table_ok or object_rows is None:
-            return "unavailable"
-        # stale: step 被熔断中止 或 raw 明显新于 mapped_at
-        if step_aborted:
-            return "stale"
-        if mapped_at is not None:
-            try:
-                # Escape _ and % in source name for SQLite LIKE (they are wildcards)
-                escaped = source.replace("\\", "\\\\").replace("_", "\\_").replace("%", "\\%")
-                raw_tables = [r[0] for r in db.con.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' "
-                    "AND name LIKE ? ESCAPE '\\'", (f"raw_{escaped}__%",)).fetchall()]
-                raw_latest: datetime | None = None
-                for rt in raw_tables:
-                    try:
-                        rr = db.con.execute(
-                            f'SELECT MAX("_d2a_extracted_at") AS m FROM "{rt}"'
-                        ).fetchone()
-                        at = obs.aware(rr["m"])
-                        if at is not None and (raw_latest is None or at > raw_latest):
-                            raw_latest = at
-                    except sqlite3.Error:
-                        pass
-                if raw_latest is not None and raw_latest > mapped_at:
-                    return "stale"
-            except sqlite3.Error:
-                pass
-        # fresh: 最近 apply 成功 + raw <= mapped_at + 时间证据完整
-        if latest_apply_run_id is not None and mapped_at is not None:
-            run = db.con.execute(
-                "SELECT status FROM d2a_sync_run WHERE id = ?",
-                (latest_apply_run_id,)).fetchone()
-            if run and run["status"] == "ok":
-                return "fresh"
-        return "unknown"
 
     @api.get(
         "/quarantine",
