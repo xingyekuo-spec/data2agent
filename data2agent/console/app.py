@@ -45,6 +45,7 @@ from ..connect.config import ConnectConfig, load_config
 from ..connect.landing import LandingStore
 from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_objects
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
+from ..mapping import parse_field_expr
 from ..metamodel.loader import load_pack
 from . import data_browser as br
 from . import observability as obs
@@ -86,6 +87,7 @@ from .contracts import (
     SetupResponse,
     SetupStatusResponse,
     SetupSuccessResponse,
+    TemplateMetric,
     TemplateObject,
     ValidationResult,
 )
@@ -1825,11 +1827,193 @@ def create_app(landing: str | None = None, templates: str = "templates",
     @api.get(
         "/templates",
         response_model=list[TemplateObject],
-        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
-        tags=["v0.2-stub"],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
     )
-    def templates_view() -> list[TemplateObject]:
-        raise HTTPException(501, f"{_STUB_501}(M5 模板只读展示)")
+    def templates_view() -> list[dict]:
+        """模板只读展示:对象模板、属性、绑定、物化状态与隔离计数。
+
+        枚举映射从 binding field_map 表达式中解析;派生决策表原样透出。
+        物化状态按 obj_* 表是否存在、COUNT、MAX(_d2a_mapped_at) 判定;
+        查询失败返回 state=unknown + 警告,不伪装为未物化。
+        """
+        db = store()
+        pack = require_pack()
+        result: list[dict] = []
+        for tpl in pack.objects:
+            warnings: list[str] = []
+
+            # -- properties --
+            properties = []
+            for p in tpl.properties:
+                properties.append({
+                    "name": p.name,
+                    "type": p.type,
+                    "desc": p.desc,
+                    "sensitive": p.sensitive,
+                    "ref": p.ref,
+                    "enum_values": p.enum_values,
+                })
+
+            # -- bindings --
+            bindings = []
+            for b in tpl.bindings:
+                # Parse enum_map from field_map expressions
+                enum_map: dict[str, dict[str, str]] = {}
+                for prop_name, expr_str in b.field_map.items():
+                    try:
+                        fexpr = parse_field_expr(expr_str)
+                        if fexpr.value_map:
+                            enum_map[prop_name] = fexpr.value_map
+                    except ValueError:
+                        pass  # expression parse failure: no enum_map
+
+                # Convert derived decision tables
+                derived: dict[str, dict] = {}
+                for prop_name, df in b.derived.items():
+                    rules = []
+                    for rule in df.rules:
+                        rules.append({
+                            "when": rule.when,
+                            "value": rule.value,
+                        })
+                    derived[prop_name] = {
+                        "rules": rules,
+                        "default": df.default,
+                    }
+
+                bindings.append({
+                    "source": b.source,
+                    "tables": b.tables,
+                    "status": b.status,
+                    "key_map": b.key_map,
+                    "field_map": b.field_map,
+                    "watermark": b.watermark,
+                    "notes": b.notes,
+                    "enabled": b.enabled,
+                    "enum_map": enum_map,
+                    "derived": derived,
+                })
+
+            # -- materialized lookup --
+            materialized = None
+            table_name = f"obj_{tpl.object}"
+            try:
+                exists = db.con.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (table_name,)).fetchone()
+                if exists:
+                    try:
+                        row = db.con.execute(
+                            f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
+                            f'FROM "{table_name}"'
+                        ).fetchone()
+                        rows = row["n"]
+                        mapped_at = obs.aware(row["m"])
+                    except sqlite3.Error as e:
+                        warnings.append(f"物化表查询失败: {e}")
+                        rows = None
+                        mapped_at = None
+
+                    # batch_id from most recent apply step for this object
+                    batch_id = None
+                    step = db.con.execute(
+                        "SELECT batch_id FROM d2a_run_step "
+                        "WHERE kind = 'object' AND target = ? "
+                        "ORDER BY id DESC LIMIT 1", (tpl.object,)).fetchone()
+                    if step:
+                        batch_id = step["batch_id"]
+
+                    # source from first enabled binding
+                    source = None
+                    for b2 in tpl.bindings:
+                        if b2.enabled:
+                            source = b2.source
+                            break
+                    if source is None and tpl.bindings:
+                        source = tpl.bindings[0].source
+
+                    materialized = {
+                        "state": "materialized",
+                        "source": source,
+                        "rows": rows,
+                        "mapped_at": mapped_at,
+                        "batch_id": batch_id,
+                        "warnings": [],
+                    }
+                else:
+                    materialized = {
+                        "state": "not_materialized",
+                        "source": None,
+                        "rows": None,
+                        "mapped_at": None,
+                        "batch_id": None,
+                        "warnings": [],
+                    }
+            except sqlite3.Error as e:
+                warnings.append(f"物化状态查询失败: {e}")
+                materialized = {
+                    "state": "unknown",
+                    "source": None,
+                    "rows": None,
+                    "mapped_at": None,
+                    "batch_id": None,
+                    "warnings": [str(e)],
+                }
+
+            # -- quarantine_pending --
+            (qp,) = db.con.execute(
+                "SELECT COUNT(*) FROM d2a_quarantine "
+                "WHERE object = ? AND resolved_at IS NULL",
+                (tpl.object,)).fetchone()
+
+            result.append({
+                "object": tpl.object,
+                "display_name": tpl.display_name,
+                "description": tpl.description,
+                "domain": tpl.domain,
+                "keys": tpl.keys,
+                "properties": properties,
+                "bindings": bindings,
+                "source_of_truth": tpl.source_of_truth,
+                "knowledge_refs": tpl.knowledge_refs,
+                "materialized": materialized,
+                "quarantine_pending": qp,
+                "warnings": warnings,
+            })
+        return result
+
+    @api.get(
+        "/templates/metrics",
+        response_model=list[TemplateMetric],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
+    def templates_metrics() -> list[dict]:
+        """指标只读展示:模板包内所有指标定义。
+
+        calibration_state 按 status 映射:certified→calibrated, draft→uncalibrated,
+        deprecated→deprecated。draft 指标表示"模板未声明完成现场校准"。
+        """
+        pack = require_pack()
+        result: list[dict] = []
+        for m in pack.metrics:
+            calibration_state = {
+                "certified": "calibrated",
+                "draft": "uncalibrated",
+                "deprecated": "deprecated",
+            }.get(m.status, "uncalibrated")
+
+            result.append({
+                "metric": m.metric,
+                "display_name": m.display_name,
+                "status": m.status,
+                "calibration_state": calibration_state,
+                "formula": m.formula,
+                "grain": m.grain,
+                "dimensions": m.dimensions,
+                "caveats": m.caveats,
+                "freshness_sla": m.freshness_sla,
+            })
+        return result
 
     @api.post(
         "/gateway/proposals",

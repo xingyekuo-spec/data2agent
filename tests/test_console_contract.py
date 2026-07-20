@@ -87,18 +87,15 @@ NAMED_SUCCESS_SCHEMAS = {
 # M2 v0.2 契约桩:schema 先行,运行时在所属里程碑实现前一律 501。
 # (M3 已实现 /api/pipeline,不再属于桩)
 STUB_API_ROUTES = {
-    ("GET", "/api/templates"),
     ("POST", "/api/gateway/proposals"),
 }
 
 STUB_SUCCESS_SCHEMAS = {
-    ("get", "/api/templates"): ("array", "TemplateObject"),
     ("post", "/api/gateway/proposals"): "ProposalResponse",
 }
 
 # (method, concrete path, kwargs) for runtime 501 checks
 STUB_RUNTIME_CALLS = [
-    ("get", "/api/templates", {}),
     ("post", "/api/gateway/proposals", {
         "json": {"object": "SalesOrder", "action": "review", "conclusion": "c",
                  "evidence": [{"claim": "c", "query_id": "q1"}]},
@@ -473,7 +470,7 @@ def test_stub_routes_present(tmp_path):
                 found.add((method.upper(), path))
     missing = STUB_API_ROUTES - found
     assert not missing, f"missing stub routes: {sorted(missing)}"
-    assert len(STUB_API_ROUTES) == 2
+    assert len(STUB_API_ROUTES) == 1
 
 
 def test_stub_success_schemas_named_and_typed(tmp_path):
