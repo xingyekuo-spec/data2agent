@@ -740,82 +740,107 @@ else:
     }
 
     // M5-12b: 隔离页 UI retry 流——点击按钮、确认对话框、确认 Runs step
+    // 前面的 API retry 可能已 resolve Customer 隔离;重新插入确保按钮可见
+    insertQuarantineRecord(
+      landing, SOURCE, 'Customer',
+      { CUSTOMER_CODE: 'RETRY-UI-001' },
+      'e2e-retry-ui: 验证 UI retry 流',
+      { CUSTOMER_CODE: 'RETRY-UI-001', CUSTOMER_NAME: 'Retry UI Test' },
+    )
     await page.goto(`http://localhost:${REAL_UI_PORT}/v1/quarantine`, { waitUntil: 'networkidle' })
     await page.waitForTimeout(2000)
     // 查找 Customer 分组的 retry 按钮
     const retryBtn = page.locator('[data-testid="retry-Customer"]')
-    if (await retryBtn.count() > 0) {
-      // 点击 retry 按钮,应弹出 Element Plus 确认对话框
-      await retryBtn.first().click()
-      await page.waitForTimeout(1000)
-      // 确认对话框应包含对象名
-      const confirmBox = page.locator('.el-message-box')
-      const confirmVisible = await confirmBox.count()
-      expect(confirmVisible > 0, 'M5:retry 确认对话框可见')
-      if (confirmVisible > 0) {
-        const confirmText = await confirmBox.textContent()
-        expect(confirmText.includes('Customer'), 'M5:确认对话框含对象名 Customer')
-        // 点击确认按钮
-        const confirmBtn = confirmBox.locator('.el-button--primary').first()
-        await confirmBtn.click()
-        await page.waitForTimeout(3000)
-      }
-      // 等待 retry 结果对话框(成功或失败)
-      const resultBox = page.locator('[data-testid="retry-result-dialog"]')
-      const retryRunLink = page.locator('[data-testid="retry-run-link"]')
-      const retryErrorRunLink = page.locator('[data-testid="retry-error-run-link"]')
-      const hasResult = await resultBox.count()
-      const hasRunLink = await retryRunLink.count() > 0
-      const hasErrorLink = await retryErrorRunLink.count() > 0
-      if (hasResult > 0) {
-        // 验证 step kind="object": 获取 run_id 后通过 API 验证
-        if (hasRunLink) {
-          const href = await retryRunLink.getAttribute('href')
-          const runIdMatch = href && href.match(/\d+$/)
-          if (runIdMatch) {
-            const runId = parseInt(runIdMatch[0], 10)
-            const runDetailResp = await page.request.get(
-              `http://localhost:${CONSOLE_PORT}/api/runs/${runId}`,
-              { headers: { Authorization: 'Bearer e2e-token' } },
-            )
-            expect(runDetailResp.status() === 200, 'M5:retry run 详情可访问')
-            const runDetail = await runDetailResp.json()
-            expect(runDetail.steps_state !== undefined, 'M5:retry run 含 steps_state')
-            // 验证至少一个 step 的 kind 为 object
-            const steps = runDetail.steps_state?.steps ?? []
-            expect(steps.length > 0, 'M5:retry run 含 step')
-            const hasObjectStep = steps.some(s => s.kind === 'object' || s.target === 'Customer')
-            expect(hasObjectStep, 'M5:retry run step kind 含 object')
-          }
-        } else if (hasErrorLink) {
-          // 重试失败也有 run link(熔断/执行失败)
-          const href = await retryErrorRunLink.getAttribute('href')
-          expect(href && href.includes('/v1/runs/'), 'M5:retry 失败也有 runs 链接')
-        }
-      }
+    expect(await retryBtn.count() > 0, 'M5:retry-Customer 按钮存在')
+    // 点击 retry 按钮,应弹出 Element Plus 确认对话框
+    await retryBtn.first().click()
+    await page.waitForTimeout(1000)
+    // 确认对话框应包含对象名(必须存在)
+    const confirmBox = page.locator('.el-message-box')
+    const confirmVisible = await confirmBox.count()
+    expect(confirmVisible > 0, 'M5:retry 确认对话框可见')
+    const confirmText = await confirmBox.textContent()
+    expect(confirmText.includes('Customer'), 'M5:确认对话框含对象名 Customer')
+    // 点击确认按钮
+    const confirmBtn = confirmBox.locator('.el-button--primary').first()
+    await confirmBtn.click()
+    await page.waitForTimeout(3000)
+    // 等待 retry 结果对话框(成功或失败)——必须存在
+    const resultBox = page.locator('[data-testid="retry-result-dialog"]')
+    const retryRunLink = page.locator('[data-testid="retry-run-link"]')
+    const retryErrorRunLink = page.locator('[data-testid="retry-error-run-link"]')
+    const hasResult = await resultBox.count()
+    const hasRunLink = await retryRunLink.count() > 0
+    const hasErrorLink = await retryErrorRunLink.count() > 0
+    expect(hasResult > 0, 'M5:retry 结果对话框可见')
+    expect(hasRunLink || hasErrorLink, 'M5:retry 结果含 run 链接')
+    // 验证 step kind="object": 获取 run_id 后通过 API 验证
+    if (hasRunLink) {
+      const href = await retryRunLink.getAttribute('href')
+      const runIdMatch = href && href.match(/\d+$/)
+      expect(runIdMatch !== null, 'M5:retry run link 含 run_id')
+      const runId = parseInt(runIdMatch[0], 10)
+      const runDetailResp = await page.request.get(
+        `http://localhost:${CONSOLE_PORT}/api/runs/${runId}`,
+        { headers: { Authorization: 'Bearer e2e-token' } },
+      )
+      expect(runDetailResp.status() === 200, 'M5:retry run 详情可访问')
+      const runDetail = await runDetailResp.json()
+      expect(runDetail.steps_state !== undefined, 'M5:retry run 含 steps_state')
+      // steps 是 RunDetailResponse 顶层数组(非 steps_state 内嵌)
+      const steps = runDetail.steps ?? []
+      expect(Array.isArray(steps) && steps.length > 0, 'M5:retry run 含 step')
+      const hasObjectStep = steps.some(s => s.kind === 'object')
+      expect(hasObjectStep, 'M5:retry run step kind 含 object')
+    } else if (hasErrorLink) {
+      // 重试失败也有 run link(熔断/执行失败)
+      const href = await retryErrorRunLink.getAttribute('href')
+      expect(href && href.includes('/v1/runs/'), 'M5:retry 失败也有 runs 链接')
     }
 
-    // M5-12c: stale serving_state 场景——插入一条隔离记录后验证 groups 含 stale
-    // 直接插入新记录(不重新 apply),使 groups 检测到旧对象与新的 pending
+    // M5-12c: stale serving_state —— 创建真实 stale 场景
+    // 使 raw 表的 _d2a_extracted_at 晚于 obj 表的 _d2a_mapped_at,触发 serving_state=stale
+    // 前面 UI retry 可能已 resolve;重新插入 Customer 隔离以保证分组中出现
     insertQuarantineRecord(
-      landing, SOURCE, 'SalesOrder',
-      { ORDER_NO: 'SO-STALE-001' },
-      'quote_no: 源码值 Q-SECRET 未在 map 中声明',
-      { ORDER_NO: 'SO-STALE-001', quote_no: 'Q-SECRET' },
+      landing, SOURCE, 'Customer',
+      { CUSTOMER_CODE: 'STALE-TEST-001' },
+      'e2e-stale-test: 验证 stale 服务状态',
+      { CUSTOMER_CODE: 'STALE-TEST-001', CUSTOMER_NAME: 'Stale Test' },
     )
+    const makeStaleSh = `
+import json, sqlite3
+from datetime import datetime, timezone, timedelta
+db = sqlite3.connect(${JSON.stringify(landing)})
+# 确认 obj_Customer 有 _d2a_mapped_at
+row = db.execute('SELECT MAX("_d2a_mapped_at") AS m FROM "obj_Customer"').fetchone()
+mapped_at = row["m"]
+assert mapped_at is not None, "obj_Customer 缺少 _d2a_mapped_at,无法构造 stale"
+# 将 raw 表的 _d2a_extracted_at 设为未来时间,使其明显晚于 mapped_at
+future = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
+updated = db.execute(
+    'UPDATE "raw_digiwin_e10__CUSTOMER" SET "_d2a_extracted_at" = ?'
+    ' WHERE "_d2a_extracted_at" <= ?', (future, mapped_at))
+db.commit()
+print(f"mapped_at={mapped_at} updated={updated.rowcount}")
+`
+    sh(PYTHON, ['-c', makeStaleSh])
     const staleGroupsResp = await page.request.get(
       `http://localhost:${CONSOLE_PORT}/api/quarantine/groups?source=${SOURCE}`,
       { headers: { Authorization: 'Bearer e2e-token' } },
     )
     expect(staleGroupsResp.status() === 200, 'M5:stale 场景分组 200')
     const staleGroups = await staleGroupsResp.json()
-    // 验证 serving_state 枚举值包含 stale(不要求某个对象一定是 stale)
+    const customerStaleGroup = staleGroups.find(g => g.object === 'Customer')
+    expect(customerStaleGroup !== undefined, 'M5:stale 场景 Customer 在分组中')
+    expect(customerStaleGroup.serving_state === 'stale',
+      `M5:Customer serving_state=stale(实际 ${customerStaleGroup.serving_state})`)
+    expect(customerStaleGroup.quarantine_rate !== null,
+      `M5:Customer quarantine_rate 有值(实际 ${customerStaleGroup.quarantine_rate})`)
+    // 验证各 serving_state 枚举值均合法
     const allStates = staleGroups.map(g => g.serving_state)
     const validServingStates = ['fresh', 'stale', 'not_materialized', 'unavailable', 'unknown']
     expect(allStates.every(s => validServingStates.includes(s)),
       `M5:serving_state 均为合法值(含 ${new Set(allStates).size} 种)`)
-    // 至少有一个 stale 或 not_materialized(新插入的隔离记录会使对象状态为 stale)
-    // 不强制——取决于熔断窗口与隔离率;但 serving_state 枚举值均已验证合法
 
     // M5-13: 回归——M4 运行/审计/数据页仍可用
     await page.goto(`http://localhost:${REAL_UI_PORT}/v1/runs`, { waitUntil: 'networkidle' })
