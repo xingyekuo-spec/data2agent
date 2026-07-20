@@ -109,6 +109,73 @@ class McpCallBody(BaseModel):
     params: dict[str, JsonValue] = Field(default_factory=dict)
 
 
+McpLabReasonCode = Literal[
+    "invalid_params",
+    "unknown_target",
+    "not_materialized",
+    "query_expired",
+    "tier_forbidden",
+    "rate_limited",
+    "mcp_unavailable",
+    "execution_failed",
+]
+
+
+class McpQueryMeta(BaseModel):
+    """查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。"""
+
+    query_id: str | None = Field(
+        default=None,
+        description="可被建议卡引用的查询 ID;目录查询或无可引用结果时为 null",
+    )
+    tool: Literal["query_objects", "query_metrics"]
+    target: str = Field(description="对象名或指标名;目录查询可用空串")
+    row_count: int | None = None
+    duration_ms: int = Field(ge=0, description="服务端耗时毫秒")
+    masked_fields: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    evidence_scope: Literal["process"] = Field(
+        default="process",
+        description="v0.2:query ID 仅在当前 Console 进程/配置签名内有效",
+    )
+
+
+class McpLabError(BaseModel):
+    """MCP Lab 安全错误:前端按 status/reason_code 分支,不解析中文 detail。"""
+
+    detail: str
+    reason_code: McpLabReasonCode
+    tool: str | None = None
+    retryable: bool = False
+    error_id: str | None = None
+
+
+class McpObjectQueryResult(BaseModel):
+    """query_objects 数据查询成功形状(目录查询另见宽表结果)。"""
+
+    object: str
+    display_name: str
+    rows: list[dict[str, JsonValue]]
+    meta: McpQueryMeta
+
+
+class McpMetricsQueryResult(BaseModel):
+    """query_metrics 数据查询成功形状。"""
+
+    metric: str
+    display_name: str
+    status: str
+    formula: str
+    grain: list[str] = Field(default_factory=list)
+    caveats: str = ""
+    freshness_sla: str = ""
+    implemented: bool
+    unit: str | None = None
+    group_by: str | None = None
+    rows: list[dict[str, JsonValue]] = Field(default_factory=list)
+    meta: McpQueryMeta
+
+
 # ---- setup / config ----
 
 

@@ -62,6 +62,10 @@ from .contracts import (
     HttpError,
     LogsResponse,
     McpCallBody,
+    McpLabError,
+    McpMetricsQueryResult,
+    McpObjectQueryResult,
+    McpQueryMeta,
     McpToolResult,
     ObjectRowsPageResponse,
     ObjectSummary,
@@ -701,6 +705,19 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         "schema": {"type": "integer"},
                         "description": "当前筛选条件下的总数(分页用)",
                     }
+        # M6-T01:冻结查询 meta / Lab 错误 / 数据结果形状(运行时映射在后续任务)
+        schemas = components.setdefault("schemas", {})
+        for model in (
+            McpQueryMeta, McpLabError, McpObjectQueryResult, McpMetricsQueryResult,
+        ):
+            name = model.__name__
+            if name in schemas:
+                continue
+            model_schema = model.model_json_schema(
+                ref_template="#/components/schemas/{model}")
+            for def_name, def_schema in model_schema.pop("$defs", {}).items():
+                schemas.setdefault(def_name, def_schema)
+            schemas[name] = model_schema
         app.openapi_schema = schema
         return app.openapi_schema
 
@@ -1565,9 +1582,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
         responses={
             400: {"model": HttpError},
             401: _RESP_HTTP_ERROR[401],
-            409: _RESP_HTTP_ERROR[409],
-            502: {"model": HttpError},
-            503: {"model": HttpError},
+            403: {"model": McpLabError, "description": "档位禁止或其他治理拒绝"},
+            409: {"model": McpLabError, "description": "未配置/冲突/query 过期等"},
+            429: {"model": McpLabError, "description": "限流"},
+            502: {"model": McpLabError, "description": "上游 MCP 失败"},
+            503: {"model": McpLabError, "description": "MCP 不可用"},
         },
     )
     def debug_mcp_call(body: McpCallBody) -> dict:
@@ -2323,6 +2342,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
         response_model=ProposalResponse,
         responses={
             401: _RESP_HTTP_ERROR[401],
+            403: {"model": McpLabError, "description": "档位禁止"},
+            409: {"model": McpLabError, "description": "query 过期/配置冲突"},
             422: _RESP_HTTP_ERROR[422],
             501: _RESP_HTTP_ERROR_STUB[501],
         },
