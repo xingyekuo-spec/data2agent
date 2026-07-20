@@ -87,29 +87,17 @@ NAMED_SUCCESS_SCHEMAS = {
 # M2 v0.2 契约桩:schema 先行,运行时在所属里程碑实现前一律 501。
 # (M3 已实现 /api/pipeline,不再属于桩)
 STUB_API_ROUTES = {
-    ("GET", "/api/runs/{run_id}"),
-    ("GET", "/api/data/raw/{source}/{table}"),
-    ("GET", "/api/objects"),
-    ("GET", "/api/objects/{object}"),
     ("GET", "/api/templates"),
     ("POST", "/api/gateway/proposals"),
 }
 
 STUB_SUCCESS_SCHEMAS = {
-    ("get", "/api/runs/{run_id}"): "RunDetailResponse",
-    ("get", "/api/data/raw/{source}/{table}"): "RawDataPageResponse",
-    ("get", "/api/objects"): ("array", "ObjectSummary"),
-    ("get", "/api/objects/{object}"): "ObjectRowsPageResponse",
     ("get", "/api/templates"): ("array", "TemplateObject"),
     ("post", "/api/gateway/proposals"): "ProposalResponse",
 }
 
 # (method, concrete path, kwargs) for runtime 501 checks
 STUB_RUNTIME_CALLS = [
-    ("get", "/api/runs/1", {}),
-    ("get", "/api/data/raw/digiwin_e10/raw_x", {}),
-    ("get", "/api/objects", {}),
-    ("get", "/api/objects/SalesOrder", {}),
     ("get", "/api/templates", {}),
     ("post", "/api/gateway/proposals", {
         "json": {"object": "SalesOrder", "action": "review", "conclusion": "c",
@@ -237,6 +225,9 @@ def test_openapi_declares_optional_bearer_security(tmp_path):
     optional = [{"HTTPBearer": []}, {}]
     overview = spec["paths"]["/api/overview"]["get"]
     assert overview.get("security") == optional
+    assert spec["paths"]["/api/data/raw"]["get"].get("security") == [{"HTTPBearer": []}]
+    assert spec["paths"]["/api/data/raw/{source}/{table}"]["get"].get("security") == [
+        {"HTTPBearer": []}]
     # Setup routes use the same optional Bearer: after first-time setup + token,
     # runtime returns 401 without credentials (not permanently unauthenticated).
     assert spec["paths"]["/api/setup"]["post"].get("security") == optional
@@ -315,11 +306,15 @@ def test_setup_mode_blocks_management_apis(tmp_path):
 def test_limit_is_capped(env):
     landing, _ = env
     client = TestClient(create_app(landing.db_path, ROOT / "templates"))
-    runs = client.get("/api/runs", params={"limit": 9999}).json()
-    assert isinstance(runs, list)
-    assert len(runs) <= 100
-    audit = client.get("/api/audit", params={"limit": 9999}).json()
-    assert len(audit) <= 200
+    # M4 口径:越界参数返回 422(不是静默截断)
+    assert client.get("/api/runs", params={"limit": 9999}).status_code == 422
+    assert client.get("/api/runs", params={"limit": 0}).status_code == 422
+    runs = client.get("/api/runs", params={"limit": 100}).json()
+    assert isinstance(runs, list) and len(runs) <= 100
+    # audit 同样按 M4 口径:越界 422
+    assert client.get("/api/audit", params={"limit": 9999}).status_code == 422
+    audit = client.get("/api/audit", params={"limit": 100}).json()
+    assert len(audit) <= 100
 
 
 def test_mcp_unknown_tool_rejected(env):
@@ -478,7 +473,7 @@ def test_stub_routes_present(tmp_path):
                 found.add((method.upper(), path))
     missing = STUB_API_ROUTES - found
     assert not missing, f"missing stub routes: {sorted(missing)}"
-    assert len(STUB_API_ROUTES) == 6
+    assert len(STUB_API_ROUTES) == 2
 
 
 def test_stub_success_schemas_named_and_typed(tmp_path):
@@ -576,3 +571,58 @@ def test_pipeline_contract_overall_and_node_fields(tmp_path):
     expected = {"unknown", "idle", "running", "healthy", "warning", "failed", "stale"}
     assert set(node_props["status"]["enum"]) == expected
     assert set(resp["properties"]["overall_status"]["enum"]) == expected
+
+
+# ---- M4 契约冻结 ----
+
+
+def test_m4_run_summary_shape(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    schemas = spec["components"]["schemas"]
+    props = schemas["RunSummary"]["properties"]
+    assert set(props["type"]["anyOf"][0]["enum"]) == {
+        "sync", "apply", "reconcile", "ingest", "validation"}
+    assert set(props["status"]["anyOf"][0]["enum"]) == {
+        "running", "ok", "paused", "failed", "aborted"}
+    for field in ("duration_ms", "quarantined", "dataset_version", "error", "error_id"):
+        assert field in props, field
+    detail = schemas["RunDetailResponse"]["properties"]
+    assert set(detail["steps_state"]["enum"]) == {"available", "legacy_unavailable"}
+    step_props = schemas["RunStep"]["properties"]
+    assert set(step_props["kind"]["enum"]) == {"table", "object", "segment", "batch"}
+    for field in ("ordinal", "batch_id", "repaired", "soft_deleted",
+                  "watermark_before", "watermark_after"):
+        assert field in step_props, field
+    run_params = {
+        p["name"]: p["schema"]
+        for p in spec["paths"]["/api/runs"]["get"]["parameters"]
+    }
+    assert set(run_params["type"]["anyOf"][0]["enum"]) == {
+        "sync", "apply", "reconcile", "ingest", "validation"}
+    assert set(run_params["status"]["anyOf"][0]["enum"]) == {
+        "running", "ok", "paused", "failed", "aborted"}
+
+
+def test_m4_browse_and_audit_shapes(tmp_path):
+    schemas = _openapi_app(tmp_path).openapi()["components"]["schemas"]
+    raw_props = schemas["RawDataPageResponse"]["properties"]
+    for field in ("columns", "truncations", "sort", "query", "searchable",
+                  "warnings", "generated_at"):
+        assert field in raw_props, field
+    col_props = schemas["ColumnMeta"]["properties"]
+    assert set(col_props["role"]["enum"]) == {"business_key", "data", "metadata"}
+    assert set(col_props["classification"]["enum"]) == {"normal", "sensitive", "unknown"}
+    assert set(schemas["AccessAuditItem"]["properties"]["resource_type"]["enum"]) == {
+        "raw", "object"}
+    obj_props = schemas["ObjectSummary"]["properties"]
+    assert "searchable" in obj_props and "warning" in obj_props
+    audit_props = schemas["AuditRecord"]["properties"]
+    assert "id" in audit_props
+
+
+def test_runs_and_audit_declare_total_count_header(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    for path in ("/api/runs", "/api/audit"):
+        headers = spec["paths"][path]["get"]["responses"]["200"].get("headers", {})
+        assert "X-Total-Count" in headers, path
+        assert headers["X-Total-Count"]["schema"]["type"] == "integer"

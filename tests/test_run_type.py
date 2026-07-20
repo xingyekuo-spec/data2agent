@@ -58,6 +58,10 @@ def test_start_run_writes_type_and_validates(tmp_path):
     rid = store.start_run(SOURCE, "sync")
     assert store.con.execute(
         "SELECT run_type FROM d2a_sync_run WHERE id = ?", (rid,)).fetchone()[0] == "sync"
+    validation_id = store.start_run(SOURCE, "validation")
+    assert store.con.execute(
+        "SELECT run_type FROM d2a_sync_run WHERE id = ?", (validation_id,)
+    ).fetchone()[0] == "validation"
     with pytest.raises(ValueError, match="未知 run_type"):
         store.start_run(SOURCE, "bogus")
 

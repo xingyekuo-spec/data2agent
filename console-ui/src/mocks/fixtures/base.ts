@@ -12,6 +12,8 @@ export type OverviewResponse = components['schemas']['OverviewResponse']
 export type RunSummary = components['schemas']['RunSummary']
 export type QuarantineRecord = components['schemas']['QuarantineRecord']
 export type AuditRecord = components['schemas']['AuditRecord']
+export type AccessAuditPage = components['schemas']['AccessAuditPage']
+export type RawTableCatalogResponse = components['schemas']['RawTableCatalogResponse']
 export type ServicesStatusResponse = components['schemas']['ServicesStatusResponse']
 export type ConfigViewResponse = components['schemas']['ConfigViewResponse']
 export type LogsResponse = components['schemas']['LogsResponse']
@@ -33,6 +35,8 @@ export interface ScenarioFixture {
   runs: RunSummary[]
   quarantine: QuarantineRecord[]
   audit: AuditRecord[]
+  accessAudit: AccessAuditPage
+  rawCatalog: RawTableCatalogResponse
   services: ServicesStatusResponse
   config: ConfigViewResponse
   logs: LogsResponse
@@ -114,6 +118,7 @@ const baseObjects: ObjectSummary[] = [
     mapped_at: T,
     quarantined: 0,
     version: null,
+    searchable: true,
   },
   {
     object: 'Material',
@@ -123,6 +128,7 @@ const baseObjects: ObjectSummary[] = [
     mapped_at: T,
     quarantined: 0,
     version: null,
+    searchable: true,
   },
   {
     object: 'Quotation',
@@ -132,6 +138,7 @@ const baseObjects: ObjectSummary[] = [
     mapped_at: T,
     quarantined: 0,
     version: null,
+    searchable: true,
   },
   {
     object: 'SalesOrder',
@@ -141,6 +148,77 @@ const baseObjects: ObjectSummary[] = [
     mapped_at: T,
     quarantined: 0,
     version: null,
+    searchable: true,
+  },
+]
+
+const customerColumns: RawDataPageResponse['columns'] = [
+  {
+    name: 'CUSTOMER_CODE',
+    data_type: 'TEXT',
+    role: 'business_key',
+    classification: 'normal',
+    masked: false,
+    searchable: true,
+  },
+  {
+    name: 'CUSTOMER_NAME',
+    data_type: 'TEXT',
+    role: 'data',
+    classification: 'normal',
+    masked: false,
+    searchable: false,
+  },
+  {
+    name: 'CONTACT_EMAIL',
+    data_type: 'TEXT',
+    role: 'data',
+    classification: 'sensitive',
+    masked: true,
+    searchable: false,
+  },
+  {
+    name: 'LAST_MODIFIED_DATE',
+    data_type: 'TEXT',
+    role: 'data',
+    classification: 'unknown',
+    masked: false,
+    searchable: false,
+  },
+]
+
+const customerObjColumns: RawDataPageResponse['columns'] = [
+  {
+    name: 'customer_code',
+    data_type: 'TEXT',
+    role: 'business_key',
+    classification: 'normal',
+    masked: false,
+    searchable: true,
+  },
+  {
+    name: 'name',
+    data_type: 'TEXT',
+    role: 'data',
+    classification: 'normal',
+    masked: false,
+    searchable: false,
+  },
+  {
+    name: 'payment_days',
+    data_type: 'INTEGER',
+    role: 'data',
+    classification: 'normal',
+    masked: false,
+    searchable: false,
+  },
+  {
+    name: 'contact',
+    data_type: 'TEXT',
+    role: 'data',
+    classification: 'sensitive',
+    masked: true,
+    searchable: false,
   },
 ]
 
@@ -272,29 +350,42 @@ export const baseFixture: ScenarioFixture = {
   runs: [
     {
       id: 42,
+      type: 'sync',
+      status: 'ok',
       source: 'digiwin_e10',
-      started_at: '2026-07-18 09:10:00',
-      finished_at: '2026-07-18 09:10:06',
+      started_at: '2026-07-18T09:10:00+08:00',
+      finished_at: '2026-07-18T09:10:06+08:00',
+      duration_ms: 6000,
       tables: 4,
       rows: 1284,
-      status: 'ok',
+      quarantined: 0,
+      dataset_version: null,
       detail: null,
+      error: null,
+      error_id: null,
     },
     {
       id: 41,
+      type: 'sync',
+      status: 'ok',
       source: 'digiwin_e10',
-      started_at: '2026-07-18 08:10:00',
-      finished_at: '2026-07-18 08:10:05',
+      started_at: '2026-07-18T08:10:00+08:00',
+      finished_at: '2026-07-18T08:10:05+08:00',
+      duration_ms: 5000,
       tables: 4,
       rows: 36,
-      status: 'ok',
+      quarantined: 0,
+      dataset_version: null,
       detail: null,
+      error: null,
+      error_id: null,
     },
   ],
   quarantine: [],
   audit: [
     {
-      ts: '2026-07-18 09:10:01',
+      id: 1,
+      ts: '2026-07-18T09:10:01+08:00',
       source: 'digiwin_e10',
       action: 'select',
       sql: 'SELECT * FROM CUSTOMER WHERE LAST_MODIFIED_DATE > ?',
@@ -302,6 +393,68 @@ export const baseFixture: ScenarioFixture = {
       duration_ms: 12.4,
     },
   ],
+  accessAudit: {
+    items: [
+      {
+        id: 1,
+        ts: '2026-07-18T09:20:00+08:00',
+        subject: 'console-admin',
+        resource_type: 'raw',
+        source: 'digiwin_e10',
+        resource: 'CUSTOMER',
+        allowed: true,
+        reason_code: 'ok',
+        offset: 0,
+        limit: 50,
+        returned_rows: 24,
+        request_id: null,
+      },
+      {
+        id: 2,
+        ts: '2026-07-18T09:21:00+08:00',
+        subject: 'anonymous',
+        resource_type: 'raw',
+        source: null,
+        resource: 'sqlite_master',
+        allowed: false,
+        reason_code: 'not_in_catalog',
+        offset: null,
+        limit: null,
+        returned_rows: null,
+        request_id: null,
+      },
+    ],
+    offset: 0,
+    limit: 50,
+    total: 2,
+    generated_at: T,
+  },
+  rawCatalog: {
+    items: [
+      {
+        source: 'digiwin_e10',
+        table: 'CUSTOMER',
+        display_name: 'CUSTOMER',
+        rows: 24,
+        latest_batch_id: 'b-20260718-0910',
+        extracted_at: T,
+        searchable: true,
+        classification_warning: true,
+      },
+      {
+        source: 'digiwin_e10',
+        table: 'SALES_ORDER',
+        display_name: 'SALES_ORDER',
+        rows: 97,
+        latest_batch_id: 'b-20260718-0910',
+        extracted_at: T,
+        searchable: true,
+        classification_warning: false,
+      },
+    ],
+    warnings: [],
+    generated_at: T,
+  },
   services: {
     ingest: { ok: true, method: 'http' },
     mcp: { ok: true, method: 'http' },
@@ -339,34 +492,73 @@ export const baseFixture: ScenarioFixture = {
     started_at: '2026-07-18T09:10:00+08:00',
     finished_at: '2026-07-18T09:10:06+08:00',
     duration_ms: 6000,
+    tables: 4,
+    rows: 1284,
+    quarantined: 0,
     dataset_version: null,
+    detail: null,
+    error: null,
+    error_id: null,
+    steps_state: 'available',
     steps: [
       {
-        name: 'raw_digiwin_e10__CUSTOMER',
+        id: 1,
+        ordinal: 1,
+        kind: 'table',
+        name: 'CUSTOMER',
+        status: 'ok',
+        started_at: '2026-07-18T09:10:01+08:00',
+        finished_at: '2026-07-18T09:10:03+08:00',
+        duration_ms: 2000,
+        batch_id: 'b-20260718-0910',
         rows_in: 36,
         rows_out: 36,
         quarantined: 0,
+        repaired: null,
+        soft_deleted: null,
         watermark_before: '2026-07-17 08:30:00',
         watermark_after: '2026-07-18 08:30:00',
         error: null,
+        error_id: null,
       },
     ],
   },
   rawData: {
     source: 'digiwin_e10',
-    table: 'raw_digiwin_e10__CUSTOMER',
+    table: 'CUSTOMER',
+    columns: customerColumns,
+    rows: [
+      {
+        CUSTOMER_CODE: 'C-001',
+        CUSTOMER_NAME: '北极星钓具(美国)',
+        CONTACT_EMAIL: '***',
+        LAST_MODIFIED_DATE: '2026-07-17 18:02:11',
+      },
+    ],
+    truncations: [],
     offset: 0,
     limit: 50,
     total: 36,
-    rows: [{ CUSTOMER_CODE: 'C-001', CUSTOMER_NAME: '北极星钓具(美国)' }],
+    sort: 'pk:CUSTOMER_CODE',
+    query: '',
+    searchable: true,
+    warnings: ['列 LAST_MODIFIED_DATE 分类未知,按未确认处理展示'],
+    generated_at: T,
   },
   objects: baseObjects,
   objectRows: {
     object: 'Customer',
+    columns: customerObjColumns,
+    rows: [{ customer_code: 'C-001', name: '北极星钓具(美国)', payment_days: 60, contact: '***' }],
+    truncations: [],
     offset: 0,
     limit: 50,
     total: 36,
-    rows: [{ customer_code: 'C-001', name: '北极星钓具(美国)', payment_days: 60 }],
+    sort: 'pk:customer_code',
+    query: '',
+    searchable: true,
+    warnings: [],
+    generated_at: T,
   },
   templates: baseTemplates,
   proposal: {

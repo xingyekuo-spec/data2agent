@@ -31,6 +31,21 @@ _TYPE_SQL = {"int": "INTEGER", "decimal": "REAL", "money": "REAL", "bool": "INTE
 class MappingCircuitBreaker(Exception):
     """单对象隔离率超阈值,映射中止,旧对象表保留。"""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        total: int = 0,
+        mapped: int = 0,
+        quarantined: int = 0,
+        batch_id: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.total = total
+        self.mapped = mapped
+        self.quarantined = quarantined
+        self.batch_id = batch_id
+
 
 @dataclass
 class ObjectApplyResult:
@@ -137,7 +152,8 @@ def apply_object(landing: LandingStore, tpl: ObjectTemplate, source: str,
     if total and len(quarantined) / total > threshold:
         raise MappingCircuitBreaker(
             f"{tpl.object}: 隔离率 {len(quarantined)}/{total} 超过阈值 {threshold:.0%},"
-            f"映射中止,旧对象表保留;隔离明细见 d2a_quarantine(batch {batch_id})")
+            f"映射中止,旧对象表保留;隔离明细见 d2a_quarantine(batch {batch_id})",
+            total=total, mapped=len(good), quarantined=len(quarantined), batch_id=batch_id)
 
     _rebuild_obj_table(landing, tpl, good, batch_id)
     return ObjectApplyResult(tpl.object, total, len(good), len(quarantined))
@@ -198,12 +214,48 @@ def apply_objects(landing: LandingStore, pack: TemplatePack, source: str,
     report = ApplyReport(source=source)
     run_id = landing.start_run(source, "apply")
     aborted_msgs = []
-    for tpl in pack.objects:
+    for ordinal, tpl in enumerate(pack.objects, start=1):
+        step_id: int | None = None
         try:
+            step_id = landing.add_step(run_id, ordinal, "object", tpl.object)
             result = apply_object(landing, tpl, source, threshold)
+            landing.update_step(
+                step_id, status="ok",
+                rows_in=result.total, rows_out=result.mapped,
+                quarantined=result.quarantined,
+                error=None if result.status == "ok" else result.status)
         except MappingCircuitBreaker as e:
-            result = ObjectApplyResult(tpl.object, 0, 0, 0, status="aborted")
+            result = ObjectApplyResult(
+                tpl.object, e.total, e.mapped, e.quarantined, status="aborted")
+            if step_id is not None:
+                try:
+                    landing.update_step(
+                        step_id, status="aborted",
+                        rows_in=result.total, rows_out=result.mapped,
+                        quarantined=result.quarantined, batch_id=e.batch_id,
+                        error=str(e)[:500])
+                except Exception as step_error:
+                    landing.finish_run(
+                        run_id,
+                        tables=len(report.results),
+                        rows=sum(r.mapped for r in report.results),
+                        status="failed",
+                        detail=f"apply observation failed: {step_error}")
+                    raise
             aborted_msgs.append(str(e))
+        except Exception as e:
+            if step_id is not None:
+                try:
+                    landing.update_step(step_id, status="failed", error=str(e)[:500])
+                except Exception:
+                    pass
+            landing.finish_run(
+                run_id,
+                tables=len(report.results),
+                rows=sum(r.mapped for r in report.results),
+                status="failed",
+                detail=f"apply failed: {e}")
+            raise
         if not result.status.startswith("skipped"):
             report.results.append(result)
     landing.finish_run(

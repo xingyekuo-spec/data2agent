@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS d2a_audit_log (
 CREATE TABLE IF NOT EXISTS d2a_sync_run (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
-    tables INTEGER, rows INTEGER, status TEXT, detail TEXT
+    tables INTEGER, rows INTEGER, status TEXT, detail TEXT,
+    run_type TEXT, steps_recorded INTEGER
 );
 CREATE TABLE IF NOT EXISTS d2a_sync_state (
     source TEXT NOT NULL, table_name TEXT NOT NULL,
@@ -48,6 +49,39 @@ CREATE TABLE IF NOT EXISTS d2a_quarantine (
     keys_json TEXT, reason TEXT NOT NULL, raw_json TEXT,
     batch_id TEXT, created_at TEXT NOT NULL, resolved_at TEXT
 );
+CREATE TABLE IF NOT EXISTS d2a_run_step (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    kind TEXT NOT NULL,          -- table | object | segment | batch
+    target TEXT NOT NULL,        -- 表 / 对象 / segment / batch 标识
+    status TEXT NOT NULL,        -- running | ok | paused | failed | aborted
+    started_at TEXT, finished_at TEXT,
+    batch_id TEXT,
+    rows_in INTEGER, rows_out INTEGER, quarantined INTEGER,
+    repaired INTEGER, soft_deleted INTEGER,
+    watermark_before TEXT,       -- JSON
+    watermark_after TEXT,        -- JSON
+    error TEXT, error_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_run_step_run ON d2a_run_step (run_id, ordinal, id);
+CREATE INDEX IF NOT EXISTS idx_d2a_run_step_batch ON d2a_run_step (batch_id);
+CREATE TABLE IF NOT EXISTS d2a_console_access_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    subject TEXT NOT NULL,       -- 稳定主体标识(console-admin),不记 Token/指纹
+    resource_type TEXT NOT NULL, -- raw | object
+    source TEXT,
+    resource TEXT NOT NULL,
+    allowed INTEGER NOT NULL,    -- 1 允许 / 0 拒绝
+    reason_code TEXT NOT NULL,
+    page_offset INTEGER, page_limit INTEGER, returned_rows INTEGER,
+    request_id TEXT
+    -- 严禁:Token、Token 指纹、查询值原文、返回数据、完整 SQL、traceback
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_access_ts ON d2a_console_access_audit (ts);
+CREATE INDEX IF NOT EXISTS idx_d2a_access_type_allowed
+    ON d2a_console_access_audit (resource_type, allowed);
 """
 
 
@@ -75,7 +109,7 @@ def _now() -> str:
 
 
 class LandingStore:
-    RUN_TYPES = frozenset({"sync", "apply", "reconcile", "ingest"})
+    RUN_TYPES = frozenset({"sync", "apply", "reconcile", "ingest", "validation"})
 
     def __init__(self, db_path: str | Path):
         db_path = Path(db_path)
@@ -91,14 +125,28 @@ class LandingStore:
         self._migrate()
 
     def _migrate(self) -> None:
-        """幂等兼容升级(M3):d2a_sync_run 增加结构化 run_type。
+        """幂等兼容升级(M3/M4):d2a_sync_run 增加结构化运行元数据。
 
-        旧记录保持 NULL(类型未知),不批量回填猜测;重复初始化无副作用。
+        旧记录保持 NULL(类型/step 证据未知),不批量回填猜测;重复初始化无副作用。
         """
         cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_sync_run)")}
         if "run_type" not in cols:
             self.con.execute("ALTER TABLE d2a_sync_run ADD COLUMN run_type TEXT")
-            self.con.commit()
+        if "steps_recorded" not in cols:
+            self.con.execute("ALTER TABLE d2a_sync_run ADD COLUMN steps_recorded INTEGER")
+        try:
+            self.con.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_run_step_ingest_batch "
+                "ON d2a_run_step (target, batch_id) "
+                "WHERE kind = 'batch' AND batch_id IS NOT NULL")
+        except sqlite3.IntegrityError:
+            # 旧库若已被早期实现写入重复 batch 观测,不阻断启动;新写入仍按
+            # ingest 端 source/table/batch 查询复用既有 step。
+            self.con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_d2a_run_step_ingest_batch_lookup "
+                "ON d2a_run_step (target, batch_id) "
+                "WHERE kind = 'batch' AND batch_id IS NOT NULL")
+        self.con.commit()
 
     # ---- raw 表 ----
 
@@ -259,8 +307,8 @@ class LandingStore:
         if run_type not in self.RUN_TYPES:
             raise ValueError(f"未知 run_type '{run_type}',可用:{sorted(self.RUN_TYPES)}")
         cur = self.con.execute(
-            "INSERT INTO d2a_sync_run (source, started_at, status, run_type) "
-            "VALUES (?, ?, 'running', ?)",
+            "INSERT INTO d2a_sync_run (source, started_at, status, run_type, steps_recorded) "
+            "VALUES (?, ?, 'running', ?, 1)",
             (source, _now(), run_type))
         self.con.commit()
         return cur.lastrowid
@@ -272,3 +320,78 @@ class LandingStore:
             "status = ?, detail = ? WHERE id = ?",
             (_now(), tables, rows, status, detail, run_id))
         self.con.commit()
+
+    # ---- run steps(M4)----
+
+    def add_step(self, run_id: int, ordinal: int, kind: str, target: str, **fields) -> int:
+        """新建 step(默认 running);kind∈table|object|segment|batch。"""
+        if kind not in ("table", "object", "segment", "batch"):
+            raise ValueError(f"非法 step kind '{kind}'")
+        cur = self.con.execute(
+            "INSERT INTO d2a_run_step (run_id, ordinal, kind, target, status,"
+            " started_at, finished_at, batch_id, rows_in, rows_out, quarantined,"
+            " repaired, soft_deleted, watermark_before, watermark_after, error, error_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (run_id, ordinal, kind, target,
+             fields.get("status", "running"),
+             fields.get("started_at", _now()),
+             fields.get("finished_at"),
+             fields.get("batch_id"),
+             fields.get("rows_in"),
+             fields.get("rows_out"),
+             fields.get("quarantined"),
+             fields.get("repaired"),
+             fields.get("soft_deleted"),
+             fields.get("watermark_before"),
+             fields.get("watermark_after"),
+             fields.get("error"),
+             fields.get("error_id")))
+        self.con.commit()
+        return cur.lastrowid
+
+    def update_step(self, step_id: int, **fields) -> None:
+        """按主键更新 step 度量/状态(结束时关闭 step)。
+
+        进入终态(ok/paused/failed/aborted)且未显式给 finished_at 时自动补上。
+        """
+        allowed = {"status", "finished_at", "batch_id", "rows_in", "rows_out",
+                   "quarantined", "repaired", "soft_deleted", "watermark_before",
+                   "watermark_after", "error", "error_id"}
+        fields = {k: v for k, v in fields.items() if k in allowed}
+        if not fields:
+            return
+        if ("finished_at" not in fields
+                and fields.get("status") in ("ok", "paused", "failed", "aborted")):
+            fields["finished_at"] = _now()
+        sql = "UPDATE d2a_run_step SET " + ", ".join(f"{k} = ?" for k in fields) + \
+            " WHERE id = ?"
+        self.con.execute(sql, list(fields.values()) + [step_id])
+        self.con.commit()
+
+    def steps_for_run(self, run_id: int) -> list[sqlite3.Row]:
+        return self.con.execute(
+            "SELECT * FROM d2a_run_step WHERE run_id = ? ORDER BY ordinal, id",
+            (run_id,)).fetchall()
+
+    # ---- 控制台访问审计(M4)----
+
+    def log_access(self, *, subject: str, resource_type: str, source: str | None,
+                   resource: str, allowed: bool, reason_code: str,
+                   page_offset: int | None = None, page_limit: int | None = None,
+                   returned_rows: int | None = None,
+                   request_id: str | None = None) -> int:
+        """记录控制台数据访问(允许/拒绝)。
+
+        只记主体/目标/结果/查询形状/行数;严禁 Token、q 原文、返回值、traceback。
+        """
+        if resource_type not in ("raw", "object"):
+            raise ValueError(f"非法 resource_type '{resource_type}'")
+        cur = self.con.execute(
+            "INSERT INTO d2a_console_access_audit (ts, subject, resource_type, source,"
+            " resource, allowed, reason_code, page_offset, page_limit, returned_rows,"
+            " request_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (_now(), subject, resource_type, source, resource,
+             1 if allowed else 0, reason_code,
+             page_offset, page_limit, returned_rows, request_id))
+        self.con.commit()
+        return cur.lastrowid

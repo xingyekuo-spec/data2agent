@@ -61,7 +61,7 @@ export const pipelineStatuses: PipelineResponse['nodes'][number]['status'][] = [
 ]
 
 type RunDetail = components['schemas']['RunDetailResponse']
-export const runTypes: RunDetail['type'][] = ['sync', 'apply', 'reconcile', 'ingest']
+export const runTypes: RunDetail['type'][] = ['sync', 'apply', 'reconcile', 'ingest', 'validation']
 export const runStatuses: RunDetail['status'][] = [
   'running',
   'ok',

@@ -1,6 +1,150 @@
 {
   "components": {
     "schemas": {
+      "AccessAuditItem": {
+        "description": "控制台数据访问事实。严禁记录 Token、查询值原文、返回值或 traceback。",
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "limit": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Limit"
+          },
+          "offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offset"
+          },
+          "reason_code": {
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Id"
+          },
+          "resource": {
+            "title": "Resource",
+            "type": "string"
+          },
+          "resource_type": {
+            "enum": [
+              "raw",
+              "object"
+            ],
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "returned_rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Returned Rows"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          },
+          "ts": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "ts",
+          "subject",
+          "resource_type",
+          "source",
+          "resource",
+          "allowed",
+          "reason_code"
+        ],
+        "title": "AccessAuditItem",
+        "type": "object"
+      },
+      "AccessAuditPage": {
+        "properties": {
+          "generated_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AccessAuditItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "offset",
+          "limit",
+          "total",
+          "generated_at"
+        ],
+        "title": "AccessAuditPage",
+        "type": "object"
+      },
       "ActionBody": {
         "properties": {
           "deep": {
@@ -92,6 +236,11 @@
             ],
             "title": "Duration Ms"
           },
+          "id": {
+            "description": "稳定主键(排序锚点)",
+            "title": "Id",
+            "type": "integer"
+          },
           "rows": {
             "anyOf": [
               {
@@ -112,12 +261,14 @@
             "type": "string"
           },
           "ts": {
-            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
             "title": "Ts",
             "type": "string"
           }
         },
         "required": [
+          "id",
           "ts",
           "source",
           "action",
@@ -147,6 +298,56 @@
           "disabled"
         ],
         "title": "BindingSummary",
+        "type": "object"
+      },
+      "ColumnMeta": {
+        "description": "列元数据;unknown 分类持续警告,不能默认为安全。",
+        "properties": {
+          "classification": {
+            "enum": [
+              "normal",
+              "sensitive",
+              "unknown"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "data_type": {
+            "title": "Data Type",
+            "type": "string"
+          },
+          "masked": {
+            "description": "服务端已脱敏为 ***;v0.2 不提供 unmask",
+            "title": "Masked",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "business_key",
+              "data",
+              "metadata"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "searchable": {
+            "title": "Searchable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "data_type",
+          "role",
+          "classification",
+          "masked",
+          "searchable"
+        ],
+        "title": "ColumnMeta",
         "type": "object"
       },
       "ConfigPatch": {
@@ -272,6 +473,28 @@
           "message"
         ],
         "title": "FieldError",
+        "type": "object"
+      },
+      "FieldTruncation": {
+        "description": "行级截断标记:预览不得当作完整值导出。",
+        "properties": {
+          "fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "row_index": {
+            "title": "Row Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row_index",
+          "fields"
+        ],
+        "title": "FieldTruncation",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -453,6 +676,19 @@
       },
       "ObjectRowsPageResponse": {
         "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ColumnMeta"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "generated_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
           "limit": {
             "title": "Limit",
             "type": "integer"
@@ -465,6 +701,10 @@
             "title": "Offset",
             "type": "integer"
           },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          },
           "rows": {
             "items": {
               "additionalProperties": {
@@ -475,17 +715,46 @@
             "title": "Rows",
             "type": "array"
           },
+          "searchable": {
+            "title": "Searchable",
+            "type": "boolean"
+          },
+          "sort": {
+            "title": "Sort",
+            "type": "string"
+          },
           "total": {
             "title": "Total",
             "type": "integer"
+          },
+          "truncations": {
+            "items": {
+              "$ref": "#/components/schemas/FieldTruncation"
+            },
+            "title": "Truncations",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
           "object",
+          "columns",
+          "rows",
+          "truncations",
           "offset",
           "limit",
           "total",
-          "rows"
+          "sort",
+          "query",
+          "searchable",
+          "warnings",
+          "generated_at"
         ],
         "title": "ObjectRowsPageResponse",
         "type": "object"
@@ -540,6 +809,11 @@
             "description": "尚未物化时为 null,不等于 0",
             "title": "Rows"
           },
+          "searchable": {
+            "default": false,
+            "title": "Searchable",
+            "type": "boolean"
+          },
           "version": {
             "anyOf": [
               {
@@ -551,6 +825,17 @@
             ],
             "description": "object version 属 v0.3,当前为空",
             "title": "Version"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
           }
         },
         "required": [
@@ -1396,6 +1681,19 @@
       },
       "RawDataPageResponse": {
         "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/ColumnMeta"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "generated_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
           "limit": {
             "title": "Limit",
             "type": "integer"
@@ -1403,6 +1701,11 @@
           "offset": {
             "title": "Offset",
             "type": "integer"
+          },
+          "query": {
+            "description": "回显 q 参数(空串=未搜索)",
+            "title": "Query",
+            "type": "string"
           },
           "rows": {
             "items": {
@@ -1414,28 +1717,162 @@
             "title": "Rows",
             "type": "array"
           },
+          "searchable": {
+            "title": "Searchable",
+            "type": "boolean"
+          },
+          "sort": {
+            "description": "排序来源说明,如 pk:CUSTOMER_CODE 或 rowid",
+            "title": "Sort",
+            "type": "string"
+          },
           "source": {
             "title": "Source",
             "type": "string"
           },
           "table": {
+            "description": "逻辑表名;物理表名不作为用户输入",
             "title": "Table",
             "type": "string"
           },
           "total": {
             "title": "Total",
             "type": "integer"
+          },
+          "truncations": {
+            "items": {
+              "$ref": "#/components/schemas/FieldTruncation"
+            },
+            "title": "Truncations",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
           "source",
           "table",
+          "columns",
+          "rows",
+          "truncations",
           "offset",
           "limit",
           "total",
-          "rows"
+          "sort",
+          "query",
+          "searchable",
+          "warnings",
+          "generated_at"
         ],
         "title": "RawDataPageResponse",
+        "type": "object"
+      },
+      "RawTableCatalogItem": {
+        "properties": {
+          "classification_warning": {
+            "title": "Classification Warning",
+            "type": "boolean"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "extracted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Extracted At"
+          },
+          "latest_batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Batch Id"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "计数失败为 null + 警告,不伪装 0",
+            "title": "Rows"
+          },
+          "searchable": {
+            "title": "Searchable",
+            "type": "boolean"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "table": {
+            "description": "逻辑表名",
+            "title": "Table",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "table",
+          "display_name",
+          "rows",
+          "latest_batch_id",
+          "extracted_at",
+          "searchable",
+          "classification_warning"
+        ],
+        "title": "RawTableCatalogItem",
+        "type": "object"
+      },
+      "RawTableCatalogResponse": {
+        "properties": {
+          "generated_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RawTableCatalogItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "generated_at"
+        ],
+        "title": "RawTableCatalogResponse",
         "type": "object"
       },
       "RawTablePageResponse": {
@@ -1514,7 +1951,8 @@
                   "sync",
                   "apply",
                   "reconcile",
-                  "ingest"
+                  "ingest",
+                  "validation"
                 ],
                 "type": "string"
               },
@@ -1676,7 +2114,7 @@
         "type": "object"
       },
       "RunDetailResponse": {
-        "description": "统一运行模型(v0.3 起 validation 复用同一 Run/steps 结构)。",
+        "description": "统一运行详情。steps_state=legacy_unavailable 表示历史运行缺少 step\n证据(不能显示为\"处理 0 项\");新运行确实没有工作单元时才允许\navailable + steps=[]。",
         "properties": {
           "dataset_version": {
             "anyOf": [
@@ -1687,8 +2125,20 @@
                 "type": "null"
               }
             ],
-            "description": "dataset version 属 v0.3,当前为空",
+            "description": "v0.3 前固定 null",
             "title": "Dataset Version"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "既有字段,安全截断,逐步弃用;状态判断不得解析它",
+            "title": "Detail"
           },
           "duration_ms": {
             "anyOf": [
@@ -1700,6 +2150,28 @@
               }
             ],
             "title": "Duration Ms"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "error_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Id"
           },
           "finished_at": {
             "anyOf": [
@@ -1718,33 +2190,62 @@
             "title": "Id",
             "type": "integer"
           },
-          "source": {
+          "quarantined": {
             "anyOf": [
               {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quarantined"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rows"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Source"
-          },
-          "started_at": {
             "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
-            "format": "date-time",
-            "title": "Started At",
-            "type": "string"
+            "title": "Started At"
           },
           "status": {
-            "enum": [
-              "running",
-              "ok",
-              "paused",
-              "failed",
-              "aborted"
+            "anyOf": [
+              {
+                "enum": [
+                  "running",
+                  "ok",
+                  "paused",
+                  "failed",
+                  "aborted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Status",
-            "type": "string"
+            "title": "Status"
           },
           "steps": {
             "items": {
@@ -1753,26 +2254,49 @@
             "title": "Steps",
             "type": "array"
           },
-          "type": {
+          "steps_state": {
             "enum": [
-              "sync",
-              "apply",
-              "reconcile",
-              "ingest"
+              "available",
+              "legacy_unavailable"
             ],
-            "title": "Type",
+            "title": "Steps State",
             "type": "string"
+          },
+          "tables": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tables"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sync",
+                  "apply",
+                  "reconcile",
+                  "ingest",
+                  "validation"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "结构化运行类型;历史记录为 NULL(类型未知),不回填猜测",
+            "title": "Type"
           }
         },
         "required": [
           "id",
-          "type",
-          "status",
           "source",
-          "started_at",
-          "finished_at",
-          "duration_ms",
-          "dataset_version",
+          "steps_state",
           "steps"
         ],
         "title": "RunDetailResponse",
@@ -1780,6 +2304,28 @@
       },
       "RunStep": {
         "properties": {
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
           "error": {
             "anyOf": [
               {
@@ -1791,10 +2337,52 @@
             ],
             "title": "Error"
           },
+          "error_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Id"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "kind": {
+            "enum": [
+              "table",
+              "object",
+              "segment",
+              "batch"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
           "name": {
-            "description": "步骤对象:表名 / 对象名 / 批次 ID",
+            "description": "步骤对象:表名 / 对象名 / segment / batch",
             "title": "Name",
             "type": "string"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
           },
           "quarantined": {
             "anyOf": [
@@ -1806,6 +2394,17 @@
               }
             ],
             "title": "Quarantined"
+          },
+          "repaired": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repaired"
           },
           "rows_in": {
             "anyOf": [
@@ -1829,43 +2428,89 @@
             ],
             "title": "Rows Out"
           },
-          "watermark_after": {
+          "soft_deleted": {
             "anyOf": [
               {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Soft Deleted"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Watermark After"
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Started At"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "ok",
+              "paused",
+              "failed",
+              "aborted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "watermark_after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "watermark_before": {
             "anyOf": [
               {
-                "type": "string"
+                "$ref": "#/components/schemas/JsonValue-Output"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Watermark Before"
+            ]
           }
         },
         "required": [
+          "id",
+          "ordinal",
+          "kind",
           "name",
+          "status",
           "rows_in",
           "rows_out",
-          "quarantined",
-          "watermark_before",
-          "watermark_after",
-          "error"
+          "quarantined"
         ],
         "title": "RunStep",
         "type": "object"
       },
       "RunSummary": {
         "properties": {
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "v0.3 前固定 null",
+            "title": "Dataset Version"
+          },
           "detail": {
             "anyOf": [
               {
@@ -1875,9 +2520,21 @@
                 "type": "null"
               }
             ],
+            "description": "既有字段,安全截断,逐步弃用;状态判断不得解析它",
             "title": "Detail"
           },
-          "finished_at": {
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "error": {
             "anyOf": [
               {
                 "type": "string"
@@ -1886,12 +2543,46 @@
                 "type": "null"
               }
             ],
-            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
+            "title": "Error"
+          },
+          "error_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Id"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
             "title": "Finished At"
           },
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "quarantined": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quarantined"
           },
           "rows": {
             "anyOf": [
@@ -1909,13 +2600,28 @@
             "type": "string"
           },
           "started_at": {
-            "description": "legacy local ISO text from SQLite; offset/timezone not guaranteed in M1",
-            "title": "Started At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Started At"
           },
           "status": {
             "anyOf": [
               {
+                "enum": [
+                  "running",
+                  "ok",
+                  "paused",
+                  "failed",
+                  "aborted"
+                ],
                 "type": "string"
               },
               {
@@ -1934,12 +2640,30 @@
               }
             ],
             "title": "Tables"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "enum": [
+                  "sync",
+                  "apply",
+                  "reconcile",
+                  "ingest",
+                  "validation"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "结构化运行类型;历史记录为 NULL(类型未知),不回填猜测",
+            "title": "Type"
           }
         },
         "required": [
           "id",
-          "source",
-          "started_at"
+          "source"
         ],
         "title": "RunSummary",
         "type": "object"
@@ -2725,6 +3449,7 @@
     },
     "/api/audit": {
       "get": {
+        "description": "SQL 操作审计(d2a_audit_log):筛选 + X-Total-Count(M4)。\n\n时间区间为带时区 ISO 8601 闭开区间 [from, to);筛选全部参数化;\n排序固定 ts DESC, id DESC。不用 SQL 文本推断 Run 状态。",
         "operationId": "audit_api_audit_get",
         "parameters": [
           {
@@ -2732,9 +3457,85 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 30,
+              "default": 50,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
             }
           }
         ],
@@ -2748,6 +3549,173 @@
                   },
                   "title": "Response Audit Api Audit Get",
                   "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Total-Count": {
+                "description": "当前筛选条件下的总数(分页用)",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Audit"
+      }
+    },
+    "/api/audit/access": {
+      "get": {
+        "description": "控制台数据访问审计(d2a_console_access_audit,M4)。\n\n只含主体/目标/允许与否/查询形状/行数;不含 Token、查询值原文、返回值。",
+        "operationId": "audit_access_api_audit_access_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "subject",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subject"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "allowed",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Allowed"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessAuditPage"
                 }
               }
             },
@@ -2777,11 +3745,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/RequestError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
           }
         },
         "security": [
@@ -2790,7 +3758,7 @@
           },
           {}
         ],
-        "summary": "Audit"
+        "summary": "Audit Access"
       }
     },
     "/api/config": {
@@ -2963,8 +3931,73 @@
         "summary": "Validate Config"
       }
     },
+    "/api/data/raw": {
+      "get": {
+        "description": "raw 目录:当前配置允许且确实存在的表(不含 SQLite 内部表)。",
+        "operationId": "data_raw_catalog_api_data_raw_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RawTableCatalogResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "未配置控制台 Token,raw 目录关闭"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "未处理异常"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Data Raw Catalog"
+      }
+    },
     "/api/data/raw/{source}/{table}": {
       "get": {
+        "description": "raw 白名单分页浏览(强鉴权 + 访问审计,§4.7)。\n\n必须配置控制台 Token 且请求携带有效 Bearer;每次尝试(允许/拒绝)\n都写不泄密访问审计;审计失败则请求失败关闭。",
         "operationId": "data_raw_api_data_raw__source___table__get",
         "parameters": [
           {
@@ -3004,6 +4037,16 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3027,17 +4070,7 @@
             },
             "description": "缺少或无效的 Bearer Token"
           },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "501": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3045,19 +4078,45 @@
                 }
               }
             },
-            "description": "契约桩:端点在所属里程碑实现前返回 501"
+            "description": "未配置控制台 Token,raw 浏览关闭"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
           }
         },
         "security": [
           {
             "HTTPBearer": []
-          },
-          {}
+          }
         ],
-        "summary": "Data Raw",
-        "tags": [
-          "v0.2-stub"
-        ]
+        "summary": "Data Raw"
       }
     },
     "/api/debug/mcp-call": {
@@ -3419,7 +4478,8 @@
     },
     "/api/objects": {
       "get": {
-        "operationId": "objects_api_objects_get",
+        "description": "对象目录:模板 ∩ 物化状态;未物化为 rows=null + warning,不伪装 0。",
+        "operationId": "objects_catalog_api_objects_get",
         "responses": {
           "200": {
             "content": {
@@ -3428,7 +4488,7 @@
                   "items": {
                     "$ref": "#/components/schemas/ObjectSummary"
                   },
-                  "title": "Response Objects Api Objects Get",
+                  "title": "Response Objects Catalog Api Objects Get",
                   "type": "array"
                 }
               }
@@ -3445,7 +4505,7 @@
             },
             "description": "缺少或无效的 Bearer Token"
           },
-          "501": {
+          "409": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3453,7 +4513,7 @@
                 }
               }
             },
-            "description": "契约桩:端点在所属里程碑实现前返回 501"
+            "description": "冲突/未配置/只读/熔断"
           }
         },
         "security": [
@@ -3462,14 +4522,12 @@
           },
           {}
         ],
-        "summary": "Objects",
-        "tags": [
-          "v0.2-stub"
-        ]
+        "summary": "Objects Catalog"
       }
     },
     "/api/objects/{object}": {
       "get": {
+        "description": "对象分页浏览(敏感属性服务端永久脱敏)。",
         "operationId": "object_rows_api_objects__object__get",
         "parameters": [
           {
@@ -3500,6 +4558,16 @@
               "title": "Limit",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3523,17 +4591,7 @@
             },
             "description": "缺少或无效的 Bearer Token"
           },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          },
-          "501": {
+          "404": {
             "content": {
               "application/json": {
                 "schema": {
@@ -3541,7 +4599,27 @@
                 }
               }
             },
-            "description": "契约桩:端点在所属里程碑实现前返回 501"
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "模板存在但尚未物化"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
           }
         },
         "security": [
@@ -3550,10 +4628,7 @@
           },
           {}
         ],
-        "summary": "Object Rows",
-        "tags": [
-          "v0.2-stub"
-        ]
+        "summary": "Object Rows"
       }
     },
     "/api/overview": {
@@ -3723,6 +4798,7 @@
     },
     "/api/runs": {
       "get": {
+        "description": "运行列表:数组 wire shape + X-Total-Count 响应头(M4)。\n\n筛选 type/status 与领域模型一致(数据库列 run_type 只是内部实现);\n排序固定 started_at DESC, id DESC;时间规范化为带时区。",
         "operationId": "runs_api_runs_get",
         "parameters": [
           {
@@ -3730,9 +4806,65 @@
             "name": "limit",
             "required": false,
             "schema": {
-              "default": 15,
+              "default": 50,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "sync",
+                    "apply",
+                    "reconcile",
+                    "ingest",
+                    "validation"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "running",
+                    "ok",
+                    "paused",
+                    "failed",
+                    "aborted"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
             }
           }
         ],
@@ -3749,7 +4881,15 @@
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "Successful Response",
+            "headers": {
+              "X-Total-Count": {
+                "description": "当前筛选条件下的总数(分页用)",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
           },
           "401": {
             "content": {
@@ -3775,11 +4915,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/RequestError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
           }
         },
         "security": [
@@ -3793,6 +4933,7 @@
     },
     "/api/runs/{run_id}": {
       "get": {
+        "description": "运行详情:统一 Run + step;历史无 step 返回 legacy_unavailable(不伪造)。",
         "operationId": "run_detail_api_runs__run_id__get",
         "parameters": [
           {
@@ -3826,6 +4967,26 @@
             },
             "description": "缺少或无效的 Bearer Token"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3835,16 +4996,6 @@
               }
             },
             "description": "Validation Error"
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "契约桩:端点在所属里程碑实现前返回 501"
           }
         },
         "security": [
@@ -3853,10 +5004,7 @@
           },
           {}
         ],
-        "summary": "Run Detail",
-        "tags": [
-          "v0.2-stub"
-        ]
+        "summary": "Run Detail"
       }
     },
     "/api/services": {

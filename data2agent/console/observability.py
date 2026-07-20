@@ -294,6 +294,7 @@ def _run_fields(facts: dict[str, Any], source: str, now: datetime) -> dict[str, 
     if shown is None:
         return out
     out["run_id"] = str(shown["id"])
+    out["detail_path"] = f"/runs?run_id={shown['id']}"  # M4 运行详情深链
     out["rows_in"] = shown["rows"]
     out["rows_out"] = shown["rows"]
     started = aware(shown["started_at"])

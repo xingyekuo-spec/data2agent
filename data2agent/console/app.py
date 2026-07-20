@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import json
 import os
 import shutil
 import socket
@@ -25,9 +26,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
@@ -42,8 +45,10 @@ from ..connect.landing import LandingStore
 from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_objects
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..metamodel.loader import load_pack
+from . import data_browser as br
 from . import observability as obs
 from .contracts import (
+    AccessAuditPage,
     ActionBody,
     ActionExecutionResult,
     ApplyActionResult,
@@ -63,11 +68,14 @@ from .contracts import (
     ProposalResponse,
     QuarantineRecord,
     RawDataPageResponse,
+    RawTableCatalogResponse,
     RawTablePageResponse,
     RequestError,
     RetryActionResult,
     RunDetailResponse,
+    RunStatus,
     RunSummary,
+    RunType,
     ServicesStatusResponse,
     SetupBody,
     SetupFailureResponse,
@@ -95,6 +103,7 @@ _RESP_HTTP_ERROR_STUB = {
 }
 
 _SETUP_API_PATHS = frozenset({"/api/setup", "/api/setup/status"})
+_AUDIT_SQL_BUDGET = 4096
 
 _PKG = Path(__file__).resolve().parent
 _ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
@@ -116,6 +125,13 @@ def _make_templates() -> Jinja2Templates:
     return Jinja2Templates(env=env)
 
 
+def _budget_text(value: str, budget: int = _AUDIT_SQL_BUDGET) -> str:
+    if len(value.encode("utf-8", "ignore")) <= budget:
+        return value
+    raw = value.encode("utf-8", "ignore")[:budget]
+    return raw.decode("utf-8", "ignore") + "…[已截断]"
+
+
 _INGEST_HEALTH = "http://127.0.0.1:8850/ingest/health"
 _MCP_URL = "http://127.0.0.1:8848/mcp"
 _MCP_HOST, _MCP_PORT = "127.0.0.1", 8848
@@ -128,6 +144,70 @@ _LOG_FILES = {
     "launcher": "d2a-launcher.log",   # 便携包启动器:进程重启 / 崩溃记录
 }
 _MCP_TOOLS = frozenset({"query_objects", "query_metrics"})
+
+_FAILED_STATUSES = ("failed", "aborted")
+
+
+def _map_run(r) -> dict:
+    """d2a_sync_run 行 → RunSummary(带时区时间;错误安全截断)。"""
+    started = obs.aware(r["started_at"])
+    finished = obs.aware(r["finished_at"])
+    return {
+        "id": r["id"],
+        "type": r["run_type"] if "run_type" in r.keys() else None,
+        "status": r["status"],
+        "source": r["source"],
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": (
+            round((finished - started).total_seconds() * 1000)
+            if started and finished else None),
+        "tables": r["tables"],
+        "rows": r["rows"],
+        "quarantined": None,
+        "dataset_version": None,
+        "detail": obs.safe_error_summary(r["detail"]),
+        "error": obs.safe_error_summary(
+            r["detail"] if r["status"] in _FAILED_STATUSES else None),
+        "error_id": None,
+    }
+
+
+def _map_step(s) -> dict:
+    """d2a_run_step 行 → RunStep(水位 JSON 还原为值)。"""
+    started = obs.aware(s["started_at"])
+    finished = obs.aware(s["finished_at"])
+
+    def _wm(v: str | None):
+        if v is None:
+            return None
+        try:
+            return json.loads(v)
+        except (json.JSONDecodeError, TypeError):
+            return None  # 损坏的水位证据按缺失处理,不原样透传
+
+    return {
+        "id": s["id"],
+        "ordinal": s["ordinal"],
+        "kind": s["kind"],
+        "name": s["target"],
+        "status": s["status"],
+        "started_at": started,
+        "finished_at": finished,
+        "duration_ms": (
+            round((finished - started).total_seconds() * 1000)
+            if started and finished else None),
+        "batch_id": s["batch_id"],
+        "rows_in": s["rows_in"],
+        "rows_out": s["rows_out"],
+        "quarantined": s["quarantined"],
+        "repaired": s["repaired"],
+        "soft_deleted": s["soft_deleted"],
+        "watermark_before": _wm(s["watermark_before"]),
+        "watermark_after": _wm(s["watermark_after"]),
+        "error": obs.safe_error_summary(s["error"]),
+        "error_id": s["error_id"],
+    }
 
 # 数量口径说明(M3):名称、口径、数据来源;页面按此展示,不让用户猜数字含义
 _COUNT_NOTES = [
@@ -286,6 +366,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     def auth(request: Request) -> None:
         path = request.url.path
+        if path == "/api/data/raw" or path.startswith("/api/data/raw/"):
+            return
         if needs_setup():
             if path in ("/api/setup", "/api/setup/status") or path.startswith("/api/setup"):
                 if _client_host(request) not in _LOOPBACK:
@@ -320,6 +402,62 @@ def create_app(landing: str | None = None, templates: str = "templates",
         if path is None:
             raise HTTPException(409, "未配置 config_path(--config),配置 API 不可用")
         return Path(path)
+
+    def _auth_supplied(request: Request) -> str:
+        return request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+
+    def require_raw_browse_auth(db: LandingStore, request: Request, *,
+                                source: str | None, resource: str,
+                                offset: int | None = None,
+                                limit: int | None = None) -> None:
+        tok = state["token"]
+        if not tok:
+            db.log_access(
+                subject="anonymous", resource_type="raw", source=source,
+                resource=resource, allowed=False,
+                reason_code="token_not_configured",
+                page_offset=offset, page_limit=limit)
+            raise HTTPException(403, "raw 浏览需配置控制台 Token 并显式认证")
+        if _auth_supplied(request) != tok:
+            db.log_access(
+                subject="anonymous", resource_type="raw", source=source,
+                resource=resource, allowed=False, reason_code="unauthorized",
+                page_offset=offset, page_limit=limit)
+            raise HTTPException(401, "需要有效的管理界面登录密码")
+
+    def _is_raw_api_path(path: str) -> bool:
+        return path == "/api/data/raw" or path.startswith("/api/data/raw/")
+
+    def _raw_audit_target(request: Request) -> tuple[str | None, str]:
+        path = request.url.path
+        if path == "/api/data/raw":
+            return None, "__catalog__"
+        params = request.path_params
+        if "source" in params and "table" in params:
+            return str(params["source"]), str(params["table"])
+        parts = path.split("/")
+        if len(parts) >= 6:
+            return parts[4], parts[5]
+        return None, "__unknown__"
+
+    def _query_int_or_none(request: Request, name: str) -> int | None:
+        raw = request.query_params.get(name)
+        if raw is None:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
+    def _require_aware_dt(value: datetime | None, name: str) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise HTTPException(422, f"{name} 必须为带时区 ISO 8601 时间")
+        return value
+
+    def _filter_time(value: datetime) -> str:
+        return value.astimezone().replace(tzinfo=None).isoformat(timespec="seconds")
 
     def require_pack():
         pack = state["pack"]
@@ -367,6 +505,45 @@ def create_app(landing: str | None = None, templates: str = "templates",
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
     jinja = _make_templates()
 
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_handler(
+        request: Request, exc: RequestValidationError,
+    ) -> JSONResponse:
+        if not _is_raw_api_path(request.url.path):
+            return JSONResponse(
+                status_code=422,
+                content={"detail": jsonable_encoder(exc.errors())},
+            )
+        try:
+            db = store()
+            source, resource = _raw_audit_target(request)
+            offset = _query_int_or_none(request, "offset")
+            limit = _query_int_or_none(request, "limit")
+            try:
+                require_raw_browse_auth(
+                    db, request, source=source, resource=resource,
+                    offset=offset, limit=limit)
+            except HTTPException as auth_error:
+                return JSONResponse(
+                    status_code=auth_error.status_code,
+                    content={"detail": auth_error.detail},
+                )
+            db.log_access(
+                subject="console-admin", resource_type="raw", source=source,
+                resource=resource, allowed=False, reason_code="invalid_query",
+                page_offset=offset, page_limit=limit)
+        except HTTPException as e:
+            return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+        except Exception:
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "访问审计写入失败,raw 浏览已关闭"},
+            )
+        return JSONResponse(
+            status_code=422,
+            content={"detail": jsonable_encoder(exc.errors())},
+        )
+
     def custom_openapi():
         if app.openapi_schema:
             return app.openapi_schema
@@ -395,8 +572,13 @@ def create_app(landing: str | None = None, templates: str = "templates",
             for method, op in item.items():
                 if method not in ("get", "post", "put", "patch", "delete"):
                     continue
-                # OpenAPI optional auth: empty requirement OR Bearer
-                op["security"] = [{"HTTPBearer": []}, {}]
+                # 普通管理 API 的 Token 可按部署关闭;raw 原始数据浏览始终
+                # 要求显式 Bearer,与运行时强门禁保持一致。
+                op["security"] = (
+                    [{"HTTPBearer": []}]
+                    if _is_raw_api_path(path)
+                    else [{"HTTPBearer": []}, {}]
+                )
                 if path in _SETUP_API_PATHS:
                     op["description"] = (
                         (op.get("description") or "")
@@ -404,6 +586,15 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         + "Auth: skipped only while needs_setup=true (first-time bootstrap). "
                         "After configuration, Bearer is required when D2A_CONSOLE_TOKEN is set."
                     ).strip()
+        # M4:运行/审计列表的总数响应头显式声明(类型层必须可见)
+        for path in ("/api/runs", "/api/audit"):
+            get_op = schema.get("paths", {}).get(path, {}).get("get")
+            if get_op is not None:
+                get_op.setdefault("responses", {}).setdefault("200", {}) \
+                    .setdefault("headers", {})["X-Total-Count"] = {
+                        "schema": {"type": "integer"},
+                        "description": "当前筛选条件下的总数(分页用)",
+                    }
         app.openapi_schema = schema
         return app.openapi_schema
 
@@ -622,12 +813,62 @@ def create_app(landing: str | None = None, templates: str = "templates",
     @api.get(
         "/runs",
         response_model=list[RunSummary],
-        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409],
+                   422: _RESP_HTTP_ERROR[422]},
     )
-    def runs(limit: int = 15) -> list[dict]:
-        return [dict(r) for r in store().con.execute(
-            "SELECT * FROM d2a_sync_run ORDER BY id DESC LIMIT ?",
-            (max(1, min(limit, 100)),))]
+    def runs(response: Response, limit: int = 50, offset: int = 0,
+             type: RunType | None = None,
+             status: RunStatus | None = None) -> list[dict]:
+        """运行列表:数组 wire shape + X-Total-Count 响应头(M4)。
+
+        筛选 type/status 与领域模型一致(数据库列 run_type 只是内部实现);
+        排序固定 started_at DESC, id DESC;时间规范化为带时区。
+        """
+        if not 1 <= limit <= 100 or offset < 0:
+            raise HTTPException(422, "limit 须为 1..100,offset 须 >= 0")
+        where: list[str] = []
+        params: list[Any] = []
+        if type is not None:
+            where.append("run_type = ?")
+            params.append(type)
+        if status is not None:
+            where.append("status = ?")
+            params.append(status)
+        wsql = (" WHERE " + " AND ".join(where)) if where else ""
+        db = store()
+        (total,) = db.con.execute(
+            f"SELECT COUNT(*) FROM d2a_sync_run{wsql}", params).fetchone()
+        response.headers["X-Total-Count"] = str(total)
+        rows = db.con.execute(
+            f"SELECT * FROM d2a_sync_run{wsql} "
+            "ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset])
+        return [_map_run(r) for r in rows]
+
+    @api.get(
+        "/runs/{run_id}",
+        response_model=RunDetailResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 404: {"model": HttpError},
+                   409: _RESP_HTTP_ERROR[409]},
+    )
+    def run_detail(run_id: int) -> dict:
+        """运行详情:统一 Run + step;历史无 step 返回 legacy_unavailable(不伪造)。"""
+        db = store()
+        r = db.con.execute(
+            "SELECT * FROM d2a_sync_run WHERE id = ?", (run_id,)).fetchone()
+        if r is None:
+            raise HTTPException(404, f"运行 #{run_id} 不存在")
+        steps = db.steps_for_run(run_id)
+        steps_state = (
+            "available"
+            if steps or r["steps_recorded"] == 1
+            else "legacy_unavailable"
+        )
+        return {
+            **_map_run(r),
+            "steps_state": steps_state,
+            "steps": [_map_step(s) for s in steps],
+        }
 
     @api.get(
         "/quarantine",
@@ -646,12 +887,126 @@ def create_app(landing: str | None = None, templates: str = "templates",
     @api.get(
         "/audit",
         response_model=list[AuditRecord],
-        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409],
+                   422: _RESP_HTTP_ERROR[422]},
     )
-    def audit(limit: int = 30) -> list[dict]:
-        return [dict(r) for r in store().con.execute(
-            "SELECT ts, source, action, sql, rows, duration_ms FROM d2a_audit_log "
-            "ORDER BY id DESC LIMIT ?", (max(1, min(limit, 200)),))]
+    def audit(response: Response, limit: int = 50, offset: int = 0,
+              source: str | None = None, action: str | None = None,
+              from_: datetime | None = Query(None, alias="from"),
+              to: datetime | None = None) -> list[dict]:
+        """SQL 操作审计(d2a_audit_log):筛选 + X-Total-Count(M4)。
+
+        时间区间为带时区 ISO 8601 闭开区间 [from, to);筛选全部参数化;
+        排序固定 ts DESC, id DESC。不用 SQL 文本推断 Run 状态。
+        """
+        if not 1 <= limit <= 100 or offset < 0:
+            raise HTTPException(422, "limit 须为 1..100,offset 须 >= 0")
+        from_ = _require_aware_dt(from_, "from")
+        to = _require_aware_dt(to, "to")
+        if from_ is not None and to is not None and from_ >= to:
+            raise HTTPException(422, "时间区间非法:from 必须早于 to(闭开区间)")
+        where: list[str] = []
+        params: list[Any] = []
+        if source is not None:
+            where.append("source = ?")
+            params.append(source)
+        if action is not None:
+            where.append("action = ?")
+            params.append(action)
+        if from_ is not None:
+            where.append("ts >= ?")
+            params.append(_filter_time(from_))
+        if to is not None:
+            where.append("ts < ?")
+            params.append(_filter_time(to))
+        wsql = (" WHERE " + " AND ".join(where)) if where else ""
+        db = store()
+        (total,) = db.con.execute(
+            f"SELECT COUNT(*) FROM d2a_audit_log{wsql}", params).fetchone()
+        response.headers["X-Total-Count"] = str(total)
+        rows = db.con.execute(
+            f"SELECT id, ts, source, action, sql, rows, duration_ms "
+            f"FROM d2a_audit_log{wsql} ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset])
+        return [{
+            "id": r["id"],
+            "ts": obs.aware(r["ts"]),
+            "source": r["source"],
+            "action": r["action"],
+            "sql": _budget_text(r["sql"]),
+            "rows": r["rows"],
+            "duration_ms": r["duration_ms"],
+        } for r in rows]
+
+    @api.get(
+        "/audit/access",
+        response_model=AccessAuditPage,
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409],
+                   422: _RESP_HTTP_ERROR[422]},
+    )
+    def audit_access(limit: int = 50, offset: int = 0,
+                     subject: str | None = None,
+                     resource_type: str | None = None,
+                     allowed: bool | None = None,
+                     from_: datetime | None = Query(None, alias="from"),
+                     to: datetime | None = None) -> dict:
+        """控制台数据访问审计(d2a_console_access_audit,M4)。
+
+        只含主体/目标/允许与否/查询形状/行数;不含 Token、查询值原文、返回值。
+        """
+        if not 1 <= limit <= 100 or offset < 0:
+            raise HTTPException(422, "limit 须为 1..100,offset 须 >= 0")
+        if resource_type is not None and resource_type not in ("raw", "object"):
+            raise HTTPException(422, f"未知 resource_type '{resource_type}'")
+        from_ = _require_aware_dt(from_, "from")
+        to = _require_aware_dt(to, "to")
+        if from_ is not None and to is not None and from_ >= to:
+            raise HTTPException(422, "时间区间非法:from 必须早于 to(闭开区间)")
+        where: list[str] = []
+        params: list[Any] = []
+        if subject is not None:
+            where.append("subject = ?")
+            params.append(subject)
+        if resource_type is not None:
+            where.append("resource_type = ?")
+            params.append(resource_type)
+        if allowed is not None:
+            where.append("allowed = ?")
+            params.append(1 if allowed else 0)
+        if from_ is not None:
+            where.append("ts >= ?")
+            params.append(_filter_time(from_))
+        if to is not None:
+            where.append("ts < ?")
+            params.append(_filter_time(to))
+        wsql = (" WHERE " + " AND ".join(where)) if where else ""
+        db = store()
+        (total,) = db.con.execute(
+            f"SELECT COUNT(*) FROM d2a_console_access_audit{wsql}", params).fetchone()
+        rows = db.con.execute(
+            f"SELECT * FROM d2a_console_access_audit{wsql} "
+            "ORDER BY ts DESC, id DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset])
+        return {
+            "items": [{
+                "id": r["id"],
+                "ts": obs.aware(r["ts"]),
+                "subject": r["subject"],
+                "resource_type": r["resource_type"],
+                "source": r["source"],
+                "resource": r["resource"],
+                "allowed": bool(r["allowed"]),
+                "reason_code": r["reason_code"],
+                "offset": r["page_offset"],
+                "limit": r["page_limit"],
+                "returned_rows": r["returned_rows"],
+                "request_id": r["request_id"],
+            } for r in rows],
+            "offset": offset,
+            "limit": limit,
+            "total": total,
+            "generated_at": datetime.now().astimezone(),
+        }
 
     # ---- 配置 / 服务 / 日志 / 调试 ----
 
@@ -894,42 +1249,197 @@ def create_app(landing: str | None = None, templates: str = "templates",
     _STUB_501 = "契约桩:端点已声明,将在所属里程碑实现;不得视为成功或空数据"
 
     @api.get(
-        "/runs/{run_id}",
-        response_model=RunDetailResponse,
-        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
-        tags=["v0.2-stub"],
+        "/data/raw",
+        response_model=RawTableCatalogResponse,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            403: {"model": HttpError, "description": "未配置控制台 Token,raw 目录关闭"},
+            409: _RESP_HTTP_ERROR[409],
+            500: _RESP_HTTP_ERROR[500],
+        },
     )
-    def run_detail(run_id: int) -> RunDetailResponse:
-        raise HTTPException(501, f"{_STUB_501}(M4 运行详情)")
+    def data_raw_catalog(request: Request) -> dict:
+        """raw 目录:当前配置允许且确实存在的表(不含 SQLite 内部表)。"""
+        db = store()
+        require_raw_browse_auth(db, request, source=None, resource="__catalog__")
+        cfg = state["config"]
+        pack = require_pack()
+        try:
+            items, warnings = br.raw_catalog(
+                db, pack, br.allowed_sources(pack, sorted(cfg.sources) if cfg else []))
+        except Exception as e:
+            try:
+                db.log_access(
+                    subject="console-admin", resource_type="raw", source=None,
+                    resource="__catalog__", allowed=False,
+                    reason_code="catalog_failed")
+            except Exception as audit_error:
+                raise HTTPException(500, "raw 目录失败且访问审计写入失败") from audit_error
+            raise HTTPException(500, "raw 目录失败") from e
+        try:
+            db.log_access(
+                subject="console-admin", resource_type="raw", source=None,
+                resource="__catalog__", allowed=True, reason_code="ok",
+                returned_rows=len(items))
+        except Exception as audit_error:
+            raise HTTPException(500, "raw 目录访问审计写入失败") from audit_error
+        return {"items": items, "warnings": warnings,
+                "generated_at": datetime.now().astimezone()}
 
     @api.get(
         "/data/raw/{source}/{table}",
         response_model=RawDataPageResponse,
-        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
-        tags=["v0.2-stub"],
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            403: {"model": HttpError, "description": "未配置控制台 Token,raw 浏览关闭"},
+            404: {"model": HttpError},
+            409: _RESP_HTTP_ERROR[409],
+            422: _RESP_HTTP_ERROR[422],
+        },
     )
-    def data_raw(source: str, table: str, offset: int = 0,
-                 limit: int = 50) -> RawDataPageResponse:
-        raise HTTPException(501, f"{_STUB_501}(M4 raw 数据浏览)")
+    def data_raw(source: str, table: str, request: Request,
+                 offset: int = 0, limit: int = 50, q: str = "") -> dict:
+        """raw 白名单分页浏览(强鉴权 + 访问审计,§4.7)。
+
+        必须配置控制台 Token 且请求携带有效 Bearer;每次尝试(允许/拒绝)
+        都写不泄密访问审计;审计失败则请求失败关闭。
+        """
+        db = store()
+        pack = require_pack()
+        cfg = state["config"]
+        require_raw_browse_auth(
+            db, request, source=source, resource=table, offset=offset, limit=limit)
+        try:
+            br.require_source(
+                br.allowed_sources(pack, sorted(cfg.sources) if cfg else []), db, source)
+            br.require_raw_table(db, source, table, br.allowed_raw_tables(pack, source))
+        except br.BrowseError as e:
+            db.log_access(
+                subject="console-admin", resource_type="raw", source=source,
+                resource=table, allowed=False, reason_code="not_in_catalog",
+                page_offset=offset, page_limit=limit)
+            raise HTTPException(e.status, e.detail) from e
+        try:
+            cols = br.raw_column_meta(db, pack, source, table)
+            page = br.browse_table(
+                db, br.physical_raw(source, table), cols,
+                limit=limit, offset=offset, q=q,
+                base_where="_d2a_deleted_at IS NULL")
+        except br.BrowseError as e:
+            db.log_access(
+                subject="console-admin", resource_type="raw", source=source,
+                resource=table, allowed=False, reason_code="invalid_query",
+                page_offset=offset, page_limit=limit)
+            raise HTTPException(e.status, e.detail) from e
+        except Exception as e:
+            try:
+                db.log_access(
+                    subject="console-admin", resource_type="raw", source=source,
+                    resource=table, allowed=False, reason_code="browse_failed",
+                    page_offset=offset, page_limit=limit)
+            except Exception as audit_error:
+                raise HTTPException(500, "raw 浏览失败且访问审计写入失败") from audit_error
+            raise HTTPException(500, "raw 浏览失败") from e
+        db.log_access(
+            subject="console-admin", resource_type="raw", source=source,
+            resource=table, allowed=True, reason_code="ok",
+            page_offset=offset, page_limit=limit,
+            returned_rows=len(page["rows"]))
+        warnings = [f"列 {c['name']} 分类未知,按未确认处理展示"
+                    for c in cols if c["classification"] == "unknown"]
+        return {
+            "source": source,
+            "table": table,
+            "columns": cols,
+            "rows": page["rows"],
+            "truncations": page["truncations"],
+            "offset": offset,
+            "limit": limit,
+            "total": page["total"],
+            "sort": page["sort"],
+            "query": q,
+            "searchable": page["searchable"],
+            "warnings": warnings,
+            "generated_at": datetime.now().astimezone(),
+        }
 
     @api.get(
         "/objects",
         response_model=list[ObjectSummary],
-        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
-        tags=["v0.2-stub"],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
     )
-    def objects() -> list[ObjectSummary]:
-        raise HTTPException(501, f"{_STUB_501}(M4 对象列表)")
+    def objects_catalog() -> list[dict]:
+        """对象目录:模板 ∩ 物化状态;未物化为 rows=null + warning,不伪装 0。"""
+        db = store()
+        pack = require_pack()
+        out = []
+        for tpl in pack.objects:
+            try:
+                row = db.con.execute(
+                    f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
+                    f'FROM {br.quote_ident(br.physical_object(tpl.object))}').fetchone()
+                rows, mapped_at, warning = row["n"], obs.aware(row["m"]), None
+            except sqlite3.Error:
+                rows, mapped_at, warning = None, None, "尚未物化"
+            (qp,) = db.con.execute(
+                "SELECT COUNT(*) FROM d2a_quarantine "
+                "WHERE object = ? AND resolved_at IS NULL", (tpl.object,)).fetchone()
+            out.append({
+                "object": tpl.object,
+                "display_name": tpl.display_name,
+                "domain": tpl.domain,
+                "rows": rows,
+                "mapped_at": mapped_at,
+                "quarantined": qp,
+                "version": None,
+                "searchable": bool(tpl.keys),
+                "warning": warning,
+            })
+        return out
 
     @api.get(
         "/objects/{object}",
         response_model=ObjectRowsPageResponse,
-        responses={401: _RESP_HTTP_ERROR[401], 501: _RESP_HTTP_ERROR_STUB[501]},
-        tags=["v0.2-stub"],
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            404: {"model": HttpError},
+            409: {"model": HttpError, "description": "模板存在但尚未物化"},
+            422: _RESP_HTTP_ERROR[422],
+        },
     )
     def object_rows(object: str, offset: int = 0,
-                    limit: int = 50) -> ObjectRowsPageResponse:
-        raise HTTPException(501, f"{_STUB_501}(M4 对象数据浏览)")
+                    limit: int = 50, q: str = "") -> dict:
+        """对象分页浏览(敏感属性服务端永久脱敏)。"""
+        db = store()
+        pack = require_pack()
+        tpl = next((o for o in pack.objects if o.object == object), None)
+        if tpl is None:
+            raise HTTPException(404, f"未知对象 '{object}'")
+        if not br.table_exists(db, br.physical_object(object)):
+            raise HTTPException(409, f"对象 '{object}' 尚未物化")
+        cols = br.object_column_meta(db, tpl)
+        try:
+            page = br.browse_table(
+                db, br.physical_object(object), cols,
+                limit=limit, offset=offset, q=q)
+        except br.BrowseError as e:
+            raise HTTPException(e.status, e.detail) from e
+        warnings = [f"列 {c['name']} 分类未知,按未确认处理展示"
+                    for c in cols if c["classification"] == "unknown"]
+        return {
+            "object": object,
+            "columns": cols,
+            "rows": page["rows"],
+            "truncations": page["truncations"],
+            "offset": offset,
+            "limit": limit,
+            "total": page["total"],
+            "sort": page["sort"],
+            "query": q,
+            "searchable": page["searchable"],
+            "warnings": warnings,
+            "generated_at": datetime.now().astimezone(),
+        }
 
     @api.get(
         "/templates",

@@ -25,6 +25,12 @@ TZ_TIME_DESC = (
     "convert legacy local text to an offset-bearing value"
 )
 
+# 统一运行模型(M3 起):validation 属 v0.3,但进入同一 Run 模型,避免另造验收记录。
+RunType = Literal["sync", "apply", "reconcile", "ingest", "validation"]
+RunStatus = Literal["running", "ok", "paused", "failed", "aborted"]
+StepKind = Literal["table", "object", "segment", "batch"]
+StepsState = Literal["available", "legacy_unavailable"]
+
 
 class JsonValue(RootModel[
     str | int | float | bool | None | list["JsonValue"] | dict[str, "JsonValue"]
@@ -182,13 +188,21 @@ class RunSummary(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: int
+    type: RunType | None = Field(
+        default=None, description="结构化运行类型;历史记录为 NULL(类型未知),不回填猜测")
+    status: RunStatus | None = None
     source: str
-    started_at: str = Field(description=LEGACY_TIME_DESC)
-    finished_at: str | None = Field(default=None, description=LEGACY_TIME_DESC)
+    started_at: datetime | None = Field(default=None, description=TZ_TIME_DESC)
+    finished_at: datetime | None = Field(default=None, description=TZ_TIME_DESC)
+    duration_ms: float | None = None
     tables: int | None = None
     rows: int | None = None
-    status: str | None = None
-    detail: str | None = None
+    quarantined: int | None = None
+    dataset_version: str | None = Field(default=None, description="v0.3 前固定 null")
+    detail: str | None = Field(
+        default=None, description="既有字段,安全截断,逐步弃用;状态判断不得解析它")
+    error: str | None = None
+    error_id: str | None = None
 
 
 class QuarantineRecord(BaseModel):
@@ -201,7 +215,8 @@ class QuarantineRecord(BaseModel):
 
 
 class AuditRecord(BaseModel):
-    ts: str = Field(description=LEGACY_TIME_DESC)
+    id: int = Field(description="稳定主键(排序锚点)")
+    ts: datetime = Field(description=TZ_TIME_DESC)
     source: str
     action: str
     sql: str
@@ -312,41 +327,77 @@ class PipelineResponse(BaseModel):
     nodes: list[PipelineNode]
 
 
-RunType = Literal["sync", "apply", "reconcile", "ingest"]
-RunStatus = Literal["running", "ok", "paused", "failed", "aborted"]
-
-
 class RunStep(BaseModel):
-    name: str = Field(description="步骤对象:表名 / 对象名 / 批次 ID")
+    id: int
+    ordinal: int
+    kind: StepKind
+    name: str = Field(description="步骤对象:表名 / 对象名 / segment / batch")
+    status: RunStatus
+    started_at: datetime | None = Field(default=None, description=TZ_TIME_DESC)
+    finished_at: datetime | None = Field(default=None, description=TZ_TIME_DESC)
+    duration_ms: float | None = None
+    batch_id: str | None = None
     rows_in: int | None
     rows_out: int | None
     quarantined: int | None
-    watermark_before: str | None
-    watermark_after: str | None
-    error: str | None
+    repaired: int | None = None
+    soft_deleted: int | None = None
+    watermark_before: JsonValue | None = None
+    watermark_after: JsonValue | None = None
+    error: str | None = None
+    error_id: str | None = None
 
 
-class RunDetailResponse(BaseModel):
-    """统一运行模型(v0.3 起 validation 复用同一 Run/steps 结构)。"""
+class RunDetailResponse(RunSummary):
+    """统一运行详情。steps_state=legacy_unavailable 表示历史运行缺少 step
+    证据(不能显示为"处理 0 项");新运行确实没有工作单元时才允许
+    available + steps=[]。"""
 
-    id: int
-    type: RunType
-    status: RunStatus
-    source: str | None
-    started_at: datetime = Field(description=TZ_TIME_DESC)
-    finished_at: datetime | None = Field(description=TZ_TIME_DESC)
-    duration_ms: float | None
-    dataset_version: str | None = Field(description="dataset version 属 v0.3,当前为空")
+    steps_state: StepsState
     steps: list[RunStep]
+
+
+# ---- M4:数据浏览与安全口径 ----
+
+ColumnRole = Literal["business_key", "data", "metadata"]
+ColumnClassification = Literal["normal", "sensitive", "unknown"]
+
+# 单值序列化预算(M4-T01 固定):超限值返回安全预览并在 truncations 列明
+VALUE_BUDGET_BYTES = 64 * 1024
+
+
+class ColumnMeta(BaseModel):
+    """列元数据;unknown 分类持续警告,不能默认为安全。"""
+
+    name: str
+    data_type: str
+    role: ColumnRole
+    classification: ColumnClassification
+    masked: bool = Field(description="服务端已脱敏为 ***;v0.2 不提供 unmask")
+    searchable: bool
+
+
+class FieldTruncation(BaseModel):
+    """行级截断标记:预览不得当作完整值导出。"""
+
+    row_index: int
+    fields: list[str]
 
 
 class RawDataPageResponse(BaseModel):
     source: str
-    table: str
+    table: str = Field(description="逻辑表名;物理表名不作为用户输入")
+    columns: list[ColumnMeta]
+    rows: list[dict[str, JsonValue]]
+    truncations: list[FieldTruncation]
     offset: int
     limit: int
     total: int
-    rows: list[dict[str, JsonValue]]
+    sort: str = Field(description="排序来源说明,如 pk:CUSTOMER_CODE 或 rowid")
+    query: str = Field(description="回显 q 参数(空串=未搜索)")
+    searchable: bool
+    warnings: list[str]
+    generated_at: datetime = Field(description=TZ_TIME_DESC)
 
 
 class ObjectSummary(BaseModel):
@@ -357,14 +408,65 @@ class ObjectSummary(BaseModel):
     mapped_at: datetime | None = Field(description=TZ_TIME_DESC)
     quarantined: int
     version: str | None = Field(description="object version 属 v0.3,当前为空")
+    searchable: bool = False
+    warning: str | None = None
 
 
 class ObjectRowsPageResponse(BaseModel):
     object: str
+    columns: list[ColumnMeta]
+    rows: list[dict[str, JsonValue]]
+    truncations: list[FieldTruncation]
     offset: int
     limit: int
     total: int
-    rows: list[dict[str, JsonValue]]
+    sort: str
+    query: str
+    searchable: bool
+    warnings: list[str]
+    generated_at: datetime = Field(description=TZ_TIME_DESC)
+
+
+class RawTableCatalogItem(BaseModel):
+    source: str
+    table: str = Field(description="逻辑表名")
+    display_name: str
+    rows: int | None = Field(description="计数失败为 null + 警告,不伪装 0")
+    latest_batch_id: str | None
+    extracted_at: datetime | None = Field(description=TZ_TIME_DESC)
+    searchable: bool
+    classification_warning: bool
+
+
+class RawTableCatalogResponse(BaseModel):
+    items: list[RawTableCatalogItem]
+    warnings: list[str] = Field(default_factory=list)
+    generated_at: datetime = Field(description=TZ_TIME_DESC)
+
+
+class AccessAuditItem(BaseModel):
+    """控制台数据访问事实。严禁记录 Token、查询值原文、返回值或 traceback。"""
+
+    id: int
+    ts: datetime = Field(description=TZ_TIME_DESC)
+    subject: str
+    resource_type: Literal["raw", "object"]
+    source: str | None
+    resource: str
+    allowed: bool
+    reason_code: str
+    offset: int | None = None
+    limit: int | None = None
+    returned_rows: int | None = None
+    request_id: str | None = None
+
+
+class AccessAuditPage(BaseModel):
+    items: list[AccessAuditItem]
+    offset: int
+    limit: int
+    total: int
+    generated_at: datetime = Field(description=TZ_TIME_DESC)
 
 
 BindingStatus = Literal["draft", "verified", "disabled"]

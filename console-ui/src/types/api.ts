@@ -102,8 +102,36 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Audit */
+        /**
+         * Audit
+         * @description SQL 操作审计(d2a_audit_log):筛选 + X-Total-Count(M4)。
+         *
+         *     时间区间为带时区 ISO 8601 闭开区间 [from, to);筛选全部参数化;
+         *     排序固定 ts DESC, id DESC。不用 SQL 文本推断 Run 状态。
+         */
         get: operations["audit_api_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/audit/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Audit Access
+         * @description 控制台数据访问审计(d2a_console_access_audit,M4)。
+         *
+         *     只含主体/目标/允许与否/查询形状/行数;不含 Token、查询值原文、返回值。
+         */
+        get: operations["audit_access_api_audit_access_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -147,6 +175,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/data/raw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Data Raw Catalog
+         * @description raw 目录:当前配置允许且确实存在的表(不含 SQLite 内部表)。
+         */
+        get: operations["data_raw_catalog_api_data_raw_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/data/raw/{source}/{table}": {
         parameters: {
             query?: never;
@@ -154,7 +202,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Data Raw */
+        /**
+         * Data Raw
+         * @description raw 白名单分页浏览(强鉴权 + 访问审计,§4.7)。
+         *
+         *     必须配置控制台 Token 且请求携带有效 Bearer;每次尝试(允许/拒绝)
+         *     都写不泄密访问审计;审计失败则请求失败关闭。
+         */
         get: operations["data_raw_api_data_raw__source___table__get"];
         put?: never;
         post?: never;
@@ -239,8 +293,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Objects */
-        get: operations["objects_api_objects_get"];
+        /**
+         * Objects Catalog
+         * @description 对象目录:模板 ∩ 物化状态;未物化为 rows=null + warning,不伪装 0。
+         */
+        get: operations["objects_catalog_api_objects_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -256,7 +313,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Object Rows */
+        /**
+         * Object Rows
+         * @description 对象分页浏览(敏感属性服务端永久脱敏)。
+         */
         get: operations["object_rows_api_objects__object__get"];
         put?: never;
         post?: never;
@@ -329,7 +389,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Runs */
+        /**
+         * Runs
+         * @description 运行列表:数组 wire shape + X-Total-Count 响应头(M4)。
+         *
+         *     筛选 type/status 与领域模型一致(数据库列 run_type 只是内部实现);
+         *     排序固定 started_at DESC, id DESC;时间规范化为带时区。
+         */
         get: operations["runs_api_runs_get"];
         put?: never;
         post?: never;
@@ -346,7 +412,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Run Detail */
+        /**
+         * Run Detail
+         * @description 运行详情:统一 Run + step;历史无 step 返回 legacy_unavailable(不伪造)。
+         */
         get: operations["run_detail_api_runs__run_id__get"];
         put?: never;
         post?: never;
@@ -502,6 +571,60 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AccessAuditItem
+         * @description 控制台数据访问事实。严禁记录 Token、查询值原文、返回值或 traceback。
+         */
+        AccessAuditItem: {
+            /** Allowed */
+            allowed: boolean;
+            /** Id */
+            id: number;
+            /** Limit */
+            limit?: number | null;
+            /** Offset */
+            offset?: number | null;
+            /** Reason Code */
+            reason_code: string;
+            /** Request Id */
+            request_id?: string | null;
+            /** Resource */
+            resource: string;
+            /**
+             * Resource Type
+             * @enum {string}
+             */
+            resource_type: "raw" | "object";
+            /** Returned Rows */
+            returned_rows?: number | null;
+            /** Source */
+            source: string | null;
+            /** Subject */
+            subject: string;
+            /**
+             * Ts
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            ts: string;
+        };
+        /** AccessAuditPage */
+        AccessAuditPage: {
+            /**
+             * Generated At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            generated_at: string;
+            /** Items */
+            items: components["schemas"]["AccessAuditItem"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** ActionBody */
         ActionBody: {
             /**
@@ -542,6 +665,11 @@ export interface components {
             action: string;
             /** Duration Ms */
             duration_ms?: number | null;
+            /**
+             * Id
+             * @description 稳定主键(排序锚点)
+             */
+            id: number;
             /** Rows */
             rows?: number | null;
             /** Source */
@@ -550,7 +678,8 @@ export interface components {
             sql: string;
             /**
              * Ts
-             * @description legacy local ISO text from SQLite; offset/timezone not guaranteed in M1
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
              */
             ts: string;
         };
@@ -562,6 +691,33 @@ export interface components {
             draft: number;
             /** Verified */
             verified: number;
+        };
+        /**
+         * ColumnMeta
+         * @description 列元数据;unknown 分类持续警告,不能默认为安全。
+         */
+        ColumnMeta: {
+            /**
+             * Classification
+             * @enum {string}
+             */
+            classification: "normal" | "sensitive" | "unknown";
+            /** Data Type */
+            data_type: string;
+            /**
+             * Masked
+             * @description 服务端已脱敏为 ***;v0.2 不提供 unmask
+             */
+            masked: boolean;
+            /** Name */
+            name: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "business_key" | "data" | "metadata";
+            /** Searchable */
+            searchable: boolean;
         };
         /** ConfigPatch */
         ConfigPatch: {
@@ -615,6 +771,16 @@ export interface components {
             field: string;
             /** Message */
             message: string;
+        };
+        /**
+         * FieldTruncation
+         * @description 行级截断标记:预览不得当作完整值导出。
+         */
+        FieldTruncation: {
+            /** Fields */
+            fields: string[];
+            /** Row Index */
+            row_index: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -692,18 +858,36 @@ export interface components {
         };
         /** ObjectRowsPageResponse */
         ObjectRowsPageResponse: {
+            /** Columns */
+            columns: components["schemas"]["ColumnMeta"][];
+            /**
+             * Generated At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            generated_at: string;
             /** Limit */
             limit: number;
             /** Object */
             object: string;
             /** Offset */
             offset: number;
+            /** Query */
+            query: string;
             /** Rows */
             rows: {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             }[];
+            /** Searchable */
+            searchable: boolean;
+            /** Sort */
+            sort: string;
             /** Total */
             total: number;
+            /** Truncations */
+            truncations: components["schemas"]["FieldTruncation"][];
+            /** Warnings */
+            warnings: string[];
         };
         /** ObjectSummary */
         ObjectSummary: {
@@ -726,10 +910,17 @@ export interface components {
              */
             rows: number | null;
             /**
+             * Searchable
+             * @default false
+             */
+            searchable: boolean;
+            /**
              * Version
              * @description object version 属 v0.3,当前为空
              */
             version: string | null;
+            /** Warning */
+            warning?: string | null;
         };
         /**
          * OverviewAlert
@@ -1070,20 +1261,88 @@ export interface components {
         };
         /** RawDataPageResponse */
         RawDataPageResponse: {
+            /** Columns */
+            columns: components["schemas"]["ColumnMeta"][];
+            /**
+             * Generated At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            generated_at: string;
             /** Limit */
             limit: number;
             /** Offset */
             offset: number;
+            /**
+             * Query
+             * @description 回显 q 参数(空串=未搜索)
+             */
+            query: string;
             /** Rows */
             rows: {
                 [key: string]: components["schemas"]["JsonValue-Output"];
             }[];
+            /** Searchable */
+            searchable: boolean;
+            /**
+             * Sort
+             * @description 排序来源说明,如 pk:CUSTOMER_CODE 或 rowid
+             */
+            sort: string;
             /** Source */
             source: string;
-            /** Table */
+            /**
+             * Table
+             * @description 逻辑表名;物理表名不作为用户输入
+             */
             table: string;
             /** Total */
             total: number;
+            /** Truncations */
+            truncations: components["schemas"]["FieldTruncation"][];
+            /** Warnings */
+            warnings: string[];
+        };
+        /** RawTableCatalogItem */
+        RawTableCatalogItem: {
+            /** Classification Warning */
+            classification_warning: boolean;
+            /** Display Name */
+            display_name: string;
+            /**
+             * Extracted At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            extracted_at: string | null;
+            /** Latest Batch Id */
+            latest_batch_id: string | null;
+            /**
+             * Rows
+             * @description 计数失败为 null + 警告,不伪装 0
+             */
+            rows: number | null;
+            /** Searchable */
+            searchable: boolean;
+            /** Source */
+            source: string;
+            /**
+             * Table
+             * @description 逻辑表名
+             */
+            table: string;
+        };
+        /** RawTableCatalogResponse */
+        RawTableCatalogResponse: {
+            /**
+             * Generated At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            generated_at: string;
+            /** Items */
+            items: components["schemas"]["RawTableCatalogItem"][];
+            /** Warnings */
+            warnings?: string[];
         };
         /** RawTablePageResponse */
         RawTablePageResponse: {
@@ -1115,7 +1374,7 @@ export interface components {
              * Run Type
              * @description 结构化运行类型;历史记录为 NULL(类型未知),不回填猜测
              */
-            run_type: ("sync" | "apply" | "reconcile" | "ingest") | null;
+            run_type: ("sync" | "apply" | "reconcile" | "ingest" | "validation") | null;
             /** Source */
             source: string;
             /**
@@ -1167,88 +1426,159 @@ export interface components {
         };
         /**
          * RunDetailResponse
-         * @description 统一运行模型(v0.3 起 validation 复用同一 Run/steps 结构)。
+         * @description 统一运行详情。steps_state=legacy_unavailable 表示历史运行缺少 step
+         *     证据(不能显示为"处理 0 项");新运行确实没有工作单元时才允许
+         *     available + steps=[]。
          */
         RunDetailResponse: {
             /**
              * Dataset Version
-             * @description dataset version 属 v0.3,当前为空
+             * @description v0.3 前固定 null
              */
-            dataset_version: string | null;
-            /** Duration Ms */
-            duration_ms: number | null;
+            dataset_version?: string | null;
             /**
-             * Finished At
-             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             * Detail
+             * @description 既有字段,安全截断,逐步弃用;状态判断不得解析它
              */
-            finished_at: string | null;
-            /** Id */
-            id: number;
-            /** Source */
-            source: string | null;
-            /**
-             * Started At
-             * Format: date-time
-             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
-             */
-            started_at: string;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "running" | "ok" | "paused" | "failed" | "aborted";
-            /** Steps */
-            steps: components["schemas"]["RunStep"][];
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "sync" | "apply" | "reconcile" | "ingest";
-        };
-        /** RunStep */
-        RunStep: {
-            /** Error */
-            error: string | null;
-            /**
-             * Name
-             * @description 步骤对象:表名 / 对象名 / 批次 ID
-             */
-            name: string;
-            /** Quarantined */
-            quarantined: number | null;
-            /** Rows In */
-            rows_in: number | null;
-            /** Rows Out */
-            rows_out: number | null;
-            /** Watermark After */
-            watermark_after: string | null;
-            /** Watermark Before */
-            watermark_before: string | null;
-        };
-        /** RunSummary */
-        RunSummary: {
-            /** Detail */
             detail?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Error Id */
+            error_id?: string | null;
             /**
              * Finished At
-             * @description legacy local ISO text from SQLite; offset/timezone not guaranteed in M1
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
              */
             finished_at?: string | null;
             /** Id */
             id: number;
+            /** Quarantined */
+            quarantined?: number | null;
             /** Rows */
             rows?: number | null;
             /** Source */
             source: string;
             /**
              * Started At
-             * @description legacy local ISO text from SQLite; offset/timezone not guaranteed in M1
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
              */
-            started_at: string;
+            started_at?: string | null;
             /** Status */
-            status?: string | null;
+            status?: ("running" | "ok" | "paused" | "failed" | "aborted") | null;
+            /** Steps */
+            steps: components["schemas"]["RunStep"][];
+            /**
+             * Steps State
+             * @enum {string}
+             */
+            steps_state: "available" | "legacy_unavailable";
             /** Tables */
             tables?: number | null;
+            /**
+             * Type
+             * @description 结构化运行类型;历史记录为 NULL(类型未知),不回填猜测
+             */
+            type?: ("sync" | "apply" | "reconcile" | "ingest" | "validation") | null;
+        };
+        /** RunStep */
+        RunStep: {
+            /** Batch Id */
+            batch_id?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Error Id */
+            error_id?: string | null;
+            /**
+             * Finished At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            finished_at?: string | null;
+            /** Id */
+            id: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "table" | "object" | "segment" | "batch";
+            /**
+             * Name
+             * @description 步骤对象:表名 / 对象名 / segment / batch
+             */
+            name: string;
+            /** Ordinal */
+            ordinal: number;
+            /** Quarantined */
+            quarantined: number | null;
+            /** Repaired */
+            repaired?: number | null;
+            /** Rows In */
+            rows_in: number | null;
+            /** Rows Out */
+            rows_out: number | null;
+            /** Soft Deleted */
+            soft_deleted?: number | null;
+            /**
+             * Started At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            started_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "ok" | "paused" | "failed" | "aborted";
+            watermark_after?: components["schemas"]["JsonValue-Output"] | null;
+            watermark_before?: components["schemas"]["JsonValue-Output"] | null;
+        };
+        /** RunSummary */
+        RunSummary: {
+            /**
+             * Dataset Version
+             * @description v0.3 前固定 null
+             */
+            dataset_version?: string | null;
+            /**
+             * Detail
+             * @description 既有字段,安全截断,逐步弃用;状态判断不得解析它
+             */
+            detail?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error */
+            error?: string | null;
+            /** Error Id */
+            error_id?: string | null;
+            /**
+             * Finished At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            finished_at?: string | null;
+            /** Id */
+            id: number;
+            /** Quarantined */
+            quarantined?: number | null;
+            /** Rows */
+            rows?: number | null;
+            /** Source */
+            source: string;
+            /**
+             * Started At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            started_at?: string | null;
+            /** Status */
+            status?: ("running" | "ok" | "paused" | "failed" | "aborted") | null;
+            /** Tables */
+            tables?: number | null;
+            /**
+             * Type
+             * @description 结构化运行类型;历史记录为 NULL(类型未知),不回填猜测
+             */
+            type?: ("sync" | "apply" | "reconcile" | "ingest" | "validation") | null;
         };
         /** ServiceProbe */
         ServiceProbe: {
@@ -1686,6 +2016,11 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                offset?: number;
+                source?: string | null;
+                action?: string | null;
+                from?: string | null;
+                to?: string | null;
             };
             header?: never;
             path?: never;
@@ -1696,6 +2031,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description 当前筛选条件下的总数(分页用) */
+                    "X-Total-Count"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -1720,13 +2057,68 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description Validation Error */
+            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["RequestError"];
+                };
+            };
+        };
+    };
+    audit_access_api_audit_access_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                subject?: string | null;
+                resource_type?: string | null;
+                allowed?: boolean | null;
+                from?: string | null;
+                to?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessAuditPage"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestError"];
                 };
             };
         };
@@ -1871,11 +2263,68 @@ export interface operations {
             };
         };
     };
+    data_raw_catalog_api_data_raw_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RawTableCatalogResponse"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 未配置控制台 Token,raw 目录关闭 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 未处理异常 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
     data_raw_api_data_raw__source___table__get: {
         parameters: {
             query?: {
                 offset?: number;
                 limit?: number;
+                q?: string;
             };
             header?: never;
             path: {
@@ -1904,22 +2353,40 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
-            501: {
+            /** @description 未配置控制台 Token,raw 浏览关闭 */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestError"];
                 };
             };
         };
@@ -2173,7 +2640,7 @@ export interface operations {
             };
         };
     };
-    objects_api_objects_get: {
+    objects_catalog_api_objects_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -2200,8 +2667,8 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
-            501: {
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2216,6 +2683,7 @@ export interface operations {
             query?: {
                 offset?: number;
                 limit?: number;
+                q?: string;
             };
             header?: never;
             path: {
@@ -2243,22 +2711,31 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
-            501: {
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 模板存在但尚未物化 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestError"];
                 };
             };
         };
@@ -2392,6 +2869,9 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                offset?: number;
+                type?: ("sync" | "apply" | "reconcile" | "ingest" | "validation") | null;
+                status?: ("running" | "ok" | "paused" | "failed" | "aborted") | null;
             };
             header?: never;
             path?: never;
@@ -2402,6 +2882,8 @@ export interface operations {
             /** @description Successful Response */
             200: {
                 headers: {
+                    /** @description 当前筛选条件下的总数(分页用) */
+                    "X-Total-Count"?: number;
                     [name: string]: unknown;
                 };
                 content: {
@@ -2426,13 +2908,13 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description Validation Error */
+            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["RequestError"];
                 };
             };
         };
@@ -2466,6 +2948,24 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2473,15 +2973,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
-            501: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpError"];
                 };
             };
         };

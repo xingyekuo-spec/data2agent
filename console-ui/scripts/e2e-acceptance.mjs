@@ -5,8 +5,8 @@
  *
  * Part A(Mock):dev server + 10 场景 —— healthy 摘要、刷新失败保留旧数据、
  *   apply 熔断双节点定位;
- * Part B(Real):临时 SQLite(展厅 seed → sync → apply)+ 真实 FastAPI console
- *   + dev:real —— REAL 标识、真实计数、push 本地直写 idle、mapping warning。
+ * Part B(Real):临时 SQLite(展厅 seed → sync → apply → reconcile → ingest)
+ *   + 真实 FastAPI console + dev:real —— REAL 标识、真实计数、M4 运行/审计/数据验收。
  *
  * 用法:
  *   node scripts/e2e-acceptance.mjs            # Mock + Real
@@ -24,6 +24,7 @@ import { chromium } from 'playwright'
 const ROOT = resolve('..')
 const PYTHON = process.env.D2A_PYTHON ?? join(ROOT, '.venv/bin/python')
 const ONLY = process.argv[2]
+const SOURCE = 'digiwin_e10'
 
 const MOCK_PORT = 5191
 const REAL_UI_PORT = 5192
@@ -46,6 +47,75 @@ function sh(cmd, args, opts = {}) {
   if (r.status !== 0) {
     throw new Error(`${cmd} ${args.join(' ')} failed:\n${r.stderr || r.stdout}`)
   }
+  return r.stdout.trim()
+}
+
+function sqliteCounts(landing) {
+  const script = `
+import json, sqlite3
+db = sqlite3.connect(${JSON.stringify(landing)})
+queries = {
+    "d2a_sync_state": "SELECT COUNT(*) FROM d2a_sync_state",
+    "d2a_quarantine": "SELECT COUNT(*) FROM d2a_quarantine",
+    "d2a_sync_run": "SELECT COUNT(*) FROM d2a_sync_run",
+    "raw_CUSTOMER": 'SELECT COUNT(*) FROM "raw_digiwin_e10__CUSTOMER"',
+    "obj_Customer": 'SELECT COUNT(*) FROM "obj_Customer"',
+}
+print(json.dumps({k: db.execute(sql).fetchone()[0] for k, sql in queries.items()}, sort_keys=True))
+`
+  return JSON.parse(sh(PYTHON, ['-c', script]))
+}
+
+function postIngestBatch(landing) {
+  const script = `
+from fastapi.testclient import TestClient
+from data2agent.ingest.app import create_app
+
+client = TestClient(create_app(${JSON.stringify(landing)}))
+body = {
+    "source": ${JSON.stringify(SOURCE)},
+    "table": "CUSTOMER",
+    "columns": [
+        ["Id", "int"],
+        ["CUSTOMER_CODE", "text"],
+        ["CUSTOMER_NAME", "text"],
+        ["CUSTOMER_SHORT_NAME", "text"],
+        ["COUNTRY_REGION", "text"],
+        ["CURRENCY_ID", "int"],
+        ["PAYMENT_TERM_DAYS", "int"],
+        ["CONTACT_NAME", "text"],
+        ["CONTACT_PHONE", "text"],
+        ["CONTACT_EMAIL", "text"],
+        ["CREATE_DATE", "text"],
+        ["CREATE_BY", "text"],
+        ["LAST_MODIFIED_DATE", "text"],
+        ["LAST_MODIFIED_BY", "text"],
+        ["Owner_Org_ROid", "text"],
+    ],
+    "pk": ["Id"],
+    "batch_id": "e2e-ingest-001",
+    "rows": [{
+        "Id": 999,
+        "CUSTOMER_CODE": "C999",
+        "CUSTOMER_NAME": "E2E Customer LLC",
+        "CUSTOMER_SHORT_NAME": "E2E",
+        "COUNTRY_REGION": "美国",
+        "CURRENCY_ID": 1,
+        "PAYMENT_TERM_DAYS": 30,
+        "CONTACT_NAME": "E2E Admin",
+        "CONTACT_PHONE": "+1-555-0100",
+        "CONTACT_EMAIL": "e2e.admin@example.com",
+        "CREATE_DATE": "2026-07-20 09:00:00",
+        "CREATE_BY": "E2E",
+        "LAST_MODIFIED_DATE": "2026-07-20 09:00:00",
+        "LAST_MODIFIED_BY": "E2E",
+        "Owner_Org_ROid": "ORG01",
+    }],
+}
+resp = client.post("/ingest/batch", json=body)
+resp.raise_for_status()
+`
+  sh(PYTHON, ['-c', script], { cwd: ROOT })
 }
 
 async function waitFor(url, timeoutMs = 60000) {
@@ -125,6 +195,29 @@ async function runMock(browser) {
     expect((await mapping.getAttribute('data-status')) === 'failed', '熔断:映射节点 failed')
     expect((await mapping.textContent()).includes('熔断'), '熔断:映射原因含熔断说明')
     expect((await objects.getAttribute('data-status')) === 'stale', '熔断:对象层 stale(上一稳定结果)')
+
+    // M4:运行列表 → step 详情 → URL 恢复同一 run
+    await page.locator('[data-testid="scenario-switcher"] select').selectOption('healthy')
+    await page.locator('.el-menu-item', { hasText: '运行记录' }).click()
+    await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
+    await page.locator('[data-testid="runs-table"] tbody tr').first().click()
+    await page.locator('[data-testid="steps-table"]').waitFor({ state: 'visible' })
+    expect(true, 'M4:运行行点击打开详情抽屉')
+    expect((await page.locator('[data-testid="steps-table"] tbody tr').count()) > 0, 'M4:详情含 step 行')
+    expect((await page.textContent('[data-testid="steps-table"]')).includes('CUSTOMER'), 'M4:step 含目标表')
+    expect((await page.textContent('body')).includes('2026-07-17 08:30:00'), 'M4:step 含水位证据')
+    // URL 恢复:深链重新打开同一 run
+    await page.goto(`http://localhost:${MOCK_PORT}/v1/runs?run_id=42`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="run-detail-drawer"]').waitFor({ state: 'visible' })
+    expect(true, 'M4:run_id 深链自动打开详情')
+    // 审计与数据页
+    await page.goto(`http://localhost:${MOCK_PORT}/v1/audit`, { waitUntil: 'networkidle' })
+    expect((await page.locator('[data-testid="sql-table"]').count()) === 1, 'M4:SQL 审计表可见')
+    expect((await page.locator('[data-testid="sql-full"]').count()) === 0, 'M4:SQL 默认折叠(全文不展开)')
+    await page.goto(`http://localhost:${MOCK_PORT}/v1/data`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="browse-CUSTOMER"]').click()
+    await page.locator('[data-testid="raw-table"]').waitFor({ state: 'visible' })
+    expect((await page.textContent('[data-testid="raw-table"]')).includes('***'), 'M4:raw 敏感列脱敏')
     await page.close()
   } finally {
     dev.stop()
@@ -141,6 +234,14 @@ async function runReal(browser) {
   sh('cp', [join(ROOT, 'showroom/e10.sqlite'), src])
   sh(PYTHON, ['-m', 'data2agent.connect', 'sync', '--sqlite', src, '--landing', landing], { cwd: ROOT })
   sh(PYTHON, ['-m', 'data2agent.connect', 'apply', '--landing', landing], { cwd: ROOT })
+  sh(PYTHON, ['-m', 'data2agent.connect', 'reconcile', '--sqlite', src, '--landing', landing], { cwd: ROOT })
+  postIngestBatch(landing)
+  // M4:补一条 legacy 运行(无 run_type / 无 step)
+  const legacyInsert = "import sqlite3;c=sqlite3.connect('" + landing + "');"
+    + "c.execute(\"INSERT INTO d2a_sync_run (source, started_at, finished_at, status, detail) "
+    + "VALUES ('digiwin_e10','2020-01-01 00:00:00','2020-01-01 00:00:05','ok','老记录')\");"
+    + 'c.commit()'
+  sh(PYTHON, ['-c', legacyInsert])
   // 带 sync_every 的配置:无配置时观测层对新鲜度只能判 unknown(诚实口径)
   const cfgPath = join(tmp, 'connect.yaml')
   writeFileSync(
@@ -179,6 +280,86 @@ async function runReal(browser) {
     expect((await statusOf('push')) === 'idle', 'Real:push 本地直写 idle')
     expect((await statusOf('mapping')) === 'warning', 'Real:mapping warning(全部 draft)')
     expect((await statusOf('mcp')) === 'failed', 'Real:mcp failed(未启动)')
+
+    // M4 Real:运行详情含真实结构化 step;legacy 显示无证据
+    await page.locator('.el-menu-item', { hasText: '运行记录' }).click()
+    await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
+    const rows = page.locator('[data-testid="runs-table"] tbody tr')
+    expect((await rows.count()) >= 5, 'Real:运行列表含 sync/apply/reconcile/ingest/legacy')
+    const runTypes = ['sync', 'apply', 'reconcile', 'ingest']
+    for (const runType of runTypes) {
+      await page.goto(`http://localhost:${REAL_UI_PORT}/v1/runs?type=${runType}`, { waitUntil: 'networkidle' })
+      await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
+      await page.locator('[data-testid="runs-table"] tbody tr').first().click()
+      await page.locator('[data-testid="steps-table"]').waitFor({ state: 'visible' })
+      expect((await page.locator('[data-testid="steps-table"] tbody tr').count()) > 0,
+        `Real:${runType} 运行有结构化 step`)
+      await page.locator('.el-drawer__close-btn').click()
+    }
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/runs`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
+    const legacyRow = page.locator('[data-testid="runs-table"] tbody tr', { hasText: '类型未知' })
+    await legacyRow.first().click()
+    await page.locator('[data-testid="legacy-note"]').waitFor({ state: 'visible' })
+    expect(true, 'Real:legacy 运行显示"没有逐步证据"')
+    await page.locator('.el-drawer__close-btn').click()
+
+    // M4 Real:SQL 筛选、raw 拒绝审计、注入搜索与业务副作用
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/audit?tab=sql&source=${SOURCE}&action=read`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="sql-table"]').waitFor({ state: 'visible' })
+    expect((await page.textContent('[data-testid="sql-table"]')).includes('read'),
+      'Real:SQL 审计 action 筛选生效')
+    expect((await page.textContent('[data-testid="sql-table"]')).includes(SOURCE),
+      'Real:SQL 审计 source 筛选生效')
+    const deniedRaw = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/data/raw/${SOURCE}/CUSTOMER`,
+    )
+    expect(deniedRaw.status() === 401, 'Real:raw 无 token 请求被拒绝')
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/audit?tab=access&allowed=false`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="access-table"]').waitFor({ state: 'visible' })
+    expect((await page.textContent('[data-testid="access-table"]')).includes('unauthorized'),
+      'Real:raw 拒绝请求进入访问审计')
+    const injected = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/data/raw/${SOURCE}/CUSTOMER`,
+      {
+        headers: { Authorization: 'Bearer e2e-token' },
+        params: { q: "' OR 1=1 --" },
+      },
+    )
+    const injectedBody = await injected.json()
+    expect(injected.status() === 200 && injectedBody.total === 0,
+      'Real:raw 搜索注入不扩张结果集')
+    const badSource = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/data/raw/bogus/CUSTOMER`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(badSource.status() === 404, 'Real:raw source 注入/越界返回 404')
+    const badTable = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/data/raw/${SOURCE}/sqlite_master`,
+      { headers: { Authorization: 'Bearer e2e-token' } },
+    )
+    expect(badTable.status() === 404, 'Real:raw table 注入/越界返回 404')
+    const countsBeforeBrowse = sqliteCounts(landing)
+
+    // M4 Real:数据浏览(脱敏 + 无副作用)
+    await page.locator('.el-menu-item', { hasText: '数据浏览' }).click()
+    await page.locator('[data-testid="raw-catalog"]').waitFor({ state: 'visible' })
+    await page.locator('[data-testid="browse-CUSTOMER"]').click()
+    await page.locator('[data-testid="raw-table"]').waitFor({ state: 'visible' })
+    expect((await page.textContent('[data-testid="raw-table"]')).includes('***'),
+      'Real:raw 敏感列脱敏')
+    const panes = page.locator('.el-tabs__item', { hasText: '对象层' })
+    await panes.click()
+    await page.locator('[data-testid="obj-catalog"]').waitFor({ state: 'visible' })
+    await page.locator('[data-testid="browse-Customer"]').click()
+    await page.locator('[data-testid="obj-table"]').waitFor({ state: 'visible' })
+    expect((await page.textContent('[data-testid="obj-table"]')).includes('***'),
+      'Real:对象敏感属性脱敏')
+    await page.locator('[data-testid="json-toggle"]').click()
+    expect((await page.textContent('[data-testid="json-view"]')).includes('***'),
+      'Real:对象 JSON 与表格同源脱敏')
+    expect(JSON.stringify(sqliteCounts(landing)) === JSON.stringify(countsBeforeBrowse),
+      'Real:数据浏览不改变业务表/水位/运行记录')
     await page.close()
   } finally {
     dev.stop()

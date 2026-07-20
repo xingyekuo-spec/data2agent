@@ -12,6 +12,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta
 from typing import Callable, Optional
+import json
 
 from ..mapping import parse_field_expr
 from ..metamodel.schema import TemplatePack
@@ -64,11 +65,15 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
     watermarks = watermarks or {}
     sink = sink or LocalSink(landing)
     report = SyncReport(source=source, run_id=landing.start_run(source, "sync"))
+    current_step: int | None = None
     try:
+        ordinal = 0
         for info in adapter.tables():
             if should_continue and not should_continue():
                 report.paused = True
                 break
+            ordinal += 1
+            current_step = landing.add_step(report.run_id, ordinal, "table", info.name)
             sink.ensure_table(source, info)
             batch_id = uuid.uuid4().hex[:12]
             wm_col = watermarks.get(info.name)
@@ -97,13 +102,29 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     if seen is not None and (max_wm is None or seen > max_wm):
                         max_wm = seen
             if interrupted:
-                report.paused = True  # 本表水位不前进,下轮从旧水位重来(upsert 幂等)
+                # 本表水位不前进,下轮从旧水位重来(upsert 幂等);step 记暂停
+                landing.update_step(current_step, status="paused",
+                                    rows_in=rows, rows_out=rows, batch_id=batch_id)
+                report.paused = True
                 break
             if wm_col:  # 全部批次提交后才前进水位
                 landing.set_high_water(source, info.name, wm_col, max_wm, batch_id)
+            landing.update_step(
+                current_step, status="ok", rows_in=rows, rows_out=rows,
+                batch_id=batch_id,
+                watermark_before=(json.dumps(high_water)
+                                  if high_water is not None else None),
+                watermark_after=(json.dumps(max_wm)
+                                 if max_wm is not None else None))
+            current_step = None
             report.tables.append(TableReport(info.name, rows, batches, batch_id,
                                              strategy=strategy, high_water=max_wm))
     except Exception as e:
+        if current_step is not None:
+            try:
+                landing.update_step(current_step, status="failed", error=str(e)[:500])
+            except Exception:
+                pass  # 尽力关闭 step;不掩盖原异常
         landing.finish_run(report.run_id, tables=len(report.tables),
                            rows=report.total_rows, status="failed", detail=str(e))
         raise

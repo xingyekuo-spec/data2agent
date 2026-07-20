@@ -7,7 +7,9 @@
 import { client } from './client'
 import { httpError, toApiError, type ApiError } from './errors'
 
-export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError }
+export type ApiResult<T> =
+  | { ok: true; data: T; response: Response }
+  | { ok: false; error: ApiError }
 
 interface FetchOutcome<T> {
   data?: T
@@ -34,7 +36,7 @@ export async function call<T>(promise: Promise<FetchOutcome<T>>): Promise<ApiRes
     if (data === undefined) {
       return { ok: false, error: { kind: 'parse', message: '成功响应缺少数据', retriable: false } }
     }
-    return { ok: true, data }
+    return { ok: true, data, response }
   } catch (err) {
     return { ok: false, error: toApiError(err) }
   }
@@ -57,4 +59,104 @@ export function getConfig() {
 /** 契约桩:后端实现前真实调用返回 501,页面据此显示「尚未接入」 */
 export function getPipeline() {
   return call(client.GET('/api/pipeline'))
+}
+
+// ---- M4:运行 / 审计 / 数据浏览 ----
+
+export interface RunsQuery {
+  limit: number
+  offset: number
+  type?: 'sync' | 'apply' | 'reconcile' | 'ingest' | 'validation'
+  status?: 'running' | 'ok' | 'paused' | 'failed' | 'aborted'
+}
+
+/** 数组 + X-Total-Count 适配为分页结果 */
+export function pageOf<T>(result: ApiResult<T[]>): ApiResult<{ items: T[]; total: number }> {
+  if (!result.ok) {
+    return result
+  }
+  const totalHeader = result.response.headers.get('X-Total-Count')
+  const total = Number(totalHeader)
+  if (totalHeader === null || !Number.isFinite(total)) {
+    return {
+      ok: false,
+      error: {
+        kind: 'parse',
+        message: '分页响应缺少有效 X-Total-Count',
+        retriable: false,
+      },
+    }
+  }
+  return {
+    ok: true,
+    data: { items: result.data, total },
+    response: result.response,
+  }
+}
+
+export async function getRuns(query: RunsQuery) {
+  return pageOf(await call(client.GET('/api/runs', { params: { query } })))
+}
+
+export function getRunDetail(runId: number) {
+  return call(client.GET('/api/runs/{run_id}', { params: { path: { run_id: runId } } }))
+}
+
+export interface AuditQuery {
+  limit: number
+  offset: number
+  source?: string
+  action?: string
+  from?: string
+  to?: string
+}
+
+export async function getAudit(query: AuditQuery) {
+  return pageOf(await call(client.GET('/api/audit', { params: { query } })))
+}
+
+export interface AccessAuditQuery {
+  limit: number
+  offset: number
+  subject?: string
+  resource_type?: 'raw' | 'object'
+  allowed?: boolean
+  from?: string
+  to?: string
+}
+
+export function getAccessAudit(query: AccessAuditQuery) {
+  return call(client.GET('/api/audit/access', { params: { query } }))
+}
+
+// ---- M4:数据浏览 ----
+
+export function getRawCatalog() {
+  return call(client.GET('/api/data/raw'))
+}
+
+export interface BrowseQuery {
+  limit: number
+  offset: number
+  q?: string
+}
+
+export function getRawPage(source: string, table: string, query: BrowseQuery) {
+  return call(
+    client.GET('/api/data/raw/{source}/{table}', {
+      params: { path: { source, table }, query },
+    }),
+  )
+}
+
+export function getObjectCatalog() {
+  return call(client.GET('/api/objects'))
+}
+
+export function getObjectRows(object: string, query: BrowseQuery) {
+  return call(
+    client.GET('/api/objects/{object}', {
+      params: { path: { object }, query },
+    }),
+  )
 }

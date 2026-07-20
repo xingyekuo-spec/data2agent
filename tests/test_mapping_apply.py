@@ -111,8 +111,12 @@ def test_circuit_breaker_preserves_old_table(landing, pack):
         f'UPDATE "{raw_table_name(SOURCE, "QUOTATION")}" SET DOC_NO = NULL WHERE Id <= 15')
     landing.con.commit()  # 15/180 > 5%
 
-    with pytest.raises(MappingCircuitBreaker, match="超过阈值"):
+    with pytest.raises(MappingCircuitBreaker, match="超过阈值") as exc_info:
         apply_object(landing, _quotation_tpl(pack), SOURCE)
+    assert exc_info.value.total == 180
+    assert exc_info.value.mapped == 165
+    assert exc_info.value.quarantined == 15
+    assert exc_info.value.batch_id
     (n,) = landing.con.execute('SELECT COUNT(*) FROM "obj_Quotation"').fetchone()
     assert n == 180, "熔断时旧对象表必须原样保留"
 

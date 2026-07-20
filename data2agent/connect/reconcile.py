@@ -98,7 +98,12 @@ def reconcile(adapter: SourceAdapter, landing: LandingStore, source: str,
             else:
                 _reconcile_by_month(adapter, landing, source, info, wm_col, deep, report)
     except Exception as e:
-        landing.finish_run(report.run_id, tables=0, rows=0, status="failed", detail=str(e))
+        landing.finish_run(
+            report.run_id,
+            tables=len({s.table for s in report.segments}),
+            rows=sum(s.repaired_rows for s in report.segments),
+            status="failed",
+            detail=f"reconcile failed:{str(e)[:500]}")
         raise
     landing.finish_run(
         report.run_id, tables=len({s.table for s in report.segments}),
@@ -117,25 +122,66 @@ def _reconcile_by_month(adapter, landing, source, info: TableInfo, wm_col: str,
         return  # 尚未同步过,无从对账
     max_wm = max(high, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     for label, start, end in month_segments(min_wm, max_wm):
-        src = adapter.segment_stats(info, wm_col, start, end)
-        dst = landing.segment_stats(source, info.name, wm_col, start, end)
-        src_max = normalize_value(src["max"])
-        consistent = src["count"] == dst["count"] and src_max == dst["max"]
-        if src["count"] == 0 and dst["count"] == 0:
-            continue  # 双侧空段不进报告
-        seg = SegmentResult(info.name, label, src["count"], dst["count"], consistent)
-        if not consistent or deep:
-            seg.repaired_rows, seg.soft_deleted = _repair_segment(
-                adapter, landing, source, info, wm_col, start, end)
-        report.segments.append(seg)
+        step_id = landing.add_step(
+            report.run_id, len(landing.steps_for_run(report.run_id)) + 1,
+            "segment", f"{info.name}:{label}")
+        src: dict | None = None
+        dst: dict | None = None
+        seg: SegmentResult | None = None
+        try:
+            src = adapter.segment_stats(info, wm_col, start, end)
+            dst = landing.segment_stats(source, info.name, wm_col, start, end)
+            src_max = normalize_value(src["max"])
+            consistent = src["count"] == dst["count"] and src_max == dst["max"]
+            if src["count"] == 0 and dst["count"] == 0:
+                landing.update_step(step_id, status="ok", rows_in=0, rows_out=0)
+                continue  # 双侧空段不进报告,但保留 step 证据
+            seg = SegmentResult(info.name, label, src["count"], dst["count"], consistent)
+            report.segments.append(seg)
+            if not consistent or deep:
+                seg.repaired_rows, seg.soft_deleted = _repair_segment(
+                    adapter, landing, source, info, wm_col, start, end)
+            landing.update_step(
+                step_id, status="ok",
+                rows_in=src["count"], rows_out=dst["count"],
+                repaired=seg.repaired_rows, soft_deleted=seg.soft_deleted,
+                error=None if consistent else f"不一致:源 {src['count']} vs 落地 {dst['count']}")
+        except Exception as e:
+            landing.update_step(
+                step_id, status="failed",
+                rows_in=src["count"] if src is not None else None,
+                rows_out=dst["count"] if dst is not None else None,
+                repaired=seg.repaired_rows if seg is not None else None,
+                soft_deleted=seg.soft_deleted if seg is not None else None,
+                error=str(e)[:500])
+            raise
 
 
 def _reconcile_full_table(adapter, landing, source, info: TableInfo,
                           deep: bool, report: ReconcileReport) -> None:
-    src_count = adapter.table_count(info)
-    dst_count = landing.count(source, info.name, active_only=True)
-    consistent = src_count == dst_count
-    seg = SegmentResult(info.name, "全表", src_count, dst_count, consistent)
-    if not consistent or deep:
-        seg.repaired_rows, seg.soft_deleted = _repair_full(adapter, landing, source, info)
-    report.segments.append(seg)
+    step_id = landing.add_step(
+        report.run_id, len(landing.steps_for_run(report.run_id)) + 1,
+        "segment", f"{info.name}:全表")
+    seg: SegmentResult | None = None
+    try:
+        src_count = adapter.table_count(info)
+        dst_count = landing.count(source, info.name, active_only=True)
+        consistent = src_count == dst_count
+        seg = SegmentResult(info.name, "全表", src_count, dst_count, consistent)
+        report.segments.append(seg)
+        if not consistent or deep:
+            seg.repaired_rows, seg.soft_deleted = _repair_full(adapter, landing, source, info)
+        landing.update_step(
+            step_id, status="ok",
+            rows_in=src_count, rows_out=dst_count,
+            repaired=seg.repaired_rows, soft_deleted=seg.soft_deleted,
+            error=None if consistent else f"不一致:源 {src_count} vs 落地 {dst_count}")
+    except Exception as e:
+        landing.update_step(
+            step_id, status="failed",
+            rows_in=seg.src_count if seg is not None else None,
+            rows_out=seg.dst_count if seg is not None else None,
+            repaired=seg.repaired_rows if seg is not None else None,
+            soft_deleted=seg.soft_deleted if seg is not None else None,
+            error=str(e)[:500])
+        raise
