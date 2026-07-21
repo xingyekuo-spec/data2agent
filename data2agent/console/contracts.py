@@ -900,7 +900,7 @@ class DatasetActionResult(BaseModel):
     note: str = ""
 
 
-# ---- v0.3 M3: mapping preview 契约(T01 冻结;运行时在后续任务实现前 501)----
+# ---- v0.3 M3: mapping preview 契约(T01 冻结;T05 接入运行时)----
 
 # 请求体放大上限:拒绝超大草稿制造 CPU/响应放大。
 _PREVIEW_MAP_ENTRY_MAX = 512

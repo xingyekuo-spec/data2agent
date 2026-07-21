@@ -54,6 +54,7 @@ from ..connect.dataset_publish import (
     resolve_published_snapshot,
     rollback_dataset,
 )
+from ..connect.mapping_preview import PreviewError, preview_mapping
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..mapping import parse_field_expr
 from ..metamodel.dataset_publish_contract import validate_build_table
@@ -80,6 +81,7 @@ from .contracts import (
     HttpError,
     LogsResponse,
     MappingPreviewError,
+    MappingPreviewErrorReasonCode,
     MappingPreviewRequest,
     MappingPreviewResponse,
     McpCallBody,
@@ -130,8 +132,20 @@ _RESP_HTTP_ERROR = {
     500: {"model": HttpError, "description": "未处理异常"},
 }
 
-_RESP_HTTP_ERROR_STUB = {
-    501: {"model": HttpError, "description": "契约桩:端点在所属里程碑实现前返回 501"},
+# PreviewError.reason_code → HTTP(§3.9);鉴权码由 endpoint 直接产出。
+_PREVIEW_HTTP_STATUS: dict[str, int] = {
+    "unauthorized": 401,
+    "token_not_configured": 403,
+    "object_not_found": 404,
+    "source_not_found": 404,
+    "raw_table_not_found": 404,
+    "sample_batch_not_found": 404,
+    "current_binding_unavailable": 409,
+    "raw_unavailable": 409,
+    "draft_invalid": 422,
+    "sample_invalid": 422,
+    "anchor_changed": 422,
+    "preview_failed": 500,
 }
 
 _SETUP_API_PATHS = frozenset({"/api/setup", "/api/setup/status"})
@@ -605,12 +619,20 @@ def create_app(landing: str | None = None, templates: str = "templates",
         id_part = path[len("/api/quarantine/"):]
         return id_part.isdigit()
 
+    def _is_mapping_preview(path: str) -> bool:
+        # /api/mappings/{object}/preview — Bearer 由端点自行强制,不接受 ?token=
+        if not path.startswith("/api/mappings/"):
+            return False
+        return path.endswith("/preview")
+
     def auth(request: Request) -> None:
         path = request.url.path
         if path == "/api/data/raw" or path.startswith("/api/data/raw/"):
             return
         if _is_quarantine_detail(path):
             return  # 隔离详情自行做强制 Bearer + 审计
+        if _is_mapping_preview(path):
+            return  # mapping preview 自行做强制 Bearer + 审计(MappingPreviewError)
         if needs_setup():
             if path in ("/api/setup", "/api/setup/status") or path.startswith("/api/setup"):
                 if _client_host(request) not in _LOOPBACK:
@@ -2205,7 +2227,57 @@ def create_app(landing: str | None = None, templates: str = "templates",
         """回滚到直接上一稳定版本。"""
         return _map_dataset_mutation(rollback_dataset(store(), version))
 
-    # ---- v0.3 M3-T01: mapping preview 契约桩(fail-closed 501)----
+    # ---- v0.3 M3-T05: mapping preview API(强制 Bearer + 审计 + 只读求值)----
+
+    def _preview_error_response(
+        status: int,
+        reason_code: MappingPreviewErrorReasonCode | str,
+        detail: str,
+        *,
+        error_id: str | None = None,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status,
+            content=MappingPreviewError(
+                status=status,
+                reason_code=reason_code,  # type: ignore[arg-type]
+                detail=detail,
+                error_id=error_id,
+            ).model_dump(),
+        )
+
+    def _preview_audit_resource(
+        object_name: str, body: MappingPreviewRequest, pack,
+    ) -> str:
+        """审计 resource=`mapping_preview:{object}:{anchor}`;锚未知时用 __unknown__。"""
+        anchor = "__unknown__"
+        if body.draft_binding is not None and body.draft_binding.tables:
+            anchor = body.draft_binding.tables[0]
+        elif pack is not None:
+            tpl = next((o for o in pack.objects if o.object == object_name), None)
+            if tpl is not None:
+                binding = next(
+                    (b for b in tpl.bindings if b.source == body.source), None)
+                if binding is not None and binding.tables:
+                    anchor = binding.tables[0]
+        return f"mapping_preview:{object_name}:{anchor}"
+
+    def _preview_safe_detail(reason_code: str) -> str:
+        """对外固定安全摘要;不回传异常原文/SQL/traceback。"""
+        return {
+            "unauthorized": "需要有效的管理界面登录密码",
+            "token_not_configured": "mapping preview 需配置控制台 Token 并显式认证",
+            "object_not_found": "对象不存在",
+            "source_not_found": "数据源不存在或不允许",
+            "raw_table_not_found": "锚表尚未落地",
+            "sample_batch_not_found": "指定批次不存在",
+            "current_binding_unavailable": "无当前 binding 且未提供草稿",
+            "raw_unavailable": "raw 数据暂不可用",
+            "draft_invalid": "草稿不合法",
+            "sample_invalid": "样本参数不合法",
+            "anchor_changed": "样本锚已变化,请重试",
+            "preview_failed": "映射预览失败",
+        }.get(reason_code, "映射预览失败")
 
     @api.post(
         "/mappings/{object}/preview",
@@ -2242,20 +2314,129 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "model": MappingPreviewError,
                 "description": "preview_failed + error_id",
             },
-            501: _RESP_HTTP_ERROR_STUB[501],
         },
         tags=["v0.3"],
     )
     def mappings_preview(
         object: str,
         body: MappingPreviewRequest,
-    ) -> MappingPreviewResponse:
-        """映射 Preview:T01 仅冻结契约;实现前 fail-closed 返回 501。
+        request: Request,
+    ) -> MappingPreviewResponse | JSONResponse:
+        """映射 Preview:只读样本试算,不写业务表。
 
-        请求体经 Pydantic 边界校验后拒绝非法草稿/样本;成功路径待后续任务实现。
-        OpenAPI 已强制 Bearer-only;运行时 401/403 + require_raw_browse_auth/审计归 T05。
+        鉴权/审计走可写 store(log_access);求值走 LandingStore.open_readonly()
+        快照连接,避免 preview 路径持有写连接或触发 DDL。
         """
-        raise HTTPException(501, "mapping preview 尚未实现")
+        request_id = uuid.uuid4().hex
+        db = store()
+        pack = require_pack()
+        resource = _preview_audit_resource(object, body, pack)
+        offset = body.sample.offset
+        limit = body.sample.limit
+
+        # 强制 Bearer(与 raw browse 同纪律;不接受 ?token=)
+        tok = state["token"]
+        if not tok:
+            db.log_access(
+                subject="anonymous", resource_type="raw", source=body.source,
+                resource=resource, allowed=False,
+                reason_code="token_not_configured",
+                page_offset=offset, page_limit=limit, request_id=request_id)
+            return _preview_error_response(
+                403, "token_not_configured",
+                _preview_safe_detail("token_not_configured"))
+        if _auth_supplied(request) != tok:
+            db.log_access(
+                subject="anonymous", resource_type="raw", source=body.source,
+                resource=resource, allowed=False, reason_code="unauthorized",
+                page_offset=offset, page_limit=limit, request_id=request_id)
+            return _preview_error_response(
+                401, "unauthorized", _preview_safe_detail("unauthorized"))
+
+        cfg = state["config"]
+        allowed = (
+            br.allowed_sources(pack, sorted(cfg.sources) if cfg else [])
+            if cfg is not None
+            else None
+        )
+        draft = (
+            body.draft_binding.model_dump() if body.draft_binding is not None else None
+        )
+
+        # 只读求值连接与审计写连接分离:preview 不借主 store 写事务。
+        ro = LandingStore.open_readonly(db.db_path)
+        try:
+            try:
+                result = preview_mapping(
+                    ro,
+                    pack,
+                    object_name=object,
+                    source=body.source,
+                    offset=offset,
+                    limit=limit,
+                    batch_id=body.sample.batch_id,
+                    draft_binding=draft,
+                    allowed_sources=allowed,
+                )
+            except PreviewError as e:
+                reason = str(e.reason_code)
+                status = _PREVIEW_HTTP_STATUS.get(reason, 500)
+                if status == 500:
+                    reason = "preview_failed"
+                try:
+                    db.log_access(
+                        subject="console-admin", resource_type="raw",
+                        source=body.source, resource=resource, allowed=False,
+                        reason_code=reason,
+                        page_offset=offset, page_limit=limit,
+                        request_id=request_id)
+                except Exception as audit_error:
+                    raise HTTPException(
+                        500, "mapping preview 失败且访问审计写入失败",
+                    ) from audit_error
+                error_id = None
+                if status == 500:
+                    error_id = hashlib.sha256(
+                        f"{reason}:{e.detail}".encode()).hexdigest()[:12]
+                return _preview_error_response(
+                    status, reason, _preview_safe_detail(reason),
+                    error_id=error_id)
+            except Exception as e:
+                error_id = hashlib.sha256(
+                    f"preview_failed:{type(e).__name__}".encode()
+                ).hexdigest()[:12]
+                try:
+                    db.log_access(
+                        subject="console-admin", resource_type="raw",
+                        source=body.source, resource=resource, allowed=False,
+                        reason_code="preview_failed",
+                        page_offset=offset, page_limit=limit,
+                        request_id=request_id)
+                except Exception as audit_error:
+                    raise HTTPException(
+                        500, "mapping preview 失败且访问审计写入失败",
+                    ) from audit_error
+                return _preview_error_response(
+                    500, "preview_failed",
+                    _preview_safe_detail("preview_failed"),
+                    error_id=error_id)
+        finally:
+            ro.con.close()
+
+        # 成功审计用结果中的真实锚表刷新 resource
+        resource = f"mapping_preview:{result.object}:{result.sample.anchor_table}"
+        try:
+            db.log_access(
+                subject="console-admin", resource_type="raw", source=result.source,
+                resource=resource, allowed=True, reason_code="preview_allowed",
+                page_offset=result.sample.offset, page_limit=result.sample.limit,
+                returned_rows=result.sample.sampled_rows, request_id=request_id)
+        except Exception as audit_error:
+            raise HTTPException(
+                500, "mapping preview 访问审计写入失败",
+            ) from audit_error
+
+        return MappingPreviewResponse.model_validate(asdict(result))
 
 
     # ---- v0.2 数据浏览与模板(已实现)----

@@ -7275,7 +7275,7 @@
     },
     "/api/mappings/{object}/preview": {
       "post": {
-        "description": "映射 Preview:T01 仅冻结契约;实现前 fail-closed 返回 501。\n\n请求体经 Pydantic 边界校验后拒绝非法草稿/样本;成功路径待后续任务实现。\nOpenAPI 已强制 Bearer-only;运行时 401/403 + require_raw_browse_auth/审计归 T05。",
+        "description": "映射 Preview:只读样本试算,不写业务表。\n\n鉴权/审计走可写 store(log_access);求值走 LandingStore.open_readonly()\n快照连接,避免 preview 路径持有写连接或触发 DDL。",
         "operationId": "mappings_preview_api_mappings__object__preview_post",
         "parameters": [
           {
@@ -7376,16 +7376,6 @@
               }
             },
             "description": "preview_failed + error_id"
-          },
-          "501": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "契约桩:端点在所属里程碑实现前返回 501"
           }
         },
         "security": [

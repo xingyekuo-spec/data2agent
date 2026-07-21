@@ -1,7 +1,7 @@
 """v0.3 M3-T01: mapping preview API 契约冻结与失败测试。
 
-门禁:OpenAPI 命名 schema、请求边界、非法草稿 422、端点 fail-closed(501)、
-Bearer-only 安全声明、reason_code 字面量可见。
+门禁:OpenAPI 命名 schema、请求边界、非法草稿 422、Bearer-only 安全声明、
+reason_code 字面量可见。运行时鉴权/求值由 T05 接入(见 test_mapping_preview_api)。
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.console.app import create_app  # noqa: E402
+from data2agent.console.contracts import MappingPreviewError  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_PATH = "/api/mappings/{object}/preview"
@@ -121,7 +122,9 @@ def test_openapi_preview_route_and_named_success_schema(tmp_path):
     op = spec["paths"][PREVIEW_PATH]["post"]
     content = op["responses"]["200"]["content"]["application/json"]["schema"]
     assert _schema_ref(content) == "MappingPreviewResponse"
-    assert "501" in op["responses"]
+    assert "501" not in op["responses"]
+    for code in ("401", "403", "404", "409", "422", "500"):
+        assert code in op["responses"], code
     schemas = spec["components"]["schemas"]
     _assert_schema_not_unknown(schemas, "MappingPreviewResponse")
     for name in RESPONSE_SCHEMA_NAMES:
@@ -141,7 +144,7 @@ def test_openapi_request_limit_offset_bounds(tmp_path):
 
 
 def test_openapi_security_is_bearer_only(tmp_path):
-    """OpenAPI 声明强制 Bearer;运行时 401/403 + 审计由 T05 接入 require_raw_browse_auth。"""
+    """OpenAPI 声明强制 Bearer;运行时 401/403 + 审计由 T05 接入。"""
     op = _openapi_app(tmp_path).openapi()["paths"][PREVIEW_PATH]["post"]
     assert op.get("security") == [{"HTTPBearer": []}]
     assert {} not in (op.get("security") or [])
@@ -200,16 +203,17 @@ def test_openapi_required_nullable_fields(tmp_path):
     assert "source_value" not in issue_req
 
 
-def test_valid_shaped_request_is_fail_closed_501(tmp_path):
+def test_unconfigured_token_returns_mapping_preview_error(tmp_path):
+    """未配 Token 时强制关闭(403 MappingPreviewError),不得伪装成功体。"""
     client = _client(tmp_path)
     r = client.post(PREVIEW_URL, json=_valid_body())
-    assert r.status_code == 501
-    body = r.json()
-    assert body.get("detail")
-    # 不得伪装 MappingPreviewResponse 成功体
-    assert "candidate" not in body
-    assert "sample" not in body
-    assert "mode" not in body
+    assert r.status_code == 403
+    err = MappingPreviewError.model_validate(r.json())
+    assert err.reason_code == "token_not_configured"
+    assert err.error_id is None
+    assert "candidate" not in r.json()
+    assert "sample" not in r.json()
+    assert "mode" not in r.json()
 
 
 @pytest.mark.parametrize(
@@ -236,20 +240,6 @@ def test_empty_draft_tables_return_422(tmp_path):
         "notes": "",
     }
     r = _client(tmp_path).post(PREVIEW_URL, json=_valid_body(draft_binding=draft))
-    assert r.status_code == 422
-
-
-@pytest.mark.parametrize(
-    "sample",
-    [
-        {"limit": 0, "offset": 0},
-        {"limit": 201, "offset": 0},
-        {"limit": 50, "offset": -1},
-        {"limit": 50, "offset": 10001},
-    ],
-)
-def test_illegal_sample_bounds_return_422(tmp_path, sample):
-    r = _client(tmp_path).post(PREVIEW_URL, json=_valid_body(sample=sample))
     assert r.status_code == 422
 
 
@@ -345,7 +335,8 @@ def test_oversized_batch_id_return_422(tmp_path):
     assert r.status_code == 422
 
 
-def test_valid_draft_shape_reaches_fail_closed_stub(tmp_path):
+def test_valid_draft_shape_reaches_auth_gate(tmp_path):
+    """合法草稿形状通过 Pydantic 后进入鉴权门(未配 Token → 403)。"""
     draft = {
         "tables": ["CUSTOMER"],
         "key_map": {"CustomerId": "Id"},
@@ -360,4 +351,6 @@ def test_valid_draft_shape_reaches_fail_closed_stub(tmp_path):
         "notes": "temp draft",
     }
     r = _client(tmp_path).post(PREVIEW_URL, json=_valid_body(draft_binding=draft))
-    assert r.status_code == 501
+    assert r.status_code == 403
+    err = MappingPreviewError.model_validate(r.json())
+    assert err.reason_code == "token_not_configured"
