@@ -669,7 +669,15 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return Path(path)
 
     def _auth_supplied(request: Request) -> str:
-        return request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        """仅接受 `Authorization: Bearer <token>`(scheme 大小写不敏感)。
+
+        裸 token / 其它 scheme 视为未认证,供 raw 浏览、隔离详情与 mapping preview
+        的强制 Bearer 门禁使用;不得用 removeprefix 把裸 token 当成合法 Bearer。
+        """
+        header = request.headers.get("authorization", "").strip()
+        if len(header) < 8 or header[:7].lower() != "bearer ":
+            return ""
+        return header[7:].strip()
 
     def require_raw_browse_auth(db: LandingStore, request: Request, *,
                                 source: str | None, resource: str,
