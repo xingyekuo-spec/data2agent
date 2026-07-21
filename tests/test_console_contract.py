@@ -61,6 +61,10 @@ REQUIRED_API_ROUTES = {
     ("POST", "/api/actions/reconcile"),
     ("POST", "/api/actions/apply"),
     ("POST", "/api/actions/retry"),
+    ("GET", "/api/datasets"),
+    ("GET", "/api/datasets/{version}"),
+    ("POST", "/api/datasets/{version}/publish"),
+    ("POST", "/api/datasets/{version}/rollback"),
 }
 
 NAMED_SUCCESS_SCHEMAS = {
@@ -82,16 +86,28 @@ NAMED_SUCCESS_SCHEMAS = {
     ("post", "/api/actions/retry"): "RetryActionResult",
     # 普通 anyOf(无 discriminator):保证 TS 生成 ok 的 boolean 字面量,可收窄
     ("post", "/api/setup"): ("anyOf", ("SetupSuccessResponse", "SetupFailureResponse")),
+    ("get", "/api/datasets"): ("array", "DatasetSummary"),
+    ("get", "/api/datasets/{version}"): "DatasetDetail",
+    ("post", "/api/datasets/{version}/publish"): "DatasetActionResult",
+    ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
 }
 
-# M2 v0.2 契约桩:schema 先行,运行时在所属里程碑实现前一律 501。
-# (M3 已实现 /api/pipeline;M6 已实现 /api/gateway/proposals)
-STUB_API_ROUTES: set[tuple[str, str]] = set()
+# v0.3 M1 契约桩:publish/rollback schema 先行,运行时在 M2 前一律 501。
+STUB_API_ROUTES: set[tuple[str, str]] = {
+    ("POST", "/api/datasets/{version}/publish"),
+    ("POST", "/api/datasets/{version}/rollback"),
+}
 
-STUB_SUCCESS_SCHEMAS: dict[tuple[str, str], str] = {}
+STUB_SUCCESS_SCHEMAS: dict[tuple[str, str], str] = {
+    ("post", "/api/datasets/{version}/publish"): "DatasetActionResult",
+    ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
+}
 
 # (method, concrete path, kwargs) for runtime 501 checks
-STUB_RUNTIME_CALLS: list[tuple[str, str, dict]] = []
+STUB_RUNTIME_CALLS: list[tuple[str, str, dict]] = [
+    ("post", "/api/datasets/ds-demo/publish", {}),
+    ("post", "/api/datasets/ds-demo/rollback", {}),
+]
 
 
 @pytest.fixture()
@@ -157,7 +173,7 @@ def test_required_api_routes_present(tmp_path):
                 found.add((method.upper(), path))
     missing = REQUIRED_API_ROUTES - found
     assert not missing, f"missing API routes: {sorted(missing)}"
-    assert len(REQUIRED_API_ROUTES) == 17
+    assert len(REQUIRED_API_ROUTES) == 21
 
 
 def test_success_responses_use_named_schemas(tmp_path):
@@ -452,11 +468,33 @@ def test_openapi_snapshot_roundtrip(tmp_path, monkeypatch):
 # ---- M2 v0.2 契约桩 ----
 
 
-def test_no_remaining_v02_stub_routes(tmp_path):
-    """M6 起 v0.2 管理 API 契约桩已清空;proposals 不再声明 501。"""
-    assert STUB_API_ROUTES == set()
-    assert STUB_SUCCESS_SCHEMAS == {}
-    assert STUB_RUNTIME_CALLS == []
+# ---- v0.3 datasets 契约桩 ----
+
+
+def test_v03_dataset_stub_routes_declare_501(tmp_path):
+    """publish/rollback schema 先行;M2 前运行时必须 501,不得伪造成功。"""
+    assert STUB_API_ROUTES == {
+        ("POST", "/api/datasets/{version}/publish"),
+        ("POST", "/api/datasets/{version}/rollback"),
+    }
+    assert STUB_SUCCESS_SCHEMAS == {
+        ("post", "/api/datasets/{version}/publish"): "DatasetActionResult",
+        ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
+    }
+    spec = _openapi_app(tmp_path).openapi()
+    for method, path in STUB_API_ROUTES:
+        op = spec["paths"][path][method.lower()]
+        assert "501" in op["responses"], path
+        assert "200" in op["responses"], path
+    client = TestClient(_openapi_app(tmp_path))
+    for method, path, kwargs in STUB_RUNTIME_CALLS:
+        r = getattr(client, method)(path, **kwargs)
+        assert r.status_code == 501, path
+        assert "契约桩" in r.json()["detail"]
+
+
+def test_proposals_no_longer_stubbed(tmp_path):
+    """M6 起 proposals 不再声明 501。"""
     spec = _openapi_app(tmp_path).openapi()
     op = spec["paths"]["/api/gateway/proposals"]["post"]
     assert "501" not in op["responses"]
@@ -577,7 +615,17 @@ def test_m4_browse_and_audit_shapes(tmp_path):
 
 def test_runs_and_audit_declare_total_count_header(tmp_path):
     spec = _openapi_app(tmp_path).openapi()
-    for path in ("/api/runs", "/api/audit"):
+    for path in ("/api/runs", "/api/audit", "/api/quarantine", "/api/datasets"):
         headers = spec["paths"][path]["get"]["responses"]["200"].get("headers", {})
         assert "X-Total-Count" in headers, path
         assert headers["X-Total-Count"]["schema"]["type"] == "integer"
+
+
+def test_datasets_declare_500_for_corrupt_metadata(tmp_path):
+    spec = _openapi_app(tmp_path).openapi()
+    for path in ("/api/datasets", "/api/datasets/{version}"):
+        responses = spec["paths"][path]["get"]["responses"]
+        assert "500" in responses, path
+    props = spec["components"]["schemas"]["DatasetSummary"]["properties"]
+    assert "error_id" in props
+    assert "error" in props

@@ -458,6 +458,247 @@
         "title": "CountNote",
         "type": "object"
       },
+      "DatasetActionResult": {
+        "description": "publish/rollback 成功形状(M2);M1 仅声明 schema,运行时 501。",
+        "properties": {
+          "dataset_version": {
+            "title": "Dataset Version",
+            "type": "string"
+          },
+          "executed": {
+            "title": "Executed",
+            "type": "boolean"
+          },
+          "note": {
+            "default": "",
+            "title": "Note",
+            "type": "string"
+          }
+        },
+        "required": [
+          "executed",
+          "dataset_version"
+        ],
+        "title": "DatasetActionResult",
+        "type": "object"
+      },
+      "DatasetDetail": {
+        "description": "数据集版本详情,含对象版本列表。",
+        "properties": {
+          "built_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Built At",
+            "type": "string"
+          },
+          "dataset_version": {
+            "title": "Dataset Version",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "安全摘要(已脱敏);原始内部错误不得出网",
+            "title": "Error"
+          },
+          "error_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "有内部错误时的稳定短标识,便于对照日志;无错误为 null",
+            "title": "Error Id"
+          },
+          "object_manifest": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "构建时冻结的对象名清单;损坏/缺失为 null(完整性 fail-closed)",
+            "title": "Object Manifest"
+          },
+          "objects": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectVersionSummary"
+            },
+            "title": "Objects",
+            "type": "array"
+          },
+          "previous_dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Dataset Version"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "已发布时必有可解析时间;库内为 null 表示尚未发布;损坏时间不得伪装成 null,应 500",
+            "title": "Published At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "building",
+              "published",
+              "failed",
+              "retired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "template_version": {
+            "title": "Template Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataset_version",
+          "source",
+          "template_version",
+          "status",
+          "built_at"
+        ],
+        "title": "DatasetDetail",
+        "type": "object"
+      },
+      "DatasetSummary": {
+        "description": "数据集版本摘要;空元数据不得伪造版本号。",
+        "properties": {
+          "built_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Built At",
+            "type": "string"
+          },
+          "dataset_version": {
+            "title": "Dataset Version",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "安全摘要(已脱敏);原始内部错误不得出网",
+            "title": "Error"
+          },
+          "error_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "有内部错误时的稳定短标识,便于对照日志;无错误为 null",
+            "title": "Error Id"
+          },
+          "object_manifest": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "构建时冻结的对象名清单;损坏/缺失为 null(完整性 fail-closed)",
+            "title": "Object Manifest"
+          },
+          "previous_dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Dataset Version"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "已发布时必有可解析时间;库内为 null 表示尚未发布;损坏时间不得伪装成 null,应 500",
+            "title": "Published At"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "building",
+              "published",
+              "failed",
+              "retired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "template_version": {
+            "title": "Template Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dataset_version",
+          "source",
+          "template_version",
+          "status",
+          "built_at"
+        ],
+        "title": "DatasetSummary",
+        "type": "object"
+      },
       "DeriveRule": {
         "description": "模板派生规则:when 条件匹配时使用 value。",
         "properties": {
@@ -1194,6 +1435,90 @@
         "title": "ObjectSummary",
         "type": "object"
       },
+      "ObjectVersionSummary": {
+        "description": "数据集内单个对象构建版本。",
+        "properties": {
+          "batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Batch Id"
+          },
+          "binding_hash": {
+            "title": "Binding Hash",
+            "type": "string"
+          },
+          "build_table": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Table"
+          },
+          "built_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Built At",
+            "type": "string"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "object_version": {
+            "title": "Object Version",
+            "type": "string"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "已发布时必有可解析时间;库内为 null 表示尚未发布;损坏时间不得伪装成 null,应 500",
+            "title": "Published At"
+          },
+          "row_count": {
+            "minimum": 0.0,
+            "title": "Row Count",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "building",
+              "built",
+              "failed",
+              "published",
+              "retired"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "object",
+          "object_version",
+          "binding_hash",
+          "row_count",
+          "status",
+          "built_at"
+        ],
+        "title": "ObjectVersionSummary",
+        "type": "object"
+      },
       "OverviewAlert": {
         "description": "当前告警:由节点/服务/隔离/治理状态确定性聚合,非持久化实体。",
         "properties": {
@@ -1540,7 +1865,7 @@
         "type": "object"
       },
       "OverviewVersions": {
-        "description": "版本信息;dataset/object version 属 v0.3,当前恒为 null(显示\"尚未启用\")。",
+        "description": "版本信息;无已发布数据集时 dataset/object 为 null(页面显示\"尚未发布\")。",
         "properties": {
           "app": {
             "anyOf": [
@@ -1563,7 +1888,7 @@
                 "type": "null"
               }
             ],
-            "description": "dataset version 属 v0.3,当前为 null",
+            "description": "当前 source 的 published dataset_version;无已发布则为 null",
             "title": "Dataset"
           },
           "object": {
@@ -1575,7 +1900,7 @@
                 "type": "null"
               }
             ],
-            "description": "object version 属 v0.3,当前为 null",
+            "description": "已发布对象层标识(原子发布下等同 dataset_version);无已发布对象版本则为 null",
             "title": "Object"
           },
           "template": {
@@ -2933,7 +3258,7 @@
                 "type": "null"
               }
             ],
-            "description": "v0.3 前固定 null",
+            "description": "M2 写入实际发布版本;M1 固定 null",
             "title": "Dataset Version"
           },
           "detail": {
@@ -3316,7 +3641,7 @@
                 "type": "null"
               }
             ],
-            "description": "v0.3 前固定 null",
+            "description": "M2 写入实际发布版本;M1 固定 null",
             "title": "Dataset Version"
           },
           "detail": {
@@ -5148,6 +5473,373 @@
           }
         ],
         "summary": "Data Raw"
+      }
+    },
+    "/api/datasets": {
+      "get": {
+        "description": "数据集版本列表:数组 wire shape + X-Total-Count;空库返回 [] 不伪造版本。",
+        "operationId": "datasets_list_api_datasets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "building",
+                    "published",
+                    "failed",
+                    "retired"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DatasetSummary"
+                  },
+                  "title": "Response Datasets List Api Datasets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "X-Total-Count": {
+                "description": "当前筛选条件下的总数(分页用)",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "未处理异常"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Datasets List",
+        "tags": [
+          "v0.3"
+        ]
+      }
+    },
+    "/api/datasets/{version}": {
+      "get": {
+        "description": "数据集版本详情(含对象版本);不存在返回 404。",
+        "operationId": "datasets_detail_api_datasets__version__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "未处理异常"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Datasets Detail",
+        "tags": [
+          "v0.3"
+        ]
+      }
+    },
+    "/api/datasets/{version}/publish": {
+      "post": {
+        "description": "M2 原子发布;M1 fail-closed,不写对象表或版本状态。",
+        "operationId": "datasets_publish_api_datasets__version__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetActionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Datasets Publish",
+        "tags": [
+          "v0.3"
+        ]
+      }
+    },
+    "/api/datasets/{version}/rollback": {
+      "post": {
+        "description": "M2 回滚上一稳定版本;M1 fail-closed,不写对象表或版本状态。",
+        "operationId": "datasets_rollback_api_datasets__version__rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "title": "Version",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DatasetActionResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Datasets Rollback",
+        "tags": [
+          "v0.3"
+        ]
       }
     },
     "/api/debug/mcp-call": {

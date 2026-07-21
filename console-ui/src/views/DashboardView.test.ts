@@ -47,10 +47,12 @@ describe('DashboardView(M3)', () => {
     expect(runs.text()).toContain('sync')
     // 无告警
     expect(wrapper.text()).toContain('无告警')
-    // 版本:dataset/object 尚未启用,不伪造版本号
+    // 版本:无 published 时显示尚未发布,不伪造版本号、不标为健康
     const versions = wrapper.find('[data-testid="versions"]')
-    expect(versions.text()).toContain('尚未启用(v0.3)')
+    expect(versions.find('[data-testid="dataset-version-na"]').text()).toBe('尚未发布')
+    expect(versions.find('[data-testid="object-version-na"]').text()).toBe('尚未发布')
     expect(versions.text()).toContain('0.1.0')   // 模板版本真实
+    expect(versions.findAll('.version-na')).toHaveLength(2)
     // 口径说明
     expect(wrapper.find('[data-testid="count-notes"]').text()).toContain('raw_rows')
   })

@@ -272,7 +272,8 @@ class RunSummary(BaseModel):
     tables: int | None = None
     rows: int | None = None
     quarantined: int | None = None
-    dataset_version: str | None = Field(default=None, description="v0.3 前固定 null")
+    dataset_version: str | None = Field(
+        default=None, description="M2 写入实际发布版本;M1 固定 null")
     detail: str | None = Field(
         default=None, description="既有字段,安全截断,逐步弃用;状态判断不得解析它")
     error: str | None = None
@@ -746,12 +747,15 @@ class OverviewSummary(BaseModel):
 
 
 class OverviewVersions(BaseModel):
-    """版本信息;dataset/object version 属 v0.3,当前恒为 null(显示"尚未启用")。"""
+    """版本信息;无已发布数据集时 dataset/object 为 null(页面显示"尚未发布")。"""
 
     app: str | None = Field(description="安装包元数据版本;取不到为 null(unknown)")
     template: str | None = Field(description="模板 pack 结构化 version")
-    dataset: str | None = Field(description="dataset version 属 v0.3,当前为 null")
-    object: str | None = Field(description="object version 属 v0.3,当前为 null")
+    dataset: str | None = Field(
+        description="当前 source 的 published dataset_version;无已发布则为 null")
+    object: str | None = Field(
+        description="已发布对象层标识(原子发布下等同 dataset_version);"
+        "无已发布对象版本则为 null")
 
 
 class BindingSummary(BaseModel):
@@ -796,3 +800,69 @@ class CountNote(BaseModel):
     name: str
     semantics: str
     source: str
+
+
+# ---- v0.3 datasets 版本契约(M1:只读;publish/rollback 在 M2 前 501)----
+
+DatasetStatus = Literal["building", "published", "failed", "retired"]
+ObjectBuildStatus = Literal["building", "built", "failed", "published", "retired"]
+
+
+class DatasetSummary(BaseModel):
+    """数据集版本摘要;空元数据不得伪造版本号。"""
+
+    dataset_version: str
+    source: str
+    template_version: str
+    status: DatasetStatus
+    built_at: datetime = Field(description=TZ_TIME_DESC)
+    published_at: datetime | None = Field(
+        default=None,
+        description="已发布时必有可解析时间;库内为 null 表示尚未发布;"
+        "损坏时间不得伪装成 null,应 500",
+    )
+    previous_dataset_version: str | None = None
+    error: str | None = Field(
+        default=None,
+        description="安全摘要(已脱敏);原始内部错误不得出网",
+    )
+    error_id: str | None = Field(
+        default=None,
+        description="有内部错误时的稳定短标识,便于对照日志;无错误为 null",
+    )
+    object_manifest: list[str] | None = Field(
+        default=None,
+        description="构建时冻结的对象名清单;损坏/缺失为 null(完整性 fail-closed)",
+    )
+
+
+class ObjectVersionSummary(BaseModel):
+    """数据集内单个对象构建版本。"""
+
+    object: str
+    object_version: str
+    binding_hash: str
+    row_count: int = Field(ge=0)
+    batch_id: str | None = None
+    build_table: str | None = None
+    status: ObjectBuildStatus
+    built_at: datetime = Field(description=TZ_TIME_DESC)
+    published_at: datetime | None = Field(
+        default=None,
+        description="已发布时必有可解析时间;库内为 null 表示尚未发布;"
+        "损坏时间不得伪装成 null,应 500",
+    )
+
+
+class DatasetDetail(DatasetSummary):
+    """数据集版本详情,含对象版本列表。"""
+
+    objects: list[ObjectVersionSummary] = Field(default_factory=list)
+
+
+class DatasetActionResult(BaseModel):
+    """publish/rollback 成功形状(M2);M1 仅声明 schema,运行时 501。"""
+
+    executed: bool
+    dataset_version: str
+    note: str = ""

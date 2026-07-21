@@ -15,6 +15,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from .adapters.base import TableInfo
+from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 _TYPE_SQL = {"int": "INTEGER", "real": "REAL", "text": "TEXT", "blob": "BLOB"}
 
@@ -82,6 +83,84 @@ CREATE TABLE IF NOT EXISTS d2a_console_access_audit (
 CREATE INDEX IF NOT EXISTS idx_d2a_access_ts ON d2a_console_access_audit (ts);
 CREATE INDEX IF NOT EXISTS idx_d2a_access_type_allowed
     ON d2a_console_access_audit (resource_type, allowed);
+CREATE TABLE IF NOT EXISTS d2a_dataset_version (
+    dataset_version TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    template_version TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('building', 'published', 'failed', 'retired')),
+    built_at TEXT NOT NULL,
+    published_at TEXT,
+    previous_dataset_version TEXT,
+    error TEXT,
+    object_manifest TEXT,
+    CHECK (
+        status NOT IN ('published', 'retired')
+        OR (published_at IS NOT NULL AND trim(published_at) != '')
+    )
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_dataset_one_published
+    ON d2a_dataset_version (source) WHERE status = 'published';
+CREATE INDEX IF NOT EXISTS idx_d2a_dataset_source_built
+    ON d2a_dataset_version (source, built_at DESC);
+CREATE TABLE IF NOT EXISTS d2a_object_version (
+    dataset_version TEXT NOT NULL,
+    object TEXT NOT NULL,
+    object_version TEXT NOT NULL,
+    binding_hash TEXT NOT NULL,
+    row_count INTEGER NOT NULL CHECK (row_count >= 0),
+    batch_id TEXT,
+    build_table TEXT,
+    status TEXT NOT NULL CHECK (
+        status IN ('building', 'built', 'failed', 'published', 'retired')
+    ),
+    built_at TEXT NOT NULL,
+    published_at TEXT,
+    PRIMARY KEY (dataset_version, object),
+    UNIQUE (object_version),
+    FOREIGN KEY (dataset_version) REFERENCES d2a_dataset_version (dataset_version),
+    CHECK (
+        status NOT IN ('published', 'retired')
+        OR (published_at IS NOT NULL AND trim(published_at) != '')
+    )
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_object_version_object
+    ON d2a_object_version (object, built_at DESC);
+"""
+
+# 旧库 CREATE TABLE IF NOT EXISTS 不会补 CHECK;用触发器幂等强制状态联动。
+_VERSION_PUBLISHED_AT_TRIGGERS = """
+CREATE TRIGGER IF NOT EXISTS trg_d2a_dataset_published_at_ins
+BEFORE INSERT ON d2a_dataset_version
+FOR EACH ROW
+WHEN NEW.status IN ('published', 'retired')
+ AND (NEW.published_at IS NULL OR trim(NEW.published_at) = '')
+BEGIN
+  SELECT RAISE(ABORT, 'published_at required when status is published or retired');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_dataset_published_at_upd
+BEFORE UPDATE ON d2a_dataset_version
+FOR EACH ROW
+WHEN NEW.status IN ('published', 'retired')
+ AND (NEW.published_at IS NULL OR trim(NEW.published_at) = '')
+BEGIN
+  SELECT RAISE(ABORT, 'published_at required when status is published or retired');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_object_published_at_ins
+BEFORE INSERT ON d2a_object_version
+FOR EACH ROW
+WHEN NEW.status IN ('published', 'retired')
+ AND (NEW.published_at IS NULL OR trim(NEW.published_at) = '')
+BEGIN
+  SELECT RAISE(ABORT, 'published_at required when status is published or retired');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_object_published_at_upd
+BEFORE UPDATE ON d2a_object_version
+FOR EACH ROW
+WHEN NEW.status IN ('published', 'retired')
+ AND (NEW.published_at IS NULL OR trim(NEW.published_at) = '')
+BEGIN
+  SELECT RAISE(ABORT, 'published_at required when status is published or retired');
+END;
 """
 
 
@@ -108,6 +187,36 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _row_to_dataset_version(row: sqlite3.Row) -> DatasetVersionRecord:
+    keys = set(row.keys())
+    return DatasetVersionRecord(
+        dataset_version=row["dataset_version"],
+        source=row["source"],
+        template_version=row["template_version"],
+        status=row["status"],
+        built_at=row["built_at"],
+        published_at=row["published_at"],
+        previous_dataset_version=row["previous_dataset_version"],
+        error=row["error"],
+        object_manifest=row["object_manifest"] if "object_manifest" in keys else None,
+    )
+
+
+def _row_to_object_version(row: sqlite3.Row) -> ObjectVersionRecord:
+    return ObjectVersionRecord(
+        dataset_version=row["dataset_version"],
+        object=row["object"],
+        object_version=row["object_version"],
+        binding_hash=row["binding_hash"],
+        row_count=row["row_count"],
+        batch_id=row["batch_id"],
+        build_table=row["build_table"],
+        status=row["status"],
+        built_at=row["built_at"],
+        published_at=row["published_at"],
+    )
+
+
 class LandingStore:
     RUN_TYPES = frozenset({"sync", "apply", "reconcile", "ingest", "validation"})
 
@@ -117,6 +226,9 @@ class LandingStore:
         self.db_path = str(db_path)
         self.con = sqlite3.connect(db_path)
         self.con.row_factory = sqlite3.Row
+        # 版本元数据要求 object_version 必须隶属于真实 dataset_version；
+        # SQLite 默认不执行外键约束，因此每个连接显式开启。
+        self.con.execute("PRAGMA foreign_keys=ON")
         # WAL:写批次不阻塞 MCP / 控制台的只读连接(单写者 + 多读者场景);
         # busy_timeout:偶发写锁竞争时等待而非立即抛 "database is locked"。
         self.con.execute("PRAGMA journal_mode=WAL")
@@ -146,6 +258,13 @@ class LandingStore:
                 "CREATE INDEX IF NOT EXISTS idx_d2a_run_step_ingest_batch_lookup "
                 "ON d2a_run_step (target, batch_id) "
                 "WHERE kind = 'batch' AND batch_id IS NOT NULL")
+        # v0.3:published/retired 必须带 published_at(旧库靠触发器补强制)。
+        self.con.executescript(_VERSION_PUBLISHED_AT_TRIGGERS)
+        # v0.3:数据集冻结对象清单(完整性分母);旧库缺列则补上。
+        ds_cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_dataset_version)")}
+        if "object_manifest" not in ds_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_dataset_version ADD COLUMN object_manifest TEXT")
         self.con.commit()
 
     # ---- raw 表 ----
@@ -395,3 +514,59 @@ class LandingStore:
              page_offset, page_limit, returned_rows, request_id))
         self.con.commit()
         return cur.lastrowid
+
+    # ---- 数据集/对象版本只读查询(v0.3 M1)----
+
+    def list_dataset_versions(
+        self,
+        *,
+        source: str | None = None,
+        status: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list["DatasetVersionRecord"], int]:
+        """按 built_at DESC, dataset_version DESC 列出版本；空表返回 ([], 0)。"""
+        where: list[str] = []
+        params: list[object] = []
+        if source is not None:
+            where.append("source = ?")
+            params.append(source)
+        if status is not None:
+            where.append("status = ?")
+            params.append(status)
+        wsql = (" WHERE " + " AND ".join(where)) if where else ""
+        (total,) = self.con.execute(
+            f"SELECT COUNT(*) FROM d2a_dataset_version{wsql}", params
+        ).fetchone()
+        rows = self.con.execute(
+            f"SELECT * FROM d2a_dataset_version{wsql} "
+            "ORDER BY built_at DESC, dataset_version DESC "
+            "LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+        return [_row_to_dataset_version(r) for r in rows], total
+
+    def get_dataset_version(self, version: str) -> "DatasetVersionRecord | None":
+        row = self.con.execute(
+            "SELECT * FROM d2a_dataset_version WHERE dataset_version = ?",
+            (version,),
+        ).fetchone()
+        return _row_to_dataset_version(row) if row else None
+
+    def get_published_dataset(self, source: str) -> "DatasetVersionRecord | None":
+        row = self.con.execute(
+            "SELECT * FROM d2a_dataset_version "
+            "WHERE source = ? AND status = 'published'",
+            (source,),
+        ).fetchone()
+        return _row_to_dataset_version(row) if row else None
+
+    def list_object_versions(
+        self, dataset_version: str
+    ) -> list["ObjectVersionRecord"]:
+        rows = self.con.execute(
+            "SELECT * FROM d2a_object_version WHERE dataset_version = ? "
+            "ORDER BY built_at DESC, object DESC",
+            (dataset_version,),
+        ).fetchall()
+        return [_row_to_object_version(r) for r in rows]

@@ -382,14 +382,16 @@ const sortedAlerts = computed(() =>
               <span
                 v-else
                 class="version-na"
-              >尚未启用(v0.3)</span>
+                data-testid="dataset-version-na"
+              >尚未发布</span>
             </el-descriptions-item>
             <el-descriptions-item label="object 版本">
               <span v-if="ov.versions.object">{{ ov.versions.object }}</span>
               <span
                 v-else
                 class="version-na"
-              >尚未启用(v0.3)</span>
+                data-testid="object-version-na"
+              >尚未发布</span>
             </el-descriptions-item>
             <el-descriptions-item label="binding 状态">
               verified {{ ov.binding_summary.verified }} / draft {{ ov.binding_summary.draft }}

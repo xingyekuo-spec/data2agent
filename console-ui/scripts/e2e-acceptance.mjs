@@ -182,7 +182,7 @@ async function runMock(browser) {
     expect((await waitText(page, '[data-testid="env-badge"]')) === 'MOCK', '顶栏持续显示 MOCK 标识')
     expect((await page.locator('[data-testid="stat-value"]').allTextContents()).length === 4, '四张摘要卡')
     expect((await page.textContent('body')).includes('对象层总行数'), '摘要卡有口径标签')
-    expect((await page.textContent('body')).includes('尚未启用(v0.3)'), 'dataset/object 版本显示尚未启用(不伪造版本号)')
+    expect((await page.textContent('body')).includes('尚未发布'), 'dataset/object 版本显示尚未发布(不伪造版本号)')
     expect((await page.textContent('body')).includes('raw_rows'), '数量口径说明可见')
 
     // 管道页:7 节点 + overall;节点详情可开可关

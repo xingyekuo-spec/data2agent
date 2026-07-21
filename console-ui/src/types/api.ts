@@ -218,6 +218,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Datasets List
+         * @description 数据集版本列表:数组 wire shape + X-Total-Count;空库返回 [] 不伪造版本。
+         */
+        get: operations["datasets_list_api_datasets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/datasets/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Datasets Detail
+         * @description 数据集版本详情(含对象版本);不存在返回 404。
+         */
+        get: operations["datasets_detail_api_datasets__version__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/datasets/{version}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Datasets Publish
+         * @description M2 原子发布;M1 fail-closed,不写对象表或版本状态。
+         */
+        post: operations["datasets_publish_api_datasets__version__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/datasets/{version}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Datasets Rollback
+         * @description M2 回滚上一稳定版本;M1 fail-closed,不写对象表或版本状态。
+         */
+        post: operations["datasets_rollback_api_datasets__version__rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/debug/mcp-call": {
         parameters: {
             query?: never;
@@ -852,6 +932,113 @@ export interface components {
             source: string;
         };
         /**
+         * DatasetActionResult
+         * @description publish/rollback 成功形状(M2);M1 仅声明 schema,运行时 501。
+         */
+        DatasetActionResult: {
+            /** Dataset Version */
+            dataset_version: string;
+            /** Executed */
+            executed: boolean;
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /**
+         * DatasetDetail
+         * @description 数据集版本详情,含对象版本列表。
+         */
+        DatasetDetail: {
+            /**
+             * Built At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            built_at: string;
+            /** Dataset Version */
+            dataset_version: string;
+            /**
+             * Error
+             * @description 安全摘要(已脱敏);原始内部错误不得出网
+             */
+            error?: string | null;
+            /**
+             * Error Id
+             * @description 有内部错误时的稳定短标识,便于对照日志;无错误为 null
+             */
+            error_id?: string | null;
+            /**
+             * Object Manifest
+             * @description 构建时冻结的对象名清单;损坏/缺失为 null(完整性 fail-closed)
+             */
+            object_manifest?: string[] | null;
+            /** Objects */
+            objects?: components["schemas"]["ObjectVersionSummary"][];
+            /** Previous Dataset Version */
+            previous_dataset_version?: string | null;
+            /**
+             * Published At
+             * @description 已发布时必有可解析时间;库内为 null 表示尚未发布;损坏时间不得伪装成 null,应 500
+             */
+            published_at?: string | null;
+            /** Source */
+            source: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "building" | "published" | "failed" | "retired";
+            /** Template Version */
+            template_version: string;
+        };
+        /**
+         * DatasetSummary
+         * @description 数据集版本摘要;空元数据不得伪造版本号。
+         */
+        DatasetSummary: {
+            /**
+             * Built At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            built_at: string;
+            /** Dataset Version */
+            dataset_version: string;
+            /**
+             * Error
+             * @description 安全摘要(已脱敏);原始内部错误不得出网
+             */
+            error?: string | null;
+            /**
+             * Error Id
+             * @description 有内部错误时的稳定短标识,便于对照日志;无错误为 null
+             */
+            error_id?: string | null;
+            /**
+             * Object Manifest
+             * @description 构建时冻结的对象名清单;损坏/缺失为 null(完整性 fail-closed)
+             */
+            object_manifest?: string[] | null;
+            /** Previous Dataset Version */
+            previous_dataset_version?: string | null;
+            /**
+             * Published At
+             * @description 已发布时必有可解析时间;库内为 null 表示尚未发布;损坏时间不得伪装成 null,应 500
+             */
+            published_at?: string | null;
+            /** Source */
+            source: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "building" | "published" | "failed" | "retired";
+            /** Template Version */
+            template_version: string;
+        };
+        /**
          * DeriveRule
          * @description 模板派生规则:when 条件匹配时使用 value。
          */
@@ -1162,6 +1349,40 @@ export interface components {
             warning?: string | null;
         };
         /**
+         * ObjectVersionSummary
+         * @description 数据集内单个对象构建版本。
+         */
+        ObjectVersionSummary: {
+            /** Batch Id */
+            batch_id?: string | null;
+            /** Binding Hash */
+            binding_hash: string;
+            /** Build Table */
+            build_table?: string | null;
+            /**
+             * Built At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            built_at: string;
+            /** Object */
+            object: string;
+            /** Object Version */
+            object_version: string;
+            /**
+             * Published At
+             * @description 已发布时必有可解析时间;库内为 null 表示尚未发布;损坏时间不得伪装成 null,应 500
+             */
+            published_at?: string | null;
+            /** Row Count */
+            row_count: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "building" | "built" | "failed" | "published" | "retired";
+        };
+        /**
          * OverviewAlert
          * @description 当前告警:由节点/服务/隔离/治理状态确定性聚合,非持久化实体。
          */
@@ -1302,7 +1523,7 @@ export interface components {
         };
         /**
          * OverviewVersions
-         * @description 版本信息;dataset/object version 属 v0.3,当前恒为 null(显示"尚未启用")。
+         * @description 版本信息;无已发布数据集时 dataset/object 为 null(页面显示"尚未发布")。
          */
         OverviewVersions: {
             /**
@@ -1312,12 +1533,12 @@ export interface components {
             app: string | null;
             /**
              * Dataset
-             * @description dataset version 属 v0.3,当前为 null
+             * @description 当前 source 的 published dataset_version;无已发布则为 null
              */
             dataset: string | null;
             /**
              * Object
-             * @description object version 属 v0.3,当前为 null
+             * @description 已发布对象层标识(原子发布下等同 dataset_version);无已发布对象版本则为 null
              */
             object: string | null;
             /**
@@ -1823,7 +2044,7 @@ export interface components {
         RunDetailResponse: {
             /**
              * Dataset Version
-             * @description v0.3 前固定 null
+             * @description M2 写入实际发布版本;M1 固定 null
              */
             dataset_version?: string | null;
             /**
@@ -1928,7 +2149,7 @@ export interface components {
         RunSummary: {
             /**
              * Dataset Version
-             * @description v0.3 前固定 null
+             * @description M2 写入实际发布版本;M1 固定 null
              */
             dataset_version?: string | null;
             /**
@@ -2875,6 +3096,234 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestError"];
+                };
+            };
+        };
+    };
+    datasets_list_api_datasets_get: {
+        parameters: {
+            query?: {
+                source?: string | null;
+                status?: ("building" | "published" | "failed" | "retired") | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    /** @description 当前筛选条件下的总数(分页用) */
+                    "X-Total-Count"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetSummary"][];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestError"];
+                };
+            };
+            /** @description 未处理异常 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    datasets_detail_api_datasets__version__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetDetail"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 未处理异常 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    datasets_publish_api_datasets__version__publish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetActionResult"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    datasets_rollback_api_datasets__version__rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatasetActionResult"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
                 };
             };
         };

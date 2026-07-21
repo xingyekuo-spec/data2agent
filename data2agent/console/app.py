@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -49,6 +50,7 @@ from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_o
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..mapping import parse_field_expr
 from ..metamodel.loader import load_pack
+from ..metamodel.versioning import object_layer_fully_published, parse_object_manifest
 from . import data_browser as br
 from . import observability as obs
 from .mcp_lab import mcp_lab_error_response, proposal_response_from_service
@@ -62,6 +64,10 @@ from .contracts import (
     ConfigPatch,
     ConfigSaveResponse,
     ConfigViewResponse,
+    DatasetActionResult,
+    DatasetDetail,
+    DatasetStatus,
+    DatasetSummary,
     HttpError,
     LogsResponse,
     McpCallBody,
@@ -218,6 +224,78 @@ def _map_run(r) -> dict:
         "error": obs.safe_error_summary(
             r["detail"] if r["status"] in _FAILED_STATUSES else None),
         "error_id": None,
+    }
+
+
+def _parse_version_time(
+    text: str | None, *, field: str, required: bool,
+) -> datetime | None:
+    """严格解析版本时间。
+
+    - DB null/空串 + required=False → None(合法尚未发布)
+    - 非空但无法解析 → 500(不得伪装成尚未发布);detail 含 error_id
+    """
+    if text is None or (isinstance(text, str) and not text.strip()):
+        if required:
+            error_id = uuid.uuid4().hex[:12]
+            raise HTTPException(
+                500, f"版本元数据 {field} 缺失或无法解析(error_id={error_id})")
+        return None
+    value = obs.aware(text if isinstance(text, str) else None)
+    if value is None:
+        error_id = uuid.uuid4().hex[:12]
+        raise HTTPException(
+            500, f"版本元数据 {field} 无法解析(error_id={error_id})")
+    return value
+
+
+def _dataset_error_fields(raw: str | None) -> tuple[str | None, str | None]:
+    """数据集内部错误 → 固定安全摘要 + 稳定 error_id;原文永不出口。"""
+    if not raw or not isinstance(raw, str) or not raw.strip():
+        return None, None
+    error_id = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
+    return f"数据集构建失败(error_id={error_id})", error_id
+
+
+def _published_at_required(status: str) -> bool:
+    return status in ("published", "retired")
+
+
+def _map_dataset_summary(record) -> dict:
+    error, error_id = _dataset_error_fields(record.error)
+    return {
+        "dataset_version": record.dataset_version,
+        "source": record.source,
+        "template_version": record.template_version,
+        "status": record.status,
+        "built_at": _parse_version_time(record.built_at, field="built_at", required=True),
+        "published_at": _parse_version_time(
+            record.published_at,
+            field="published_at",
+            required=_published_at_required(record.status),
+        ),
+        "previous_dataset_version": record.previous_dataset_version,
+        "error": error,
+        "error_id": error_id,
+        "object_manifest": parse_object_manifest(record.object_manifest),
+    }
+
+
+def _map_object_version(record) -> dict:
+    return {
+        "object": record.object,
+        "object_version": record.object_version,
+        "binding_hash": record.binding_hash,
+        "row_count": record.row_count,
+        "batch_id": record.batch_id,
+        "build_table": record.build_table,
+        "status": record.status,
+        "built_at": _parse_version_time(record.built_at, field="built_at", required=True),
+        "published_at": _parse_version_time(
+            record.published_at,
+            field="published_at",
+            required=_published_at_required(record.status),
+        ),
     }
 
 
@@ -822,8 +900,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         + "Auth: skipped only while needs_setup=true (first-time bootstrap). "
                         "After configuration, Bearer is required when D2A_CONSOLE_TOKEN is set."
                     ).strip()
-        # M4/M5:列表总数响应头显式声明(类型层必须可见)
-        for path in ("/api/runs", "/api/audit", "/api/quarantine"):
+        # M4/M5/M1:列表总数响应头显式声明(类型层必须可见)
+        for path in ("/api/runs", "/api/audit", "/api/quarantine", "/api/datasets"):
             get_op = schema.get("paths", {}).get(path, {}).get("get")
             if get_op is not None:
                 get_op.setdefault("responses", {}).setdefault("200", {}) \
@@ -1023,7 +1101,16 @@ def create_app(landing: str | None = None, templates: str = "templates",
             app_version = None  # 开发环境无包元数据:明确 null(unknown)
         bs = obs.binding_summary(pack)
         qp = obs.quarantine_pending(db)
-        default_src = next(iter(agg_sources), "digiwin_e10")
+        # 与 Pipeline / MCP / QueryService 共用配置顺序首源,不得用字典序首项。
+        default_src = default_source()
+        published = db.get_published_dataset(default_src)
+        dataset_version = published.dataset_version if published else None
+        # 原子发布:以数据集冻结 object_manifest 为分母;清单不全/有额外/非 published → 未发布。
+        object_version = None
+        if published is not None:
+            obj_rows = db.list_object_versions(published.dataset_version)
+            if object_layer_fully_published(published, obj_rows):
+                object_version = published.dataset_version
         nodes = obs.compute_nodes(db, pack, cfg, default_src,
                                   component_version=app_version)
         recent = obs.recent_runs(db)
@@ -1051,7 +1138,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 },
                 "versions": {
                     "app": app_version, "template": pack.version,
-                    "dataset": None, "object": None,  # v0.3 前恒 null(尚未启用)
+                    "dataset": dataset_version, "object": object_version,
                 },
                 "binding_summary": bs,
                 "alerts": alerts,
@@ -2047,11 +2134,79 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return obs.build_pipeline(db, require_pack(), cfg, default_source(),
                                   probes=probes, component_version=component_version)
 
-    # ---- v0.2 契约桩(M2)----
-    # schema 先行供前端类型生成与 Mock;真实实现归属 M4–M6,
-    # 实现前一律返回 501,不得返回伪造成功或空数据。
+    # ---- v0.3 datasets(M1 只读;publish/rollback 在 M2 前 fail-closed)----
 
     _STUB_501 = "契约桩:端点已声明,将在所属里程碑实现;不得视为成功或空数据"
+
+    @api.get(
+        "/datasets",
+        response_model=list[DatasetSummary],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409],
+                   422: _RESP_HTTP_ERROR[422], 500: _RESP_HTTP_ERROR[500]},
+        tags=["v0.3"],
+    )
+    def datasets_list(
+        response: Response,
+        source: str | None = None,
+        status: DatasetStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """数据集版本列表:数组 wire shape + X-Total-Count;空库返回 [] 不伪造版本。"""
+        if not 1 <= limit <= 100 or offset < 0:
+            raise HTTPException(422, "limit 须为 1..100,offset 须 >= 0")
+        rows, total = store().list_dataset_versions(
+            source=source, status=status, limit=limit, offset=offset)
+        response.headers["X-Total-Count"] = str(total)
+        return [_map_dataset_summary(r) for r in rows]
+
+    @api.get(
+        "/datasets/{version}",
+        response_model=DatasetDetail,
+        responses={401: _RESP_HTTP_ERROR[401], 404: {"model": HttpError},
+                   409: _RESP_HTTP_ERROR[409], 500: _RESP_HTTP_ERROR[500]},
+        tags=["v0.3"],
+    )
+    def datasets_detail(version: str) -> dict:
+        """数据集版本详情(含对象版本);不存在返回 404。"""
+        record = store().get_dataset_version(version)
+        if record is None:
+            raise HTTPException(404, f"数据集版本 {version} 不存在")
+        objects = store().list_object_versions(version)
+        return {
+            **_map_dataset_summary(record),
+            "objects": [_map_object_version(o) for o in objects],
+        }
+
+    @api.post(
+        "/datasets/{version}/publish",
+        response_model=DatasetActionResult,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            **_RESP_HTTP_ERROR_STUB,
+        },
+        tags=["v0.3"],
+    )
+    def datasets_publish(version: str) -> None:
+        """M2 原子发布;M1 fail-closed,不写对象表或版本状态。"""
+        raise HTTPException(501, _STUB_501)
+
+    @api.post(
+        "/datasets/{version}/rollback",
+        response_model=DatasetActionResult,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            **_RESP_HTTP_ERROR_STUB,
+        },
+        tags=["v0.3"],
+    )
+    def datasets_rollback(version: str) -> None:
+        """M2 回滚上一稳定版本;M1 fail-closed,不写对象表或版本状态。"""
+        raise HTTPException(501, _STUB_501)
+
+    # ---- v0.2 数据浏览与模板(已实现)----
+    # 历史注释曾把下列端点标为契约桩;M4–M6 已落地,publish/rollback 以外
+    # 的 501 桩已清空。
 
     @api.get(
         "/data/raw",
