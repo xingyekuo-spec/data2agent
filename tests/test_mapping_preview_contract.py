@@ -156,6 +156,48 @@ def test_openapi_issue_and_error_reason_codes(tmp_path):
         assert field in schemas["MappingPreviewError"]["properties"]
 
 
+def test_openapi_422_includes_mapping_preview_error(tmp_path):
+    """§3.9:422 冻结 RequestError(校验)与 MappingPreviewError(语义)双形状。"""
+    op = _openapi_app(tmp_path).openapi()["paths"][PREVIEW_PATH]["post"]
+    schema = op["responses"]["422"]["content"]["application/json"]["schema"]
+    refs = {_schema_ref(x) for x in schema.get("anyOf", [])} or {_schema_ref(schema)}
+    assert "MappingPreviewError" in refs, schema
+    assert "RequestError" in refs, schema
+
+
+def _assert_required_nullable(schemas: dict, model: str, field: str) -> None:
+    node = schemas[model]
+    assert field in node.get("required", []), (
+        f"{model}.{field} must be required (present, may be null); "
+        f"required={node.get('required')}"
+    )
+    prop = node["properties"][field]
+    # nullable: anyOf includes null, or type includes null
+    if "anyOf" in prop:
+        kinds = {item.get("type") for item in prop["anyOf"] if isinstance(item, dict)}
+        assert "null" in kinds, f"{model}.{field} not nullable: {prop}"
+    else:
+        assert prop.get("type") == "null" or "null" in (prop.get("type") or []), prop
+    assert "default" not in prop, (
+        f"{model}.{field} must not omit via default; got {prop}"
+    )
+
+
+def test_openapi_required_nullable_fields(tmp_path):
+    schemas = _openapi_app(tmp_path).openapi()["components"]["schemas"]
+    _assert_required_nullable(schemas, "MappingPreviewResponse", "current_binding_hash")
+    _assert_required_nullable(schemas, "MappingPreviewResponse", "current")
+    assert "warnings" in schemas["MappingPreviewResponse"]["required"]
+    _assert_required_nullable(schemas, "MappingPreviewDiff", "reason")
+    _assert_required_nullable(schemas, "MappingPreviewSampleInfo", "requested_batch_id")
+    _assert_required_nullable(schemas, "MappingPreviewDerivedCoverage", "row_coverage")
+    _assert_required_nullable(schemas, "MappingPreviewIssue", "field")
+    # §3.5: detail required; source_value optional
+    issue_req = schemas["MappingPreviewIssue"]["required"]
+    assert "detail" in issue_req
+    assert "source_value" not in issue_req
+
+
 def test_valid_shaped_request_is_fail_closed_501(tmp_path):
     client = _client(tmp_path)
     r = client.post(PREVIEW_URL, json=_valid_body())

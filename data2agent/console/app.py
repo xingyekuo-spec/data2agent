@@ -2231,10 +2231,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "description": "current_binding_unavailable / raw_unavailable",
             },
             422: {
-                "model": RequestError,
+                "model": RequestError | MappingPreviewError,
                 "description": (
-                    "请求校验失败,或 draft_invalid / sample_invalid / "
-                    "anchor_changed"
+                    "Pydantic 请求校验(RequestError),或语义错误 "
+                    "draft_invalid / sample_invalid / anchor_changed"
+                    "(MappingPreviewError.reason_code)"
                 ),
             },
             500: {

@@ -1080,7 +1080,7 @@
                 "type": "null"
               }
             ],
-            "description": "分母为零时为 null,不伪装为 0% 或 100%",
+            "description": "分母为零时为 null,不伪装为 0% 或 100%(必填可空)",
             "title": "Row Coverage"
           },
           "rules": {
@@ -1112,6 +1112,7 @@
           "matched_rows",
           "default_hits",
           "unmatched_rows",
+          "row_coverage",
           "rules_total",
           "rules_hit"
         ],
@@ -1178,6 +1179,7 @@
                 "type": "null"
               }
             ],
+            "description": "unavailable 时为 no_current_binding;available 时为 null(必填可空)",
             "title": "Reason"
           },
           "rows": {
@@ -1201,6 +1203,7 @@
         },
         "required": [
           "state",
+          "reason",
           "summary"
         ],
         "title": "MappingPreviewDiff",
@@ -1522,6 +1525,7 @@
                 "type": "null"
               }
             ],
+            "description": "问题字段;无具体字段时为 null(必填可空)",
             "title": "Field"
           },
           "reason_code": {
@@ -1551,6 +1555,7 @@
         },
         "required": [
           "reason_code",
+          "field",
           "detail"
         ],
         "title": "MappingPreviewIssue",
@@ -1603,7 +1608,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "当前 binding 试算;无 current 时为 null(必填可空)"
           },
           "current_binding_hash": {
             "anyOf": [
@@ -1614,6 +1620,7 @@
                 "type": "null"
               }
             ],
+            "description": "当前启用 binding 的 hash;无 current 时为 null(必填可空)",
             "title": "Current Binding Hash"
           },
           "diff": {
@@ -1655,10 +1662,13 @@
           "source",
           "mode",
           "template_version",
+          "current_binding_hash",
           "candidate_binding_hash",
           "sample",
+          "current",
           "candidate",
-          "diff"
+          "diff",
+          "warnings"
         ],
         "title": "MappingPreviewResponse",
         "type": "object"
@@ -1762,6 +1772,7 @@
                 "type": "null"
               }
             ],
+            "description": "请求的 batch_id;未指定时为 null(必填可空)",
             "title": "Requested Batch Id"
           },
           "sample_batch_ids": {
@@ -1785,6 +1796,7 @@
           "anchor_table",
           "offset",
           "limit",
+          "requested_batch_id",
           "sampled_rows",
           "sample_fingerprint"
         ],
@@ -7338,11 +7350,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RequestError"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RequestError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MappingPreviewError"
+                    }
+                  ],
+                  "title": "Response 422 Mappings Preview Api Mappings  Object  Preview Post"
                 }
               }
             },
-            "description": "请求校验失败,或 draft_invalid / sample_invalid / anchor_changed"
+            "description": "Pydantic 请求校验(RequestError),或语义错误 draft_invalid / sample_invalid / anchor_changed(MappingPreviewError.reason_code)"
           },
           "500": {
             "content": {

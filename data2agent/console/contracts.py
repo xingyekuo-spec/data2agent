@@ -1054,7 +1054,9 @@ class MappingPreviewError(BaseModel):
 
 class MappingPreviewIssue(BaseModel):
     reason_code: MappingPreviewIssueReasonCode
-    field: str | None = None
+    field: str | None = Field(
+        description="问题字段;无具体字段时为 null(必填可空)",
+    )
     detail: str = Field(description="安全摘要;不含 SQL/物理表/traceback/未脱敏原值")
     source_value: str | None = None
 
@@ -1103,8 +1105,7 @@ class MappingPreviewDerivedCoverage(BaseModel):
     default_hits: int = Field(ge=0)
     unmatched_rows: int = Field(ge=0)
     row_coverage: float | None = Field(
-        default=None,
-        description="分母为零时为 null,不伪装为 0% 或 100%",
+        description="分母为零时为 null,不伪装为 0% 或 100%(必填可空)",
     )
     rules_total: int = Field(ge=0)
     rules_hit: int = Field(ge=0)
@@ -1127,7 +1128,9 @@ class MappingPreviewSampleInfo(BaseModel):
     anchor_table: str
     offset: int = Field(ge=0)
     limit: int = Field(ge=1)
-    requested_batch_id: str | None = None
+    requested_batch_id: str | None = Field(
+        description="请求的 batch_id;未指定时为 null(必填可空)",
+    )
     sample_batch_ids: list[str] = Field(default_factory=list)
     sampled_rows: int = Field(ge=0)
     sample_fingerprint: str
@@ -1154,7 +1157,9 @@ class MappingPreviewDiffSummary(BaseModel):
 
 class MappingPreviewDiff(BaseModel):
     state: MappingPreviewDiffState
-    reason: MappingPreviewDiffReason | None = None
+    reason: MappingPreviewDiffReason | None = Field(
+        description="unavailable 时为 no_current_binding;available 时为 null(必填可空)",
+    )
     summary: MappingPreviewDiffSummary
     rows: list[MappingPreviewDiffRow] = Field(default_factory=list)
 
@@ -1166,10 +1171,14 @@ class MappingPreviewResponse(BaseModel):
     source: str
     mode: MappingPreviewMode
     template_version: str
-    current_binding_hash: str | None = None
+    current_binding_hash: str | None = Field(
+        description="当前启用 binding 的 hash;无 current 时为 null(必填可空)",
+    )
     candidate_binding_hash: str
     sample: MappingPreviewSampleInfo
-    current: MappingPreviewEvaluation | None = None
+    current: MappingPreviewEvaluation | None = Field(
+        description="当前 binding 试算;无 current 时为 null(必填可空)",
+    )
     candidate: MappingPreviewEvaluation
     diff: MappingPreviewDiff
-    warnings: list[str] = Field(default_factory=list)
+    warnings: list[str]
