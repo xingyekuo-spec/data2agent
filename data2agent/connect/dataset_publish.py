@@ -57,6 +57,16 @@ class PublishedSnapshotError(Exception):
         super().__init__(detail)
 
 
+class _TxnRecheckAbort(Exception):
+    """临界事务内重检得到非 execute 决策;外层映射为幂等/409/404,非 500。"""
+
+    def __init__(self, outcome: str, reason_code: str | None, http_status: int | None):
+        self.outcome = outcome
+        self.reason_code = reason_code
+        self.http_status = http_status
+        super().__init__(f"recheck:{outcome}:{reason_code}")
+
+
 class PublishedObjectEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -452,8 +462,12 @@ def publish_dataset(store: LandingStore, version: str) -> DatasetMutationResult:
         again = evaluate_publish(
             candidate=cand, objects=objs, current_published=cur,
         )
+        if again.outcome == "idempotent":
+            raise _TxnRecheckAbort("idempotent", None, None)
         if again.outcome != "execute":
-            raise RuntimeError(f"publish recheck:{again.outcome}:{again.reason_code}")
+            raise _TxnRecheckAbort(
+                again.outcome, again.reason_code, again.http_status,
+            )
         if cur is not None:
             for obj in store.list_object_versions(cur.dataset_version):
                 store.update_object_lifecycle(
@@ -475,6 +489,29 @@ def publish_dataset(store: LandingStore, version: str) -> DatasetMutationResult:
 
     try:
         _run_immediate_txn(store, _txn)
+    except _TxnRecheckAbort as e:
+        try:
+            store.finish_run(
+                run_id, tables=0, rows=0, status="ok",
+                detail=f"publish recheck:{e.outcome}",
+            )
+        except Exception:
+            pass
+        if e.outcome == "idempotent":
+            return DatasetMutationResult(
+                executed=False,
+                dataset_version=version,
+                outcome="idempotent",
+                note="already published",
+            )
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome=e.outcome,  # type: ignore[arg-type]
+            reason_code=e.reason_code,
+            http_status=e.http_status,
+            note=e.reason_code or e.outcome,
+        )
     except Exception as e:
         summary, error_id = _safe_action_error(str(e))
         try:
@@ -568,9 +605,11 @@ def rollback_dataset(store: LandingStore, version: str) -> DatasetMutationResult
         tgt = store.get_dataset_version(version)
         cur = store.get_published_dataset(source)
         again = evaluate_rollback(target=tgt, current_published=cur)
+        if again.outcome == "idempotent":
+            raise _TxnRecheckAbort("idempotent", None, None)
         if again.outcome != "execute":
-            raise RuntimeError(
-                f"rollback recheck:{again.outcome}:{again.reason_code}"
+            raise _TxnRecheckAbort(
+                again.outcome, again.reason_code, again.http_status,
             )
         assert cur is not None
         for obj in store.list_object_versions(cur.dataset_version):
@@ -597,6 +636,29 @@ def rollback_dataset(store: LandingStore, version: str) -> DatasetMutationResult
 
     try:
         _run_immediate_txn(store, _txn)
+    except _TxnRecheckAbort as e:
+        try:
+            store.finish_run(
+                run_id, tables=0, rows=0, status="ok",
+                detail=f"rollback recheck:{e.outcome}",
+            )
+        except Exception:
+            pass
+        if e.outcome == "idempotent":
+            return DatasetMutationResult(
+                executed=False,
+                dataset_version=version,
+                outcome="idempotent",
+                note="already current",
+            )
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome=e.outcome,  # type: ignore[arg-type]
+            reason_code=e.reason_code,
+            http_status=e.http_status,
+            note=e.reason_code or e.outcome,
+        )
     except Exception as e:
         summary, error_id = _safe_action_error(str(e))
         try:

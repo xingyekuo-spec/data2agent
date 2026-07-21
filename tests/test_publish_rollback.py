@@ -77,6 +77,53 @@ def test_publish_idempotent_when_already_current(landing, pack):
     assert landing.get_published_dataset(SOURCE).dataset_version == staged.dataset_version
 
 
+def test_publish_in_txn_recheck_idempotent_not_500(landing, pack, monkeypatch):
+    staged = _stage(landing, pack)
+    calls = {"n": 0}
+    import data2agent.connect.dataset_publish as dp
+    from data2agent.metamodel.dataset_publish_contract import ActionDecision
+
+    real = dp.evaluate_publish
+
+    def flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real(**kwargs)
+        return ActionDecision(outcome="idempotent")
+
+    monkeypatch.setattr(dp, "evaluate_publish", flaky)
+    result = publish_dataset(landing, staged.dataset_version)
+    assert result.outcome == "idempotent"
+    assert result.executed is False
+    assert result.http_status in (None, 200)
+    assert landing.get_published_dataset(SOURCE) is None
+    assert landing.get_dataset_version(staged.dataset_version).status == "building"
+
+
+def test_publish_in_txn_recheck_conflict_maps_409(landing, pack, monkeypatch):
+    staged = _stage(landing, pack)
+    calls = {"n": 0}
+    import data2agent.connect.dataset_publish as dp
+    from data2agent.metamodel.dataset_publish_contract import ActionDecision
+
+    real = dp.evaluate_publish
+
+    def flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real(**kwargs)
+        return ActionDecision(
+            outcome="conflict", reason_code="stale_previous", http_status=409,
+        )
+
+    monkeypatch.setattr(dp, "evaluate_publish", flaky)
+    result = publish_dataset(landing, staged.dataset_version)
+    assert result.outcome == "conflict"
+    assert result.reason_code == "stale_previous"
+    assert result.http_status == 409
+    assert landing.get_published_dataset(SOURCE) is None
+
+
 def test_stale_previous_candidate_conflict_409(landing, pack):
     v1 = _stage(landing, pack)
     assert publish_dataset(landing, v1.dataset_version).executed is True
@@ -165,6 +212,30 @@ def test_fault_inject_mid_txn_keeps_old_published(landing, pack):
     assert snap.dataset_version == v1.dataset_version
     for o in landing.list_object_versions(v1.dataset_version):
         assert o.status == "published"
+
+
+def test_rollback_fault_inject_mid_txn_keeps_states(landing, pack, monkeypatch):
+    v1 = _stage(landing, pack)
+    assert publish_dataset(landing, v1.dataset_version).executed is True
+    v2 = _stage(landing, pack)
+    assert publish_dataset(landing, v2.dataset_version).executed is True
+
+    orig = LandingStore.update_dataset_lifecycle
+
+    def flaky(self, dataset_version, *, status, **kwargs):
+        result = orig(self, dataset_version, status=status, **kwargs)
+        if status == "retired" and dataset_version == v2.dataset_version:
+            raise RuntimeError("injected fault during rollback")
+        return result
+
+    monkeypatch.setattr(LandingStore, "update_dataset_lifecycle", flaky)
+    result = rollback_dataset(landing, v1.dataset_version)
+    assert result.outcome == "error"
+    assert result.http_status == 500
+    pub = landing.get_published_dataset(SOURCE)
+    assert pub is not None and pub.dataset_version == v2.dataset_version
+    assert landing.get_dataset_version(v1.dataset_version).status == "retired"
+    assert landing.get_dataset_version(v2.dataset_version).status == "published"
 
 
 def test_one_step_rollback_and_reverse(landing, pack):
