@@ -37,6 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
 
+from .. import __version__
 from ..admin_common.config_edit import PLATFORM_EDITABLE, merge_whitelist_and_save
 from ..admin_common.home_layout import HomeLayout
 from ..admin_common.logs import tail_lines
@@ -688,7 +689,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
             raise HTTPException(502, f"MCP 返回错误:{payload['error']}")
         return payload.get("result", payload)
 
-    app = FastAPI(title="data2agent 运维控制台")
+    app = FastAPI(title="data2agent 运维控制台", version=__version__)
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
     jinja = _make_templates()
 

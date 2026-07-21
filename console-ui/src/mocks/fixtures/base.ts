@@ -469,7 +469,7 @@ export const baseFixture: ScenarioFixture = {
       last_run_at: T,
       data_updated_at: T,
     },
-    versions: { app: '0.1.6', template: '0.1.0', dataset: null, object: null },
+    versions: { app: '0.2.0', template: '0.1.0', dataset: null, object: null },
     binding_summary: { verified: 10, draft: 0, disabled: 0 },
     alerts: [],
     recent_runs: [
