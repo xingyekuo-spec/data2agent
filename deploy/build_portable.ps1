@@ -111,8 +111,27 @@ if ($LASTEXITCODE -ne 0) { throw 'pip install data2agent failed' }
 Write-Step 'Copy templates -> app/templates'
 Copy-Item -Recurse -Force (Join-Path $root 'templates\*') (Join-Path $portable 'app\templates')
 
+# --- 4b. Vue Console dist (platform; required for /v1) ----------------------
+if ($Role -eq 'platform') {
+    $vueDist = Join-Path $root 'console-ui\dist'
+    $vueIndex = Join-Path $vueDist 'index.html'
+    if (-not (Test-Path $vueIndex)) {
+        throw "console-ui/dist/index.html missing; run: cd console-ui; npm ci; npm run build"
+    }
+    Write-Step 'Copy Vue dist -> app/console-ui/dist'
+    $destDist = Join-Path $portable 'app\console-ui\dist'
+    New-Item -ItemType Directory -Force -Path $destDist | Out-Null
+    Copy-Item -Recurse -Force (Join-Path $vueDist '*') $destDist
+    if (-not (Test-Path (Join-Path $destDist 'index.html'))) {
+        throw 'portable Vue dist copy failed: index.html missing'
+    }
+}
+
 # --- 5. README (single entry: data2agent.exe, added by release / -LauncherExe) ---
 Write-Step 'Write README.txt'
+$v1Note = if ($Role -eq 'platform') {
+    "  5. Vue Console: open http://127.0.0.1:8849/v1/ (requires app\console-ui\dist)."
+} else { '' }
 $readme = @"
 data2agent portable ($Role) $Version
 ====================================
@@ -123,7 +142,7 @@ Extract anywhere. Double-click data2agent.exe — that is the only entry.
   2. Tray icon (system tray): Open admin UI / Quit.
   3. If already running, double-click only reopens the admin UI.
   4. Quit from tray stops services started by this app.
-
+$v1Note
 Middle also needs Microsoft ODBC Driver 18 for SQL Server (MSI).
 
 Keep this folder intact (runtime\ must stay next to data2agent.exe).

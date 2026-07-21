@@ -24,6 +24,7 @@ const spec = JSON.parse(readFileSync(input, 'utf8'))
 
 const EXPECTED_KINDS = ['string', 'integer', 'number', 'boolean', 'array', 'object', 'null']
 const JSON_VALUE_ALIASES = {
+  JsonValue: 'JsonValueInput',
   'JsonValue-Input': 'JsonValueInput',
   'JsonValue-Output': 'JsonValueOutput',
 }

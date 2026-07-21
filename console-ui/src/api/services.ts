@@ -239,3 +239,75 @@ export async function postRetry(body: RetryBody): Promise<ApiResult<components['
     return { ok: false, error: toApiError(err) }
   }
 }
+
+// ---- M6:MCP Lab ----
+
+export type McpToolResult = components['schemas']['McpToolResult']
+export type ProposalResponse = components['schemas']['ProposalResponse']
+export type ProposalRequest = components['schemas']['ProposalRequest']
+export type McpLabErrorBody = components['schemas']['McpLabError']
+
+export interface McpLabApiError extends ApiError {
+  reason_code?: McpLabErrorBody['reason_code']
+  tool?: string | null
+  error_id?: string | null
+}
+
+function mcpLabErrorFrom(status: number, error: unknown): McpLabApiError {
+  const err = error as Record<string, unknown> | undefined
+  const detail = typeof err?.detail === 'string' ? err.detail : detailOf(error)
+  return {
+    kind: 'http',
+    status,
+    message: detail || `HTTP ${status}`,
+    retriable: status >= 500 && status !== 501,
+    reason_code: typeof err?.reason_code === 'string'
+      ? (err.reason_code as McpLabErrorBody['reason_code'])
+      : undefined,
+    tool: typeof err?.tool === 'string' ? err.tool : null,
+    error_id: typeof err?.error_id === 'string' ? err.error_id : null,
+  }
+}
+
+export async function postMcpCall(
+  tool: 'query_objects' | 'query_metrics',
+  params: Record<string, unknown>,
+  init?: { signal?: AbortSignal },
+): Promise<ApiResult<McpToolResult>> {
+  try {
+    const { data, error, response } = await client.POST('/api/debug/mcp-call', {
+      body: { tool, params: params as components['schemas']['McpCallBody']['params'] },
+      signal: init?.signal,
+    })
+    if (!response.ok) {
+      return { ok: false, error: mcpLabErrorFrom(response.status, error) }
+    }
+    if (data === undefined) {
+      return { ok: false, error: { kind: 'parse', message: '成功响应缺少数据', retriable: false } }
+    }
+    return { ok: true, data, response }
+  } catch (err) {
+    return { ok: false, error: toApiError(err) }
+  }
+}
+
+export async function postProposal(
+  body: ProposalRequest,
+  init?: { signal?: AbortSignal },
+): Promise<ApiResult<ProposalResponse>> {
+  try {
+    const { data, error, response } = await client.POST('/api/gateway/proposals', {
+      body,
+      signal: init?.signal,
+    })
+    if (!response.ok) {
+      return { ok: false, error: mcpLabErrorFrom(response.status, error) }
+    }
+    if (data === undefined) {
+      return { ok: false, error: { kind: 'parse', message: '成功响应缺少数据', retriable: false } }
+    }
+    return { ok: true, data, response }
+  } catch (err) {
+    return { ok: false, error: toApiError(err) }
+  }
+}

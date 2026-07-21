@@ -624,10 +624,21 @@ export const baseFixture: ScenarioFixture = {
     ],
   },
   mcpCall: {
-    data: [
-      { customer_code: 'C-001', name: '北极星钓具(美国)', payment_days: 60 },
+    object: 'Customer',
+    display_name: '客户',
+    rows: [
+      { customer_code: 'C-001', name: '北极星钓具(美国)', payment_days: 60, contact: '***' },
     ],
-    meta: { query_id: 'q1', tool: 'query_objects', target: 'Customer', at: T },
+    meta: {
+      query_id: 'q1',
+      tool: 'query_objects',
+      target: 'Customer',
+      row_count: 1,
+      duration_ms: 12,
+      masked_fields: ['contact'],
+      warnings: ['binding 为 draft:字段映射按参考表形构造,口径未经现场校准'],
+      evidence_scope: 'process',
+    },
   },
   pipeline: basePipeline,
   runDetail: {

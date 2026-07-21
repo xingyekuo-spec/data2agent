@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, 
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
@@ -122,7 +122,36 @@ _PKG = Path(__file__).resolve().parent
 _ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
 _CONSOLE_TEMPLATES = _PKG / "templates"
 _ADMIN_STATIC = _ADMIN_TEMPLATES / "static"
+_REPO_ROOT = _PKG.parent.parent
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+_VUE_MISSING_HTML = """<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Vue Console 未安装</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;line-height:1.5">
+<h1>控制台未安装或未构建</h1>
+<p><code>/v1</code> 需要 Vue Console 的构建产物（<code>console-ui/dist</code>）。</p>
+<p>开发可用 Vite；源码/便携包/Docker 需先执行 <code>cd console-ui &amp;&amp; npm run build</code>，
+或设置环境变量 <code>D2A_VUE_DIST</code> 指向含 <code>index.html</code> 的目录。</p>
+<p>应急入口：<a href="/">/</a> · <a href="/v0">/v0</a></p>
+</body></html>
+"""
+
+
+def resolve_vue_dist() -> Path | None:
+    """定位 Vue dist;优先 D2A_VUE_DIST,其次仓库 console-ui/dist。"""
+    env = (os.environ.get("D2A_VUE_DIST") or "").strip()
+    candidates: list[Path] = []
+    if env:
+        candidates.append(Path(env))
+    candidates.append(_REPO_ROOT / "console-ui" / "dist")
+    candidates.append(_PKG / "vue_dist")
+    for cand in candidates:
+        try:
+            if (cand / "index.html").is_file():
+                return cand.resolve()
+        except OSError:
+            continue
+    return None
 
 
 def _make_templates() -> Jinja2Templates:
@@ -2436,5 +2465,39 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     if _ADMIN_STATIC.is_dir():
         app.mount("/static", StaticFiles(directory=_ADMIN_STATIC), name="static")
+
+    # ---- M6: Vue Console /v1 静态挂载与 SPA fallback ----
+    vue_dist = resolve_vue_dist()
+    app.state.vue_dist = vue_dist
+
+    def _vue_missing() -> HTMLResponse:
+        return HTMLResponse(_VUE_MISSING_HTML, status_code=503)
+
+    if vue_dist is not None:
+        assets_dir = vue_dist / "assets"
+        if assets_dir.is_dir():
+            app.mount("/v1/assets", StaticFiles(directory=assets_dir), name="vue-assets")
+
+    @app.get("/v1", include_in_schema=False)
+    @app.get("/v1/", include_in_schema=False)
+    def vue_console_index():
+        if vue_dist is None:
+            return _vue_missing()
+        return FileResponse(vue_dist / "index.html")
+
+    @app.get("/v1/{full_path:path}", include_in_schema=False)
+    def vue_console_spa(full_path: str):
+        if vue_dist is None:
+            return _vue_missing()
+        # 已由 StaticFiles 处理 /v1/assets/*;其余文件或 SPA 回退
+        candidate = (vue_dist / full_path).resolve()
+        try:
+            candidate.relative_to(vue_dist.resolve())
+        except ValueError:
+            return _vue_missing()
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(vue_dist / "index.html")
+
     app.state.d2a_state = state
     return app

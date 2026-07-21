@@ -1,4 +1,11 @@
-# 通用 runner:python + msodbcsql18 + 本仓库全依赖(展厅 compose 与集成测试共用)
+# 多阶段:先构建 Vue Console dist,再装入 Python runner(展厅 compose / 集成测试共用)
+FROM node:22-bookworm AS vue-build
+WORKDIR /ui
+COPY console-ui/package.json console-ui/package-lock.json ./
+RUN npm ci
+COPY console-ui/ ./
+RUN npm run build && node scripts/check-dist.mjs
+
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg2 \
@@ -12,4 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg2 \
 
 WORKDIR /app
 COPY . .
-RUN pip install --no-cache-dir -e ".[dev,connect,mcp,console,ingest,excel]"
+COPY --from=vue-build /ui/dist /app/console-ui/dist
+ENV D2A_VUE_DIST=/app/console-ui/dist
+RUN pip install --no-cache-dir -e ".[dev,connect,mcp,console,ingest,excel]" \
+    && test -f /app/console-ui/dist/index.html

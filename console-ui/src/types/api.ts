@@ -910,9 +910,7 @@ export interface components {
          *     Do not use pydantic.JsonValue or Any here: those emit empty `{}` schemas that
          *     become `unknown` after openapi-typescript.
          */
-        JsonValue: string | number | boolean | components["schemas"]["JsonValue"][] | {
-            [key: string]: components["schemas"]["JsonValue"];
-        } | null;
+        JsonValue: JsonValueInput;
         /**
          * JsonValue
          * @description Recursive JSON value with an explicit anyOf schema for OpenAPI/TS.
