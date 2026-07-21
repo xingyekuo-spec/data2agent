@@ -52,6 +52,15 @@ def parse_field_expr(raw: str) -> FieldExpr:
     return FieldExpr(m["table"], m["column"], join_fk, value_map)
 
 
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_ident(name: str, *, label: str) -> str:
+    if not _IDENT_RE.match(name):
+        raise ValueError(f"非法{label}标识符: {name!r}")
+    return name
+
+
 def build_select(
     template: ObjectTemplate,
     binding: SourceBinding,
@@ -63,11 +72,16 @@ def build_select(
     physical: Callable[[str], str] | None = None,   # 逻辑表名 → 物理表名(落地库 raw_*)
     active_col: str | None = None,                  # 软删列:锚表过滤 + join 条件排除已删行
     extra_anchor_cols: list[str] | None = None,     # 额外锚表列(派生决策表用),别名 __列名
+    anchor_pk_cols: list[str] | None = None,        # 内部:锚表主键列(DDL 序)
+    anchor_pk_values: list[tuple] | None = None,    # 内部:冻结主键元组;与 cols 同用
 ) -> tuple[str, list, dict[str, FieldExpr]]:
     """按 binding 生成参数化 SELECT。返回 (sql, params, 属性->表达式)。
 
     默认直读源表形(展厅/测试);映射应用传 physical + active_col
     在落地库 raw_* 上物化对象层。limit=None 不限行(仅限内部消费者)。
+
+    anchor_pk_cols / anchor_pk_values 仅供 Preview 等内部消费者锁定冻结样本行;
+    默认 unset 时行为与既有查询完全一致。
     """
     physical = physical or (lambda t: t)
     if not binding.tables:
@@ -76,6 +90,11 @@ def build_select(
     exprs = {p: parse_field_expr(v) for p, v in binding.field_map.items()}
     if not exprs:
         raise ValueError(f"{template.object}: binding({binding.source})未声明 field_map")
+
+    if (anchor_pk_cols is None) ^ (anchor_pk_values is None):
+        raise ValueError("anchor_pk_cols 与 anchor_pk_values 必须同时提供或同时省略")
+    if anchor_pk_cols is not None and not anchor_pk_cols:
+        raise ValueError("anchor_pk_cols 不能为空列表")
 
     joins: dict[tuple[str, str], str] = {}  # (目标表, 锚表外键) -> 别名
 
@@ -106,6 +125,27 @@ def build_select(
             val = reverse[val]
         where.append(f"{sql_col(e)} = ?")
         params.append(val)
+
+    if anchor_pk_cols is not None and anchor_pk_values is not None:
+        pk_cols = [_validate_ident(c, label="主键列") for c in anchor_pk_cols]
+        n = len(pk_cols)
+        for tup in anchor_pk_values:
+            if len(tup) != n:
+                raise ValueError(
+                    f"主键元组长度须为 {n},got {len(tup)}: {tup!r}")
+        if not anchor_pk_values:
+            where.append("1 = 0")
+        elif n == 1:
+            placeholders = ", ".join("?" for _ in anchor_pk_values)
+            where.append(f'a."{pk_cols[0]}" IN ({placeholders})')
+            params.extend(t[0] for t in anchor_pk_values)
+        else:
+            cols_sql = ", ".join(f'a."{c}"' for c in pk_cols)
+            row_ph = "(" + ", ".join("?" for _ in range(n)) + ")"
+            placeholders = ", ".join(row_ph for _ in anchor_pk_values)
+            where.append(f"({cols_sql}) IN ({placeholders})")
+            for tup in anchor_pk_values:
+                params.extend(tup)
 
     order = ""
     if order_by:
