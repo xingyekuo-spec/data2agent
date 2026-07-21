@@ -19,7 +19,7 @@ const { filters, page } = store
 const route = useRoute()
 const router = useRouter()
 
-const TYPE_OPTIONS = ['sync', 'apply', 'reconcile', 'ingest', 'validation'] as const
+const TYPE_OPTIONS = ['sync', 'apply', 'reconcile', 'ingest', 'validation', 'publish', 'rollback'] as const
 const STATUS_OPTIONS = ['running', 'ok', 'paused', 'failed', 'aborted'] as const
 
 const runStatusMap: Record<string, HealthStatus> = {

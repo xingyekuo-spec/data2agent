@@ -67,7 +67,7 @@ export function getPipeline() {
 export interface RunsQuery {
   limit: number
   offset: number
-  type?: 'sync' | 'apply' | 'reconcile' | 'ingest' | 'validation'
+  type?: 'sync' | 'apply' | 'reconcile' | 'ingest' | 'validation' | 'publish' | 'rollback'
   status?: 'running' | 'ok' | 'paused' | 'failed' | 'aborted'
 }
 
@@ -192,6 +192,54 @@ export function getTemplates() {
 
 export function getTemplateMetrics() {
   return call(client.GET('/api/templates/metrics'))
+}
+
+// ---- M2:数据集版本 / apply(publish 开关) ----
+
+export interface DatasetsQuery {
+  limit: number
+  offset: number
+  source?: string
+  status?: components['schemas']['DatasetSummary']['status']
+}
+
+export async function getDatasets(query: DatasetsQuery) {
+  return pageOf(await call(client.GET('/api/datasets', { params: { query } })))
+}
+
+export function getDatasetDetail(version: string) {
+  return call(
+    client.GET('/api/datasets/{version}', { params: { path: { version } } }),
+  )
+}
+
+export function postDatasetPublish(version: string) {
+  return call(
+    client.POST('/api/datasets/{version}/publish', { params: { path: { version } } }),
+  )
+}
+
+export function postDatasetRollback(version: string) {
+  return call(
+    client.POST('/api/datasets/{version}/rollback', { params: { path: { version } } }),
+  )
+}
+
+export interface ApplyBody {
+  source: string
+  /** true=构建并自动发布;false=仅构建候选(stage-only) */
+  publish?: boolean
+}
+
+export function postApply(body: ApplyBody) {
+  return call(
+    client.POST('/api/actions/apply', {
+      body: {
+        source: body.source,
+        publish: body.publish ?? true,
+      },
+    }),
+  )
 }
 
 // ---- M5:操作(retry) ----

@@ -70,7 +70,7 @@ const detailFields = computed(() => {
     { label: '本次输出', value: n.rows_out === null ? '—' : `${n.rows_out} 行` },
     { label: '耗时', value: n.duration_ms === null ? '—' : `${Math.round(n.duration_ms)} ms` },
     { label: '错误', value: n.error ?? '—' },
-    { label: '版本', value: n.version ?? '未启用(v0.3)' },
+    { label: '版本', value: n.version ?? '尚未发布' },
     { label: '运行 ID', value: n.run_id ?? '—' },
     { label: '来源', value: n.source ?? '—' },
   ]

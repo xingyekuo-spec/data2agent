@@ -47,17 +47,16 @@ describe('DashboardView(M3)', () => {
     expect(runs.text()).toContain('sync')
     // 无告警
     expect(wrapper.text()).toContain('无告警')
-    // 版本:无 published 时显示尚未发布,不伪造版本号、不标为健康
+    // 版本:healthy 场景展示已发布 dataset/object 版本
     const versions = wrapper.find('[data-testid="versions"]')
-    expect(versions.find('[data-testid="dataset-version-na"]').text()).toBe('尚未发布')
-    expect(versions.find('[data-testid="object-version-na"]').text()).toBe('尚未发布')
+    expect(versions.text()).toContain('ds-20260718-091100-a1b2')
+    expect(versions.find('[data-testid="dataset-version-na"]').exists()).toBe(false)
     expect(versions.text()).toContain('0.1.0')   // 模板版本真实
-    expect(versions.findAll('.version-na')).toHaveLength(2)
     // 口径说明
     expect(wrapper.find('[data-testid="count-notes"]').text()).toContain('raw_rows')
   })
 
-  it('empty-install:首次安装显示空态,不是 0 即健康', async () => {
+  it('empty-install:首次安装显示空态与尚未发布,不是 0 即健康', async () => {
     setScenario('empty-install')
     const { wrapper } = await mountDashboard()
     expect(wrapper.text()).toContain('尚未完成首次配置')

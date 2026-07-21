@@ -31,6 +31,10 @@ export type QuarantineGroup = components['schemas']['QuarantineGroup']
 export type QuarantineDetail = components['schemas']['QuarantineDetail']
 export type RetryActionResult = components['schemas']['RetryActionResult']
 export type ProposalResponse = components['schemas']['ProposalResponse']
+export type DatasetSummary = components['schemas']['DatasetSummary']
+export type DatasetDetail = components['schemas']['DatasetDetail']
+export type DatasetActionResult = components['schemas']['DatasetActionResult']
+export type ApplyActionResult = components['schemas']['ApplyActionResult']
 
 /** 场景在各端点的 200 响应体;401/500 等传输级场景由 handler 统一短路 */
 export interface ScenarioFixture {
@@ -56,11 +60,133 @@ export interface ScenarioFixture {
   templates: TemplateObject[]
   templateMetrics: TemplateMetric[]
   proposal: ProposalResponse
+  datasets: DatasetSummary[]
+  datasetDetails: Record<string, DatasetDetail>
+  datasetAction: DatasetActionResult
+  datasetActionStatus: number
+  applyAction: ApplyActionResult
+  applyActionStatus: number
   retryAction: RetryActionResult | { detail: string; reason_code?: string; run_id?: number | null; step_id?: number | null; detail_path?: string | null }
   retryActionStatus: number
 }
 
 const T = '2026-07-18T09:12:00+08:00'
+const DS_PUBLISHED = 'ds-20260718-091100-a1b2'
+const DS_PREVIOUS = 'ds-20260717-220000-c3d4'
+const DS_READY = 'ds-20260718-095000-e5f6'
+
+const publishedObjectVersions = [
+  {
+    object: 'Customer',
+    object_version: 'ov-cust-1',
+    binding_hash: 'sha256:' + 'aa'.repeat(32),
+    row_count: 36,
+    batch_id: 'b-20260718-0910',
+    build_table: 'objv_demo_customer_a1',
+    status: 'published' as const,
+    built_at: T,
+    published_at: T,
+  },
+  {
+    object: 'Material',
+    object_version: 'ov-mat-1',
+    binding_hash: 'sha256:' + 'bb'.repeat(32),
+    row_count: 58,
+    batch_id: 'b-20260718-0910',
+    build_table: 'objv_demo_material_a1',
+    status: 'published' as const,
+    built_at: T,
+    published_at: T,
+  },
+  {
+    object: 'Quotation',
+    object_version: 'ov-quo-1',
+    binding_hash: 'sha256:' + 'cc'.repeat(32),
+    row_count: 41,
+    batch_id: 'b-20260718-0910',
+    build_table: 'objv_demo_quotation_a1',
+    status: 'published' as const,
+    built_at: T,
+    published_at: T,
+  },
+  {
+    object: 'SalesOrder',
+    object_version: 'ov-so-1',
+    binding_hash: 'sha256:' + 'dd'.repeat(32),
+    row_count: 52,
+    batch_id: 'b-20260718-0910',
+    build_table: 'objv_demo_salesorder_a1',
+    status: 'published' as const,
+    built_at: T,
+    published_at: T,
+  },
+]
+
+const readyObjectVersions = publishedObjectVersions.map((o) => ({
+  ...o,
+  status: 'built' as const,
+  published_at: null,
+  object_version: `${o.object_version}-ready`,
+  build_table: `${o.build_table}_ready`,
+}))
+
+const baseDatasets: DatasetSummary[] = [
+  {
+    dataset_version: DS_READY,
+    source: 'digiwin_e10',
+    template_version: '0.1.0',
+    status: 'building',
+    built_at: '2026-07-18T09:50:00+08:00',
+    published_at: null,
+    previous_dataset_version: DS_PUBLISHED,
+    error: null,
+    error_id: null,
+    object_manifest: ['Customer', 'Material', 'Quotation', 'SalesOrder'],
+  },
+  {
+    dataset_version: DS_PUBLISHED,
+    source: 'digiwin_e10',
+    template_version: '0.1.0',
+    status: 'published',
+    built_at: T,
+    published_at: T,
+    previous_dataset_version: DS_PREVIOUS,
+    error: null,
+    error_id: null,
+    object_manifest: ['Customer', 'Material', 'Quotation', 'SalesOrder'],
+  },
+  {
+    dataset_version: DS_PREVIOUS,
+    source: 'digiwin_e10',
+    template_version: '0.1.0',
+    status: 'retired',
+    built_at: '2026-07-17T22:00:00+08:00',
+    published_at: '2026-07-17T22:00:00+08:00',
+    previous_dataset_version: null,
+    error: null,
+    error_id: null,
+    object_manifest: ['Customer', 'Material', 'Quotation', 'SalesOrder'],
+  },
+]
+
+const baseDatasetDetails: Record<string, DatasetDetail> = {
+  [DS_READY]: {
+    ...baseDatasets[0]!,
+    objects: readyObjectVersions,
+  },
+  [DS_PUBLISHED]: {
+    ...baseDatasets[1]!,
+    objects: publishedObjectVersions,
+  },
+  [DS_PREVIOUS]: {
+    ...baseDatasets[2]!,
+    objects: publishedObjectVersions.map((o) => ({
+      ...o,
+      status: 'retired' as const,
+      published_at: '2026-07-17T22:00:00+08:00',
+    })),
+  },
+}
 
 /** 管道节点构造 helper:未提供的字段显式为 null(unknown 语义,不是省略) */
 export function pipelineNode(
@@ -113,7 +239,13 @@ const basePipeline: PipelineResponse = {
       rows_out: 1279,
       duration_ms: 640,
     }),
-    pipelineNode({ node: 'objects', status: 'healthy', last_success_at: T, rows_out: 1279 }),
+    pipelineNode({
+      node: 'objects',
+      status: 'healthy',
+      last_success_at: T,
+      rows_out: 1279,
+      version: DS_PUBLISHED,
+    }),
     pipelineNode({ node: 'mcp', status: 'healthy', last_success_at: T }),
   ],
 }
@@ -126,7 +258,7 @@ const baseObjects: ObjectSummary[] = [
     rows: 36,
     mapped_at: T,
     quarantined: 0,
-    version: null,
+    version: 'ov-cust-1',
     searchable: true,
   },
   {
@@ -136,7 +268,7 @@ const baseObjects: ObjectSummary[] = [
     rows: 58,
     mapped_at: T,
     quarantined: 0,
-    version: null,
+    version: 'ov-mat-1',
     searchable: true,
   },
   {
@@ -146,7 +278,7 @@ const baseObjects: ObjectSummary[] = [
     rows: 41,
     mapped_at: T,
     quarantined: 0,
-    version: null,
+    version: 'ov-quo-1',
     searchable: true,
   },
   {
@@ -156,7 +288,7 @@ const baseObjects: ObjectSummary[] = [
     rows: 52,
     mapped_at: T,
     quarantined: 0,
-    version: null,
+    version: 'ov-so-1',
     searchable: true,
   },
 ]
@@ -469,7 +601,7 @@ export const baseFixture: ScenarioFixture = {
       last_run_at: T,
       data_updated_at: T,
     },
-    versions: { app: '0.2.0', template: '0.1.0', dataset: null, object: null },
+    versions: { app: '0.2.0', template: '0.1.0', dataset: DS_PUBLISHED, object: DS_PUBLISHED },
     binding_summary: { verified: 10, draft: 0, disabled: 0 },
     alerts: [],
     recent_runs: [
@@ -638,6 +770,9 @@ export const baseFixture: ScenarioFixture = {
       masked_fields: ['contact'],
       warnings: ['binding 为 draft:字段映射按参考表形构造,口径未经现场校准'],
       evidence_scope: 'process',
+      dataset_version: DS_PUBLISHED,
+      template_version: '0.1.0',
+      binding_hashes: { Customer: 'sha256:' + 'aa'.repeat(32) },
     },
   },
   pipeline: basePipeline,
@@ -799,6 +934,28 @@ export const baseFixture: ScenarioFixture = {
     run_id: 42,
     step_id: 1,
     detail_path: '/runs/42',
+    dataset_version: DS_PUBLISHED,
   },
   retryActionStatus: 200,
+
+  // ---- M2: datasets / apply ----
+  datasets: baseDatasets,
+  datasetDetails: baseDatasetDetails,
+  datasetAction: {
+    executed: true,
+    dataset_version: DS_PUBLISHED,
+    note: 'published',
+  },
+  datasetActionStatus: 200,
+  applyAction: {
+    executed: true,
+    results: [
+      { object: 'Customer', total: 36, mapped: 36, quarantined: 0, status: 'ok' },
+    ],
+    aborted: [],
+    dataset_version: DS_PUBLISHED,
+    published: true,
+    previous_dataset_version: DS_PREVIOUS,
+  },
+  applyActionStatus: 200,
 }

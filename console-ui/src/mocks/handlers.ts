@@ -282,5 +282,82 @@ export function buildHandlers(): HttpHandler[] {
       const fixture = scenarioFixtures[getScenario()]
       return json(fixture.retryAction, fixture.retryActionStatus ?? 200)
     }),
+
+    // ---- M2: datasets list/detail/publish/rollback + apply ----
+    http.get('*/api/datasets', ({ request }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      const fixture = scenarioFixtures[getScenario()]
+      const url = new URL(request.url)
+      const status = url.searchParams.get('status')
+      const source = url.searchParams.get('source')
+      const limit = Number(url.searchParams.get('limit') ?? '50')
+      const offset = Number(url.searchParams.get('offset') ?? '0')
+      let items = fixture.datasets
+      if (source) {
+        items = items.filter((d) => d.source === source)
+      }
+      if (status) {
+        items = items.filter((d) => d.status === status)
+      }
+      const page = items.slice(offset, offset + limit)
+      return json(page, 200, { 'X-Total-Count': String(items.length) })
+    }),
+    http.get('*/api/datasets/:version', ({ params }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      const fixture = scenarioFixtures[getScenario()]
+      const version = String(params.version)
+      const detail = fixture.datasetDetails[version]
+      if (!detail) {
+        const body: HttpError = { detail: `数据集版本 ${version} 不存在` }
+        return json(body, 404)
+      }
+      return json(detail)
+    }),
+    http.post('*/api/datasets/:version/publish', ({ params }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      const fixture = scenarioFixtures[getScenario()]
+      const version = String(params.version)
+      const detail = fixture.datasetDetails[version]
+      if (!detail) {
+        return json({ detail: `数据集版本 ${version} 不存在` } satisfies HttpError, 404)
+      }
+      if (detail.status !== 'building') {
+        return json({ detail: 'not_ready' } satisfies HttpError, 409)
+      }
+      return json(
+        { executed: true, dataset_version: version, note: 'published' },
+        fixture.datasetActionStatus ?? 200,
+      )
+    }),
+    http.post('*/api/datasets/:version/rollback', ({ params }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      const fixture = scenarioFixtures[getScenario()]
+      const version = String(params.version)
+      const detail = fixture.datasetDetails[version]
+      if (!detail) {
+        return json({ detail: `数据集版本 ${version} 不存在` } satisfies HttpError, 404)
+      }
+      if (detail.status !== 'published' || !detail.previous_dataset_version) {
+        return json({ detail: 'no_previous' } satisfies HttpError, 409)
+      }
+      return json(
+        {
+          executed: true,
+          dataset_version: detail.previous_dataset_version,
+          note: 'rolled back',
+        },
+        fixture.datasetActionStatus ?? 200,
+      )
+    }),
+    http.post('*/api/actions/apply', () => {
+      const fail = transportFailure()
+      if (fail) return fail
+      const fixture = scenarioFixtures[getScenario()]
+      return json(fixture.applyAction, fixture.applyActionStatus ?? 200)
+    }),
   ]
 }

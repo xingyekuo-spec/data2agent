@@ -1,6 +1,7 @@
 <script setup lang="ts">
-// 数据浏览(M4):Raw/Object 双 tab,目录驱动、服务端列驱动表格、业务键搜索、
-// 分类/脱敏/截断标记、同源安全 JSON。raw 403 显示安全配置指引(不降级)。
+// 数据浏览(M4+M2):Raw/Object/数据集 三 tab。
+// Raw/Object:目录驱动、服务端列驱动表格、业务键搜索、脱敏/截断、同源安全 JSON。
+// 数据集:版本列表、building-ready/failed/published/retired、publish/rollback、stage-only apply。
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { storeToRefs } from 'pinia'
@@ -9,9 +10,16 @@ import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useDataStore } from '@/stores/data'
+import { useDatasetsStore } from '@/stores/datasets'
+import {
+  canPublish,
+  canRollback,
+  datasetStatusLabel,
+} from '@/utils/datasetStatus'
 import { formatDateTime } from '@/utils/time'
 
 const store = useDataStore()
+const datasetsStore = useDatasetsStore()
 const {
   rawCatalog,
   rawCatalogRefreshError,
@@ -23,13 +31,27 @@ const {
   objPage,
   objPageRefreshError,
 } = storeToRefs(store)
+const {
+  list: datasetList,
+  total: datasetTotal,
+  listRefreshError,
+  detail: datasetDetail,
+  detailRefreshError,
+  actionResult,
+  actionError,
+  applyResult,
+  applyError,
+} = storeToRefs(datasetsStore)
 const { rawSel, rawQuery, objQuery } = store
+const { filters: datasetFilters, page: datasetPage } = datasetsStore
 const route = useRoute()
 const router = useRouter()
 
 // el-tabs 默认激活 pane 行为不明确,显式固定为 Raw
 const activeTab = ref('raw')
 const showJson = ref(false)
+const stageOnly = ref(false)
+const applySource = ref('digiwin_e10')
 let restoringQuery = false
 
 onMounted(() => {
@@ -53,7 +75,10 @@ const currentJson = computed(() => {
   if (activeTab.value === 'raw') {
     return rawPage.value?.status === 'success' ? rawPage.value.data : null
   }
-  return objPage.value?.status === 'success' ? objPage.value.data : null
+  if (activeTab.value === 'object') {
+    return objPage.value?.status === 'success' ? objPage.value.data : null
+  }
+  return datasetDetail.value?.status === 'success' ? datasetDetail.value.data : null
 })
 
 const raw403 = computed(
@@ -61,6 +86,10 @@ const raw403 = computed(
     (rawCatalog.value.status === 'error' && rawCatalog.value.error.status === 403)
     || (rawPage.value?.status === 'error' && rawPage.value.error.status === 403)
     || rawPageRefreshError.value?.status === 403,
+)
+
+const datasetDetailObjects = computed(() =>
+  datasetDetail.value?.status === 'success' ? (datasetDetail.value.data.objects ?? []) : [],
 )
 
 type CellValue = string | number | boolean | null | { __blob__?: boolean; bytes?: number }
@@ -88,6 +117,12 @@ function onObjPage(current: number): void {
   syncRouteQuery()
 }
 
+function onDatasetPage(current: number): void {
+  datasetPage.offset = (current - 1) * datasetPage.limit
+  void datasetsStore.refresh()
+  syncRouteQuery()
+}
+
 function firstString(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
@@ -105,7 +140,7 @@ function pageQuery(offset: number, limit: number): string | undefined {
 function applyRouteQuery(query: LocationQuery, browse: boolean): void {
   restoringQuery = true
   const tab = firstString(query.tab)
-  activeTab.value = tab === 'object' ? 'object' : 'raw'
+  activeTab.value = tab === 'object' || tab === 'datasets' ? tab : 'raw'
 
   let browseRaw = false
   let browseObject = false
@@ -142,6 +177,12 @@ function applyRouteQuery(query: LocationQuery, browse: boolean): void {
     }
     browseObject = Boolean(nextObj)
   }
+
+  const nextDsVersion = activeTab.value === 'datasets' ? firstString(query.version) : ''
+  const nextDsOffset = activeTab.value === 'datasets' ? pageOffset(query.page, datasetPage.limit) : 0
+  if (datasetPage.offset !== nextDsOffset) {
+    datasetPage.offset = nextDsOffset
+  }
   restoringQuery = false
   if (browse) {
     if (browseRaw && activeTab.value === 'raw') {
@@ -149,6 +190,12 @@ function applyRouteQuery(query: LocationQuery, browse: boolean): void {
     }
     if (browseObject && activeTab.value === 'object') {
       void store.browseObject()
+    }
+    if (activeTab.value === 'datasets') {
+      void datasetsStore.refresh()
+      if (nextDsVersion) {
+        void datasetsStore.openDetail(nextDsVersion)
+      }
     }
   }
 }
@@ -170,6 +217,18 @@ function syncRouteQuery(): void {
     })
     return
   }
+  if (activeTab.value === 'datasets') {
+    void router.replace({
+      query: {
+        tab: 'datasets',
+        ...(datasetsStore.detailVersion ? { version: datasetsStore.detailVersion } : {}),
+        ...(pageQuery(datasetPage.offset, datasetPage.limit) ? {
+          page: pageQuery(datasetPage.offset, datasetPage.limit),
+        } : {}),
+      },
+    })
+    return
+  }
   void router.replace({
     query: {
       tab: 'raw',
@@ -180,6 +239,33 @@ function syncRouteQuery(): void {
         page: pageQuery(rawQuery.offset, rawQuery.limit),
       } : {}),
     },
+  })
+}
+
+function onTabChange(): void {
+  if (activeTab.value === 'datasets') {
+    void datasetsStore.refresh()
+  }
+  syncRouteQuery()
+}
+
+function openDataset(version: string): void {
+  void datasetsStore.openDetail(version)
+  syncRouteQuery()
+}
+
+async function onPublish(version: string): Promise<void> {
+  await datasetsStore.publish(version)
+}
+
+async function onRollback(version: string): Promise<void> {
+  await datasetsStore.rollback(version)
+}
+
+async function onApply(): Promise<void> {
+  await datasetsStore.apply({
+    source: applySource.value || 'digiwin_e10',
+    publish: !stageOnly.value,
   })
 }
 
@@ -208,7 +294,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
 <template>
   <section class="data-page">
-    <el-tabs v-model="activeTab" data-testid="data-tabs" @tab-change="syncRouteQuery">
+    <el-tabs v-model="activeTab" data-testid="data-tabs" @tab-change="onTabChange">
       <!-- Raw 浏览 -->
       <el-tab-pane label="Raw" name="raw">
         <div class="d2a-card">
@@ -357,6 +443,12 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               <el-table-column label="行数" width="90">
                 <template #default="{ row }">{{ row.rows ?? '不可检测' }}</template>
               </el-table-column>
+              <el-table-column label="版本" width="160">
+                <template #default="{ row }">
+                  <span v-if="row.version" data-testid="obj-version">{{ row.version }}</span>
+                  <span v-else class="version-na" data-testid="obj-version-na">尚未发布</span>
+                </template>
+              </el-table-column>
               <el-table-column label="物化时间" width="150">
                 <template #default="{ row }">{{ formatDateTime(row.mapped_at) }}</template>
               </el-table-column>
@@ -447,6 +539,180 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           </template>
         </div>
       </el-tab-pane>
+
+      <!-- 数据集版本 -->
+      <el-tab-pane label="数据集" name="datasets">
+        <div class="d2a-card">
+          <h3 class="card-title">构建 / 发布</h3>
+          <div class="toolbar" data-testid="dataset-apply-bar">
+            <el-input
+              v-model="applySource"
+              size="small"
+              class="toolbar__search"
+              placeholder="source"
+              data-testid="apply-source"
+            />
+            <label class="inline" data-testid="stage-only-toggle">
+              <input v-model="stageOnly" type="checkbox" />
+              仅构建不发布(stage-only)
+            </label>
+            <el-button type="primary" size="small" data-testid="apply-run" @click="onApply">
+              {{ stageOnly ? '构建候选' : '构建并发布' }}
+            </el-button>
+          </div>
+          <p v-if="applyError" class="refresh-warning" data-testid="apply-error">
+            构建失败({{ applyError.message }})
+          </p>
+          <p
+            v-else-if="applyResult?.status === 'success'"
+            class="action-note"
+            data-testid="apply-result"
+          >
+            候选 {{ applyResult.data.dataset_version ?? '—' }}
+            · published={{ applyResult.data.published ?? false }}
+            · previous={{ applyResult.data.previous_dataset_version ?? '—' }}
+          </p>
+        </div>
+
+        <div class="d2a-card">
+          <div class="toolbar">
+            <el-select
+              v-model="datasetFilters.status"
+              placeholder="状态"
+              clearable
+              size="small"
+              data-testid="dataset-filter-status"
+              @change="datasetsStore.refresh()"
+            >
+              <el-option label="building" value="building" />
+              <el-option label="published" value="published" />
+              <el-option label="failed" value="failed" />
+              <el-option label="retired" value="retired" />
+            </el-select>
+            <el-button size="small" data-testid="datasets-refresh" @click="datasetsStore.refresh()">
+              刷新
+            </el-button>
+            <span class="toolbar__meta">共 {{ datasetTotal }} 个版本</span>
+          </div>
+          <p v-if="listRefreshError" class="refresh-warning" data-testid="datasets-refresh-error">
+            刷新失败({{ listRefreshError.message }}),展示上一次成功数据
+          </p>
+          <p v-if="actionError" class="refresh-warning" data-testid="dataset-action-error">
+            操作失败({{ actionError.message }})
+          </p>
+          <p
+            v-else-if="actionResult?.status === 'success'"
+            class="action-note"
+            data-testid="dataset-action-result"
+          >
+            已执行 → {{ actionResult.data.dataset_version }} ({{ actionResult.data.note || 'ok' }})
+          </p>
+          <LoadingState v-if="datasetList.status === 'idle' || datasetList.status === 'loading'" />
+          <ErrorState
+            v-else-if="datasetList.status === 'error'"
+            :error="datasetList.error"
+            @retry="datasetsStore.refresh()"
+          />
+          <EmptyState
+            v-else-if="datasetList.status === 'success' && datasetList.data.length === 0"
+            title="尚无数据集版本"
+            hint="先执行构建(可选择 stage-only)生成候选"
+          />
+          <template v-else-if="datasetList.status === 'success'">
+            <el-table :data="datasetList.data" size="small" data-testid="datasets-table">
+              <el-table-column prop="dataset_version" label="版本" min-width="200" />
+              <el-table-column prop="source" label="来源" width="130" />
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }">
+                  <span :data-testid="`dataset-status-${row.dataset_version}`">
+                    {{ datasetStatusLabel(row) }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="构建时间" width="150">
+                <template #default="{ row }">{{ formatDateTime(row.built_at) }}</template>
+              </el-table-column>
+              <el-table-column label="发布时间" width="150">
+                <template #default="{ row }">{{ formatDateTime(row.published_at) || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="上一版本" width="160">
+                <template #default="{ row }">{{ row.previous_dataset_version ?? '—' }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="220" fixed="right">
+                <template #default="{ row }">
+                  <el-button
+                    size="small"
+                    text
+                    :data-testid="`dataset-detail-${row.dataset_version}`"
+                    @click="openDataset(row.dataset_version)"
+                  >
+                    详情
+                  </el-button>
+                  <el-button
+                    v-if="canPublish(row)"
+                    size="small"
+                    type="primary"
+                    text
+                    :data-testid="`dataset-publish-${row.dataset_version}`"
+                    @click="onPublish(row.dataset_version)"
+                  >
+                    发布
+                  </el-button>
+                  <el-button
+                    v-if="canRollback(row)"
+                    size="small"
+                    type="warning"
+                    text
+                    :data-testid="`dataset-rollback-${row.dataset_version}`"
+                    @click="onRollback(row.dataset_version)"
+                  >
+                    回滚
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-pagination
+              class="pager"
+              layout="prev, pager, next"
+              :total="datasetTotal"
+              :page-size="datasetPage.limit"
+              :current-page="datasetPage.offset / datasetPage.limit + 1"
+              data-testid="datasets-pager"
+              @current-change="onDatasetPage"
+            />
+          </template>
+        </div>
+
+        <div v-if="datasetDetail" class="d2a-card" data-testid="dataset-detail">
+          <LoadingState v-if="datasetDetail.status === 'loading'" />
+          <ErrorState
+            v-else-if="datasetDetail.status === 'error'"
+            :error="datasetDetail.error"
+            @retry="datasetsStore.detailVersion && datasetsStore.openDetail(datasetsStore.detailVersion)"
+          />
+          <template v-else-if="datasetDetail.status === 'success'">
+            <p v-if="detailRefreshError" class="refresh-warning">
+              刷新失败({{ detailRefreshError.message }})
+            </p>
+            <h3 class="card-title">
+              {{ datasetDetail.data.dataset_version }}
+              · {{ datasetStatusLabel(datasetDetail.data, datasetDetailObjects) }}
+            </h3>
+            <p class="toolbar__meta">
+              template {{ datasetDetail.data.template_version }}
+              · previous {{ datasetDetail.data.previous_dataset_version ?? '—' }}
+              · error {{ datasetDetail.data.error ?? '—' }}
+            </p>
+            <el-table :data="datasetDetailObjects" size="small" data-testid="dataset-objects-table">
+              <el-table-column prop="object" label="对象" width="140" />
+              <el-table-column prop="object_version" label="对象版本" min-width="140" />
+              <el-table-column prop="status" label="状态" width="100" />
+              <el-table-column prop="row_count" label="行数" width="80" />
+              <el-table-column prop="binding_hash" label="binding_hash" min-width="180" />
+            </el-table>
+          </template>
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <div v-if="currentJson" class="d2a-card">
@@ -488,6 +754,24 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
 .toolbar__meta {
   font-size: 12px;
+  color: var(--d2a-text-secondary);
+}
+
+.inline {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--d2a-text-secondary);
+}
+
+.action-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--d2a-text-secondary);
+}
+
+.version-na {
   color: var(--d2a-text-secondary);
 }
 

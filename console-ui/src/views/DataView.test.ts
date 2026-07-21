@@ -53,19 +53,35 @@ describe('DataView(M4)', () => {
     expect(wrapper.text()).toContain('pk:CUSTOMER_CODE')
   })
 
-  it('对象目录 → 浏览:敏感属性脱敏', async () => {
+  it('数据集 tab:列表区分待发布/已发布,可发布与回滚', async () => {
+    const wrapper = await mountView()
+    const panes = wrapper.findAll('.el-tabs__item')
+    await panes.find((p) => p.text().includes('数据集'))?.trigger('click')
+    await flushPromises()
+    const table = wrapper.find('[data-testid="datasets-table"]')
+    expect(table.exists()).toBe(true)
+    expect(table.text()).toContain('待发布')
+    expect(table.text()).toContain('已发布')
+    expect(table.text()).toContain('已退役')
+    expect(wrapper.find('[data-testid="dataset-publish-ds-20260718-095000-e5f6"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="dataset-rollback-ds-20260718-091100-a1b2"]').exists()).toBe(true)
+
+    await wrapper.find('[data-testid="dataset-publish-ds-20260718-095000-e5f6"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dataset-action-result"]').text()).toContain('ds-20260718-095000-e5f6')
+
+    await wrapper.find('[data-testid="dataset-detail-ds-20260718-095000-e5f6"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="dataset-objects-table"]').text()).toContain('Customer')
+    expect(wrapper.find('[data-testid="dataset-objects-table"]').text()).toContain('built')
+  })
+
+  it('对象目录展示 published object_version', async () => {
     const wrapper = await mountView()
     const panes = wrapper.findAll('.el-tabs__item')
     await panes.find((p) => p.text().includes('对象层'))?.trigger('click')
     await flushPromises()
-    const catalog = wrapper.find('[data-testid="obj-catalog"]')
-    expect(catalog.exists()).toBe(true)
-    await wrapper.find('[data-testid="browse-Customer"]').trigger('click')
-    await flushPromises()
-    const table = wrapper.find('[data-testid="obj-table"]')
-    expect(table.exists()).toBe(true)
-    expect(table.text()).toContain('***')
-    expect(table.text()).not.toContain('@')
+    expect(wrapper.find('[data-testid="obj-version"]').text()).toContain('ov-cust-1')
   })
 
   it('JSON 面板与表格同源(脱敏值,不含原值)', async () => {

@@ -154,7 +154,7 @@ export const applyCircuitBrokenFixture = {
         status: 'stale',
         status_reason: 'apply 失败,对象层继续使用上一稳定结果',
         last_success_at: '2026-07-17T22:00:12+08:00',
-        version: '上一稳定版本(2026-07-17 22:00)',
+        version: 'ds-20260717-220000-c3d4',
       }),
       pipelineNode({ node: 'mcp', status: 'healthy', last_success_at: '2026-07-18T09:10:00+08:00' }),
     ],

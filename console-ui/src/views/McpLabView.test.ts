@@ -27,7 +27,7 @@ describe('McpLabView', () => {
     expect(w.find('[data-testid="feature-placeholder"]').exists()).toBe(false)
   })
 
-  it('runs object query and shows masked fields + json toggle', async () => {
+  it('runs object query and shows masked fields + version meta + json toggle', async () => {
     vi.mocked(postMcpCall).mockResolvedValue({
       ok: true,
       data: {
@@ -43,6 +43,9 @@ describe('McpLabView', () => {
           masked_fields: ['contact'],
           warnings: ['draft'],
           evidence_scope: 'process',
+          dataset_version: 'ds-v1',
+          template_version: '0.1.0',
+          binding_hashes: { Customer: 'sha256:aa' },
         },
       },
       response: new Response(),
@@ -56,9 +59,33 @@ describe('McpLabView', () => {
     await flushPromises()
     expect(w.find('[data-testid="object-result"]').exists()).toBe(true)
     expect(w.find('[data-testid="object-masked"]').text()).toContain('contact')
+    expect(w.find('[data-testid="object-dataset-version"]').text()).toContain('ds-v1')
+    expect(w.find('[data-testid="object-template-version"]').text()).toContain('0.1.0')
     await w.find('[data-testid="toggle-object-json"]').trigger('click')
     expect(w.find('[data-testid="object-raw-json"]').text()).toContain('q1')
     expect(w.find('[data-testid="object-raw-json"]').text()).toContain('***')
+  })
+
+  it('maps not_published reason for empty install queries', async () => {
+    vi.mocked(postMcpCall).mockResolvedValue({
+      ok: false,
+      error: {
+        kind: 'http',
+        status: 409,
+        message: '当前来源没有可用的已发布数据集',
+        retriable: false,
+        reason_code: 'not_published',
+      } as import('@/api/services').McpLabApiError,
+    })
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const w = mount(McpLabView, {
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    await w.find('[data-testid="object-run"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="object-result"]').exists()).toBe(false)
+    expect(w.find('[data-testid="object-error-reason"]').text()).toBe('未发布')
   })
 
   it('keeps meta and raw json when object query returns zero rows', async () => {

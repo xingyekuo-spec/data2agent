@@ -54,12 +54,22 @@ function sqliteCounts(landing) {
   const script = `
 import json, sqlite3
 db = sqlite3.connect(${JSON.stringify(landing)})
+row = db.execute(
+    "SELECT ov.build_table FROM d2a_dataset_version dv "
+    "JOIN d2a_object_version ov ON ov.dataset_version = dv.dataset_version "
+    "WHERE dv.source = ? AND dv.status = 'published' AND ov.object = 'Customer' "
+    "AND ov.build_table IS NOT NULL",
+    (${JSON.stringify(SOURCE)},),
+).fetchone()
+if row is None or not row[0]:
+    raise SystemExit("no published Customer build_table")
+phys = row[0]
 queries = {
     "d2a_sync_state": "SELECT COUNT(*) FROM d2a_sync_state",
     "d2a_quarantine": "SELECT COUNT(*) FROM d2a_quarantine",
     "d2a_sync_run": "SELECT COUNT(*) FROM d2a_sync_run",
     "raw_CUSTOMER": 'SELECT COUNT(*) FROM "raw_digiwin_e10__CUSTOMER"',
-    "obj_Customer": 'SELECT COUNT(*) FROM "obj_Customer"',
+    "obj_Customer": f'SELECT COUNT(*) FROM "{phys}"',
 }
 print(json.dumps({k: db.execute(sql).fetchone()[0] for k, sql in queries.items()}, sort_keys=True))
 `
@@ -182,8 +192,16 @@ async function runMock(browser) {
     expect((await waitText(page, '[data-testid="env-badge"]')) === 'MOCK', '顶栏持续显示 MOCK 标识')
     expect((await page.locator('[data-testid="stat-value"]').allTextContents()).length === 4, '四张摘要卡')
     expect((await page.textContent('body')).includes('对象层总行数'), '摘要卡有口径标签')
-    expect((await page.textContent('body')).includes('尚未发布'), 'dataset/object 版本显示尚未发布(不伪造版本号)')
+    expect((await page.textContent('body')).includes('ds-20260718-091100-a1b2'), 'healthy 展示已发布 dataset 版本')
     expect((await page.textContent('body')).includes('raw_rows'), '数量口径说明可见')
+
+    // 首次安装场景:尚未发布,不伪造版本号
+    await page.locator('[data-testid="scenario-switcher"] select').selectOption('empty-install')
+    await page.waitForTimeout(300)
+    expect((await page.textContent('body')).includes('尚未发布') || (await page.textContent('body')).includes('尚未完成首次配置'),
+      'empty-install:尚未发布或不完整配置')
+    await page.locator('[data-testid="scenario-switcher"] select').selectOption('healthy')
+    await page.waitForTimeout(300)
 
     // 管道页:7 节点 + overall;节点详情可开可关
     await page.locator('.el-menu-item', { hasText: '管道状态' }).click()
@@ -236,6 +254,25 @@ async function runMock(browser) {
     await page.locator('[data-testid="raw-table"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="raw-table"]')).includes('***'), 'M4:raw 敏感列脱敏')
 
+    // M2:数据集 tab —— 待发布/已发布状态、发布与回滚交互、对象版本
+    await page.goto(`http://localhost:${MOCK_PORT}/v1/data?tab=datasets`, { waitUntil: 'networkidle' })
+    await page.locator('[data-testid="datasets-table"]').waitFor({ state: 'visible' })
+    expect((await page.textContent('[data-testid="datasets-table"]')).includes('待发布'), 'M2:候选显示待发布')
+    expect((await page.textContent('[data-testid="datasets-table"]')).includes('已发布'), 'M2:当前 published 可见')
+    await page.locator('[data-testid="dataset-publish-ds-20260718-095000-e5f6"]').click()
+    await page.locator('[data-testid="dataset-action-result"]').waitFor({ state: 'visible' })
+    expect((await page.textContent('[data-testid="dataset-action-result"]')).includes('ds-20260718-095000-e5f6'),
+      'M2:publish 返回激活版本')
+    await page.locator('[data-testid="dataset-rollback-ds-20260718-091100-a1b2"]').click()
+    await page.waitForTimeout(300)
+    expect((await page.textContent('[data-testid="dataset-action-result"]')).includes('ds-20260717-220000-c3d4'),
+      'M2:rollback 回到上一稳定版本')
+    await page.locator('[data-testid="stage-only-toggle"] input').check()
+    await page.locator('[data-testid="apply-run"]').click()
+    await page.locator('[data-testid="apply-result"]').waitFor({ state: 'visible' })
+    expect((await page.textContent('[data-testid="apply-result"]')).includes('published='),
+      'M2:stage-only/apply 结果含 published 标志')
+
     // M6:MCP Lab Mock —— 查询表单、结果、建议卡入口,无写回控件
     await page.goto(`http://localhost:${MOCK_PORT}/v1/mcp`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="mcp-lab-page"]').waitFor({ state: 'visible' })
@@ -246,6 +283,8 @@ async function runMock(browser) {
     await page.locator('[data-testid="object-run"]').click()
     await page.waitForTimeout(500)
     expect((await page.locator('[data-testid="object-result"]').count()) === 1, 'M6:Mock 对象查询有结果')
+    expect((await page.textContent('[data-testid="object-dataset-version"]')).includes('ds-20260718-091100-a1b2'),
+      'M2:MCP Lab 展示查询 dataset_version')
     expect((await page.textContent('[data-testid="no-execute-hint"]')).includes('不提供执行建议'),
       'M6:明确无执行建议/写回')
     await page.close()
@@ -827,17 +866,26 @@ else:
 import json, sqlite3
 from datetime import datetime, timezone, timedelta
 db = sqlite3.connect(${JSON.stringify(landing)})
-# 确认 obj_Customer 有 _d2a_mapped_at
-row = db.execute('SELECT MAX("_d2a_mapped_at") AS m FROM "obj_Customer"').fetchone()
-mapped_at = row[0]
-assert mapped_at is not None, "obj_Customer 缺少 _d2a_mapped_at,无法构造 stale"
+# M2:从 published 快照物理表读取 _d2a_mapped_at(不再使用遗留 obj_*)
+row = db.execute(
+    "SELECT ov.build_table FROM d2a_dataset_version dv "
+    "JOIN d2a_object_version ov ON ov.dataset_version = dv.dataset_version "
+    "WHERE dv.source = ? AND dv.status = 'published' AND ov.object = 'Customer' "
+    "AND ov.build_table IS NOT NULL",
+    (${JSON.stringify(SOURCE)},),
+).fetchone()
+assert row and row[0], "no published Customer build_table"
+phys = row[0]
+mapped = db.execute(f'SELECT MAX("_d2a_mapped_at") AS m FROM "{phys}"').fetchone()
+mapped_at = mapped[0] if mapped else None
+assert mapped_at is not None, f"{phys} 缺少 _d2a_mapped_at,无法构造 stale"
 # 将 raw 表的 _d2a_extracted_at 设为未来时间,使其明显晚于 mapped_at
 future = (datetime.now(timezone.utc) + timedelta(days=365)).isoformat()
 updated = db.execute(
     'UPDATE "raw_digiwin_e10__CUSTOMER" SET "_d2a_extracted_at" = ?'
     ' WHERE "_d2a_extracted_at" <= ?', (future, mapped_at))
 db.commit()
-print(f"mapped_at={mapped_at} updated={updated.rowcount}")
+print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
 `
     sh(PYTHON, ['-c', makeStaleSh])
     const staleGroupsResp = await page.request.get(

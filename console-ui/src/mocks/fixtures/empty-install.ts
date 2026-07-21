@@ -81,4 +81,17 @@ export const emptyInstallFixture = {
     generated_at: '2026-07-18T09:12:00+08:00',
   },
   mcpCall: { data: [], meta: { usage: '带 object 参数查询数据' } },
+  datasets: [],
+  datasetDetails: {},
+  datasetAction: { executed: false, dataset_version: '', note: 'no datasets' },
+  datasetActionStatus: 404,
+  applyAction: {
+    executed: false,
+    results: [],
+    aborted: [],
+    dataset_version: null,
+    published: false,
+    previous_dataset_version: null,
+  },
+  applyActionStatus: 409,
 } satisfies ScenarioFixture

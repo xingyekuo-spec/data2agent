@@ -177,16 +177,30 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
             刷新失败({{ reasonLabel(objectRefreshError as McpLabApiError) || objectRefreshError.message }})，保留上次成功结果
           </p>
           <LoadingState v-if="objectQuery.status === 'loading'" />
-          <ErrorState
-            v-else-if="objectQuery.status === 'error'"
-            :error="objectQuery.error"
-            @retry="onRunObjects"
-          />
+          <template v-else-if="objectQuery.status === 'error'">
+            <p
+              v-if="reasonLabel(objectQuery.error as McpLabApiError)"
+              class="reason-code"
+              data-testid="object-error-reason"
+            >
+              {{ reasonLabel(objectQuery.error as McpLabApiError) }}
+            </p>
+            <ErrorState
+              :error="objectQuery.error"
+              @retry="onRunObjects"
+            />
+          </template>
           <div v-else-if="objectQuery.status === 'success'" data-testid="object-result">
             <div class="result-meta" data-testid="object-result-meta">
               <span>query_id={{ metaOf(objectQuery.data)?.query_id ?? 'null' }}</span>
               <span>耗时 {{ metaOf(objectQuery.data)?.duration_ms ?? '-' }} ms</span>
               <span>行数 {{ metaOf(objectQuery.data)?.row_count ?? rowsOf(objectQuery.data).length }}</span>
+              <span data-testid="object-dataset-version">
+                dataset={{ metaOf(objectQuery.data)?.dataset_version ?? '尚未发布' }}
+              </span>
+              <span data-testid="object-template-version">
+                template={{ metaOf(objectQuery.data)?.template_version ?? '—' }}
+              </span>
             </div>
             <p v-if="metaOf(objectQuery.data)?.masked_fields?.length" data-testid="object-masked">
               已脱敏: {{ metaOf(objectQuery.data)?.masked_fields?.join(', ') }}
@@ -242,6 +256,9 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
               <span>query_id={{ metaOf(metricsQuery.data)?.query_id ?? 'null' }}</span>
               <span>耗时 {{ metaOf(metricsQuery.data)?.duration_ms ?? '-' }} ms</span>
               <span>行数 {{ metaOf(metricsQuery.data)?.row_count ?? rowsOf(metricsQuery.data).length }}</span>
+              <span data-testid="metrics-dataset-version">
+                dataset={{ metaOf(metricsQuery.data)?.dataset_version ?? '尚未发布' }}
+              </span>
             </div>
             <ul v-if="metaOf(metricsQuery.data)?.warnings?.length" data-testid="metrics-warnings">
               <li v-for="w in metaOf(metricsQuery.data)?.warnings" :key="w">{{ w }}</li>
