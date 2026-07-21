@@ -102,8 +102,6 @@ CREATE TABLE IF NOT EXISTS d2a_dataset_version (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_dataset_one_published
     ON d2a_dataset_version (source) WHERE status = 'published';
-CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_dataset_one_building
-    ON d2a_dataset_version (source) WHERE status = 'building';
 CREATE INDEX IF NOT EXISTS idx_d2a_dataset_source_built
     ON d2a_dataset_version (source, built_at DESC);
 CREATE TABLE IF NOT EXISTS d2a_object_version (
@@ -168,9 +166,13 @@ BEGIN
 END;
 """
 
-# 冻结字段创建后不可改写;GC 仅允许 retired 对象 build_table→NULL + purged_at。
+# 冻结字段创建后不可改写;GC 仅允许已 retired 对象 build_table→NULL + purged_at。
+# status/published_at/previous_dataset_version/error 可变(发布/回滚激活路径)。
+# current/previous 保护由 T06 GC 逻辑强制,不在触发器层猜测。
 _VERSION_FREEZE_TRIGGERS = """
-CREATE TRIGGER IF NOT EXISTS trg_d2a_dataset_freeze_upd
+DROP TRIGGER IF EXISTS trg_d2a_dataset_freeze_upd;
+DROP TRIGGER IF EXISTS trg_d2a_object_freeze_upd;
+CREATE TRIGGER trg_d2a_dataset_freeze_upd
 BEFORE UPDATE ON d2a_dataset_version
 FOR EACH ROW
 WHEN NEW.source IS NOT OLD.source
@@ -181,7 +183,7 @@ WHEN NEW.source IS NOT OLD.source
 BEGIN
   SELECT RAISE(ABORT, 'frozen dataset fields are immutable');
 END;
-CREATE TRIGGER IF NOT EXISTS trg_d2a_object_freeze_upd
+CREATE TRIGGER trg_d2a_object_freeze_upd
 BEFORE UPDATE ON d2a_object_version
 FOR EACH ROW
 WHEN NEW.dataset_version IS NOT OLD.dataset_version
@@ -197,7 +199,8 @@ WHEN NEW.dataset_version IS NOT OLD.dataset_version
     IFNULL(NEW.build_table, '') IS NOT IFNULL(OLD.build_table, '')
     AND OLD.status != 'building'
     AND NOT (
-      OLD.build_table IS NOT NULL
+      OLD.status = 'retired'
+      AND OLD.build_table IS NOT NULL
       AND NEW.build_table IS NULL
       AND NEW.purged_at IS NOT NULL
       AND trim(NEW.purged_at) != ''
@@ -207,7 +210,8 @@ WHEN NEW.dataset_version IS NOT OLD.dataset_version
   OR (
     IFNULL(NEW.purged_at, '') IS NOT IFNULL(OLD.purged_at, '')
     AND NOT (
-      OLD.purged_at IS NULL
+      OLD.status = 'retired'
+      AND OLD.purged_at IS NULL
       AND NEW.purged_at IS NOT NULL
       AND trim(NEW.purged_at) != ''
       AND NEW.build_table IS NULL
@@ -706,6 +710,42 @@ class LandingStore:
         if cur.rowcount != 1:
             raise ValueError(
                 f"对象版本 {dataset_version}/{object_name} 不存在")
+        self.con.commit()
+
+    def update_object_build_result(
+        self,
+        dataset_version: str,
+        object_name: str,
+        *,
+        status: str,
+        row_count: int,
+        build_table: str | None,
+        batch_id: str | None = None,
+    ) -> None:
+        """构建完成写回:仅 building 行可更新 row_count/build_table 并转入 built/failed。"""
+        if status not in ("built", "failed"):
+            raise ValueError("构建结果状态必须是 built 或 failed")
+        if row_count < 0:
+            raise ValueError("row_count 不得为负")
+        sets = [
+            "status = ?",
+            "row_count = ?",
+            "build_table = ?",
+        ]
+        params: list[object] = [status, row_count, build_table]
+        if batch_id is not None:
+            sets.append("batch_id = ?")
+            params.append(batch_id)
+        params.extend([dataset_version, object_name])
+        cur = self.con.execute(
+            f"UPDATE d2a_object_version SET {', '.join(sets)} "
+            "WHERE dataset_version = ? AND object = ? AND status = 'building'",
+            params,
+        )
+        if cur.rowcount != 1:
+            raise ValueError(
+                f"无法写回构建结果 {dataset_version}/{object_name}"
+            )
         self.con.commit()
 
     def purge_object_build_table(

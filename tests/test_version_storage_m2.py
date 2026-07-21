@@ -233,3 +233,127 @@ def test_set_run_dataset_version_validates_existence(tmp_path):
     ).fetchone()[0] == "ds-1"
     with pytest.raises(ValueError, match="不存在"):
         store.set_run_dataset_version(rid, "missing")
+
+
+def test_dirty_multi_building_db_still_opens(tmp_path):
+    """脏旧库同 source 多个 building 不得阻断 LandingStore 启动。"""
+    db = tmp_path / "dirty.sqlite"
+    con = sqlite3.connect(db)
+    con.executescript(_OLD_DATASET_DDL)
+    for version in ("ds-a", "ds-b"):
+        con.execute(
+            "INSERT INTO d2a_dataset_version "
+            "(dataset_version, source, template_version, status, built_at, "
+            "object_manifest) "
+            "VALUES (?, 'src', '0.1.0', 'building', '2026-07-21T10:00:00', "
+            "'[\"Customer\"]')",
+            (version,),
+        )
+    con.commit()
+    con.close()
+
+    store = LandingStore(db)
+    indexes = {
+        r[0]
+        for r in store.con.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'index'"
+        )
+    }
+    assert "idx_d2a_dataset_one_building" not in indexes
+    assert "idx_d2a_dataset_building_lookup" in indexes
+    rows, total = store.list_dataset_versions(source="src", status="building")
+    assert total == 2
+    assert {r.dataset_version for r in rows} == {"ds-a", "ds-b"}
+
+
+def test_purge_from_published_is_rejected(tmp_path):
+    store = LandingStore(tmp_path / "landing.sqlite")
+    store.insert_dataset_version(
+        DatasetVersionRecord(
+            dataset_version="ds-1",
+            source="src",
+            template_version="0.1.0",
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+            object_manifest='["Customer"]',
+            template_snapshot='{"version":"0.1.0"}',
+        )
+    )
+    store.insert_object_version(
+        ObjectVersionRecord(
+            dataset_version="ds-1",
+            object="Customer",
+            object_version="obj-1",
+            binding_hash="sha256:" + "a" * 64,
+            row_count=2,
+            build_table="objv_aa_bb_cc",
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+        )
+    )
+    with pytest.raises(ValueError):
+        store.purge_object_build_table(
+            "ds-1", "Customer", purged_at="2026-07-21T12:00:00",
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        store.con.execute(
+            "UPDATE d2a_object_version "
+            "SET status = 'retired', build_table = NULL, "
+            "purged_at = '2026-07-21T12:00:00' "
+            "WHERE object_version = 'obj-1'"
+        )
+    store.con.rollback()
+    row = store.list_object_versions("ds-1")[0]
+    assert row.status == "published"
+    assert row.build_table == "objv_aa_bb_cc"
+    assert row.purged_at is None
+
+
+def test_update_object_build_result_from_building(tmp_path):
+    store = LandingStore(tmp_path / "landing.sqlite")
+    store.insert_dataset_version(
+        DatasetVersionRecord(
+            dataset_version="ds-1",
+            source="src",
+            template_version="0.1.0",
+            status="building",
+            built_at="2026-07-21T10:00:00",
+            object_manifest='["Customer"]',
+            template_snapshot='{"version":"0.1.0"}',
+        )
+    )
+    store.insert_object_version(
+        ObjectVersionRecord(
+            dataset_version="ds-1",
+            object="Customer",
+            object_version="obj-1",
+            binding_hash="sha256:" + "a" * 64,
+            row_count=0,
+            build_table=None,
+            status="building",
+            built_at="2026-07-21T10:00:00",
+        )
+    )
+    store.update_object_build_result(
+        "ds-1",
+        "Customer",
+        status="built",
+        row_count=12,
+        build_table="objv_aa_bb_cc",
+        batch_id="b1",
+    )
+    row = store.list_object_versions("ds-1")[0]
+    assert row.status == "built"
+    assert row.row_count == 12
+    assert row.build_table == "objv_aa_bb_cc"
+    assert row.batch_id == "b1"
+    with pytest.raises(ValueError):
+        store.update_object_build_result(
+            "ds-1",
+            "Customer",
+            status="built",
+            row_count=13,
+            build_table="objv_xx_yy_zz",
+        )
