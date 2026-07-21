@@ -378,7 +378,7 @@ export interface paths {
         };
         /**
          * Objects Catalog
-         * @description 对象目录:模板 ∩ 物化状态;未物化为 rows=null + warning,不伪装 0。
+         * @description 对象目录:模板 ∩ published 快照;未发布为 rows=null + warning,不伪装 0。
          */
         get: operations["objects_catalog_api_objects_get"];
         put?: never;
@@ -398,7 +398,7 @@ export interface paths {
         };
         /**
          * Object Rows
-         * @description 对象分页浏览(敏感属性服务端永久脱敏)。
+         * @description 对象分页浏览(敏感属性服务端永久脱敏);读 published 快照物理表。
          */
         get: operations["object_rows_api_objects__object__get"];
         put?: never;
@@ -630,7 +630,7 @@ export interface paths {
          * @description 模板只读展示:对象模板、属性、绑定、物化状态与隔离计数。
          *
          *     枚举映射从 binding field_map 表达式中解析;派生决策表原样透出。
-         *     物化状态按 obj_* 表是否存在、COUNT、MAX(_d2a_mapped_at) 判定;
+         *     物化状态按 published 快照物理表判定;无 published 不回退遗留 obj_*;
          *     查询失败返回 state=unknown + 警告,不伪装为未物化。
          */
         get: operations["templates_view_api_templates_get"];
@@ -1241,8 +1241,23 @@ export interface components {
         /**
          * McpQueryMeta
          * @description 查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。
+         *
+         *     M2 起附加实际读取的 dataset/template 版本与 binding_hashes(与 MCP 运行时一致)。
          */
         McpQueryMeta: {
+            /**
+             * Binding Hashes
+             * @description 查询涉及对象的 binding_hash 映射(object → hash)
+             */
+            binding_hashes?: {
+                [key: string]: string;
+            };
+            /**
+             * Dataset Version
+             * @description 查询实际读取的 published dataset_version;无 published 时为 null
+             * @default null
+             */
+            dataset_version: string | null;
             /**
              * Duration Ms
              * @description 服务端耗时毫秒
@@ -1273,6 +1288,12 @@ export interface components {
              * @description 对象名或指标名;目录查询可用空串
              */
             target: string;
+            /**
+             * Template Version
+             * @description published 快照冻结的 template_version;无 published 时为 null
+             * @default null
+             */
+            template_version: string | null;
             /**
              * Tool
              * @enum {string}
@@ -1364,7 +1385,7 @@ export interface components {
             searchable: boolean;
             /**
              * Version
-             * @description object version 属 v0.3,当前为空
+             * @description published 快照中的 object_version;尚未发布时为 null
              */
             version: string | null;
             /** Warning */
@@ -1524,7 +1545,7 @@ export interface components {
             materialized_objects: number;
             /**
              * Object Rows
-             * @description 已物化 obj_* 行数合计
+             * @description 当前 source published 快照物理表行数合计
              */
             object_rows: number | null;
             /**
@@ -3780,7 +3801,7 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description 模板存在但尚未物化 */
+            /** @description 模板存在但尚未发布 */
             409: {
                 headers: {
                     [name: string]: unknown;

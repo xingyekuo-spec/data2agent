@@ -1193,8 +1193,29 @@
         "type": "object"
       },
       "McpQueryMeta": {
-        "description": "查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。",
+        "description": "查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。\n\nM2 起附加实际读取的 dataset/template 版本与 binding_hashes(与 MCP 运行时一致)。",
         "properties": {
+          "binding_hashes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "查询涉及对象的 binding_hash 映射(object → hash)",
+            "title": "Binding Hashes",
+            "type": "object"
+          },
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "查询实际读取的 published dataset_version;无 published 时为 null",
+            "title": "Dataset Version"
+          },
           "duration_ms": {
             "description": "服务端耗时毫秒",
             "minimum": 0,
@@ -1244,6 +1265,19 @@
             "description": "对象名或指标名;目录查询可用空串",
             "title": "Target",
             "type": "string"
+          },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "published 快照冻结的 template_version;无 published 时为 null",
+            "title": "Template Version"
           },
           "tool": {
             "enum": [
@@ -1459,7 +1493,7 @@
                 "type": "null"
               }
             ],
-            "description": "object version 属 v0.3,当前为空",
+            "description": "published 快照中的 object_version;尚未发布时为 null",
             "title": "Version"
           },
           "warning": {
@@ -1870,7 +1904,7 @@
                 "type": "null"
               }
             ],
-            "description": "已物化 obj_* 行数合计",
+            "description": "当前 source published 快照物理表行数合计",
             "title": "Object Rows"
           },
           "quarantine_pending": {
@@ -6384,7 +6418,7 @@
     },
     "/api/objects": {
       "get": {
-        "description": "对象目录:模板 ∩ 物化状态;未物化为 rows=null + warning,不伪装 0。",
+        "description": "对象目录:模板 ∩ published 快照;未发布为 rows=null + warning,不伪装 0。",
         "operationId": "objects_catalog_api_objects_get",
         "responses": {
           "200": {
@@ -6433,7 +6467,7 @@
     },
     "/api/objects/{object}": {
       "get": {
-        "description": "对象分页浏览(敏感属性服务端永久脱敏)。",
+        "description": "对象分页浏览(敏感属性服务端永久脱敏);读 published 快照物理表。",
         "operationId": "object_rows_api_objects__object__get",
         "parameters": [
           {
@@ -6515,7 +6549,7 @@
                 }
               }
             },
-            "description": "模板存在但尚未物化"
+            "description": "模板存在但尚未发布"
           },
           "422": {
             "content": {
@@ -7292,7 +7326,7 @@
     },
     "/api/templates": {
       "get": {
-        "description": "模板只读展示:对象模板、属性、绑定、物化状态与隔离计数。\n\n枚举映射从 binding field_map 表达式中解析;派生决策表原样透出。\n物化状态按 obj_* 表是否存在、COUNT、MAX(_d2a_mapped_at) 判定;\n查询失败返回 state=unknown + 警告,不伪装为未物化。",
+        "description": "模板只读展示:对象模板、属性、绑定、物化状态与隔离计数。\n\n枚举映射从 binding field_map 表达式中解析;派生决策表原样透出。\n物化状态按 published 快照物理表判定;无 published 不回退遗留 obj_*;\n查询失败返回 state=unknown + 警告,不伪装为未物化。",
         "operationId": "templates_view_api_templates_get",
         "responses": {
           "200": {

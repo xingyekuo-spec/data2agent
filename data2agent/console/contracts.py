@@ -133,7 +133,10 @@ McpLabReasonCode = Literal[
 
 
 class McpQueryMeta(BaseModel):
-    """查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。"""
+    """查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。
+
+    M2 起附加实际读取的 dataset/template 版本与 binding_hashes(与 MCP 运行时一致)。
+    """
 
     query_id: str | None = Field(
         default=None,
@@ -148,6 +151,18 @@ class McpQueryMeta(BaseModel):
     evidence_scope: Literal["process"] = Field(
         default="process",
         description="v0.2:query ID 仅在当前 Console 进程/配置签名内有效",
+    )
+    dataset_version: str | None = Field(
+        default=None,
+        description="查询实际读取的 published dataset_version;无 published 时为 null",
+    )
+    template_version: str | None = Field(
+        default=None,
+        description="published 快照冻结的 template_version;无 published 时为 null",
+    )
+    binding_hashes: dict[str, str] = Field(
+        default_factory=dict,
+        description="查询涉及对象的 binding_hash 映射(object → hash)",
     )
 
 

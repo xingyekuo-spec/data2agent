@@ -73,6 +73,7 @@ def test_mcp_query_meta_schema_frozen(env):
     for key in (
         "query_id", "tool", "target", "row_count", "duration_ms",
         "masked_fields", "warnings", "evidence_scope",
+        "dataset_version", "template_version", "binding_hashes",
     ):
         assert key in props, f"McpQueryMeta missing {key}"
     scope = props["evidence_scope"]
