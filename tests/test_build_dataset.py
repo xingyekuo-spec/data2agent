@@ -126,6 +126,55 @@ def test_any_object_failure_marks_dataset_failed(landing, pack):
     assert decision.outcome == "conflict"
 
 
+def test_failure_does_not_touch_existing_published(landing, pack):
+    pub_table = make_build_table(SOURCE, "Customer", "cafebabef00d")
+    landing.con.execute(
+        f'CREATE TABLE "{pub_table}" (customer_code TEXT PRIMARY KEY)'
+    )
+    landing.con.execute(f'INSERT INTO "{pub_table}" VALUES ("KEEP")')
+    landing.insert_dataset_version(
+        DatasetVersionRecord(
+            dataset_version="ds-pub",
+            source=SOURCE,
+            template_version=pack.version,
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+            object_manifest='["Customer"]',
+            template_snapshot=pack.model_dump_json(),
+        )
+    )
+    landing.insert_object_version(
+        ObjectVersionRecord(
+            dataset_version="ds-pub",
+            object="Customer",
+            object_version="obj-keep",
+            binding_hash="sha256:" + "ab" * 32,
+            row_count=1,
+            build_table=pub_table,
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+        )
+    )
+    landing.con.execute(
+        f'UPDATE "{raw_table_name(SOURCE, "QUOTATION")}" '
+        "SET DOC_NO = NULL WHERE Id <= 15"
+    )
+    landing.con.commit()
+
+    result = build_dataset(landing, pack, SOURCE, auto_publish=False)
+    assert result.outcome == "failed"
+    assert landing.get_published_dataset(SOURCE).dataset_version == "ds-pub"
+    (code,) = landing.con.execute(
+        f'SELECT customer_code FROM "{pub_table}"'
+    ).fetchone()
+    assert code == "KEEP"
+    pub = landing.get_dataset_version("ds-pub")
+    assert pub is not None and pub.status == "published"
+    assert pub.template_snapshot == pack.model_dump_json()
+
+
 def test_empty_enabled_manifest_conflict(landing, pack):
     result = build_dataset(landing, pack, "no_such_source", auto_publish=False)
     assert result.outcome == "conflict"
@@ -133,6 +182,70 @@ def test_empty_enabled_manifest_conflict(landing, pack):
     assert result.dataset_version is None
     rows, total = landing.list_dataset_versions(source="no_such_source")
     assert total == 0 and rows == []
+
+
+def test_enabled_binding_empty_field_map_rejected(landing, pack):
+    mutated = pack.model_copy(deep=True)
+    for tpl in mutated.objects:
+        for binding in tpl.bindings:
+            if binding.source == SOURCE and binding.enabled:
+                binding.field_map = {}
+                break
+        else:
+            continue
+        break
+    result = build_dataset(landing, mutated, SOURCE, auto_publish=False)
+    assert result.outcome == "conflict"
+    assert result.reason_code == "empty_field_map"
+    assert result.dataset_version is None
+    _, total = landing.list_dataset_versions(source=SOURCE)
+    assert total == 0
+
+
+def test_new_build_freezes_new_template_snapshot(landing, pack):
+    old_snap = pack.model_dump_json()
+    pub_table = make_build_table(SOURCE, "Customer", "feedface0001")
+    landing.con.execute(
+        f'CREATE TABLE "{pub_table}" (customer_code TEXT PRIMARY KEY)'
+    )
+    landing.con.execute(f'INSERT INTO "{pub_table}" VALUES ("KEEP")')
+    landing.insert_dataset_version(
+        DatasetVersionRecord(
+            dataset_version="ds-pub",
+            source=SOURCE,
+            template_version=pack.version,
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+            object_manifest='["Customer"]',
+            template_snapshot=old_snap,
+        )
+    )
+    landing.insert_object_version(
+        ObjectVersionRecord(
+            dataset_version="ds-pub",
+            object="Customer",
+            object_version="obj-keep",
+            binding_hash="sha256:" + "ab" * 32,
+            row_count=1,
+            build_table=pub_table,
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+        )
+    )
+
+    new_pack = pack.model_copy(update={"version": "9.9.9"})
+    result = build_dataset(landing, new_pack, SOURCE, auto_publish=False)
+    assert result.outcome == "ok"
+    candidate = landing.get_dataset_version(result.dataset_version)
+    assert candidate is not None
+    assert candidate.template_version == "9.9.9"
+    assert candidate.template_snapshot == new_pack.model_dump_json()
+    published = landing.get_dataset_version("ds-pub")
+    assert published is not None
+    assert published.template_version == pack.version
+    assert published.template_snapshot == old_snap
 
 
 def test_stale_building_recovered_on_next_build(landing, pack):
