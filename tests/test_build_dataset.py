@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import date
 from pathlib import Path
 
@@ -119,6 +118,12 @@ def test_any_object_failure_marks_dataset_failed(landing, pack):
     objs = landing.list_object_versions(result.dataset_version)
     assert ds.status == "failed"
     assert any(o.object == "Quotation" and o.status == "failed" for o in objs)
+    assert all(o.status == "failed" for o in objs)
+    assert all(o.build_table is None for o in objs)
+    candidate_tables = landing.con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'objv_%'"
+    ).fetchall()
+    assert candidate_tables == []
     assert landing.get_published_dataset(SOURCE) is None
     decision = evaluate_publish(
         candidate=ds, objects=objs, current_published=None,
@@ -282,11 +287,51 @@ def test_stale_building_recovered_on_next_build(landing, pack):
     assert result.dataset_version != "ds-stale"
     stale = landing.get_dataset_version("ds-stale")
     assert stale is not None and stale.status == "failed"
+    stale_objs = landing.list_object_versions("ds-stale")
+    assert all(o.status == "failed" for o in stale_objs)
+    assert all(o.build_table is None for o in stale_objs)
     exists = landing.con.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
         (orphan,),
     ).fetchone()
     assert exists is None
+
+
+def test_active_build_run_blocks_new_candidate(landing, pack):
+    landing.insert_dataset_version(
+        DatasetVersionRecord(
+            dataset_version="ds-active",
+            source=SOURCE,
+            template_version=pack.version,
+            status="building",
+            built_at="2026-07-21T09:00:00",
+            object_manifest='["Customer"]',
+            template_snapshot=pack.model_dump_json(),
+        )
+    )
+    landing.insert_object_version(
+        ObjectVersionRecord(
+            dataset_version="ds-active",
+            object="Customer",
+            object_version="obj-active",
+            binding_hash="sha256:" + "ef" * 32,
+            row_count=0,
+            build_table=None,
+            status="building",
+            built_at="2026-07-21T09:00:00",
+        )
+    )
+    run_id = landing.start_run(SOURCE, "apply")
+    landing.set_run_dataset_version(run_id, "ds-active")
+
+    result = build_dataset(landing, pack, SOURCE, auto_publish=False)
+    assert result.outcome == "conflict"
+    assert result.reason_code == "active_build"
+    assert result.dataset_version is None
+    active = landing.get_dataset_version("ds-active")
+    assert active is not None and active.status == "building"
+    rows, total = landing.list_dataset_versions(source=SOURCE, status="building")
+    assert total == 1 and rows[0].dataset_version == "ds-active"
 
 
 def test_auto_publish_not_implemented_yet(landing, pack):

@@ -194,6 +194,11 @@ def _recover_stale_building(store: LandingStore, source: str) -> str | None:
                     store.update_object_lifecycle(
                         ds.dataset_version, obj.object, status="failed",
                     )
+            elif obj.status == "built":
+                # 冻结字段不允许清空 build_table;至少把状态改成 failed。
+                store.update_object_lifecycle(
+                    ds.dataset_version, obj.object, status="failed",
+                )
             if table and table not in protected:
                 _drop_table_best_effort(store, table)
         store.update_dataset_lifecycle(
@@ -349,7 +354,8 @@ def build_dataset(
     results: list[ObjectApplyResult] = []
     any_failed = False
     internal_errors: list[str] = []
-    built_tables: list[str] = []
+    # 延后写 built:对象保持 building,失败时可在冻结规则内清空 build_table。
+    pending_ok: list[tuple[str, ObjectApplyResult, str]] = []
 
     for tpl, binding in members:
         object_version = f"ov_{uuid.uuid4().hex[:16]}"
@@ -370,16 +376,7 @@ def build_dataset(
             result = apply_object(
                 store, tpl, source, build_table=table, threshold=threshold,
             )
-            store.update_object_build_result(
-                dataset_version,
-                tpl.object,
-                status="built",
-                row_count=result.mapped,
-                build_table=result.build_table,
-                batch_id=result.batch_id,
-            )
-            if result.build_table:
-                built_tables.append(result.build_table)
+            pending_ok.append((tpl.object, result, result.build_table or table))
             results.append(result)
         except MappingCircuitBreaker as e:
             any_failed = True
@@ -416,8 +413,21 @@ def build_dataset(
             ))
 
     if any_failed:
-        for table in built_tables:
+        for object_name, result, table in pending_ok:
             _drop_table_best_effort(store, table)
+            try:
+                store.update_object_build_result(
+                    dataset_version,
+                    object_name,
+                    status="failed",
+                    row_count=0,
+                    build_table=None,
+                    batch_id=result.batch_id,
+                )
+            except ValueError:
+                store.update_object_lifecycle(
+                    dataset_version, object_name, status="failed",
+                )
         summary, error_id = _safe_error("; ".join(internal_errors) or "build failed")
         store.update_dataset_lifecycle(
             dataset_version, status="failed", error=f"{summary} [{error_id}]",
@@ -441,6 +451,16 @@ def build_dataset(
             reason_code="build_failed",
             error=summary,
             error_id=error_id,
+        )
+
+    for object_name, result, table in pending_ok:
+        store.update_object_build_result(
+            dataset_version,
+            object_name,
+            status="built",
+            row_count=result.mapped,
+            build_table=table,
+            batch_id=result.batch_id,
         )
 
     store.finish_run(
