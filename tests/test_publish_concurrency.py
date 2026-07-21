@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.dataset_publish import (
     PublishedSnapshotError,
+    _recover_stale_building,
     build_dataset,
     publish_dataset,
     published_read_tx,
@@ -282,6 +283,75 @@ def test_two_concurrent_publishers_one_wins(tmp_path, pack):
     check.con.close()
 
 
+def test_stale_recover_skips_after_concurrent_publish_wins(tmp_path, pack, monkeypatch):
+    """recovery 先读到 building 后暂停;publish 提交后 recovery 必须跳过,不得删表。
+
+    真实双连接: list(building) → 暂停 → publish COMMIT → recovery 继续。
+    """
+    landing = _sync_landing(tmp_path, pack)
+    staged = _stage(landing, pack)
+    version = staged.dataset_version
+    tables = [
+        o.build_table
+        for o in landing.list_object_versions(version)
+        if o.build_table
+    ]
+    assert len(tables) >= 1
+    db_path = landing.db_path
+    landing.con.close()
+
+    pause_after_read = threading.Event()
+    resume = threading.Event()
+    recover_results: list[str | None] = []
+    real_list = LandingStore.list_dataset_versions
+
+    def list_then_pause(self, *args, **kwargs):
+        rows, total = real_list(self, *args, **kwargs)
+        if kwargs.get("status") == "building" and rows:
+            pause_after_read.set()
+            assert resume.wait(timeout=30), "publish did not resume recovery"
+        return rows, total
+
+    monkeypatch.setattr(LandingStore, "list_dataset_versions", list_then_pause)
+
+    def recoverer() -> None:
+        store = LandingStore(db_path)
+        try:
+            recover_results.append(_recover_stale_building(store, SOURCE))
+        finally:
+            store.con.close()
+
+    t = threading.Thread(target=recoverer, daemon=True)
+    t.start()
+    assert pause_after_read.wait(timeout=10), "recovery did not reach list pause"
+
+    publisher = LandingStore(db_path)
+    pub = publish_dataset(publisher, version)
+    publisher.con.close()
+    assert pub.executed is True and pub.outcome == "ok"
+
+    resume.set()
+    t.join(timeout=30)
+    assert recover_results == [None]
+
+    check = LandingStore(db_path)
+    published = check.get_published_dataset(SOURCE)
+    assert published is not None
+    assert published.dataset_version == version
+    assert published.status == "published"
+    objs = check.list_object_versions(version)
+    assert all(o.status == "published" for o in objs)
+    for table in tables:
+        exists = check.con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        assert exists is not None, f"published table dropped: {table}"
+    snap = resolve_published_snapshot(check, SOURCE)
+    _assert_snap_coherent(check, snap)
+    check.con.close()
+
+
 def test_build_after_intervening_publish_rejects_stale_previous(tmp_path, pack):
     """构建冻结 previous 后若另一次发布已切换当前指针 → stale_previous。"""
     landing = _sync_landing(tmp_path, pack)
@@ -398,10 +468,15 @@ def test_console_http_objects_catalog_consistent_under_publish(tmp_path, pack):
     def hammer() -> None:
         while not stop.is_set():
             try:
-                rows = client.get("/api/objects", headers=headers).json()
+                resp = client.get("/api/objects", headers=headers)
+                assert resp.status_code == 200, resp.text
+                rows = resp.json()
+                assert isinstance(rows, list), type(rows)
                 obj_versions = {
                     r["version"] for r in rows
-                    if r.get("rows") is not None and r.get("version")
+                    if isinstance(r, dict)
+                    and r.get("rows") is not None
+                    and r.get("version")
                 }
                 if obj_versions:
                     assert obj_versions <= v1_owned or obj_versions <= v2_owned

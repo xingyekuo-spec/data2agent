@@ -242,41 +242,77 @@ def _has_active_build_run(store: LandingStore, dataset_version: str) -> bool:
 
 
 def _recover_stale_building(store: LandingStore, source: str) -> str | None:
-    """关闭同 source 陈旧 building;若仍有运行中任务则返回 conflict reason。"""
-    protected = _protected_build_tables(store, source)
+    """关闭同 source 陈旧 building;若仍有运行中任务则返回 conflict reason。
+
+    每个候选在 BEGIN IMMEDIATE 内重读:仍为 building 且无 running 租约才标记
+    failed。publish 已获胜则跳过。物理表仅在元数据事务提交后清理。
+    """
     building_rows, _ = store.list_dataset_versions(
         source=source, status="building", limit=50, offset=0,
     )
     for ds in building_rows:
-        if _has_active_build_run(store, ds.dataset_version):
+        version = ds.dataset_version
+        if _has_active_build_run(store, version):
             return "active_build"
-        for obj in store.list_object_versions(ds.dataset_version):
-            table = obj.build_table
-            if obj.status == "building":
-                try:
-                    store.update_object_build_result(
-                        ds.dataset_version,
-                        obj.object,
-                        status="failed",
-                        row_count=0,
-                        build_table=None,
-                    )
-                except ValueError:
+
+        tables_to_drop: list[str] = []
+        marked_failed = False
+
+        def _txn() -> None:
+            nonlocal marked_failed
+            current = store.get_dataset_version(version)
+            if current is None or current.status != "building":
+                # publish/rollback 或其他路径已改变状态:不得按旧快照回收。
+                return
+            if _has_active_build_run(store, version):
+                raise _TxnRecheckAbort("conflict", "active_build", 409)
+
+            protected = _protected_build_tables(store, source)
+            objs = store.list_object_versions(version)
+            if any(o.status == "published" for o in objs):
+                # 数据集行仍 building 但对象已发布:异常交错,跳过以免破坏 publish。
+                return
+            for obj in objs:
+                table = obj.build_table
+                if obj.status == "building":
+                    try:
+                        store.update_object_build_result(
+                            version,
+                            obj.object,
+                            status="failed",
+                            row_count=0,
+                            build_table=None,
+                            commit=False,
+                        )
+                    except ValueError:
+                        store.update_object_lifecycle(
+                            version, obj.object, status="failed", commit=False,
+                        )
+                elif obj.status == "built":
+                    # 冻结字段不允许清空 build_table;至少把状态改成 failed。
                     store.update_object_lifecycle(
-                        ds.dataset_version, obj.object, status="failed",
+                        version, obj.object, status="failed", commit=False,
                     )
-            elif obj.status == "built":
-                # 冻结字段不允许清空 build_table;至少把状态改成 failed。
-                store.update_object_lifecycle(
-                    ds.dataset_version, obj.object, status="failed",
-                )
-            if table and table not in protected:
+                if table and table not in protected:
+                    tables_to_drop.append(table)
+            store.update_dataset_lifecycle(
+                version,
+                status="failed",
+                error="interrupted build recovered",
+                commit=False,
+            )
+            marked_failed = True
+
+        try:
+            _run_immediate_txn(store, _txn)
+        except _TxnRecheckAbort as e:
+            if e.reason_code == "active_build":
+                return "active_build"
+            raise
+
+        if marked_failed:
+            for table in tables_to_drop:
                 _drop_table_best_effort(store, table)
-        store.update_dataset_lifecycle(
-            ds.dataset_version,
-            status="failed",
-            error="interrupted build recovered",
-        )
     return None
 
 

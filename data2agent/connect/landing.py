@@ -769,6 +769,7 @@ class LandingStore:
         row_count: int,
         build_table: str | None,
         batch_id: str | None = None,
+        commit: bool = True,
     ) -> None:
         """构建完成写回:仅 building 行可更新 row_count/build_table 并转入 built/failed。"""
         if status not in ("built", "failed"):
@@ -794,7 +795,8 @@ class LandingStore:
             raise ValueError(
                 f"无法写回构建结果 {dataset_version}/{object_name}"
             )
-        self.con.commit()
+        if commit:
+            self.con.commit()
 
     def purge_object_build_table(
         self,
