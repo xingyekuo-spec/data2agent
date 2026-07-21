@@ -359,3 +359,57 @@ export async function postProposal(
     return { ok: false, error: toApiError(err) }
   }
 }
+
+// ---- M3: Mapping Preview ----
+
+export type MappingPreviewRequest = components['schemas']['MappingPreviewRequest']
+export type MappingPreviewResponse = components['schemas']['MappingPreviewResponse']
+export type MappingPreviewErrorBody = components['schemas']['MappingPreviewError']
+export type MappingPreviewDraftBinding = components['schemas']['MappingPreviewDraftBinding']
+
+/**
+ * Preview 失败时的结构化错误,保留后端 MappingPreviewError 的 reason_code / error_id,
+ * 前端按 status/reason_code 分支,不解析中文 detail。
+ */
+export interface MappingPreviewApiError extends ApiError {
+  reason_code?: MappingPreviewErrorBody['reason_code']
+  error_id?: string | null
+}
+
+function mappingPreviewErrorFrom(status: number, error: unknown): MappingPreviewApiError {
+  const err = error as Record<string, unknown> | undefined
+  const detail = typeof err?.detail === 'string' ? err.detail : detailOf(error)
+  return {
+    kind: 'http',
+    status,
+    message: detail || `HTTP ${status}`,
+    retriable: status >= 500 && status !== 501,
+    reason_code: typeof err?.reason_code === 'string'
+      ? (err.reason_code as MappingPreviewErrorBody['reason_code'])
+      : undefined,
+    error_id: typeof err?.error_id === 'string' ? err.error_id : null,
+  }
+}
+
+export async function postMappingPreview(
+  object: string,
+  body: MappingPreviewRequest,
+  init?: { signal?: AbortSignal },
+): Promise<ApiResult<MappingPreviewResponse>> {
+  try {
+    const { data, error, response } = await client.POST('/api/mappings/{object}/preview', {
+      params: { path: { object } },
+      body,
+      signal: init?.signal,
+    })
+    if (!response.ok) {
+      return { ok: false, error: mappingPreviewErrorFrom(response.status, error) }
+    }
+    if (data === undefined) {
+      return { ok: false, error: { kind: 'parse', message: '成功响应缺少数据', retriable: false } }
+    }
+    return { ok: true, data, response }
+  } catch (err) {
+    return { ok: false, error: toApiError(err) }
+  }
+}

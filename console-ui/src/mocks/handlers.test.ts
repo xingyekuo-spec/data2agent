@@ -157,3 +157,106 @@ describe('mock handlers', () => {
     ).not.toThrow()
   })
 })
+
+describe('mapping preview handlers', () => {
+  afterEach(() => setScenario('healthy'))
+
+  it('healthy current:200 + mode=current', async () => {
+    const { postMappingPreview } = await import('@/api/services')
+    const result = await postMappingPreview('Customer', { source: 'digiwin_e10' })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.data.mode).toBe('current')
+      expect(result.data.sample.sampled_rows).toBeGreaterThan(0)
+      expect(result.data.diff.state).toBe('available')
+    }
+  })
+
+  it('healthy draft:200 + mode=draft with diff', async () => {
+    const { postMappingPreview } = await import('@/api/services')
+    const result = await postMappingPreview('Customer', {
+      source: 'digiwin_e10',
+      draft_binding: {
+        tables: ['CUSTOMER'],
+        key_map: { customer_code: 'CUSTOMER.CUSTOMER_CODE' },
+        field_map: { customer_code: 'CUSTOMER.CUSTOMER_CODE' },
+        derived: {},
+        watermark: null,
+        notes: '',
+      },
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.data.mode).toBe('draft')
+      expect(result.data.diff.summary.fields_changed).toBeGreaterThan(0)
+      expect(result.data.current_binding_hash).not.toBe(result.data.candidate_binding_hash)
+    }
+  })
+
+  it('empty-install:200 + sampled_rows=0', async () => {
+    setScenario('empty-install')
+    const { postMappingPreview } = await import('@/api/services')
+    const result = await postMappingPreview('Customer', { source: 'digiwin_e10' })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect(result.data.sample.sampled_rows).toBe(0)
+      expect(result.data.candidate.summary.total).toBe(0)
+    }
+  })
+
+  it('token-invalid:401 unauthorized MappingPreviewError', async () => {
+    setScenario('token-invalid')
+    const { postMappingPreview } = await import('@/api/services')
+    const result = await postMappingPreview('Customer', { source: 'digiwin_e10' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.status).toBe(401)
+      expect((result.error as { reason_code?: string }).reason_code).toBe('unauthorized')
+    }
+  })
+
+  it('preview-forbidden:403 token_not_configured', async () => {
+    setScenario('preview-forbidden')
+    const { postMappingPreview } = await import('@/api/services')
+    const result = await postMappingPreview('Customer', { source: 'digiwin_e10' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.status).toBe(403)
+      expect((result.error as { reason_code?: string }).reason_code).toBe('token_not_configured')
+    }
+  })
+
+  it('preview-draft-invalid:422 draft_invalid', async () => {
+    setScenario('preview-draft-invalid')
+    const { postMappingPreview } = await import('@/api/services')
+    const result = await postMappingPreview('Customer', {
+      source: 'digiwin_e10',
+      draft_binding: {
+        tables: ['CUSTOMER'],
+        key_map: {},
+        field_map: {},
+        derived: {},
+        watermark: null,
+        notes: '',
+      },
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.status).toBe(422)
+      expect((result.error as { reason_code?: string }).reason_code).toBe('draft_invalid')
+    }
+  })
+
+  it('unknown-error:500 preview_failed + error_id', async () => {
+    setScenario('unknown-error')
+    const { postMappingPreview } = await import('@/api/services')
+    const result = await postMappingPreview('Customer', { source: 'digiwin_e10' })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.error.status).toBe(500)
+      expect(result.error.retriable).toBe(true)
+      expect((result.error as { reason_code?: string }).reason_code).toBe('preview_failed')
+      expect((result.error as { error_id?: string | null }).error_id).toBeTruthy()
+    }
+  })
+})

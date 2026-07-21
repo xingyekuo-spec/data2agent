@@ -5,6 +5,11 @@
  * 只覆盖与基座有差异的部分;`healthy` 不得成为 fixture 解析失败时的回退。
  */
 import type { components } from '@/types/api'
+import {
+  mappingPreviewCurrent,
+  mappingPreviewDraft,
+  mappingPreviewEmpty,
+} from './mapping-preview'
 
 export type HttpError = components['schemas']['HttpError']
 export type SetupStatusResponse = components['schemas']['SetupStatusResponse']
@@ -35,6 +40,8 @@ export type DatasetSummary = components['schemas']['DatasetSummary']
 export type DatasetDetail = components['schemas']['DatasetDetail']
 export type DatasetActionResult = components['schemas']['DatasetActionResult']
 export type ApplyActionResult = components['schemas']['ApplyActionResult']
+export type MappingPreviewResponse = components['schemas']['MappingPreviewResponse']
+export type MappingPreviewError = components['schemas']['MappingPreviewError']
 
 /** 场景在各端点的 200 响应体;401/500 等传输级场景由 handler 统一短路 */
 export interface ScenarioFixture {
@@ -70,6 +77,12 @@ export interface ScenarioFixture {
   applyStageOnlyAction?: ApplyActionResult
   retryAction: RetryActionResult | { detail: string; reason_code?: string; run_id?: number | null; step_id?: number | null; detail_path?: string | null }
   retryActionStatus: number
+  /** M3: mapping preview — current / draft / empty 成功体;错误场景用 status + error */
+  mappingPreviewCurrent: MappingPreviewResponse
+  mappingPreviewDraft: MappingPreviewResponse
+  mappingPreviewEmpty: MappingPreviewResponse
+  mappingPreviewStatus: number
+  mappingPreviewError: MappingPreviewError | null
 }
 
 const T = '2026-07-18T09:12:00+08:00'
@@ -992,4 +1005,11 @@ export const baseFixture: ScenarioFixture = {
     published: false,
     previous_dataset_version: DS_PUBLISHED,
   },
+
+  // ---- M3: mapping preview ----
+  mappingPreviewCurrent,
+  mappingPreviewDraft,
+  mappingPreviewEmpty,
+  mappingPreviewStatus: 200,
+  mappingPreviewError: null,
 }

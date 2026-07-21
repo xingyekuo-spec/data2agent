@@ -12,6 +12,8 @@ import { emptyInstallFixture } from './fixtures/empty-install'
 import { healthyFixture } from './fixtures/healthy'
 import { ingestFailedFixture } from './fixtures/ingest-failed'
 import { partialServicesDownFixture } from './fixtures/partial-services-down'
+import { previewDraftInvalidFixture } from './fixtures/preview-draft-invalid'
+import { previewForbiddenFixture } from './fixtures/preview-forbidden'
 import { quarantinePendingFixture } from './fixtures/quarantine-pending'
 import { syncRunningFixture } from './fixtures/sync-running'
 import { tokenInvalidFixture } from './fixtures/token-invalid'
@@ -28,6 +30,8 @@ export const SCENARIO_IDS = [
   'draft-governance',
   'token-invalid',
   'unknown-error',
+  'preview-forbidden',
+  'preview-draft-invalid',
 ] as const
 
 export type ScenarioId = (typeof SCENARIO_IDS)[number]
@@ -38,7 +42,7 @@ export interface ScenarioMeta {
   description: string
 }
 
-/** 必备 Mock 场景矩阵(M2 计划 §6) */
+/** Mock 场景矩阵(M2 必备 10 + M3 Preview 专用) */
 export const SCENARIOS: readonly ScenarioMeta[] = [
   { id: 'healthy', label: '全链路正常', description: '服务可达、最近运行成功、无隔离' },
   { id: 'empty-install', label: '首次安装', description: '没有数据:空集合 / 从未运行' },
@@ -58,6 +62,16 @@ export const SCENARIOS: readonly ScenarioMeta[] = [
   { id: 'draft-governance', label: 'binding 仍为 draft', description: '未经现场校准' },
   { id: 'token-invalid', label: 'Token 无效', description: '全部 API 返回 401' },
   { id: 'unknown-error', label: '未知错误', description: '全部 API 返回 500' },
+  {
+    id: 'preview-forbidden',
+    label: 'Preview 未配 Token',
+    description: '映射 Preview 返回 403 token_not_configured',
+  },
+  {
+    id: 'preview-draft-invalid',
+    label: 'Preview 草稿非法',
+    description: '映射 Preview 返回 422 draft_invalid',
+  },
 ]
 
 export const scenarioFixtures: Record<ScenarioId, ScenarioFixture> = {
@@ -71,6 +85,8 @@ export const scenarioFixtures: Record<ScenarioId, ScenarioFixture> = {
   'draft-governance': draftGovernanceFixture,
   'token-invalid': tokenInvalidFixture,
   'unknown-error': unknownErrorFixture,
+  'preview-forbidden': previewForbiddenFixture,
+  'preview-draft-invalid': previewDraftInvalidFixture,
 }
 
 const DEFAULT_SCENARIO: ScenarioId = 'healthy'

@@ -369,6 +369,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mappings/{object}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mappings Preview
+         * @description 映射 Preview:只读样本试算,不写业务表。
+         *
+         *     鉴权/审计走可写 store(log_access);求值走 LandingStore.open_readonly()
+         *     快照连接,避免 preview 路径持有写连接或触发 DDL。
+         */
+        post: operations["mappings_preview_api_mappings__object__preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/objects": {
         parameters: {
             query?: never;
@@ -1145,6 +1168,355 @@ export interface components {
              * @description Log tail text; failure must keep ok=false (not empty success)
              */
             text: string;
+        };
+        /** MappingPreviewBusinessKeyIssues */
+        MappingPreviewBusinessKeyIssues: {
+            /** Duplicate */
+            duplicate: number;
+            /** Missing */
+            missing: number;
+            /**
+             * Scope
+             * @description 重复检测仅覆盖本次样本,样本外未检查
+             * @default sample
+             * @constant
+             */
+            scope: "sample";
+        };
+        /**
+         * MappingPreviewDeriveRule
+         * @description Preview 草稿派生规则;形状与 DeriveRule 一致,附加放大上限。
+         */
+        MappingPreviewDeriveRule: {
+            /** Value */
+            value: string;
+            /**
+             * When
+             * @description 条件:字段→值(None=any);最多 32 项,键/值各 ≤512
+             */
+            when?: {
+                [key: string]: string | null;
+            };
+        };
+        /** MappingPreviewDerivedCoverage */
+        MappingPreviewDerivedCoverage: {
+            /** Default Hits */
+            default_hits: number;
+            /** Eligible Rows */
+            eligible_rows: number;
+            /** Field */
+            field: string;
+            /** Matched Rows */
+            matched_rows: number;
+            /**
+             * Row Coverage
+             * @description 分母为零时为 null,不伪装为 0% 或 100%(必填可空)
+             */
+            row_coverage: number | null;
+            /** Rules */
+            rules?: components["schemas"]["MappingPreviewDerivedRuleHit"][];
+            /** Rules Hit */
+            rules_hit: number;
+            /** Rules Total */
+            rules_total: number;
+            /** Unmatched Rows */
+            unmatched_rows: number;
+        };
+        /**
+         * MappingPreviewDerivedField
+         * @description Preview 草稿派生字段;形状与 DerivedField 一致,规则最多 64 条。
+         */
+        MappingPreviewDerivedField: {
+            /** Default */
+            default?: string | null;
+            /**
+             * Rules
+             * @description 有序规则列表,最多 64 条
+             */
+            rules?: components["schemas"]["MappingPreviewDeriveRule"][];
+        };
+        /** MappingPreviewDerivedRuleHit */
+        MappingPreviewDerivedRuleHit: {
+            /** Hit Count */
+            hit_count: number;
+            /** Index */
+            index: number;
+        };
+        /** MappingPreviewDiff */
+        MappingPreviewDiff: {
+            /**
+             * Reason
+             * @description unavailable 时为 no_current_binding;available 时为 null(必填可空)
+             */
+            reason: "no_current_binding" | null;
+            /** Rows */
+            rows?: components["schemas"]["MappingPreviewDiffRow"][];
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "available" | "unavailable";
+            summary: components["schemas"]["MappingPreviewDiffSummary"];
+        };
+        /** MappingPreviewDiffField */
+        MappingPreviewDiffField: {
+            after?: components["schemas"]["JsonValue-Output"] | null;
+            before?: components["schemas"]["JsonValue-Output"] | null;
+            /** Field */
+            field: string;
+        };
+        /** MappingPreviewDiffRow */
+        MappingPreviewDiffRow: {
+            /** Fields */
+            fields?: components["schemas"]["MappingPreviewDiffField"][];
+            /** Sample Row Id */
+            sample_row_id: string;
+            /** Status After */
+            status_after?: ("mapped" | "quarantined") | null;
+            /** Status Before */
+            status_before?: ("mapped" | "quarantined") | null;
+        };
+        /** MappingPreviewDiffSummary */
+        MappingPreviewDiffSummary: {
+            /** Fields Changed */
+            fields_changed: number;
+            /** Rows Changed */
+            rows_changed: number;
+            /** Status Changed */
+            status_changed: number;
+        };
+        /**
+         * MappingPreviewDraftBinding
+         * @description 一次性草稿 binding:draft-only,拒绝客户端伪造 status。
+         *
+         *     服务端后续任务构造 status=draft 的 SourceBinding;本模型不含 status。
+         */
+        MappingPreviewDraftBinding: {
+            /**
+             * Derived
+             * @description 派生字段,最多 64 个;每字段规则最多 64
+             */
+            derived?: {
+                [key: string]: components["schemas"]["MappingPreviewDerivedField"];
+            };
+            /**
+             * Field Map
+             * @description 字段映射,最多 128 项;键/值各 ≤512
+             */
+            field_map?: {
+                [key: string]: string;
+            };
+            /**
+             * Key Map
+             * @description 业务键映射,最多 128 项;键/值各 ≤512
+             */
+            key_map?: {
+                [key: string]: string;
+            };
+            /**
+             * Notes
+             * @description 草稿备注,最长 2000
+             * @default
+             */
+            notes: string;
+            /**
+             * Tables
+             * @description raw 表白名单引用,1..16;tables[0] 为锚表;表名非空
+             */
+            tables: string[];
+            /** Watermark */
+            watermark?: string | null;
+        };
+        /** MappingPreviewEnumGap */
+        MappingPreviewEnumGap: {
+            /** Count */
+            count: number;
+            /** Field */
+            field: string;
+            /** Source Value */
+            source_value: string;
+        };
+        /**
+         * MappingPreviewError
+         * @description Preview 安全错误:前端按 status/reason_code 分支,不解析中文 detail。
+         */
+        MappingPreviewError: {
+            /** Detail */
+            detail: string;
+            /**
+             * Error Id
+             * @description 内部失败时的稳定短标识;非 500 为 null(必填可空)
+             */
+            error_id: string | null;
+            /**
+             * Reason Code
+             * @enum {string}
+             */
+            reason_code: "unauthorized" | "token_not_configured" | "object_not_found" | "source_not_found" | "raw_table_not_found" | "sample_batch_not_found" | "current_binding_unavailable" | "raw_unavailable" | "draft_invalid" | "sample_invalid" | "anchor_changed" | "preview_failed";
+            /**
+             * Status
+             * @description HTTP 状态码
+             */
+            status: number;
+        };
+        /**
+         * MappingPreviewEvaluation
+         * @description current 或 candidate 一侧的评估结果。
+         */
+        MappingPreviewEvaluation: {
+            business_key_issues: components["schemas"]["MappingPreviewBusinessKeyIssues"];
+            /** Derived Coverage */
+            derived_coverage?: components["schemas"]["MappingPreviewDerivedCoverage"][];
+            /** Enum Gaps */
+            enum_gaps?: components["schemas"]["MappingPreviewEnumGap"][];
+            /** Rows */
+            rows?: components["schemas"]["MappingPreviewRow"][];
+            summary: components["schemas"]["MappingPreviewSummary"];
+        };
+        /** MappingPreviewIssue */
+        MappingPreviewIssue: {
+            /**
+             * Detail
+             * @description 安全摘要;不含 SQL/物理表/traceback/未脱敏原值
+             */
+            detail: string;
+            /**
+             * Field
+             * @description 问题字段;无具体字段时为 null(必填可空)
+             */
+            field: string | null;
+            /**
+             * Reason Code
+             * @enum {string}
+             */
+            reason_code: "enum_unmapped" | "enum_invalid" | "type_coercion" | "derived_unmatched" | "derived_invalid_enum" | "business_key_missing" | "business_key_duplicate";
+            /** Source Value */
+            source_value?: string | null;
+        };
+        /**
+         * MappingPreviewRequest
+         * @description POST /api/mappings/{object}/preview 请求体。
+         */
+        MappingPreviewRequest: {
+            draft_binding?: components["schemas"]["MappingPreviewDraftBinding"] | null;
+            sample?: components["schemas"]["MappingPreviewSample"];
+            /**
+             * Source
+             * @description 数据源标识,最长 128
+             */
+            source: string;
+        };
+        /**
+         * MappingPreviewResponse
+         * @description POST /api/mappings/{object}/preview 成功形状。
+         */
+        MappingPreviewResponse: {
+            candidate: components["schemas"]["MappingPreviewEvaluation"];
+            /** Candidate Binding Hash */
+            candidate_binding_hash: string;
+            /** @description 当前 binding 试算;无 current 时为 null(必填可空) */
+            current: components["schemas"]["MappingPreviewEvaluation"] | null;
+            /**
+             * Current Binding Hash
+             * @description 当前启用 binding 的 hash;无 current 时为 null(必填可空)
+             */
+            current_binding_hash: string | null;
+            diff: components["schemas"]["MappingPreviewDiff"];
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "current" | "draft";
+            /** Object */
+            object: string;
+            sample: components["schemas"]["MappingPreviewSampleInfo"];
+            /** Source */
+            source: string;
+            /** Template Version */
+            template_version: string;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** MappingPreviewRow */
+        MappingPreviewRow: {
+            /** Issues */
+            issues?: components["schemas"]["MappingPreviewIssue"][];
+            /** Output */
+            output?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Sample Row Id
+             * @description 样本内 ordinal+摘要;不泄露业务键
+             */
+            sample_row_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "mapped" | "quarantined";
+        };
+        /**
+         * MappingPreviewSample
+         * @description 样本选择参数:limit/offset 有界;可选精确 batch_id。
+         */
+        MappingPreviewSample: {
+            /**
+             * Batch Id
+             * @description 可选;按锚表 _d2a_batch_id 精确筛选,最长 128
+             */
+            batch_id?: string | null;
+            /**
+             * Limit
+             * @description 样本行数上限,1..200,默认 50
+             * @default 50
+             */
+            limit: number;
+            /**
+             * Offset
+             * @description 样本偏移,0..10000,默认 0
+             * @default 0
+             */
+            offset: number;
+        };
+        /**
+         * MappingPreviewSampleInfo
+         * @description 响应中的样本证据块。
+         */
+        MappingPreviewSampleInfo: {
+            /** Anchor Table */
+            anchor_table: string;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /**
+             * Requested Batch Id
+             * @description 请求的 batch_id;未指定时为 null(必填可空)
+             */
+            requested_batch_id: string | null;
+            /** Sample Batch Ids */
+            sample_batch_ids?: string[];
+            /** Sample Fingerprint */
+            sample_fingerprint: string;
+            /** Sampled Rows */
+            sampled_rows: number;
+        };
+        /** MappingPreviewSummary */
+        MappingPreviewSummary: {
+            /** Mapped */
+            mapped: number;
+            /** Quarantine Rate */
+            quarantine_rate: number;
+            /** Quarantined */
+            quarantined: number;
+            /** Total */
+            total: number;
+            /**
+             * Would Trip Breaker
+             * @description 仅报告;Preview 不抛熔断、不写数据
+             */
+            would_trip_breaker: boolean;
         };
         /** McpCallBody */
         McpCallBody: {
@@ -3717,6 +4089,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mappings_preview_api_mappings__object__preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                object: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MappingPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingPreviewResponse"];
+                };
+            };
+            /** @description Bearer 错误或缺失(unauthorized) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingPreviewError"];
+                };
+            };
+            /** @description 未配置 Token(token_not_configured) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingPreviewError"];
+                };
+            };
+            /** @description object_not_found / source_not_found / raw_table_not_found / sample_batch_not_found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingPreviewError"];
+                };
+            };
+            /** @description current_binding_unavailable / raw_unavailable */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingPreviewError"];
+                };
+            };
+            /** @description Pydantic 请求校验(RequestError),或语义错误 draft_invalid / sample_invalid / anchor_changed(MappingPreviewError.reason_code) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestError"] | components["schemas"]["MappingPreviewError"];
+                };
+            };
+            /** @description preview_failed + error_id */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MappingPreviewError"];
                 };
             };
         };

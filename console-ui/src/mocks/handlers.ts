@@ -399,5 +399,59 @@ export function buildHandlers(): HttpHandler[] {
       }
       return json(stage, fixture.applyActionStatus ?? 200)
     }),
+
+    // ---- M3: mapping preview (explicit; undeclared /api would throw) ----
+    http.post('*/api/mappings/:object/preview', async ({ request, params }) => {
+      const scenario = getScenario()
+      // Preview 错误体必须是 MappingPreviewError(含 reason_code),不能回落普通 HttpError。
+      if (scenario === 'token-invalid') {
+        return json(
+          {
+            status: 401,
+            reason_code: 'unauthorized',
+            detail: '需要有效的管理界面登录密码(Mock: token-invalid)',
+            error_id: null,
+          },
+          401,
+        )
+      }
+      if (scenario === 'unknown-error') {
+        return json(
+          {
+            status: 500,
+            reason_code: 'preview_failed',
+            detail: '未处理异常(Mock: unknown-error)',
+            error_id: 'err-preview-mock',
+          },
+          500,
+        )
+      }
+
+      const fixture = scenarioFixtures[scenario]
+      if (fixture.mappingPreviewStatus !== 200 && fixture.mappingPreviewError) {
+        return json(fixture.mappingPreviewError, fixture.mappingPreviewStatus)
+      }
+
+      let body: { draft_binding?: unknown; source?: string; sample?: unknown } = {}
+      try {
+        body = await request.json() as typeof body
+      } catch {
+        body = {}
+      }
+
+      const objectName = String(params.object)
+      let response = fixture.mappingPreviewCurrent
+      if (scenario === 'empty-install') {
+        response = fixture.mappingPreviewEmpty
+      } else if (body.draft_binding != null) {
+        response = fixture.mappingPreviewDraft
+      }
+
+      return json({
+        ...response,
+        object: objectName,
+        source: typeof body.source === 'string' ? body.source : response.source,
+      })
+    }),
   ]
 }

@@ -9,8 +9,8 @@ import {
 } from './scenario'
 
 describe('scenario registry', () => {
-  it('必备 10 场景全部注册且有 fixture', () => {
-    expect(SCENARIO_IDS).toHaveLength(10)
+  it('必备场景全部注册且有 fixture', () => {
+    expect(SCENARIO_IDS).toHaveLength(12)
     expect(SCENARIOS.map((s) => s.id)).toEqual([...SCENARIO_IDS])
     for (const id of SCENARIO_IDS) {
       expect(scenarioFixtures[id], id).toBeDefined()
