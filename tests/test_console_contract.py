@@ -65,6 +65,7 @@ REQUIRED_API_ROUTES = {
     ("GET", "/api/datasets/{version}"),
     ("POST", "/api/datasets/{version}/publish"),
     ("POST", "/api/datasets/{version}/rollback"),
+    ("POST", "/api/mappings/{object}/preview"),
 }
 
 NAMED_SUCCESS_SCHEMAS = {
@@ -90,6 +91,7 @@ NAMED_SUCCESS_SCHEMAS = {
     ("get", "/api/datasets/{version}"): "DatasetDetail",
     ("post", "/api/datasets/{version}/publish"): "DatasetActionResult",
     ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
+    ("post", "/api/mappings/{object}/preview"): "MappingPreviewResponse",
 }
 
 # v0.3 M2-T06: publish/rollback OpenAPI 冻结 200/404/409/500;运行时映射真实引擎结果。
@@ -179,7 +181,7 @@ def test_required_api_routes_present(tmp_path):
                 found.add((method.upper(), path))
     missing = REQUIRED_API_ROUTES - found
     assert not missing, f"missing API routes: {sorted(missing)}"
-    assert len(REQUIRED_API_ROUTES) == 21
+    assert len(REQUIRED_API_ROUTES) == 22
 
 
 def test_success_responses_use_named_schemas(tmp_path):
@@ -237,6 +239,8 @@ def test_openapi_declares_optional_bearer_security(tmp_path):
     assert overview.get("security") == optional
     assert spec["paths"]["/api/data/raw"]["get"].get("security") == [{"HTTPBearer": []}]
     assert spec["paths"]["/api/data/raw/{source}/{table}"]["get"].get("security") == [
+        {"HTTPBearer": []}]
+    assert spec["paths"]["/api/mappings/{object}/preview"]["post"].get("security") == [
         {"HTTPBearer": []}]
     # Setup routes use the same optional Bearer: after first-time setup + token,
     # runtime returns 401 without credentials (not permanently unauthenticated).

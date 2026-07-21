@@ -79,6 +79,9 @@ from .contracts import (
     DatasetSummary,
     HttpError,
     LogsResponse,
+    MappingPreviewError,
+    MappingPreviewRequest,
+    MappingPreviewResponse,
     McpCallBody,
     McpLabError,
     McpMetricsQueryResult,
@@ -669,8 +672,12 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return path == "/api/data/raw" or path.startswith("/api/data/raw/")
 
     def _requires_bearer_only(path: str) -> bool:
-        """需要强制 Bearer 的 API 路径:raw 浏览 + 隔离详情。"""
-        return _is_raw_api_path(path) or path == "/api/quarantine/{id}"
+        """需要强制 Bearer 的 API 路径:raw 浏览 + 隔离详情 + mapping preview。"""
+        return (
+            _is_raw_api_path(path)
+            or path == "/api/quarantine/{id}"
+            or path == "/api/mappings/{object}/preview"
+        )
 
     def _raw_audit_target(request: Request) -> tuple[str | None, str]:
         path = request.url.path
@@ -2197,6 +2204,57 @@ def create_app(landing: str | None = None, templates: str = "templates",
     def datasets_rollback(version: str) -> DatasetActionResult:
         """回滚到直接上一稳定版本。"""
         return _map_dataset_mutation(rollback_dataset(store(), version))
+
+    # ---- v0.3 M3-T01: mapping preview 契约桩(fail-closed 501)----
+
+    @api.post(
+        "/mappings/{object}/preview",
+        response_model=MappingPreviewResponse,
+        responses={
+            401: {
+                "model": MappingPreviewError,
+                "description": "Bearer 错误或缺失(unauthorized)",
+            },
+            403: {
+                "model": MappingPreviewError,
+                "description": "未配置 Token(token_not_configured)",
+            },
+            404: {
+                "model": MappingPreviewError,
+                "description": (
+                    "object_not_found / source_not_found / "
+                    "raw_table_not_found / sample_batch_not_found"
+                ),
+            },
+            409: {
+                "model": MappingPreviewError,
+                "description": "current_binding_unavailable / raw_unavailable",
+            },
+            422: {
+                "model": RequestError,
+                "description": (
+                    "请求校验失败,或 draft_invalid / sample_invalid / "
+                    "anchor_changed"
+                ),
+            },
+            500: {
+                "model": MappingPreviewError,
+                "description": "preview_failed + error_id",
+            },
+            501: _RESP_HTTP_ERROR_STUB[501],
+        },
+        tags=["v0.3"],
+    )
+    def mappings_preview(
+        object: str,
+        body: MappingPreviewRequest,
+    ) -> MappingPreviewResponse:
+        """映射 Preview:T01 仅冻结契约;实现前 fail-closed 返回 501。
+
+        请求体经 Pydantic 边界校验后拒绝非法草稿/样本;成功路径待后续任务实现。
+        """
+        raise HTTPException(501, "mapping preview 尚未实现")
+
 
     # ---- v0.2 数据浏览与模板(已实现)----
     # 历史注释曾把下列端点标为契约桩;M4–M6 已落地,publish/rollback 已由 T06 接通。

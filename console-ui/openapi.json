@@ -988,6 +988,848 @@
         "title": "LogsResponse",
         "type": "object"
       },
+      "MappingPreviewBusinessKeyIssues": {
+        "properties": {
+          "duplicate": {
+            "minimum": 0.0,
+            "title": "Duplicate",
+            "type": "integer"
+          },
+          "missing": {
+            "minimum": 0.0,
+            "title": "Missing",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "sample",
+            "default": "sample",
+            "description": "重复检测仅覆盖本次样本,样本外未检查",
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "missing",
+          "duplicate"
+        ],
+        "title": "MappingPreviewBusinessKeyIssues",
+        "type": "object"
+      },
+      "MappingPreviewDeriveRule": {
+        "description": "Preview 草稿派生规则;形状与 DeriveRule 一致,附加放大上限。",
+        "properties": {
+          "value": {
+            "maxLength": 512,
+            "title": "Value",
+            "type": "string"
+          },
+          "when": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "maxLength": 512,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "description": "条件:字段→值(None=any);最多 32 项,键/值各 ≤512",
+            "maxProperties": 32,
+            "propertyNames": {
+              "maxLength": 512
+            },
+            "title": "When",
+            "type": "object"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "MappingPreviewDeriveRule",
+        "type": "object"
+      },
+      "MappingPreviewDerivedCoverage": {
+        "properties": {
+          "default_hits": {
+            "minimum": 0.0,
+            "title": "Default Hits",
+            "type": "integer"
+          },
+          "eligible_rows": {
+            "minimum": 0.0,
+            "title": "Eligible Rows",
+            "type": "integer"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "matched_rows": {
+            "minimum": 0.0,
+            "title": "Matched Rows",
+            "type": "integer"
+          },
+          "row_coverage": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "分母为零时为 null,不伪装为 0% 或 100%",
+            "title": "Row Coverage"
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/MappingPreviewDerivedRuleHit"
+            },
+            "title": "Rules",
+            "type": "array"
+          },
+          "rules_hit": {
+            "minimum": 0.0,
+            "title": "Rules Hit",
+            "type": "integer"
+          },
+          "rules_total": {
+            "minimum": 0.0,
+            "title": "Rules Total",
+            "type": "integer"
+          },
+          "unmatched_rows": {
+            "minimum": 0.0,
+            "title": "Unmatched Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "field",
+          "eligible_rows",
+          "matched_rows",
+          "default_hits",
+          "unmatched_rows",
+          "rules_total",
+          "rules_hit"
+        ],
+        "title": "MappingPreviewDerivedCoverage",
+        "type": "object"
+      },
+      "MappingPreviewDerivedField": {
+        "description": "Preview 草稿派生字段;形状与 DerivedField 一致,规则最多 64 条。",
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "rules": {
+            "description": "有序规则列表,最多 64 条",
+            "items": {
+              "$ref": "#/components/schemas/MappingPreviewDeriveRule"
+            },
+            "maxItems": 64,
+            "title": "Rules",
+            "type": "array"
+          }
+        },
+        "title": "MappingPreviewDerivedField",
+        "type": "object"
+      },
+      "MappingPreviewDerivedRuleHit": {
+        "properties": {
+          "hit_count": {
+            "minimum": 0.0,
+            "title": "Hit Count",
+            "type": "integer"
+          },
+          "index": {
+            "minimum": 0.0,
+            "title": "Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "hit_count"
+        ],
+        "title": "MappingPreviewDerivedRuleHit",
+        "type": "object"
+      },
+      "MappingPreviewDiff": {
+        "properties": {
+          "reason": {
+            "anyOf": [
+              {
+                "const": "no_current_binding",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/MappingPreviewDiffRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/MappingPreviewDiffSummary"
+          }
+        },
+        "required": [
+          "state",
+          "summary"
+        ],
+        "title": "MappingPreviewDiff",
+        "type": "object"
+      },
+      "MappingPreviewDiffField": {
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field"
+        ],
+        "title": "MappingPreviewDiffField",
+        "type": "object"
+      },
+      "MappingPreviewDiffRow": {
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/MappingPreviewDiffField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "sample_row_id": {
+            "title": "Sample Row Id",
+            "type": "string"
+          },
+          "status_after": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mapped",
+                  "quarantined"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status After"
+          },
+          "status_before": {
+            "anyOf": [
+              {
+                "enum": [
+                  "mapped",
+                  "quarantined"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Before"
+          }
+        },
+        "required": [
+          "sample_row_id"
+        ],
+        "title": "MappingPreviewDiffRow",
+        "type": "object"
+      },
+      "MappingPreviewDiffSummary": {
+        "properties": {
+          "fields_changed": {
+            "minimum": 0.0,
+            "title": "Fields Changed",
+            "type": "integer"
+          },
+          "rows_changed": {
+            "minimum": 0.0,
+            "title": "Rows Changed",
+            "type": "integer"
+          },
+          "status_changed": {
+            "minimum": 0.0,
+            "title": "Status Changed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rows_changed",
+          "status_changed",
+          "fields_changed"
+        ],
+        "title": "MappingPreviewDiffSummary",
+        "type": "object"
+      },
+      "MappingPreviewDraftBinding": {
+        "additionalProperties": false,
+        "description": "一次性草稿 binding:draft-only,拒绝客户端伪造 status。\n\n服务端后续任务构造 status=draft 的 SourceBinding;本模型不含 status。",
+        "properties": {
+          "derived": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/MappingPreviewDerivedField"
+            },
+            "description": "派生字段,最多 64 个;每字段规则最多 64",
+            "maxProperties": 64,
+            "propertyNames": {
+              "maxLength": 512
+            },
+            "title": "Derived",
+            "type": "object"
+          },
+          "field_map": {
+            "additionalProperties": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "description": "字段映射,最多 128 项;键/值各 ≤512",
+            "maxProperties": 128,
+            "propertyNames": {
+              "maxLength": 512
+            },
+            "title": "Field Map",
+            "type": "object"
+          },
+          "key_map": {
+            "additionalProperties": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "description": "业务键映射,最多 128 项;键/值各 ≤512",
+            "maxProperties": 128,
+            "propertyNames": {
+              "maxLength": 512
+            },
+            "title": "Key Map",
+            "type": "object"
+          },
+          "notes": {
+            "default": "",
+            "description": "草稿备注,最长 2000",
+            "maxLength": 2000,
+            "title": "Notes",
+            "type": "string"
+          },
+          "tables": {
+            "description": "raw 表白名单引用,最多 16;tables[0] 为锚表",
+            "items": {
+              "maxLength": 512,
+              "type": "string"
+            },
+            "maxItems": 16,
+            "title": "Tables",
+            "type": "array"
+          },
+          "watermark": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark"
+          }
+        },
+        "required": [
+          "tables"
+        ],
+        "title": "MappingPreviewDraftBinding",
+        "type": "object"
+      },
+      "MappingPreviewEnumGap": {
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "field": {
+            "title": "Field",
+            "type": "string"
+          },
+          "source_value": {
+            "title": "Source Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "source_value",
+          "count"
+        ],
+        "title": "MappingPreviewEnumGap",
+        "type": "object"
+      },
+      "MappingPreviewError": {
+        "description": "Preview 安全错误:前端按 status/reason_code 分支,不解析中文 detail。",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "error_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "内部失败时的稳定短标识;非 500 通常为 null",
+            "title": "Error Id"
+          },
+          "reason_code": {
+            "enum": [
+              "unauthorized",
+              "token_not_configured",
+              "object_not_found",
+              "source_not_found",
+              "raw_table_not_found",
+              "sample_batch_not_found",
+              "current_binding_unavailable",
+              "raw_unavailable",
+              "draft_invalid",
+              "sample_invalid",
+              "anchor_changed",
+              "preview_failed"
+            ],
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "status": {
+            "description": "HTTP 状态码",
+            "title": "Status",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "reason_code",
+          "detail"
+        ],
+        "title": "MappingPreviewError",
+        "type": "object"
+      },
+      "MappingPreviewEvaluation": {
+        "description": "current 或 candidate 一侧的评估结果。",
+        "properties": {
+          "business_key_issues": {
+            "$ref": "#/components/schemas/MappingPreviewBusinessKeyIssues"
+          },
+          "derived_coverage": {
+            "items": {
+              "$ref": "#/components/schemas/MappingPreviewDerivedCoverage"
+            },
+            "title": "Derived Coverage",
+            "type": "array"
+          },
+          "enum_gaps": {
+            "items": {
+              "$ref": "#/components/schemas/MappingPreviewEnumGap"
+            },
+            "title": "Enum Gaps",
+            "type": "array"
+          },
+          "rows": {
+            "items": {
+              "$ref": "#/components/schemas/MappingPreviewRow"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/MappingPreviewSummary"
+          }
+        },
+        "required": [
+          "summary",
+          "business_key_issues"
+        ],
+        "title": "MappingPreviewEvaluation",
+        "type": "object"
+      },
+      "MappingPreviewIssue": {
+        "properties": {
+          "detail": {
+            "description": "安全摘要;不含 SQL/物理表/traceback/未脱敏原值",
+            "title": "Detail",
+            "type": "string"
+          },
+          "field": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Field"
+          },
+          "reason_code": {
+            "enum": [
+              "enum_unmapped",
+              "enum_invalid",
+              "type_coercion",
+              "derived_unmatched",
+              "derived_invalid_enum",
+              "business_key_missing",
+              "business_key_duplicate"
+            ],
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "source_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Value"
+          }
+        },
+        "required": [
+          "reason_code",
+          "detail"
+        ],
+        "title": "MappingPreviewIssue",
+        "type": "object"
+      },
+      "MappingPreviewRequest": {
+        "description": "POST /api/mappings/{object}/preview 请求体。",
+        "properties": {
+          "draft_binding": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MappingPreviewDraftBinding"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sample": {
+            "$ref": "#/components/schemas/MappingPreviewSample"
+          },
+          "source": {
+            "description": "数据源标识,最长 128",
+            "maxLength": 128,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "MappingPreviewRequest",
+        "type": "object"
+      },
+      "MappingPreviewResponse": {
+        "description": "POST /api/mappings/{object}/preview 成功形状。",
+        "properties": {
+          "candidate": {
+            "$ref": "#/components/schemas/MappingPreviewEvaluation"
+          },
+          "candidate_binding_hash": {
+            "title": "Candidate Binding Hash",
+            "type": "string"
+          },
+          "current": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MappingPreviewEvaluation"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current_binding_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Binding Hash"
+          },
+          "diff": {
+            "$ref": "#/components/schemas/MappingPreviewDiff"
+          },
+          "mode": {
+            "enum": [
+              "current",
+              "draft"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "sample": {
+            "$ref": "#/components/schemas/MappingPreviewSampleInfo"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "template_version": {
+            "title": "Template Version",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "object",
+          "source",
+          "mode",
+          "template_version",
+          "candidate_binding_hash",
+          "sample",
+          "candidate",
+          "diff"
+        ],
+        "title": "MappingPreviewResponse",
+        "type": "object"
+      },
+      "MappingPreviewRow": {
+        "properties": {
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/MappingPreviewIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "output": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "title": "Output",
+            "type": "object"
+          },
+          "sample_row_id": {
+            "description": "样本内 ordinal+摘要;不泄露业务键",
+            "title": "Sample Row Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "mapped",
+              "quarantined"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sample_row_id",
+          "status"
+        ],
+        "title": "MappingPreviewRow",
+        "type": "object"
+      },
+      "MappingPreviewSample": {
+        "description": "样本选择参数:limit/offset 有界;可选精确 batch_id。",
+        "properties": {
+          "batch_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "可选;按锚表 _d2a_batch_id 精确筛选,最长 128",
+            "title": "Batch Id"
+          },
+          "limit": {
+            "default": 50,
+            "description": "样本行数上限,1..200,默认 50",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "default": 0,
+            "description": "样本偏移,0..10000,默认 0",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          }
+        },
+        "title": "MappingPreviewSample",
+        "type": "object"
+      },
+      "MappingPreviewSampleInfo": {
+        "description": "响应中的样本证据块。",
+        "properties": {
+          "anchor_table": {
+            "title": "Anchor Table",
+            "type": "string"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "requested_batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested Batch Id"
+          },
+          "sample_batch_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Sample Batch Ids",
+            "type": "array"
+          },
+          "sample_fingerprint": {
+            "title": "Sample Fingerprint",
+            "type": "string"
+          },
+          "sampled_rows": {
+            "minimum": 0.0,
+            "title": "Sampled Rows",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "anchor_table",
+          "offset",
+          "limit",
+          "sampled_rows",
+          "sample_fingerprint"
+        ],
+        "title": "MappingPreviewSampleInfo",
+        "type": "object"
+      },
+      "MappingPreviewSummary": {
+        "properties": {
+          "mapped": {
+            "minimum": 0.0,
+            "title": "Mapped",
+            "type": "integer"
+          },
+          "quarantine_rate": {
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Quarantine Rate",
+            "type": "number"
+          },
+          "quarantined": {
+            "minimum": 0.0,
+            "title": "Quarantined",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "would_trip_breaker": {
+            "description": "仅报告;Preview 不抛熔断、不写数据",
+            "title": "Would Trip Breaker",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "total",
+          "mapped",
+          "quarantined",
+          "quarantine_rate",
+          "would_trip_breaker"
+        ],
+        "title": "MappingPreviewSummary",
+        "type": "object"
+      },
       "McpCallBody": {
         "properties": {
           "params": {
@@ -6414,6 +7256,124 @@
           {}
         ],
         "summary": "Get Logs"
+      }
+    },
+    "/api/mappings/{object}/preview": {
+      "post": {
+        "description": "映射 Preview:T01 仅冻结契约;实现前 fail-closed 返回 501。\n\n请求体经 Pydantic 边界校验后拒绝非法草稿/样本;成功路径待后续任务实现。",
+        "operationId": "mappings_preview_api_mappings__object__preview_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "object",
+            "required": true,
+            "schema": {
+              "title": "Object",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MappingPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingPreviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingPreviewError"
+                }
+              }
+            },
+            "description": "Bearer 错误或缺失(unauthorized)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingPreviewError"
+                }
+              }
+            },
+            "description": "未配置 Token(token_not_configured)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingPreviewError"
+                }
+              }
+            },
+            "description": "object_not_found / source_not_found / raw_table_not_found / sample_batch_not_found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingPreviewError"
+                }
+              }
+            },
+            "description": "current_binding_unavailable / raw_unavailable"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求校验失败,或 draft_invalid / sample_invalid / anchor_changed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MappingPreviewError"
+                }
+              }
+            },
+            "description": "preview_failed + error_id"
+          },
+          "501": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "契约桩:端点在所属里程碑实现前返回 501"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mappings Preview",
+        "tags": [
+          "v0.3"
+        ]
       }
     },
     "/api/objects": {

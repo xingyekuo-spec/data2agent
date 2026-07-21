@@ -12,7 +12,7 @@ M2 追加:v0.2 新端点(pipeline / run 详情 / 数据浏览 / 对象 / 模板 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
@@ -898,3 +898,278 @@ class DatasetActionResult(BaseModel):
     executed: bool
     dataset_version: str
     note: str = ""
+
+
+# ---- v0.3 M3: mapping preview 契约(T01 冻结;运行时在后续任务实现前 501)----
+
+# 请求体放大上限:拒绝超大草稿制造 CPU/响应放大。
+_PREVIEW_MAP_ENTRY_MAX = 512
+_PREVIEW_MAP_SIZE_MAX = 128
+_PREVIEW_TABLES_MAX = 16
+_PREVIEW_DERIVED_FIELDS_MAX = 64
+_PREVIEW_DERIVED_RULES_MAX = 64
+_PREVIEW_NOTES_MAX = 2000
+_PREVIEW_BATCH_ID_MAX = 128
+_PREVIEW_SOURCE_MAX = 128
+
+PreviewMapStr = Annotated[
+    str,
+    Field(max_length=_PREVIEW_MAP_ENTRY_MAX),
+]
+"""Preview 草稿 map 键/值字符串上限(512)。"""
+
+
+MappingPreviewIssueReasonCode = Literal[
+    "enum_unmapped",
+    "enum_invalid",
+    "type_coercion",
+    "derived_unmatched",
+    "derived_invalid_enum",
+    "business_key_missing",
+    "business_key_duplicate",
+]
+
+MappingPreviewErrorReasonCode = Literal[
+    "unauthorized",
+    "token_not_configured",
+    "object_not_found",
+    "source_not_found",
+    "raw_table_not_found",
+    "sample_batch_not_found",
+    "current_binding_unavailable",
+    "raw_unavailable",
+    "draft_invalid",
+    "sample_invalid",
+    "anchor_changed",
+    "preview_failed",
+]
+
+MappingPreviewRowStatus = Literal["mapped", "quarantined"]
+MappingPreviewMode = Literal["current", "draft"]
+MappingPreviewDiffState = Literal["available", "unavailable"]
+MappingPreviewDiffReason = Literal["no_current_binding"]
+
+
+class MappingPreviewSample(BaseModel):
+    """样本选择参数:limit/offset 有界;可选精确 batch_id。"""
+
+    limit: int = Field(
+        default=50,
+        ge=1,
+        le=200,
+        description="样本行数上限,1..200,默认 50",
+    )
+    offset: int = Field(
+        default=0,
+        ge=0,
+        le=10000,
+        description="样本偏移,0..10000,默认 0",
+    )
+    batch_id: str | None = Field(
+        default=None,
+        max_length=_PREVIEW_BATCH_ID_MAX,
+        description="可选;按锚表 _d2a_batch_id 精确筛选,最长 128",
+    )
+
+
+class MappingPreviewDeriveRule(BaseModel):
+    """Preview 草稿派生规则;形状与 DeriveRule 一致,附加放大上限。"""
+
+    when: dict[PreviewMapStr, PreviewMapStr | None] = Field(
+        default_factory=dict,
+        max_length=32,
+        description="条件:字段→值(None=any);最多 32 项,键/值各 ≤512",
+    )
+    value: PreviewMapStr
+
+
+class MappingPreviewDerivedField(BaseModel):
+    """Preview 草稿派生字段;形状与 DerivedField 一致,规则最多 64 条。"""
+
+    rules: list[MappingPreviewDeriveRule] = Field(
+        default_factory=list,
+        max_length=_PREVIEW_DERIVED_RULES_MAX,
+        description="有序规则列表,最多 64 条",
+    )
+    default: PreviewMapStr | None = None
+
+
+class MappingPreviewDraftBinding(BaseModel):
+    """一次性草稿 binding:draft-only,拒绝客户端伪造 status。
+
+    服务端后续任务构造 status=draft 的 SourceBinding;本模型不含 status。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tables: list[PreviewMapStr] = Field(
+        max_length=_PREVIEW_TABLES_MAX,
+        description="raw 表白名单引用,最多 16;tables[0] 为锚表",
+    )
+    key_map: dict[PreviewMapStr, PreviewMapStr] = Field(
+        default_factory=dict,
+        max_length=_PREVIEW_MAP_SIZE_MAX,
+        description="业务键映射,最多 128 项;键/值各 ≤512",
+    )
+    field_map: dict[PreviewMapStr, PreviewMapStr] = Field(
+        default_factory=dict,
+        max_length=_PREVIEW_MAP_SIZE_MAX,
+        description="字段映射,最多 128 项;键/值各 ≤512",
+    )
+    derived: dict[PreviewMapStr, MappingPreviewDerivedField] = Field(
+        default_factory=dict,
+        max_length=_PREVIEW_DERIVED_FIELDS_MAX,
+        description="派生字段,最多 64 个;每字段规则最多 64",
+    )
+    watermark: PreviewMapStr | None = None
+    notes: str = Field(
+        default="",
+        max_length=_PREVIEW_NOTES_MAX,
+        description="草稿备注,最长 2000",
+    )
+
+
+class MappingPreviewRequest(BaseModel):
+    """POST /api/mappings/{object}/preview 请求体。"""
+
+    source: str = Field(
+        max_length=_PREVIEW_SOURCE_MAX,
+        description="数据源标识,最长 128",
+    )
+    sample: MappingPreviewSample = Field(default_factory=MappingPreviewSample)
+    draft_binding: MappingPreviewDraftBinding | None = None
+
+
+class MappingPreviewError(BaseModel):
+    """Preview 安全错误:前端按 status/reason_code 分支,不解析中文 detail。"""
+
+    status: int = Field(description="HTTP 状态码")
+    reason_code: MappingPreviewErrorReasonCode
+    detail: str
+    error_id: str | None = Field(
+        default=None,
+        description="内部失败时的稳定短标识;非 500 通常为 null",
+    )
+
+
+class MappingPreviewIssue(BaseModel):
+    reason_code: MappingPreviewIssueReasonCode
+    field: str | None = None
+    detail: str = Field(description="安全摘要;不含 SQL/物理表/traceback/未脱敏原值")
+    source_value: str | None = None
+
+
+class MappingPreviewRow(BaseModel):
+    sample_row_id: str = Field(description="样本内 ordinal+摘要;不泄露业务键")
+    status: MappingPreviewRowStatus
+    output: dict[str, JsonValue] = Field(default_factory=dict)
+    issues: list[MappingPreviewIssue] = Field(default_factory=list)
+
+
+class MappingPreviewSummary(BaseModel):
+    total: int = Field(ge=0)
+    mapped: int = Field(ge=0)
+    quarantined: int = Field(ge=0)
+    quarantine_rate: float = Field(ge=0, le=1)
+    would_trip_breaker: bool = Field(
+        description="仅报告;Preview 不抛熔断、不写数据",
+    )
+
+
+class MappingPreviewEnumGap(BaseModel):
+    field: str
+    source_value: str
+    count: int = Field(ge=0)
+
+
+class MappingPreviewBusinessKeyIssues(BaseModel):
+    missing: int = Field(ge=0)
+    duplicate: int = Field(ge=0)
+    scope: Literal["sample"] = Field(
+        default="sample",
+        description="重复检测仅覆盖本次样本,样本外未检查",
+    )
+
+
+class MappingPreviewDerivedRuleHit(BaseModel):
+    index: int = Field(ge=0)
+    hit_count: int = Field(ge=0)
+
+
+class MappingPreviewDerivedCoverage(BaseModel):
+    field: str
+    eligible_rows: int = Field(ge=0)
+    matched_rows: int = Field(ge=0)
+    default_hits: int = Field(ge=0)
+    unmatched_rows: int = Field(ge=0)
+    row_coverage: float | None = Field(
+        default=None,
+        description="分母为零时为 null,不伪装为 0% 或 100%",
+    )
+    rules_total: int = Field(ge=0)
+    rules_hit: int = Field(ge=0)
+    rules: list[MappingPreviewDerivedRuleHit] = Field(default_factory=list)
+
+
+class MappingPreviewEvaluation(BaseModel):
+    """current 或 candidate 一侧的评估结果。"""
+
+    summary: MappingPreviewSummary
+    rows: list[MappingPreviewRow] = Field(default_factory=list)
+    enum_gaps: list[MappingPreviewEnumGap] = Field(default_factory=list)
+    business_key_issues: MappingPreviewBusinessKeyIssues
+    derived_coverage: list[MappingPreviewDerivedCoverage] = Field(default_factory=list)
+
+
+class MappingPreviewSampleInfo(BaseModel):
+    """响应中的样本证据块。"""
+
+    anchor_table: str
+    offset: int = Field(ge=0)
+    limit: int = Field(ge=1)
+    requested_batch_id: str | None = None
+    sample_batch_ids: list[str] = Field(default_factory=list)
+    sampled_rows: int = Field(ge=0)
+    sample_fingerprint: str
+
+
+class MappingPreviewDiffField(BaseModel):
+    field: str
+    before: JsonValue | None = None
+    after: JsonValue | None = None
+
+
+class MappingPreviewDiffRow(BaseModel):
+    sample_row_id: str
+    status_before: MappingPreviewRowStatus | None = None
+    status_after: MappingPreviewRowStatus | None = None
+    fields: list[MappingPreviewDiffField] = Field(default_factory=list)
+
+
+class MappingPreviewDiffSummary(BaseModel):
+    rows_changed: int = Field(ge=0)
+    status_changed: int = Field(ge=0)
+    fields_changed: int = Field(ge=0)
+
+
+class MappingPreviewDiff(BaseModel):
+    state: MappingPreviewDiffState
+    reason: MappingPreviewDiffReason | None = None
+    summary: MappingPreviewDiffSummary
+    rows: list[MappingPreviewDiffRow] = Field(default_factory=list)
+
+
+class MappingPreviewResponse(BaseModel):
+    """POST /api/mappings/{object}/preview 成功形状。"""
+
+    object: str
+    source: str
+    mode: MappingPreviewMode
+    template_version: str
+    current_binding_hash: str | None = None
+    candidate_binding_hash: str
+    sample: MappingPreviewSampleInfo
+    current: MappingPreviewEvaluation | None = None
+    candidate: MappingPreviewEvaluation
+    diff: MappingPreviewDiff
+    warnings: list[str] = Field(default_factory=list)
