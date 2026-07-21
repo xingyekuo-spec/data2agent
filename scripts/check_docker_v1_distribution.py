@@ -51,7 +51,9 @@ print(f"DIST={dist}")
 
 def run(cmd: list[str]) -> None:
     print("+", " ".join(cmd), flush=True)
-    subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd, check=False)
+    if result.returncode != 0:
+        raise SystemExit(result.returncode)
 
 
 def capture(cmd: list[str]) -> str:
