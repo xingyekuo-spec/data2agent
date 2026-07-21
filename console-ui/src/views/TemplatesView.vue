@@ -8,6 +8,7 @@ import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
+import MappingPreviewPanel from '@/components/templates/MappingPreviewPanel.vue'
 import { useTemplatesStore } from '@/stores/templates'
 import { formatDateTime } from '@/utils/time'
 import type { components } from '@/types/api'
@@ -213,6 +214,11 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
               <span class="card-subtitle">{{ selectedObject.object }}</span>
             </h3>
           </div>
+
+          <MappingPreviewPanel
+            :object-name="selectedObject.object"
+            :bindings="selectedObject.bindings"
+          />
 
           <div class="d2a-card">
             <el-tabs v-model="activeTab" data-testid="tpl-detail-tabs">

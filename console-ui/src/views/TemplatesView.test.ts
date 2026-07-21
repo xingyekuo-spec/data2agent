@@ -373,25 +373,18 @@ describe('TemplatesView(M5)', () => {
     await wrapper.find('[data-testid="tpl-item-Customer"]').trigger('click')
     await flushPromises()
 
-    // overview tab
-    expect(wrapper.text()).not.toContain('保存')
-    expect(wrapper.text()).not.toContain('编辑')
-    expect(wrapper.text()).not.toContain('发布')
-
-    // properties tab
-    await switchTab(wrapper, '属性')
-    expect(wrapper.text()).not.toContain('保存')
-    expect(wrapper.text()).not.toContain('编辑')
-
-    // bindings tab
-    await switchTab(wrapper, '绑定')
-    expect(wrapper.text()).not.toContain('保存')
-    expect(wrapper.text()).not.toContain('编辑')
-
-    // metrics tab
-    await switchTab(wrapper, '指标')
-    expect(wrapper.text()).not.toContain('保存')
-    expect(wrapper.text()).not.toContain('编辑')
+    const forbiddenActions = ['保存模板', '应用草稿', '发布候选', '编辑模板']
+    const tabs = ['概览', '属性', '绑定', '指标'] as const
+    for (const tab of tabs) {
+      if (tab !== '概览') await switchTab(wrapper, tab)
+      const text = wrapper.text()
+      for (const label of forbiddenActions) {
+        expect(text).not.toContain(label)
+      }
+    }
+    // Preview 只读声明可含「保存/发布」字样,但不得出现写入口按钮
+    expect(wrapper.find('[data-testid="mapping-preview-panel"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('不会保存或发布')
   })
 
   it('shows no toggle controls for verified/certified', async () => {
