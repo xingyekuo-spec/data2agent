@@ -458,7 +458,6 @@ def test_console_http_objects_catalog_consistent_under_publish(tmp_path, pack):
     landing.con.close()
 
     app = create_app(db_path, ROOT / "templates", token=TOKEN)
-    client = TestClient(app)
     headers = {"Authorization": f"Bearer {TOKEN}"}
 
     stop = threading.Event()
@@ -466,6 +465,8 @@ def test_console_http_objects_catalog_consistent_under_publish(tmp_path, pack):
     lock = threading.Lock()
 
     def hammer() -> None:
+        # TestClient 非线程安全:每线程独立客户端,避免并发串响应。
+        client = TestClient(app)
         while not stop.is_set():
             try:
                 resp = client.get("/api/objects", headers=headers)
@@ -525,7 +526,6 @@ def test_console_http_overview_atomic_under_publish(tmp_path, pack):
     landing.con.close()
 
     app = create_app(db_path, ROOT / "templates", token=TOKEN)
-    client = TestClient(app)
     headers = {"Authorization": f"Bearer {TOKEN}"}
 
     stop = threading.Event()
@@ -534,6 +534,8 @@ def test_console_http_overview_atomic_under_publish(tmp_path, pack):
     allowed = set(rows_by_version)
 
     def hammer() -> None:
+        # TestClient 非线程安全:每线程独立客户端,避免并发串响应。
+        client = TestClient(app)
         while not stop.is_set():
             try:
                 body = client.get("/api/overview", headers=headers).json()
