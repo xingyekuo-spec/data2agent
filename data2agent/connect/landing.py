@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS d2a_sync_run (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
     tables INTEGER, rows INTEGER, status TEXT, detail TEXT,
-    run_type TEXT, steps_recorded INTEGER
+    run_type TEXT, steps_recorded INTEGER,
+    dataset_version TEXT
 );
 CREATE TABLE IF NOT EXISTS d2a_sync_state (
     source TEXT NOT NULL, table_name TEXT NOT NULL,
@@ -93,6 +94,7 @@ CREATE TABLE IF NOT EXISTS d2a_dataset_version (
     previous_dataset_version TEXT,
     error TEXT,
     object_manifest TEXT,
+    template_snapshot TEXT,
     CHECK (
         status NOT IN ('published', 'retired')
         OR (published_at IS NOT NULL AND trim(published_at) != '')
@@ -100,6 +102,8 @@ CREATE TABLE IF NOT EXISTS d2a_dataset_version (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_dataset_one_published
     ON d2a_dataset_version (source) WHERE status = 'published';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_dataset_one_building
+    ON d2a_dataset_version (source) WHERE status = 'building';
 CREATE INDEX IF NOT EXISTS idx_d2a_dataset_source_built
     ON d2a_dataset_version (source, built_at DESC);
 CREATE TABLE IF NOT EXISTS d2a_object_version (
@@ -115,6 +119,7 @@ CREATE TABLE IF NOT EXISTS d2a_object_version (
     ),
     built_at TEXT NOT NULL,
     published_at TEXT,
+    purged_at TEXT,
     PRIMARY KEY (dataset_version, object),
     UNIQUE (object_version),
     FOREIGN KEY (dataset_version) REFERENCES d2a_dataset_version (dataset_version),
@@ -163,6 +168,57 @@ BEGIN
 END;
 """
 
+# 冻结字段创建后不可改写;GC 仅允许 retired 对象 build_table→NULL + purged_at。
+_VERSION_FREEZE_TRIGGERS = """
+CREATE TRIGGER IF NOT EXISTS trg_d2a_dataset_freeze_upd
+BEFORE UPDATE ON d2a_dataset_version
+FOR EACH ROW
+WHEN NEW.source IS NOT OLD.source
+  OR NEW.template_version IS NOT OLD.template_version
+  OR IFNULL(NEW.object_manifest, '') IS NOT IFNULL(OLD.object_manifest, '')
+  OR IFNULL(NEW.template_snapshot, '') IS NOT IFNULL(OLD.template_snapshot, '')
+  OR NEW.built_at IS NOT OLD.built_at
+BEGIN
+  SELECT RAISE(ABORT, 'frozen dataset fields are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_object_freeze_upd
+BEFORE UPDATE ON d2a_object_version
+FOR EACH ROW
+WHEN NEW.dataset_version IS NOT OLD.dataset_version
+  OR NEW.object IS NOT OLD.object
+  OR NEW.object_version IS NOT OLD.object_version
+  OR NEW.binding_hash IS NOT OLD.binding_hash
+  OR NEW.built_at IS NOT OLD.built_at
+  OR (
+    NEW.row_count IS NOT OLD.row_count
+    AND OLD.status != 'building'
+  )
+  OR (
+    IFNULL(NEW.build_table, '') IS NOT IFNULL(OLD.build_table, '')
+    AND OLD.status != 'building'
+    AND NOT (
+      OLD.build_table IS NOT NULL
+      AND NEW.build_table IS NULL
+      AND NEW.purged_at IS NOT NULL
+      AND trim(NEW.purged_at) != ''
+      AND NEW.status = 'retired'
+    )
+  )
+  OR (
+    IFNULL(NEW.purged_at, '') IS NOT IFNULL(OLD.purged_at, '')
+    AND NOT (
+      OLD.purged_at IS NULL
+      AND NEW.purged_at IS NOT NULL
+      AND trim(NEW.purged_at) != ''
+      AND NEW.build_table IS NULL
+      AND NEW.status = 'retired'
+    )
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'frozen object fields are immutable');
+END;
+"""
+
 
 def raw_table_name(source: str, table: str) -> str:
     return f"raw_{source}__{table}"
@@ -199,10 +255,14 @@ def _row_to_dataset_version(row: sqlite3.Row) -> DatasetVersionRecord:
         previous_dataset_version=row["previous_dataset_version"],
         error=row["error"],
         object_manifest=row["object_manifest"] if "object_manifest" in keys else None,
+        template_snapshot=(
+            row["template_snapshot"] if "template_snapshot" in keys else None
+        ),
     )
 
 
 def _row_to_object_version(row: sqlite3.Row) -> ObjectVersionRecord:
+    keys = set(row.keys())
     return ObjectVersionRecord(
         dataset_version=row["dataset_version"],
         object=row["object"],
@@ -214,6 +274,7 @@ def _row_to_object_version(row: sqlite3.Row) -> ObjectVersionRecord:
         status=row["status"],
         built_at=row["built_at"],
         published_at=row["published_at"],
+        purged_at=row["purged_at"] if "purged_at" in keys else None,
     )
 
 
@@ -239,15 +300,18 @@ class LandingStore:
         self._migrate()
 
     def _migrate(self) -> None:
-        """幂等兼容升级(M3/M4):d2a_sync_run 增加结构化运行元数据。
+        """幂等兼容升级:运行元数据与 v0.3 版本列/不变量。
 
-        旧记录保持 NULL(类型/step 证据未知),不批量回填猜测;重复初始化无副作用。
+        旧记录保持 NULL(类型/快照/版本引用未知),不批量回填猜测;重复初始化无副作用。
         """
         cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_sync_run)")}
         if "run_type" not in cols:
             self.con.execute("ALTER TABLE d2a_sync_run ADD COLUMN run_type TEXT")
         if "steps_recorded" not in cols:
             self.con.execute("ALTER TABLE d2a_sync_run ADD COLUMN steps_recorded INTEGER")
+        if "dataset_version" not in cols:
+            self.con.execute(
+                "ALTER TABLE d2a_sync_run ADD COLUMN dataset_version TEXT")
         try:
             self.con.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_run_step_ingest_batch "
@@ -262,11 +326,28 @@ class LandingStore:
                 "WHERE kind = 'batch' AND batch_id IS NOT NULL")
         # v0.3:published/retired 必须带 published_at(旧库靠触发器补强制)。
         self.con.executescript(_VERSION_PUBLISHED_AT_TRIGGERS)
-        # v0.3:数据集冻结对象清单(完整性分母);旧库缺列则补上。
+        self.con.executescript(_VERSION_FREEZE_TRIGGERS)
+        # v0.3:数据集冻结对象清单与模板快照;旧库缺列则补上。
         ds_cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_dataset_version)")}
         if "object_manifest" not in ds_cols:
             self.con.execute(
                 "ALTER TABLE d2a_dataset_version ADD COLUMN object_manifest TEXT")
+        if "template_snapshot" not in ds_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_dataset_version ADD COLUMN template_snapshot TEXT")
+        obj_cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_object_version)")}
+        if "purged_at" not in obj_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_object_version ADD COLUMN purged_at TEXT")
+        try:
+            self.con.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_dataset_one_building "
+                "ON d2a_dataset_version (source) WHERE status = 'building'")
+        except sqlite3.IntegrityError:
+            # 脏旧库可能已有多 building;不阻断启动,由后续构建恢复关闭陈旧候选。
+            self.con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_d2a_dataset_building_lookup "
+                "ON d2a_dataset_version (source) WHERE status = 'building'")
         self.con.commit()
 
     # ---- raw 表 ----
@@ -517,7 +598,148 @@ class LandingStore:
         self.con.commit()
         return cur.lastrowid
 
-    # ---- 数据集/对象版本只读查询(v0.3 M1)----
+    # ---- 数据集/对象版本 CRUD(v0.3 M2)----
+
+    def insert_dataset_version(self, record: DatasetVersionRecord) -> None:
+        """插入数据集版本行;冻结字段此后仅能通过生命周期/激活路径变更。"""
+        self.con.execute(
+            "INSERT INTO d2a_dataset_version ("
+            "dataset_version, source, template_version, status, built_at, "
+            "published_at, previous_dataset_version, error, object_manifest, "
+            "template_snapshot"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.dataset_version,
+                record.source,
+                record.template_version,
+                record.status,
+                record.built_at,
+                record.published_at,
+                record.previous_dataset_version,
+                record.error,
+                record.object_manifest,
+                record.template_snapshot,
+            ),
+        )
+        self.con.commit()
+
+    def update_dataset_lifecycle(
+        self,
+        dataset_version: str,
+        *,
+        status: str,
+        published_at: str | None = None,
+        previous_dataset_version: str | None = None,
+        error: str | None = None,
+        clear_error: bool = False,
+    ) -> None:
+        """仅更新状态机字段;不得改写冻结的模板/清单/built_at。"""
+        sets = ["status = ?"]
+        params: list[object] = [status]
+        if published_at is not None:
+            sets.append("published_at = ?")
+            params.append(published_at)
+        if previous_dataset_version is not None:
+            sets.append("previous_dataset_version = ?")
+            params.append(previous_dataset_version)
+        if clear_error:
+            sets.append("error = NULL")
+        elif error is not None:
+            sets.append("error = ?")
+            params.append(error)
+        params.append(dataset_version)
+        cur = self.con.execute(
+            f"UPDATE d2a_dataset_version SET {', '.join(sets)} "
+            "WHERE dataset_version = ?",
+            params,
+        )
+        if cur.rowcount != 1:
+            raise ValueError(f"数据集版本 {dataset_version} 不存在")
+        self.con.commit()
+
+    def insert_object_version(self, record: ObjectVersionRecord) -> None:
+        self.con.execute(
+            "INSERT INTO d2a_object_version ("
+            "dataset_version, object, object_version, binding_hash, row_count, "
+            "batch_id, build_table, status, built_at, published_at, purged_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.dataset_version,
+                record.object,
+                record.object_version,
+                record.binding_hash,
+                record.row_count,
+                record.batch_id,
+                record.build_table,
+                record.status,
+                record.built_at,
+                record.published_at,
+                record.purged_at,
+            ),
+        )
+        self.con.commit()
+
+    def update_object_lifecycle(
+        self,
+        dataset_version: str,
+        object_name: str,
+        *,
+        status: str,
+        published_at: str | None = None,
+        batch_id: str | None = None,
+    ) -> None:
+        """更新对象状态/发布时间/批次;不得改写 binding/row_count/build_table。"""
+        sets = ["status = ?"]
+        params: list[object] = [status]
+        if published_at is not None:
+            sets.append("published_at = ?")
+            params.append(published_at)
+        if batch_id is not None:
+            sets.append("batch_id = ?")
+            params.append(batch_id)
+        params.extend([dataset_version, object_name])
+        cur = self.con.execute(
+            f"UPDATE d2a_object_version SET {', '.join(sets)} "
+            "WHERE dataset_version = ? AND object = ?",
+            params,
+        )
+        if cur.rowcount != 1:
+            raise ValueError(
+                f"对象版本 {dataset_version}/{object_name} 不存在")
+        self.con.commit()
+
+    def purge_object_build_table(
+        self,
+        dataset_version: str,
+        object_name: str,
+        *,
+        purged_at: str,
+    ) -> None:
+        """GC tombstone:仅 retired 对象可将 build_table 置空并写入 purged_at。"""
+        cur = self.con.execute(
+            "UPDATE d2a_object_version "
+            "SET build_table = NULL, purged_at = ? "
+            "WHERE dataset_version = ? AND object = ? AND status = 'retired' "
+            "AND build_table IS NOT NULL AND purged_at IS NULL",
+            (purged_at, dataset_version, object_name),
+        )
+        if cur.rowcount != 1:
+            raise ValueError(
+                f"无法清理对象物理表 {dataset_version}/{object_name}"
+            )
+        self.con.commit()
+
+    def set_run_dataset_version(self, run_id: int, dataset_version: str) -> None:
+        """将 Run 绑定到真实数据集版本;未知版本 fail-closed。"""
+        if self.get_dataset_version(dataset_version) is None:
+            raise ValueError(f"数据集版本 {dataset_version} 不存在")
+        cur = self.con.execute(
+            "UPDATE d2a_sync_run SET dataset_version = ? WHERE id = ?",
+            (dataset_version, run_id),
+        )
+        if cur.rowcount != 1:
+            raise ValueError(f"运行 {run_id} 不存在")
+        self.con.commit()
 
     def list_dataset_versions(
         self,

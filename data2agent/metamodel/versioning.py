@@ -42,6 +42,10 @@ class DatasetVersionRecord(BaseModel):
         default=None,
         description="构建时冻结的对象名 JSON 数组;完整性分母,与当前模板无关",
     )
+    template_snapshot: str | None = Field(
+        default=None,
+        description="冻结 TemplatePack JSON;内部字段,不暴露 datasets API",
+    )
 
 
 class ObjectVersionRecord(BaseModel):
@@ -60,6 +64,10 @@ class ObjectVersionRecord(BaseModel):
     built_at: str = Field(description="legacy local ISO text from SQLite")
     published_at: str | None = Field(
         default=None, description="legacy local ISO text from SQLite")
+    purged_at: str | None = Field(
+        default=None,
+        description="物理表已清理时的 tombstone 时间;legacy local ISO text",
+    )
 
 
 def parse_object_manifest(raw: str | None) -> list[str] | None:
