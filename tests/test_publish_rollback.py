@@ -99,7 +99,7 @@ def test_publish_in_txn_recheck_idempotent_not_500(landing, pack, monkeypatch):
     assert landing.get_published_dataset(SOURCE) is None
     assert landing.get_dataset_version(staged.dataset_version).status == "building"
     run = landing.con.execute(
-        "SELECT status FROM d2a_sync_run WHERE type = 'publish' "
+        "SELECT status FROM d2a_sync_run WHERE run_type = 'publish' "
         "ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert run is not None and run[0] == "aborted"
@@ -128,7 +128,7 @@ def test_publish_in_txn_recheck_conflict_maps_409(landing, pack, monkeypatch):
     assert result.http_status == 409
     assert landing.get_published_dataset(SOURCE) is None
     run = landing.con.execute(
-        "SELECT status FROM d2a_sync_run WHERE type = 'publish' "
+        "SELECT status FROM d2a_sync_run WHERE run_type = 'publish' "
         "ORDER BY id DESC LIMIT 1"
     ).fetchone()
     assert run is not None and run[0] == "aborted"
