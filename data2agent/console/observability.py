@@ -674,8 +674,10 @@ def build_pipeline(db: LandingStore, pack: TemplatePack, cfg: ConnectConfig | No
                    component_version: str | None = None) -> dict[str, Any]:
     """PipelineResponse 载荷:固定 7 节点 + 折叠总体状态。"""
     now = now or now_aware()
-    nodes = compute_nodes(db, pack, cfg, source, probes=probes, now=now,
-                          component_version=component_version)
+    # 整条 pipeline 与对象层节点共用同一读快照(compute_nodes 内 nested 可重入)。
+    with published_read_tx(db):
+        nodes = compute_nodes(db, pack, cfg, source, probes=probes, now=now,
+                              component_version=component_version)
     assert [n["node"] for n in nodes] == list(NODE_IDS)
     return {
         "generated_at": now,

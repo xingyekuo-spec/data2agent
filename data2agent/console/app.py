@@ -1114,8 +1114,10 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 obj_rows = db.list_object_versions(published.dataset_version)
                 if object_layer_fully_published(published, obj_rows):
                     object_version = published.dataset_version
-        nodes = obs.compute_nodes(db, pack, cfg, default_src,
-                                  component_version=app_version)
+            # Pipeline 节点与 object_stats / versions 共用同一读快照,避免并发 publish 混版。
+            nodes = obs.compute_nodes(
+                db, pack, cfg, default_src, component_version=app_version,
+            )
         recent = obs.recent_runs(db)
         if recent is None:
             query_failures.append("最近运行查询失败(d2a_sync_run)")

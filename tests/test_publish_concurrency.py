@@ -426,6 +426,68 @@ def test_console_http_objects_catalog_consistent_under_publish(tmp_path, pack):
     assert not errors, errors
 
 
+def test_console_http_overview_atomic_under_publish(tmp_path, pack):
+    """Overview 的 versions 与 object_rows 属于同一 published 快照(§10.1)。"""
+    landing = _sync_landing(tmp_path, pack)
+    v1 = _stage(landing, pack)
+    assert publish_dataset(landing, v1.dataset_version).executed is True
+    v2 = _stage(landing, pack)
+    db_path = landing.db_path
+
+    def _object_rows(version: str) -> int:
+        total = 0
+        for o in landing.list_object_versions(version):
+            (n,) = landing.con.execute(
+                f'SELECT COUNT(*) FROM "{o.build_table}"'
+            ).fetchone()
+            total += n
+        return total
+
+    rows_by_version = {
+        v1.dataset_version: _object_rows(v1.dataset_version),
+        v2.dataset_version: _object_rows(v2.dataset_version),
+    }
+    landing.con.close()
+
+    app = create_app(db_path, ROOT / "templates", token=TOKEN)
+    client = TestClient(app)
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+
+    stop = threading.Event()
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+    allowed = set(rows_by_version)
+
+    def hammer() -> None:
+        while not stop.is_set():
+            try:
+                body = client.get("/api/overview", headers=headers).json()
+                ds = body["versions"]["dataset"]
+                assert ds in allowed
+                # 对象层完整 published → object 版本与 dataset 一致
+                assert body["versions"]["object"] == ds
+                assert body["summary"]["object_rows"] == rows_by_version[ds]
+            except Exception as e:
+                with lock:
+                    errors.append(e)
+                break
+
+    threads = [threading.Thread(target=hammer, daemon=True) for _ in range(3)]
+    for t in threads:
+        t.start()
+    time.sleep(0.05)
+
+    writer = LandingStore(db_path)
+    assert publish_dataset(writer, v2.dataset_version).executed is True
+    writer.con.close()
+    time.sleep(0.15)
+    stop.set()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors, errors
+
+
 def test_dual_source_isolation_console_and_mcp(tmp_path):
     """双 source 同名对象互不串线(Console resolve + MCP)。"""
     store = LandingStore(tmp_path / "landing.sqlite")
