@@ -26,7 +26,7 @@ _ACTIVE_COL = "_d2a_deleted_at"
 _BATCH_COL = "_d2a_batch_id"
 _ROW_HASH_COL = "_d2a_row_hash"
 
-PreviewSampleReason = str  # sample_batch_not_found | sample_invalid | raw_table_not_found
+PreviewSampleReason = str  # sample_batch_not_found | sample_invalid | raw_table_not_found | anchor_changed
 
 
 class PreviewSampleError(Exception):
@@ -40,6 +40,7 @@ class PreviewSampleError(Exception):
 
 @dataclass(frozen=True)
 class FrozenSample:
+    source: str
     anchor_table: str
     pk_cols: tuple[str, ...]
     pk_tuples: tuple[tuple, ...]
@@ -61,8 +62,19 @@ def _require_ident(name: str, *, label: str) -> str:
     return name
 
 
+def _require_preview_read_tx(store: LandingStore) -> None:
+    if getattr(store, "_preview_read_depth", 0) < 1:
+        raise PreviewSampleError(
+            "sample_invalid",
+            "freeze_sample/load_sample_rows 须在 preview_read_tx 内调用",
+        )
+
+
 def _validate_bounds(offset: int, limit: int) -> tuple[int, int]:
-    if not isinstance(offset, int) or not isinstance(limit, int):
+    # bool 是 int 子类;显式拒绝 True/False 避免当成 0/1。
+    if isinstance(offset, bool) or isinstance(limit, bool):
+        raise PreviewSampleError("sample_invalid", "offset/limit 须为整数")
+    if type(offset) is not int or type(limit) is not int:
         raise PreviewSampleError("sample_invalid", "offset/limit 须为整数")
     if offset < _SAMPLE_OFFSET_MIN or offset > _SAMPLE_OFFSET_MAX:
         raise PreviewSampleError(
@@ -164,6 +176,7 @@ def freeze_sample(
     batch_id: str | None = None,
 ) -> FrozenSample:
     """在当前读事务内冻结锚表样本主键集合与 fingerprint。"""
+    _require_preview_read_tx(store)
     source = _require_ident(source, label="source")
     anchor_table = _require_ident(anchor_table, label="锚表")
     offset, limit = _validate_bounds(offset, limit)
@@ -227,6 +240,7 @@ def freeze_sample(
         rows=fingerprint_rows,
     )
     return FrozenSample(
+        source=source,
         anchor_table=anchor_table,
         pk_cols=tuple(pk_cols),
         pk_tuples=tuple(pk_tuples),
@@ -249,8 +263,12 @@ def load_sample_rows(
     extra_anchor_cols: list[str] | None = None,
 ) -> list[dict]:
     """用冻结主键集合经 build_select 读取一行集;结果按冻结主键序排列。"""
+    _require_preview_read_tx(store)
+    source = _require_ident(source, label="source")
+    if source != sample.source:
+        raise PreviewSampleError("sample_invalid", "source 与冻结样本不一致")
     if not binding.tables or binding.tables[0] != sample.anchor_table:
-        raise PreviewSampleError("sample_invalid", "binding 锚表与冻结样本不一致")
+        raise PreviewSampleError("anchor_changed", "binding 锚表与冻结样本不一致")
     if not sample.pk_tuples:
         return []
 
@@ -273,4 +291,10 @@ def load_sample_rows(
         cleaned = {k: v for k, v in row.items() if not k.startswith("__")}
         by_pk[pk] = cleaned
 
-    return [by_pk[pk] for pk in sample.pk_tuples if pk in by_pk]
+    missing = [pk for pk in sample.pk_tuples if pk not in by_pk]
+    if missing:
+        raise PreviewSampleError(
+            "anchor_changed",
+            "冻结主键在加载时缺失,样本已漂移",
+        )
+    return [by_pk[pk] for pk in sample.pk_tuples]

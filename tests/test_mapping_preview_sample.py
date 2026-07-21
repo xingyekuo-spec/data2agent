@@ -106,6 +106,7 @@ def test_freeze_offset_limit_stable_pk_order(tmp_path):
         frozen = freeze_sample(
             ro, source=SOURCE, anchor_table=ANCHOR, offset=1, limit=2,
         )
+    assert frozen.source == SOURCE
     assert frozen.pk_cols == ("Id",)
     assert frozen.pk_tuples == ((2,), (3,))
     assert frozen.sampled_rows == 2
@@ -129,8 +130,32 @@ def test_freeze_composite_pk(tmp_path):
         frozen = freeze_sample(
             ro, source=SOURCE, anchor_table=ANCHOR, offset=0, limit=10,
         )
+    assert frozen.source == SOURCE
     assert frozen.pk_cols == ("ORG", "CODE")
     assert frozen.pk_tuples == (("A", "1"), ("A", "2"), ("B", "2"))
+
+
+def test_composite_pk_freeze_then_load(tmp_path):
+    landing = _seed(
+        tmp_path,
+        composite=True,
+        rows=[
+            {"ORG": "B", "CODE": "2", "NAME": "b2"},
+            {"ORG": "A", "CODE": "2", "NAME": "a2"},
+            {"ORG": "A", "CODE": "1", "NAME": "a1"},
+            {"ORG": "C", "CODE": "9", "NAME": "c9"},
+        ],
+    )
+    tpl, binding = _tpl_binding()
+    ro = LandingStore.open_readonly(landing.db_path)
+    with preview_read_tx(ro):
+        frozen = freeze_sample(
+            ro, source=SOURCE, anchor_table=ANCHOR, offset=1, limit=2,
+        )
+        rows = load_sample_rows(ro, tpl, binding, frozen, source=SOURCE)
+    assert frozen.pk_tuples == (("A", "2"), ("B", "2"))
+    assert [r["code"] for r in rows] == ["2", "2"]
+    assert [r["name"] for r in rows] == ["a2", "b2"]
 
 
 def test_soft_deleted_rows_excluded(tmp_path):
@@ -420,6 +445,10 @@ def test_freeze_rejects_out_of_bounds(tmp_path):
         with pytest.raises(PreviewSampleError) as exc:
             freeze_sample(ro, source=SOURCE, anchor_table=ANCHOR, offset=-1, limit=10)
     assert exc.value.reason_code == "sample_invalid"
+    with preview_read_tx(ro):
+        with pytest.raises(PreviewSampleError) as exc:
+            freeze_sample(ro, source=SOURCE, anchor_table=ANCHOR, offset=True, limit=10)
+    assert exc.value.reason_code == "sample_invalid"
 
 
 def test_raw_table_not_found(tmp_path):
@@ -431,10 +460,18 @@ def test_raw_table_not_found(tmp_path):
     assert exc.value.reason_code == "raw_table_not_found"
 
 
-def test_frozen_sample_dataclass_fields():
+def test_requires_preview_read_tx(tmp_path):
+    landing = _seed(tmp_path, rows=[{"Id": 1, "CODE": "A", "NAME": "a"}])
+    ro = LandingStore.open_readonly(landing.db_path)
+    with pytest.raises(PreviewSampleError) as exc:
+        freeze_sample(ro, source=SOURCE, anchor_table=ANCHOR, offset=0, limit=50)
+    assert exc.value.reason_code == "sample_invalid"
+
+    tpl, binding = _tpl_binding()
     sample = FrozenSample(
+        source=SOURCE,
         anchor_table=ANCHOR,
-        pk_cols=["Id"],
+        pk_cols=("Id",),
         pk_tuples=((1,),),
         sample_batch_ids=("batch-a",),
         fingerprint="a" * 64,
@@ -443,4 +480,56 @@ def test_frozen_sample_dataclass_fields():
         limit=50,
         requested_batch_id=None,
     )
+    with pytest.raises(PreviewSampleError) as exc:
+        load_sample_rows(ro, tpl, binding, sample, source=SOURCE)
+    assert exc.value.reason_code == "sample_invalid"
+
+
+def test_load_rejects_source_mismatch(tmp_path):
+    landing = _seed(tmp_path, rows=[{"Id": 1, "CODE": "A", "NAME": "a"}])
+    tpl, binding = _tpl_binding()
+    ro = LandingStore.open_readonly(landing.db_path)
+    with preview_read_tx(ro):
+        frozen = freeze_sample(ro, source=SOURCE, anchor_table=ANCHOR, offset=0, limit=50)
+        with pytest.raises(PreviewSampleError) as exc:
+            load_sample_rows(ro, tpl, binding, frozen, source="other_src")
+    assert exc.value.reason_code == "sample_invalid"
+
+
+def test_load_fail_closed_on_pk_drift(tmp_path):
+    landing = _seed(
+        tmp_path,
+        rows=[
+            {"Id": 1, "CODE": "A", "NAME": "a"},
+            {"Id": 2, "CODE": "B", "NAME": "b"},
+        ],
+    )
+    tpl, binding = _tpl_binding()
+    ro = LandingStore.open_readonly(landing.db_path)
+    with preview_read_tx(ro):
+        frozen = freeze_sample(ro, source=SOURCE, anchor_table=ANCHOR, offset=0, limit=50)
+    assert frozen.pk_tuples == ((1,), (2,))
+
+    landing.mark_deleted(SOURCE, ANCHOR, "Id", {2})
+    ro2 = LandingStore.open_readonly(landing.db_path)
+    with preview_read_tx(ro2):
+        with pytest.raises(PreviewSampleError) as exc:
+            load_sample_rows(ro2, tpl, binding, frozen, source=SOURCE)
+    assert exc.value.reason_code == "anchor_changed"
+
+
+def test_frozen_sample_dataclass_fields():
+    sample = FrozenSample(
+        source=SOURCE,
+        anchor_table=ANCHOR,
+        pk_cols=("Id",),
+        pk_tuples=((1,),),
+        sample_batch_ids=("batch-a",),
+        fingerprint="a" * 64,
+        sampled_rows=1,
+        offset=0,
+        limit=50,
+        requested_batch_id=None,
+    )
+    assert sample.source == SOURCE
     assert sample.sampled_rows == 1
