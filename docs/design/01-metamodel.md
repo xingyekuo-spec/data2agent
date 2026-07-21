@@ -1,6 +1,6 @@
 # 01 · 元模型与模板包
 
-> 状态:对象/绑定契约已实现;v0.3 M1/M2 版本身份与原子发布已落地(r2,2026-07-21)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py` · 当前消费者:映射引擎、MCP 网关、白名单推导、本地对账、数据集发布/published 快照;后续消费者:v0.3 血缘/preview 与 v0.4 跨机协议
+> 状态:对象/绑定契约已实现;v0.3 M1/M2 版本身份与原子发布、M3 映射 Preview 已落地(r3,2026-07-21)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py`、`data2agent/connect/mapping_transform.py` · 当前消费者:映射引擎、Preview、MCP 网关、白名单推导、本地对账、数据集发布/published 快照;后续消费者:v0.3 字段血缘与 v0.4 跨机协议
 > 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
 
 ## 1. 设计目标
@@ -117,6 +117,7 @@ derived:
 约束:
 
 - `binding_hash` 变化必须触发 preview/重建,不能沿用旧对象版本并标为最新;
+- Preview(`POST /api/mappings/{object}/preview`)返回 `template_version` 与 current/candidate `binding_hash`,并在同一 raw 样本上试算;不写 published/隔离/水位;
 - `schema_fingerprint` 不兼容时 ingest 明确拒绝,不能静默丢列或改类型;
 - MCP 响应与字段血缘返回当前 `dataset_version/template_version/binding_hash`;
 - 一次建议卡引用的数据必须属于可解释的数据集版本,跨版本引用需显式警告;

@@ -1,7 +1,7 @@
 # 05 · 控制台与管理界面
 
-> 状态:Jinja 管理页已实现;Vue Console v0.2 为当前主产品路线(r2,2026-07-17)
-> 实现:`data2agent/console/` + `data2agent/middle_admin/`;待建:`console-ui/`
+> 状态:Jinja 管理页已实现;Vue Console v0.2 为当前主产品路线;v0.3 M3 映射 Preview 已接入模板页(r3,2026-07-21)
+> 实现:`data2agent/console/` + `data2agent/middle_admin/` + `console-ui/`
 > 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
 > Vue 实施规格:[console-ui design](../superpowers/specs/2026-07-15-console-ui-design.md)
 
@@ -142,7 +142,10 @@ Run
 - 熔断时显示当前仍服务的稳定数据集版本;
 - retry 触发完整数据集重建并走同一编排器(非单对象旁路发布),UI 必须明确提示影响范围;
 - 模板页展示对象、属性、敏感标记、binding 状态、field map、enum map、derived 和 watermark;
-- v0.2 模板只读,不提供在线编辑或自动 `verified`。
+- v0.2 模板只读,不提供在线编辑或自动 `verified`;
+- v0.3 M3 模板页提供映射 Preview:选择 source、有界 raw 样本,可用当前 binding 或一次性草稿试算;
+  展示摘要、行结果、枚举 gap、业务键问题、derived 覆盖率与 current↔draft diff;
+  不提供草稿保存、模板发布或 apply 快捷按钮;Preview 后 datasets/quarantine/runs 业务数据不变。
 
 ### 4.5 MCP Lab
 
@@ -265,8 +268,8 @@ response model → OpenAPI → fixture → 页面全部状态 → 真实 API →
 ### v0.3 可验证
 
 ```text
-GET  /api/objects/{object}/{key}/lineage          # M4
-POST /api/mappings/{object}/preview              # M3
+GET  /api/objects/{object}/{key}/lineage          # M4 待建
+POST /api/mappings/{object}/preview              # M3 已实现
 GET  /api/datasets                               # M1/M2 已实现
 GET  /api/datasets/{version}                     # M1/M2 已实现
 POST /api/datasets/{version}/publish             # M2 已实现
@@ -277,6 +280,9 @@ POST /api/validation/run                         # M6
 GET  /api/validation/runs/{run_id}               # M6
 ```
 
+`POST /api/mappings/{object}/preview` 强制 Bearer,写入 access audit(`resource_type=raw`,
+resource=`mapping_preview:{object}:{anchor}`);响应含 `template_version`、binding hash、
+sample fingerprint、candidate/current 评估与 diff;除审计外不写业务表。
 ### v0.4 可试点
 
 ```text
