@@ -205,8 +205,8 @@ def test_mcp_call_reuses_query_service_across_requests(env):
     assert r2.status_code == 200, r2.text
     q1 = r1.json()["meta"]["query_id"]
     q2 = r2.json()["meta"]["query_id"]
-    assert q1 == "q1"
-    assert q2 == "q2"
+    assert q1 and q2 and q1 != q2
+    assert q1.startswith("q") and q2.startswith("q")
 
 
 def test_shared_query_service_allows_propose_after_mcp_call(env):
@@ -226,7 +226,7 @@ def test_shared_query_service_allows_propose_after_mcp_call(env):
 
 
 def test_query_service_resets_when_config_signature_changes(env, tmp_path):
-    """landing/templates/source/max_tier 签名变化后旧 query 日志清空,ID 重新计数。"""
+    """签名变化后旧 query 日志清空,且新 ID 不得与旧 ID 重号(避免 evidence 错绑)。"""
     import shutil
 
     client, app, _cfg = _client(env)
@@ -235,8 +235,8 @@ def test_query_service_resets_when_config_signature_changes(env, tmp_path):
     r1b = client.post("/api/debug/mcp-call", json={
         "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
     assert r1.status_code == 200 and r1b.status_code == 200
-    assert r1.json()["meta"]["query_id"] == "q1"
-    assert r1b.json()["meta"]["query_id"] == "q2"
+    old_ids = {r1.json()["meta"]["query_id"], r1b.json()["meta"]["query_id"]}
+    assert len(old_ids) == 2
     old_svc = app.state.d2a_state["query_service"]
     stale_qid = r1b.json()["meta"]["query_id"]  # 仅存在于旧服务日志
 
@@ -248,13 +248,70 @@ def test_query_service_resets_when_config_signature_changes(env, tmp_path):
     r2 = client.post("/api/debug/mcp-call", json={
         "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
     assert r2.status_code == 200, r2.text
-    assert r2.json()["meta"]["query_id"] == "q1"
+    new_qid = r2.json()["meta"]["query_id"]
+    assert new_qid not in old_ids
     new_svc = app.state.d2a_state["query_service"]
     assert new_svc is not old_svc
     with pytest.raises(ValueError, match="无法溯源"):
         new_svc.propose_action(
             "Quotation", "quote_review", "新服务不应看见旧 ID",
             [{"claim": "x", "query_id": stale_qid}])
+    # 旧 evidence 经 gateway 也必须失败,不能因重号误绑到新查询
+    expired = client.post("/api/gateway/proposals", json={
+        "object": "Quotation", "action": "quote_review",
+        "conclusion": "旧 evidence",
+        "evidence": [{"claim": "x", "query_id": stale_qid}],
+    })
+    assert expired.status_code == 409
+    assert expired.json()["reason_code"] == "query_expired"
+
+
+def test_mcp_call_invalid_filters_shape_returns_invalid_params(env):
+    """filters 非对象不得伪装为 mcp_unavailable。"""
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    r = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects",
+        "params": {"object": "Customer", "filters": [1]},
+    })
+    assert r.status_code == 422, r.text
+    err = McpLabError.model_validate(r.json())
+    assert err.reason_code == "invalid_params"
+    assert err.tool == "query_objects"
+    assert err.retryable is False
+
+
+def test_proposal_empty_evidence_returns_mcp_lab_error(env):
+    """空 evidence 须返回 McpLabError.invalid_params,而非裸 FastAPI 422。"""
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    r = client.post("/api/gateway/proposals", json={
+        "object": "Quotation", "action": "quote_review",
+        "conclusion": "无证据",
+        "evidence": [],
+    })
+    assert r.status_code == 422, r.text
+    err = McpLabError.model_validate(r.json())
+    assert err.reason_code == "invalid_params"
+    assert err.tool == "propose_action"
+
+
+def test_resolve_vue_dist_under_portable_home(tmp_path, monkeypatch):
+    """便携布局 home/app/console-ui/dist 应可被 resolve_vue_dist 发现。"""
+    from data2agent.console.app import resolve_vue_dist
+
+    home = tmp_path / "portable"
+    dist = home / "app" / "console-ui" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+    monkeypatch.delenv("D2A_VUE_DIST", raising=False)
+    monkeypatch.setenv("D2A_HOME", str(home))
+    # 避免仓库内真实 dist 抢先命中
+    monkeypatch.setattr(
+        "data2agent.console.app._REPO_ROOT", tmp_path / "not-a-repo")
+    assert resolve_vue_dist() == dist.resolve()
 
 
 # ---- M6-T03 / T04: 查询 API 与 proposal gateway ----
@@ -266,7 +323,7 @@ def test_mcp_call_meta_includes_duration_and_process_scope(env):
         "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
     assert r.status_code == 200, r.text
     meta = r.json()["meta"]
-    assert meta["query_id"] == "q1"
+    assert meta["query_id"] and str(meta["query_id"]).startswith("q")
     assert meta["tool"] == "query_objects"
     assert meta["target"] == "Customer"
     assert meta["evidence_scope"] == "process"

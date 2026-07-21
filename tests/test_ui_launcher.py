@@ -160,3 +160,14 @@ def test_supervise_circuit_breaker(tmp_path, monkeypatch):
     assert mod._MANAGED[0]["failed"] is True, "反复崩溃应触发熔断,停止重启"
     assert mod._MANAGED[0]["restarts"] == mod.SUPERVISE_MAX_RESTARTS
     mod._MANAGED.clear()
+
+
+def test_portable_vue_dist_env_sets_d2a_vue_dist(tmp_path):
+    """platform 便携包 dist 位于 home/app/console-ui/dist,启动环境必须传给子进程。"""
+    mod = _load_launcher()
+    dist = tmp_path / "app" / "console-ui" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+    env = mod.portable_vue_dist_env(tmp_path, {"D2A_HOME": str(tmp_path)})
+    assert env["D2A_VUE_DIST"] == str(dist.resolve())
+    assert mod.portable_vue_dist_env(tmp_path / "empty", {}) == {}

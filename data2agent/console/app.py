@@ -138,11 +138,16 @@ _VUE_MISSING_HTML = """<!doctype html>
 
 
 def resolve_vue_dist() -> Path | None:
-    """定位 Vue dist;优先 D2A_VUE_DIST,其次仓库 console-ui/dist。"""
+    """定位 Vue dist;优先 D2A_VUE_DIST,其次便携 home,再仓库/包内路径。"""
     env = (os.environ.get("D2A_VUE_DIST") or "").strip()
     candidates: list[Path] = []
     if env:
         candidates.append(Path(env))
+    home = (os.environ.get("D2A_HOME") or "").strip()
+    if home:
+        home_path = Path(home)
+        candidates.append(home_path / "app" / "console-ui" / "dist")
+        candidates.append(home_path / "console-ui" / "dist")
     candidates.append(_REPO_ROOT / "console-ui" / "dist")
     candidates.append(_PKG / "vue_dist")
     for cand in candidates:
@@ -683,7 +688,20 @@ def create_app(landing: str | None = None, templates: str = "templates",
     async def request_validation_handler(
         request: Request, exc: RequestValidationError,
     ) -> JSONResponse:
-        if not _is_raw_api_path(request.url.path):
+        path = request.url.path
+        if path.endswith("/gateway/proposals") or path.endswith("/debug/mcp-call"):
+            tool = "propose_action" if path.endswith("/gateway/proposals") else None
+            return JSONResponse(
+                status_code=422,
+                content=McpLabError(
+                    detail="查询或建议卡参数无效",
+                    reason_code="invalid_params",
+                    tool=tool,
+                    retryable=False,
+                    error_id=None,
+                ).model_dump(),
+            )
+        if not _is_raw_api_path(path):
             return JSONResponse(
                 status_code=422,
                 content={"detail": jsonable_encoder(exc.errors())},
@@ -1660,8 +1678,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
         params = body.model_dump().get("params") or {}
         try:
             return _mcp_in_process(body.tool, params)
-        except ValueError as e:
-            # 业务错误直接映射;不回落到远端 HTTP(远端 query ID 无法被本进程 proposal 引用)
+        except (ValueError, TypeError) as e:
+            # 业务/参数错误直接映射;不回落到远端 HTTP(远端 query ID 无法被本进程 proposal 引用)
             return mcp_lab_error_response(e, tool=body.tool)
         except HTTPException:
             raise

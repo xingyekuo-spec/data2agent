@@ -23,7 +23,8 @@ const {
 } = storeToRefs(store)
 
 const tab = ref<'objects' | 'metrics' | 'proposal'>('objects')
-const showRawJson = ref(false)
+const showObjectRawJson = ref(false)
+const showMetricsRawJson = ref(false)
 const expandedEvidence = ref<string | null>(null)
 
 const objectForm = reactive({
@@ -180,10 +181,6 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
             :error="objectQuery.error"
             @retry="onRunObjects"
           />
-          <EmptyState
-            v-else-if="objectQuery.status === 'success' && rowsOf(objectQuery.data).length === 0"
-            title="查询成功，无行返回"
-          />
           <div v-else-if="objectQuery.status === 'success'" data-testid="object-result">
             <div class="result-meta" data-testid="object-result-meta">
               <span>query_id={{ metaOf(objectQuery.data)?.query_id ?? 'null' }}</span>
@@ -196,7 +193,16 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
             <ul v-if="metaOf(objectQuery.data)?.warnings?.length" data-testid="object-warnings">
               <li v-for="w in metaOf(objectQuery.data)?.warnings" :key="w">{{ w }}</li>
             </ul>
-            <el-table :data="rowsOf(objectQuery.data)" size="small" data-testid="object-rows-table">
+            <EmptyState
+              v-if="rowsOf(objectQuery.data).length === 0"
+              title="查询成功，无行返回"
+            />
+            <el-table
+              v-else
+              :data="rowsOf(objectQuery.data)"
+              size="small"
+              data-testid="object-rows-table"
+            >
               <el-table-column
                 v-for="col in Object.keys(rowsOf(objectQuery.data)[0] ?? {})"
                 :key="col"
@@ -205,10 +211,10 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
                 min-width="120"
               />
             </el-table>
-            <el-button size="small" data-testid="toggle-object-json" @click="showRawJson = !showRawJson">
-              {{ showRawJson ? '隐藏' : '显示' }}原始 JSON
+            <el-button size="small" data-testid="toggle-object-json" @click="showObjectRawJson = !showObjectRawJson">
+              {{ showObjectRawJson ? '隐藏' : '显示' }}原始 JSON
             </el-button>
-            <pre v-if="showRawJson" data-testid="object-raw-json">{{ JSON.stringify(objectQuery.data, null, 2) }}</pre>
+            <pre v-if="showObjectRawJson" data-testid="object-raw-json">{{ JSON.stringify(objectQuery.data, null, 2) }}</pre>
           </div>
         </el-tab-pane>
 
@@ -231,14 +237,24 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
             @retry="onRunMetrics"
           />
           <div v-else-if="metricsQuery.status === 'success'" data-testid="metrics-result">
-            <div class="result-meta">
+            <div class="result-meta" data-testid="metrics-result-meta">
               <span>query_id={{ metaOf(metricsQuery.data)?.query_id ?? 'null' }}</span>
               <span>耗时 {{ metaOf(metricsQuery.data)?.duration_ms ?? '-' }} ms</span>
+              <span>行数 {{ metaOf(metricsQuery.data)?.row_count ?? rowsOf(metricsQuery.data).length }}</span>
             </div>
             <ul v-if="metaOf(metricsQuery.data)?.warnings?.length" data-testid="metrics-warnings">
               <li v-for="w in metaOf(metricsQuery.data)?.warnings" :key="w">{{ w }}</li>
             </ul>
-            <el-table :data="rowsOf(metricsQuery.data)" size="small" data-testid="metrics-rows-table">
+            <EmptyState
+              v-if="rowsOf(metricsQuery.data).length === 0"
+              title="查询成功，无行返回"
+            />
+            <el-table
+              v-else
+              :data="rowsOf(metricsQuery.data)"
+              size="small"
+              data-testid="metrics-rows-table"
+            >
               <el-table-column
                 v-for="col in Object.keys(rowsOf(metricsQuery.data)[0] ?? {})"
                 :key="col"
@@ -247,6 +263,10 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
                 min-width="120"
               />
             </el-table>
+            <el-button size="small" data-testid="toggle-metrics-json" @click="showMetricsRawJson = !showMetricsRawJson">
+              {{ showMetricsRawJson ? '隐藏' : '显示' }}原始 JSON
+            </el-button>
+            <pre v-if="showMetricsRawJson" data-testid="metrics-raw-json">{{ JSON.stringify(metricsQuery.data, null, 2) }}</pre>
           </div>
         </el-tab-pane>
 

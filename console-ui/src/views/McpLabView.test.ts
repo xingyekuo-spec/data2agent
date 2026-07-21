@@ -60,4 +60,70 @@ describe('McpLabView', () => {
     expect(w.find('[data-testid="object-raw-json"]').text()).toContain('q1')
     expect(w.find('[data-testid="object-raw-json"]').text()).toContain('***')
   })
+
+  it('keeps meta and raw json when object query returns zero rows', async () => {
+    vi.mocked(postMcpCall).mockResolvedValue({
+      ok: true,
+      data: {
+        object: 'Customer',
+        display_name: '客户',
+        rows: [],
+        meta: {
+          query_id: 'q-empty',
+          tool: 'query_objects',
+          target: 'Customer',
+          row_count: 0,
+          duration_ms: 3,
+          masked_fields: ['contact'],
+          warnings: ['draft'],
+          evidence_scope: 'process',
+        },
+      },
+      response: new Response(),
+    })
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const w = mount(McpLabView, {
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    await w.find('[data-testid="object-run"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="object-result"]').exists()).toBe(true)
+    expect(w.find('[data-testid="object-result-meta"]').text()).toContain('q-empty')
+    expect(w.find('[data-testid="object-result-meta"]').text()).toContain('行数 0')
+    await w.find('[data-testid="toggle-object-json"]').trigger('click')
+    expect(w.find('[data-testid="object-raw-json"]').text()).toContain('"row_count": 0')
+  })
+
+  it('shows metrics raw json toggle', async () => {
+    vi.mocked(postMcpCall).mockResolvedValue({
+      ok: true,
+      data: {
+        metric: 'gross_margin_rate',
+        rows: [{ value: 0.3 }],
+        meta: {
+          query_id: 'qm1',
+          tool: 'query_metrics',
+          target: 'gross_margin_rate',
+          row_count: 1,
+          duration_ms: 4,
+          masked_fields: [],
+          warnings: ['caveat'],
+          evidence_scope: 'process',
+        },
+      },
+      response: new Response(),
+    })
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const w = mount(McpLabView, {
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    // Element Plus tabs keep panes mounted; click metrics run directly
+    await w.find('[data-testid="metrics-run"]').trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid="metrics-result"]').exists()).toBe(true)
+    await w.find('[data-testid="toggle-metrics-json"]').trigger('click')
+    expect(w.find('[data-testid="metrics-raw-json"]').text()).toContain('qm1')
+  })
 })

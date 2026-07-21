@@ -90,10 +90,15 @@ export const useMcpLabStore = defineStore('mcpLab', () => {
       objectQuery.value = { status: 'success', data: result.data }
       objectRefreshError.value = null
       rememberSuccess(result.data)
-    } else if (first) {
-      objectQuery.value = { status: 'error', error: result.error }
     } else {
-      objectRefreshError.value = result.error
+      if ((result.error as McpLabApiError).reason_code === 'query_expired') {
+        clearHistory('query ID 已失效,请重新查询后再引用 evidence')
+      }
+      if (first) {
+        objectQuery.value = { status: 'error', error: result.error }
+      } else {
+        objectRefreshError.value = result.error
+      }
     }
   }
 
@@ -109,10 +114,15 @@ export const useMcpLabStore = defineStore('mcpLab', () => {
       metricsQuery.value = { status: 'success', data: result.data }
       metricsRefreshError.value = null
       rememberSuccess(result.data)
-    } else if (first) {
-      metricsQuery.value = { status: 'error', error: result.error }
     } else {
-      metricsRefreshError.value = result.error
+      if ((result.error as McpLabApiError).reason_code === 'query_expired') {
+        clearHistory('query ID 已失效,请重新查询后再引用 evidence')
+      }
+      if (first) {
+        metricsQuery.value = { status: 'error', error: result.error }
+      } else {
+        metricsRefreshError.value = result.error
+      }
     }
   }
 
@@ -127,10 +137,15 @@ export const useMcpLabStore = defineStore('mcpLab', () => {
     if (result.ok) {
       proposal.value = { status: 'success', data: result.data }
       proposalRefreshError.value = null
-    } else if (first) {
-      proposal.value = { status: 'error', error: result.error }
     } else {
-      proposalRefreshError.value = result.error
+      if ((result.error as McpLabApiError).reason_code === 'query_expired') {
+        clearHistory('query ID 已失效,请重新查询后再引用 evidence')
+      }
+      if (first) {
+        proposal.value = { status: 'error', error: result.error }
+      } else {
+        proposalRefreshError.value = result.error
+      }
     }
   }
 

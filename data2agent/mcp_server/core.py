@@ -17,6 +17,7 @@ E4 起网关消费完整管道的产物:源系统 → sync(raw_*)→ apply(obj_*
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 import threading
 import time
@@ -48,6 +49,8 @@ class QueryService:
         self.max_tier = max_tier
         self.audit_sink = audit_sink
         self._query_log: OrderedDict[str, dict] = OrderedDict()
+        # 每实例独立 epoch,避免配置重载后 q1/q2 重号导致旧 evidence 错绑新查询
+        self._qid_epoch = secrets.token_hex(4)
         self._query_seq = 0
         self._proposal_seq = 0
         self._lock = threading.Lock()
@@ -59,7 +62,7 @@ class QueryService:
     def _log_query(self, tool: str, target: str, detail: str, warnings: list[str]) -> str:
         with self._lock:
             self._query_seq += 1
-            qid = f"q{self._query_seq}"
+            qid = f"q{self._qid_epoch}-{self._query_seq}"
             entry = {
                 "query_id": qid, "tool": tool, "target": target, "detail": detail,
                 "at": datetime.now().isoformat(timespec="seconds"),
@@ -105,6 +108,8 @@ class QueryService:
         started = time.perf_counter()
         if object is None:
             return self._object_catalog(started)
+        if filters is not None and not isinstance(filters, dict):
+            raise ValueError("filters 须为对象(属性→值映射),不能为数组或其他类型")
 
         tpl = next((o for o in self.pack.objects if o.object == object), None)
         if tpl is None:

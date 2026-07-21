@@ -84,6 +84,14 @@ def detect_portable_root(start: Path | None = None) -> Path | None:
     return None
 
 
+def portable_vue_dist_env(home: Path, _env: dict | None = None) -> dict:
+    """若便携 home 含 Vue dist,返回应注入子进程的 D2A_VUE_DIST 映射。"""
+    dist = Path(home) / "app" / "console-ui" / "dist"
+    if (dist / "index.html").is_file():
+        return {"D2A_VUE_DIST": str(dist.resolve())}
+    return {}
+
+
 def _role_config(role: str, home: Path) -> dict:
     if role == "middle":
         port = int(os.environ.get("D2A_MIDDLE_ADMIN_PORT", "8851"))
@@ -540,6 +548,7 @@ def main(argv: list[str] | None = None) -> int:
     env = os.environ.copy()
     env["D2A_HOME"] = str(home)
     env = _merge_secrets_env(home, env)
+    env.update(portable_vue_dist_env(home))
 
     admin_already_up = _port_open(host, port)
     if not admin_already_up:

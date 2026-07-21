@@ -37,9 +37,12 @@ def classify_mcp_error(exc: BaseException) -> tuple[int, McpLabReasonCode, str, 
         return 403, "tier_forbidden", "动作档位超出当前部署上限", False
     if any(k in msg for k in (
         "取值须为", "未知筛选", "未知排序", "conclusion", "evidence",
-        "不能为空", "支持的 group_by", "未声明动作",
+        "不能为空", "支持的 group_by", "未声明动作", "filters 须为",
+        "参数无效", "unexpected keyword", "got an unexpected",
     )):
         return 422, "invalid_params", _safe_detail(msg, fallback="查询或建议卡参数无效"), False
+    if isinstance(exc, TypeError):
+        return 422, "invalid_params", "查询或建议卡参数类型无效", False
     if "rate" in msg.lower() and "limit" in msg.lower():
         return 429, "rate_limited", "MCP 调用过于频繁,请稍后重试", True
     return 500, "execution_failed", "MCP Lab 执行失败", False

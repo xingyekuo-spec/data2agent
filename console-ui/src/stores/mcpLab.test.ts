@@ -133,4 +133,33 @@ describe('useMcpLabStore', () => {
     })
     expect(store.proposal.status).toBe('success')
   })
+
+  it('clears history when proposal fails with query_expired', async () => {
+    vi.mocked(postMcpCall).mockResolvedValue({
+      ok: true,
+      data: sampleResult,
+      response: new Response(),
+    })
+    vi.mocked(postProposal).mockResolvedValue({
+      ok: false,
+      error: {
+        kind: 'http',
+        status: 409,
+        message: 'query ID 已失效',
+        retriable: false,
+        reason_code: 'query_expired',
+      } as import('@/api/services').McpLabApiError,
+    })
+    const store = useMcpLabStore()
+    await store.runObjectQuery({ object: 'Customer' })
+    expect(store.citableHistory).toHaveLength(1)
+    await store.runProposal({
+      object: 'Quotation',
+      action: 'quote_review',
+      conclusion: '旧证据',
+      evidence: [{ claim: 'x', query_id: 'q1' }],
+    })
+    expect(store.citableHistory).toHaveLength(0)
+    expect(store.historyClearedHint).toContain('重新查询')
+  })
 })
