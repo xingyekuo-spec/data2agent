@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.connect.dataset_publish import build_dataset
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack
 from data2agent.connect.landing import LandingStore
-from data2agent.connect.mapping_apply import apply_objects
 from data2agent.connect.sync import whitelist_from_pack
 from data2agent.mcp_server.core import MASK, QueryService
 from data2agent.metamodel.loader import load_pack
@@ -19,15 +19,15 @@ SOURCE = "digiwin_e10"
 
 
 def _pipeline(dirpath: Path) -> Path:
-    """seed → sync → apply,返回落地库路径。"""
+    """seed → sync → build_dataset(auto_publish),返回落地库路径。"""
     src = dirpath / "source.sqlite"
     write_db(src, build(seed=42, asof=date(2026, 7, 10)))
     pack = load_pack(ROOT / "templates")
     landing = LandingStore(dirpath / "landing.sqlite")
     adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE))
     incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
-    report = apply_objects(landing, pack, SOURCE)
-    assert not report.aborted
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.published and result.dataset_version
     return dirpath / "landing.sqlite"
 
 
@@ -171,10 +171,10 @@ def test_review_demo_chain(svc):
     assert "接单评审建议卡" in text and "口径警示" in text
 
 
-def test_object_layer_not_materialized_guides_user(tmp_path):
-    empty = LandingStore(tmp_path / "empty.sqlite")  # 只有系统表,无 obj_*
+def test_object_layer_not_published_rejects(tmp_path):
+    empty = LandingStore(tmp_path / "empty.sqlite")  # 只有系统表,无 published
     svc = QueryService(tmp_path / "empty.sqlite", ROOT / "templates")
-    with pytest.raises(ValueError, match="尚未物化"):
+    with pytest.raises(ValueError, match="not_published"):
         svc.query_objects("SalesOrder")
     assert empty  # fixture 保持连接存活
 

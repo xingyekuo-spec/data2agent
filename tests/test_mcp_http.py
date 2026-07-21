@@ -58,9 +58,9 @@ def test_audit_sink_records_tool_calls(tmp_path):
     from datetime import date
 
     from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
+    from data2agent.connect.dataset_publish import build_dataset
     from data2agent.connect.increment import incremental_sync, watermarks_from_pack
     from data2agent.connect.landing import LandingStore
-    from data2agent.connect.mapping_apply import apply_objects
     from data2agent.connect.sync import whitelist_from_pack
     from data2agent.mcp_server.core import QueryService
     from data2agent.metamodel.loader import load_pack
@@ -72,7 +72,8 @@ def test_audit_sink_records_tool_calls(tmp_path):
     landing = LandingStore(tmp_path / "landing.sqlite")
     incremental_sync(SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, "digiwin_e10")),
                      landing, "digiwin_e10", watermarks_from_pack(pack, "digiwin_e10"))
-    apply_objects(landing, pack, "digiwin_e10")
+    result = build_dataset(landing, pack, "digiwin_e10", auto_publish=True)
+    assert result.published
 
     audit_file = tmp_path / "gateway_audit.jsonl"
     svc = QueryService(landing.db_path, ROOT / "templates",

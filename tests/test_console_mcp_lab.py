@@ -14,9 +14,9 @@ from pydantic import ValidationError
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.config import load_config
+from data2agent.connect.dataset_publish import build_dataset
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack
 from data2agent.connect.landing import LandingStore
-from data2agent.connect.mapping_apply import apply_objects
 from data2agent.connect.sync import whitelist_from_pack
 from data2agent.console.app import create_app
 from data2agent.console.contracts import (
@@ -43,7 +43,8 @@ def env(tmp_path):
     adapter = SqliteReadOnlyAdapter(
         str(src), whitelist_from_pack(pack, SOURCE), audit_hook=hook)
     incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
-    apply_objects(landing, pack, SOURCE)
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.published
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(
         f"templates: {ROOT / 'templates'}\n"
@@ -93,8 +94,9 @@ def test_mcp_lab_error_schema_frozen(env):
     reason = props["reason_code"]
     enum = reason.get("enum") or reason.get("const")
     expected = {
-        "invalid_params", "unknown_target", "not_materialized", "query_expired",
-        "tier_forbidden", "rate_limited", "mcp_unavailable", "execution_failed",
+        "invalid_params", "unknown_target", "not_materialized", "not_published",
+        "query_expired", "tier_forbidden", "rate_limited", "mcp_unavailable",
+        "execution_failed",
     }
     assert set(enum) == expected
     parsed = McpLabError(
@@ -431,7 +433,7 @@ def test_mcp_call_unknown_target_returns_mcp_lab_error(env):
     assert err.tool == "query_objects"
 
 
-def test_mcp_call_not_materialized_returns_mcp_lab_error(tmp_path):
+def test_mcp_call_not_published_returns_mcp_lab_error(tmp_path):
     from data2agent.console.contracts import McpLabError
 
     landing = LandingStore(tmp_path / "empty.sqlite")
@@ -441,7 +443,7 @@ def test_mcp_call_not_materialized_returns_mcp_lab_error(tmp_path):
         "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
     assert r.status_code == 409
     err = McpLabError.model_validate(r.json())
-    assert err.reason_code == "not_materialized"
+    assert err.reason_code == "not_published"
 
 
 def test_proposal_gateway_success_and_expired_query(env):
@@ -475,7 +477,12 @@ def test_proposal_gateway_success_and_expired_query(env):
 
 
 def test_proposal_gateway_no_side_effects(env):
+    from data2agent.connect.dataset_publish import resolve_published_snapshot
+
     client, _app, cfg = _client(env)
+    landing = LandingStore(cfg.landing)
+    snap = resolve_published_snapshot(landing, SOURCE)
+    cust_table = snap.objects["Customer"].physical_table
 
     def counts():
         import sqlite3
@@ -486,7 +493,7 @@ def test_proposal_gateway_no_side_effects(env):
             runs = con.execute(
                 "SELECT COUNT(*) FROM d2a_sync_run").fetchone()[0]
             cust = con.execute(
-                'SELECT COUNT(*) FROM "obj_Customer"').fetchone()[0]
+                f'SELECT COUNT(*) FROM "{cust_table}"').fetchone()[0]
             return q, runs, cust
         finally:
             con.close()
