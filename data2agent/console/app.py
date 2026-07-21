@@ -744,6 +744,41 @@ def create_app(landing: str | None = None, templates: str = "templates",
             content={"detail": jsonable_encoder(exc.errors())},
         )
 
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        """MCP Lab 路径上的 409(未配置等)统一为 McpLabError。"""
+        path = request.url.path
+        if exc.status_code == 409 and (
+            path.endswith("/debug/mcp-call") or path.endswith("/gateway/proposals")
+        ):
+            tool = "propose_action" if path.endswith("/gateway/proposals") else "query_objects"
+            # 请求体 tool 字段优先(mcp-call),解析失败则回退默认
+            if path.endswith("/debug/mcp-call"):
+                try:
+                    body = await request.json()
+                    if isinstance(body, dict) and body.get("tool") in (
+                        "query_objects", "query_metrics",
+                    ):
+                        tool = body["tool"]
+                except Exception:
+                    pass
+            detail = exc.detail if isinstance(exc.detail, str) else "尚未完成首次配置或落地库不可用"
+            return JSONResponse(
+                status_code=409,
+                content=McpLabError(
+                    detail=detail,
+                    reason_code="mcp_unavailable",
+                    tool=tool,
+                    retryable=False,
+                    error_id=None,
+                ).model_dump(),
+            )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+            headers=getattr(exc, "headers", None),
+        )
+
     def custom_openapi():
         if app.openapi_schema:
             return app.openapi_schema

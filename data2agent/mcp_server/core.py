@@ -120,8 +120,6 @@ class QueryService:
         started = time.perf_counter()
         if object is not None and not isinstance(object, str):
             raise ValueError("object 须为字符串")
-        if object is None:
-            return self._object_catalog(started)
         if filters is not None:
             if not isinstance(filters, dict):
                 raise ValueError("filters 须为对象(属性→值映射),不能为数组或其他类型")
@@ -134,6 +132,8 @@ class QueryService:
         if not isinstance(desc, bool):
             raise ValueError("desc 须为布尔值")
         limit = self._require_int_limit(limit)
+        if object is None:
+            return self._object_catalog(started)
 
         tpl = next((o for o in self.pack.objects if o.object == object), None)
         if tpl is None:

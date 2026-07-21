@@ -304,6 +304,58 @@ def test_mcp_call_malformed_params_return_invalid_params(env, params):
     assert err.tool == "query_objects"
 
 
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"filters": [1]},
+        {"limit": "bad"},
+        {"desc": [1]},
+    ],
+)
+def test_mcp_call_object_catalog_rejects_bad_params(env, params):
+    """未指定 object 的目录查询仍须校验其余参数,不得伪装成 200 目录。"""
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    r = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": params,
+    })
+    assert r.status_code == 422, r.text
+    err = McpLabError.model_validate(r.json())
+    assert err.reason_code == "invalid_params"
+
+
+def test_mcp_lab_endpoints_return_mcp_lab_error_when_needs_setup(tmp_path):
+    """未完成首次配置时 mcp-call/proposal 须返回 McpLabError,而非裸 detail。"""
+    import shutil
+
+    from data2agent.admin_common.home_layout import HomeLayout
+    from data2agent.console.contracts import McpLabError
+
+    home = HomeLayout(tmp_path)
+    home.ensure_dirs()
+    shutil.copytree(ROOT / "templates", home.app / "templates")
+    client = TestClient(create_app(home=home.root))
+
+    call = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer"},
+    })
+    assert call.status_code == 409, call.text
+    err = McpLabError.model_validate(call.json())
+    assert err.reason_code == "mcp_unavailable"
+    assert err.tool == "query_objects"
+
+    prop = client.post("/api/gateway/proposals", json={
+        "object": "Quotation", "action": "quote_review",
+        "conclusion": "x",
+        "evidence": [{"claim": "c", "query_id": "q1"}],
+    })
+    assert prop.status_code == 409, prop.text
+    err2 = McpLabError.model_validate(prop.json())
+    assert err2.reason_code == "mcp_unavailable"
+    assert err2.tool == "propose_action"
+
+
 def test_openapi_mcp_call_declares_mcp_lab_error_statuses(tmp_path):
     """mcp-call OpenAPI 须声明 422/404/500 为 McpLabError,而非 HTTPValidationError。"""
     landing = tmp_path / "empty.sqlite"
