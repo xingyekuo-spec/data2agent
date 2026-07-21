@@ -12,9 +12,9 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
+from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
 from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.connect.mapping_apply import apply_objects  # noqa: E402
 from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.console.contracts import OverviewResponse  # noqa: E402
@@ -41,7 +41,8 @@ def env(tmp_path):
     adapter = SqliteReadOnlyAdapter(
         str(src), whitelist_from_pack(pack, SOURCE), audit_hook=hook)
     incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
-    apply_objects(landing, pack, SOURCE)
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.published
     return landing
 
 
@@ -99,10 +100,11 @@ def test_overview_real_aggregation(env):
     assert s.quarantine_pending == 0
     assert s.last_run_at is not None and s.last_run_at.tzinfo is not None
     assert s.data_updated_at is not None
-    # 版本:app/template 真实;无 published 元数据时 dataset/object 为 null(尚未发布)
+    # 版本:app/template 真实;已原子发布后 dataset/object 指向同一 published 版本
     assert body.versions.app is not None
     assert body.versions.template
-    assert body.versions.dataset is None and body.versions.object is None
+    assert body.versions.dataset is not None
+    assert body.versions.object == body.versions.dataset
     # binding:当前模板全部 draft → info 告警,且 mapping 不显示为 healthy
     assert body.binding_summary.draft == 10
     kinds = {a.id for a in body.alerts}
@@ -117,21 +119,11 @@ def test_overview_real_aggregation(env):
 
 def test_overview_reads_published_dataset_versions(env):
     """有 published 元数据且冻结清单与对象层齐全时 overview 填真实版本。"""
-    con = env.con
-    _insert_dataset(
-        con,
-        version="ds-pub-1",
-        source=SOURCE,
-        status="published",
-        built_at="2026-07-21T10:00:00",
-        published_at="2026-07-21T10:05:00",
-        object_manifest=ALL_OBJECTS,
-    )
-    _insert_published_objects(con, dataset_version="ds-pub-1", objects=ALL_OBJECTS)
-    con.commit()
+    published = env.get_published_dataset(SOURCE)
+    assert published is not None
     body = OverviewResponse.model_validate(_client(env).get("/api/overview").json())
-    assert body.versions.dataset == "ds-pub-1"
-    assert body.versions.object == "ds-pub-1"
+    assert body.versions.dataset == published.dataset_version
+    assert body.versions.object == published.dataset_version
 
 
 def test_overview_dataset_version_follows_config_source_order(tmp_path):
@@ -181,6 +173,13 @@ def test_overview_dataset_version_follows_config_source_order(tmp_path):
 def test_overview_failed_objects_do_not_count_as_published_layer(env):
     """仅有 failed 对象记录时,Dashboard 不得宣称对象层已发布。"""
     con = env.con
+    # 退役 fixture 已发布版本,改插不完整对象层
+    old = env.get_published_dataset(SOURCE)
+    assert old is not None
+    con.execute(
+        "UPDATE d2a_dataset_version SET status = 'retired' WHERE dataset_version = ?",
+        (old.dataset_version,),
+    )
     _insert_dataset(
         con,
         version="ds-pub",
@@ -207,6 +206,12 @@ def test_overview_failed_objects_do_not_count_as_published_layer(env):
 def test_overview_mixed_object_status_is_not_fully_published(env):
     """同一数据集混合 published/failed 时不得展示统一对象层版本。"""
     con = env.con
+    old = env.get_published_dataset(SOURCE)
+    assert old is not None
+    con.execute(
+        "UPDATE d2a_dataset_version SET status = 'retired' WHERE dataset_version = ?",
+        (old.dataset_version,),
+    )
     _insert_dataset(
         con,
         version="ds-mixed",
@@ -238,6 +243,12 @@ def test_overview_mixed_object_status_is_not_fully_published(env):
 def test_overview_missing_expected_object_is_not_fully_published(env):
     """冻结清单中缺失对象时不得展示统一对象层版本。"""
     con = env.con
+    old = env.get_published_dataset(SOURCE)
+    assert old is not None
+    con.execute(
+        "UPDATE d2a_dataset_version SET status = 'retired' WHERE dataset_version = ?",
+        (old.dataset_version,),
+    )
     _insert_dataset(
         con,
         version="ds-gap",
@@ -261,6 +272,12 @@ def test_overview_missing_expected_object_is_not_fully_published(env):
 def test_overview_extra_failed_object_is_not_fully_published(env):
     """清单内对象均 published,但额外存在 failed 对象时仍不得展示。"""
     con = env.con
+    old = env.get_published_dataset(SOURCE)
+    assert old is not None
+    con.execute(
+        "UPDATE d2a_dataset_version SET status = 'retired' WHERE dataset_version = ?",
+        (old.dataset_version,),
+    )
     _insert_dataset(
         con,
         version="ds-extra",
@@ -288,6 +305,12 @@ def test_overview_extra_failed_object_is_not_fully_published(env):
 def test_overview_missing_manifest_is_fail_closed(env):
     """无冻结清单时即使有 published 对象行也不得展示对象层版本。"""
     con = env.con
+    old = env.get_published_dataset(SOURCE)
+    assert old is not None
+    con.execute(
+        "UPDATE d2a_dataset_version SET status = 'retired' WHERE dataset_version = ?",
+        (old.dataset_version,),
+    )
     _insert_dataset(
         con,
         version="ds-nomanifest",

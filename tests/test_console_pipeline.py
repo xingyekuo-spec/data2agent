@@ -13,9 +13,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
 from data2agent.connect.config import load_config  # noqa: E402
+from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
 from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.connect.mapping_apply import apply_objects  # noqa: E402
 from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.console.contracts import PipelineResponse  # noqa: E402
@@ -37,7 +37,8 @@ def env(tmp_path):
     adapter = SqliteReadOnlyAdapter(
         str(src), whitelist_from_pack(pack, SOURCE), audit_hook=hook)
     incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
-    apply_objects(landing, pack, SOURCE)
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.published
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(
         f"templates: {ROOT / 'templates'}\n"
@@ -120,7 +121,7 @@ def test_pipeline_apply_circuit_broken_locates_two_nodes(env):
     assert nodes["mapping"].status == "failed"
     assert "隔离率" in (nodes["mapping"].error or "")
     assert nodes["objects"].status == "stale"
-    assert "上一稳定结果" in nodes["objects"].status_reason
+    assert "对象层仍服务旧版本" in nodes["objects"].status_reason
     assert nodes["mapping"].run_id is not None
 
 

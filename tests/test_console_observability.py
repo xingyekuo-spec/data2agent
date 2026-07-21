@@ -15,7 +15,12 @@ pytest.importorskip("fastapi")
 from data2agent.connect.config import load_config  # noqa: E402
 from data2agent.connect.landing import LandingStore  # noqa: E402
 from data2agent.console import observability as obs  # noqa: E402
+from data2agent.metamodel.dataset_publish_contract import make_build_table  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
+from data2agent.metamodel.versioning import (  # noqa: E402
+    DatasetVersionRecord,
+    ObjectVersionRecord,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
@@ -70,11 +75,53 @@ def _mk_raw(db, table, n, extracted_at):
     db.con.commit()
 
 
-def _mk_obj(db, name, n, mapped_at):
-    db.con.execute(f'CREATE TABLE "obj_{name}" ("K" TEXT PRIMARY KEY, "_d2a_mapped_at" TEXT)')
-    db.con.executemany(f'INSERT INTO "obj_{name}" VALUES (?, ?)',
-                       [(f"k{i}", mapped_at) for i in range(n)])
+def _mk_obj(db, pack, name, n, mapped_at, *, version="ds-obs-1"):
+    """写入 published 快照物理表(不创建遗留 obj_*)。"""
+    table = make_build_table(SOURCE, name, f"{abs(hash(version + name)):012x}"[:12])
+    db.con.execute(
+        f'CREATE TABLE IF NOT EXISTS "{table}" '
+        '("K" TEXT PRIMARY KEY, "_d2a_mapped_at" TEXT)')
+    db.con.execute(f'DELETE FROM "{table}"')
+    db.con.executemany(
+        f'INSERT INTO "{table}" VALUES (?, ?)',
+        [(f"k{i}", mapped_at) for i in range(n)])
+    existing = db.get_dataset_version(version)
+    if existing is None:
+        db.insert_dataset_version(
+            DatasetVersionRecord(
+                dataset_version=version,
+                source=SOURCE,
+                template_version=pack.version,
+                status="published",
+                built_at=mapped_at,
+                published_at=mapped_at,
+                object_manifest=f'["{name}"]',
+                template_snapshot=pack.model_dump_json(),
+            )
+        )
+    else:
+        # 追加对象到同一 published 清单(测试场景通常单对象)
+        pass
+    # upsert object row
+    db.con.execute(
+        "DELETE FROM d2a_object_version WHERE dataset_version = ? AND object = ?",
+        (version, name),
+    )
+    db.insert_object_version(
+        ObjectVersionRecord(
+            dataset_version=version,
+            object=name,
+            object_version=f"{version}-{name}",
+            binding_hash="sha256:" + "ab" * 32,
+            row_count=n,
+            build_table=table,
+            status="published",
+            built_at=mapped_at,
+            published_at=mapped_at,
+        )
+    )
     db.con.commit()
+    return table
 
 
 def _mk_quarantine(db, obj, n):
@@ -295,25 +342,25 @@ def test_objects_idle_when_not_materialized(db, pack, tmp_path):
 
 def test_objects_healthy_when_in_sync(db, pack, tmp_path):
     _mk_raw(db, "CUSTOMER", 5, FRESH)
-    _mk_obj(db, "Customer", 5, FRESH)
+    _mk_obj(db, pack, "Customer", 5, FRESH)
     nodes = _nodes(db, pack, _cfg(tmp_path))
     assert nodes["objects"]["status"] == "healthy"
 
 
 def test_objects_stale_when_raw_newer(db, pack, tmp_path):
     _mk_raw(db, "CUSTOMER", 6, FRESH)
-    _mk_obj(db, "Customer", 5, STALE)   # raw 新于对象
+    _mk_obj(db, pack, "Customer", 5, STALE)   # raw 新于对象
     nodes = _nodes(db, pack, _cfg(tmp_path))
     assert nodes["objects"]["status"] == "stale"
-    assert "旧结果" in nodes["objects"]["status_reason"]
+    assert "对象层仍服务旧版本" in nodes["objects"]["status_reason"]
 
 
 def test_objects_stale_when_apply_failed_but_old_kept(db, pack, tmp_path):
-    _mk_obj(db, "Customer", 5, FRESH)
+    _mk_obj(db, pack, "Customer", 5, FRESH)
     _run(db, "apply", "failed", FRESH, FRESH, detail="熔断")
     nodes = _nodes(db, pack, _cfg(tmp_path))
     assert nodes["objects"]["status"] == "stale"
-    assert "上一稳定结果" in nodes["objects"]["status_reason"]
+    assert "对象层仍服务旧版本" in nodes["objects"]["status_reason"]
 
 
 # ---- mcp ----
@@ -330,7 +377,7 @@ def test_mcp_failed_when_down(db, pack, tmp_path):
 
 
 def test_mcp_healthy_and_stale_follows_objects(db, pack, tmp_path):
-    _mk_obj(db, "Customer", 5, FRESH)
+    _mk_obj(db, pack, "Customer", 5, FRESH)
     nodes = _nodes(db, pack, _cfg(tmp_path), probes={"mcp": lambda: (True, "http")})
     assert nodes["mcp"]["status"] == "healthy"
 
@@ -360,12 +407,12 @@ def test_pipeline_fixed_seven_nodes_and_overall(db, pack, tmp_path):
 def test_apply_circuit_broken_two_nodes_locatable(db, pack, tmp_path):
     """apply 熔断:映射 failed 与对象层 stale 必须同时可定位。"""
     _mk_raw(db, "CUSTOMER", 10, FRESH)
-    _mk_obj(db, "Customer", 5, STALE)
+    _mk_obj(db, pack, "Customer", 5, STALE)
     _run(db, "apply", "failed", FRESH, FRESH, detail="Customer 隔离率超过阈值,apply 中止")
     nodes = _nodes(db, pack, _cfg(tmp_path))
     assert nodes["mapping"]["status"] == "failed"
     assert nodes["objects"]["status"] == "stale"
-    assert "上一稳定结果" in nodes["objects"]["status_reason"]
+    assert "对象层仍服务旧版本" in nodes["objects"]["status_reason"]
 
 
 # ---- 复审回归:异常即 unknown、按源过滤、独立成功/失败、耗时与版本 ----
@@ -482,7 +529,7 @@ def test_success_without_threshold_is_unknown_not_healthy(db, pack, tmp_path):
 
 def test_objects_unknown_when_raw_undetectable(db, pack, tmp_path):
     """raw 查询失败时,对象层不能自称"与 raw 同步";MCP 传播 unknown。"""
-    _mk_obj(db, "Customer", 5, FRESH)
+    _mk_obj(db, pack, "Customer", 5, FRESH)
     db.con.execute('CREATE TABLE "raw_digiwin_e10__BROKEN" ("K" TEXT PRIMARY KEY)')
     db.con.commit()  # 缺元数据列,raw 查询必炸
     nodes = _nodes(db, pack, _cfg(tmp_path), probes={"mcp": lambda: (True, "http")})
@@ -502,7 +549,7 @@ def test_objects_propagate_unknown_when_raw_time_missing(db, pack, tmp_path):
         '("K" TEXT PRIMARY KEY, "_d2a_extracted_at" TEXT, "_d2a_deleted_at" TEXT)')
     db.con.execute(f'INSERT INTO "raw_{SOURCE}__T1" VALUES (\'k0\', NULL, NULL)')
     db.con.commit()
-    _mk_obj(db, "Customer", 5, FRESH)
+    _mk_obj(db, pack, "Customer", 5, FRESH)
     nodes = _nodes(db, pack, _cfg(tmp_path), probes={"mcp": lambda: (True, "http")})
     assert nodes["raw"]["status"] == "unknown"
     assert nodes["objects"]["status"] == "unknown"
@@ -512,7 +559,7 @@ def test_objects_propagate_unknown_when_raw_time_missing(db, pack, tmp_path):
 def test_objects_propagate_unknown_when_threshold_missing(db, pack, tmp_path):
     """raw 缺新鲜度阈值 → raw unknown → objects/mcp 不得为 healthy。"""
     _mk_raw(db, "CUSTOMER", 5, FRESH)
-    _mk_obj(db, "Customer", 5, FRESH)
+    _mk_obj(db, pack, "Customer", 5, FRESH)
     nodes = {n["node"]: n for n in obs.compute_nodes(
         db, pack, None, SOURCE, probes={"mcp": lambda: (True, "http")}, now=NOW)}
     assert nodes["raw"]["status"] == "unknown"
@@ -522,7 +569,7 @@ def test_objects_propagate_unknown_when_threshold_missing(db, pack, tmp_path):
 
 def test_objects_propagate_unknown_when_apply_type_legacy(db, pack, tmp_path):
     """legacy run 无 run_type → mapping unknown → objects/mcp 不得为 healthy。"""
-    _mk_obj(db, "Customer", 5, FRESH)
+    _mk_obj(db, pack, "Customer", 5, FRESH)
     db.con.execute(
         "INSERT INTO d2a_sync_run (source, started_at, finished_at, status) "
         "VALUES (?, ?, ?, 'ok')", (SOURCE, FRESH, FRESH))  # run_type 为 NULL
@@ -535,7 +582,7 @@ def test_objects_propagate_unknown_when_apply_type_legacy(db, pack, tmp_path):
 
 def test_apply_paused_is_not_failure_for_objects(db, pack, tmp_path):
     """apply paused:对象层是"部分更新"(stale),不是"apply 失败"。"""
-    _mk_obj(db, "Customer", 5, FRESH)
+    _mk_obj(db, pack, "Customer", 5, FRESH)
     _run(db, "apply", "paused", FRESH, FRESH)
     nodes = _nodes(db, pack, _cfg(tmp_path), probes={"mcp": lambda: (True, "http")})
     assert nodes["mapping"]["status"] == "warning"
@@ -547,7 +594,7 @@ def test_apply_paused_is_not_failure_for_objects(db, pack, tmp_path):
 
 def test_apply_running_is_not_failure_for_objects(db, pack, tmp_path):
     """apply running:对象层是"进行中",不是"失败"。"""
-    _mk_obj(db, "Customer", 5, FRESH)
+    _mk_obj(db, pack, "Customer", 5, FRESH)
     _run(db, "apply", "running", FRESH)
     nodes = _nodes(db, pack, _cfg(tmp_path))
     assert nodes["mapping"]["status"] == "running"

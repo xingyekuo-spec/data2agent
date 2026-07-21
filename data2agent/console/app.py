@@ -342,8 +342,8 @@ _COUNT_NOTES = [
      "semantics": "当前配置范围内、未逻辑删除的 raw 活跃行数合计",
      "source": "raw_* 表 COUNT(*)"},
     {"name": "object_rows",
-     "semantics": "已物化 obj_* 表行数合计;与 raw 因隔离/软删有差",
-     "source": "obj_* 表 COUNT(*)"},
+     "semantics": "当前 source published 快照物理表行数合计;与 raw 因隔离/软删有差",
+     "source": "published snapshot 物理表 COUNT(*)"},
     {"name": "quarantine_pending",
      "semantics": "未处理(resolved_at 为空)的隔离行数",
      "source": "d2a_quarantine"},
@@ -1045,20 +1045,19 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "SELECT COUNT(*) FROM d2a_quarantine WHERE source = ? AND resolved_at IS NULL",
                 (s,)).fetchone()
             out_sources.append({"source": s, "state": sync_state, "quarantined": quarantined})
+        # 与 Pipeline / MCP / QueryService 共用配置顺序首源。
+        default_src = default_source()
+        obj_stats = obs.object_stats(db, pack, default_src)
         objects = []
         for o in pack.objects:
-            try:
-                row = db.con.execute(
-                    f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m FROM "obj_{o.object}"'
-                ).fetchone()
-                rows, mapped_at = row["n"], row["m"]
-            except sqlite3.OperationalError:
-                rows, mapped_at = None, None  # 尚未物化
-            (q,) = db.con.execute(
-                "SELECT COUNT(*) FROM d2a_quarantine WHERE object = ? AND resolved_at IS NULL",
-                (o.object,)).fetchone()
-            objects.append({"object": o.object, "display_name": o.display_name,
-                            "rows": rows, "mapped_at": mapped_at, "quarantined": q})
+            st = obj_stats.get(o.object, {})
+            mapped = st.get("mapped_at")
+            objects.append({
+                "object": o.object, "display_name": o.display_name,
+                "rows": st.get("rows"),
+                "mapped_at": mapped.isoformat() if mapped is not None else None,
+                "quarantined": st.get("quarantined") or 0,
+            })
 
         # ---- M3 观测聚合(observability;查询失败按字段降级为 null + 告警)----
         query_failures: list[str] = []
@@ -1079,7 +1078,6 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 raw_rows_total += r_rows
         if raw_failed:
             query_failures.append("raw 行数查询失败(部分源),raw_rows 置为不可检测")
-        obj_stats = obs.object_stats(db, pack)
         obj_errors = [v["error"] for v in obj_stats.values() if v.get("error")]
         if obj_errors:
             query_failures.append(obj_errors[0])
@@ -1102,8 +1100,6 @@ def create_app(landing: str | None = None, templates: str = "templates",
             app_version = None  # 开发环境无包元数据:明确 null(unknown)
         bs = obs.binding_summary(pack)
         qp = obs.quarantine_pending(db)
-        # 与 Pipeline / MCP / QueryService 共用配置顺序首源,不得用字典序首项。
-        default_src = default_source()
         published = db.get_published_dataset(default_src)
         dataset_version = published.dataset_version if published else None
         # 原子发布:以数据集冻结 object_manifest 为分母;清单不全/有额外/非 published → 未发布。
@@ -1349,32 +1345,33 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 if step["rows_in"] and step["rows_in"] > 0:
                     quarantine_rate = (step["quarantined"] or 0) / step["rows_in"]
             rate_state = _compute_rate_state(quarantine_rate, DEFAULT_BREAKER_THRESHOLD)
-            # object table info
+            # published 快照物理表(不回退遗留 obj_*)
             object_rows = None
             mapped_at = None
-            table_name = f"obj_{obj}"
-            table_exists = db.con.execute(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
-                (table_name,)).fetchone()[0] > 0
-            table_ok = False  # table exists AND has expected structure
-            if table_exists:
+            table_exists = False
+            table_ok = False
+            try:
+                physical, _ov = br.resolve_published_object(db, src, obj)
+                table_exists = True
                 try:
                     cols = {r[1] for r in db.con.execute(
-                        f'PRAGMA table_info("{table_name}")')}
+                        f'PRAGMA table_info("{physical}")')}
                     if "_d2a_mapped_at" in cols:
                         table_ok = True
                 except sqlite3.Error:
                     pass
-            if table_ok:
-                try:
-                    row = db.con.execute(
-                        f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
-                        f'FROM "{table_name}"'
-                    ).fetchone()
-                    object_rows = row["n"]
-                    mapped_at = obs.aware(row["m"])
-                except sqlite3.Error as e:
-                    warnings.append(f"对象表查询失败: {e}")
+                if table_ok:
+                    try:
+                        row = db.con.execute(
+                            f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
+                            f'FROM "{physical}"'
+                        ).fetchone()
+                        object_rows = row["n"]
+                        mapped_at = obs.aware(row["m"])
+                    except sqlite3.Error:
+                        warnings.append("对象数据查询失败")
+            except br.BrowseError:
+                pass
             # 收集该对象在此源的 binding 表集合(supply serving_state 用)
             binding_tables: list[str] | None = None
             if pack is not None:
@@ -2313,58 +2310,59 @@ def create_app(landing: str | None = None, templates: str = "templates",
         responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
     )
     def objects_catalog() -> list[dict]:
-        """对象目录:模板 ∩ 物化状态;未物化为 rows=null + warning,不伪装 0。"""
+        """对象目录:模板 ∩ published 快照;未发布为 rows=null + warning,不伪装 0。"""
         db = store()
         pack = require_pack()
+        src = default_source()
+        stats = obs.object_stats(db, pack, src)
         out = []
         for tpl in pack.objects:
-            try:
-                row = db.con.execute(
-                    f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
-                    f'FROM {br.quote_ident(br.physical_object(tpl.object))}').fetchone()
-                rows, mapped_at, warning = row["n"], obs.aware(row["m"]), None
-            except sqlite3.Error:
-                rows, mapped_at, warning = None, None, "尚未物化"
-            (qp,) = db.con.execute(
-                "SELECT COUNT(*) FROM d2a_quarantine "
-                "WHERE object = ? AND resolved_at IS NULL", (tpl.object,)).fetchone()
+            st = stats.get(tpl.object, {})
+            rows = st.get("rows")
+            mapped_at = st.get("mapped_at")
+            warning = None
+            if st.get("error"):
+                warning = st["error"]
+            elif rows is None:
+                warning = "尚未发布"
             out.append({
                 "object": tpl.object,
                 "display_name": tpl.display_name,
                 "domain": tpl.domain,
                 "rows": rows,
                 "mapped_at": mapped_at,
-                "quarantined": qp,
-                "version": None,
+                "quarantined": st.get("quarantined") or 0,
+                "version": st.get("version"),
                 "searchable": bool(tpl.keys),
                 "warning": warning,
             })
         return out
-
     @api.get(
         "/objects/{object}",
         response_model=ObjectRowsPageResponse,
         responses={
             401: _RESP_HTTP_ERROR[401],
             404: {"model": HttpError},
-            409: {"model": HttpError, "description": "模板存在但尚未物化"},
+            409: {"model": HttpError, "description": "模板存在但尚未发布"},
             422: _RESP_HTTP_ERROR[422],
         },
     )
     def object_rows(object: str, offset: int = 0,
                     limit: int = 50, q: str = "") -> dict:
-        """对象分页浏览(敏感属性服务端永久脱敏)。"""
+        """对象分页浏览(敏感属性服务端永久脱敏);读 published 快照物理表。"""
         db = store()
         pack = require_pack()
         tpl = next((o for o in pack.objects if o.object == object), None)
         if tpl is None:
             raise HTTPException(404, f"未知对象 '{object}'")
-        if not br.table_exists(db, br.physical_object(object)):
-            raise HTTPException(409, f"对象 '{object}' 尚未物化")
-        cols = br.object_column_meta(db, tpl)
+        try:
+            physical, _ov = br.resolve_published_object(db, default_source(), object)
+        except br.BrowseError as e:
+            raise HTTPException(e.status, e.detail) from e
+        cols = br.object_column_meta(db, tpl, physical)
         try:
             page = br.browse_table(
-                db, br.physical_object(object), cols,
+                db, physical, cols,
                 limit=limit, offset=offset, q=q)
         except br.BrowseError as e:
             raise HTTPException(e.status, e.detail) from e
@@ -2394,11 +2392,13 @@ def create_app(landing: str | None = None, templates: str = "templates",
         """模板只读展示:对象模板、属性、绑定、物化状态与隔离计数。
 
         枚举映射从 binding field_map 表达式中解析;派生决策表原样透出。
-        物化状态按 obj_* 表是否存在、COUNT、MAX(_d2a_mapped_at) 判定;
+        物化状态按 published 快照物理表判定;无 published 不回退遗留 obj_*;
         查询失败返回 state=unknown + 警告,不伪装为未物化。
         """
         db = store()
         pack = require_pack()
+        src = default_source()
+        stats = obs.object_stats(db, pack, src)
         result: list[dict] = []
         for tpl in pack.objects:
             warnings: list[str] = []
@@ -2455,115 +2455,57 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     "derived": derived,
                 })
 
-            # -- materialized lookup --
-            materialized = None
-            table_name = f"obj_{tpl.object}"
-            try:
-                exists = db.con.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-                    (table_name,)).fetchone()
-                if exists:
-                    # 验证表结构:必须含 _d2a_mapped_at 列
-                    struct_ok = False
-                    try:
-                        cols = {r[1] for r in db.con.execute(
-                            f'PRAGMA table_info("{table_name}")')}
-                        if "_d2a_mapped_at" in cols:
-                            struct_ok = True
-                    except sqlite3.Error:
-                        pass
-
-                    if not struct_ok:
-                        materialized = {
-                            "state": "unknown",
-                            "source": None,
-                            "rows": None,
-                            "mapped_at": None,
-                            "batch_id": None,
-                            "warnings": ["物化表缺少 _d2a_mapped_at 列,表结构不完整"],
-                        }
-                    else:
-                        try:
-                            row = db.con.execute(
-                                f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
-                                f'FROM "{table_name}"'
-                            ).fetchone()
-                            rows = row["n"]
-                            mapped_at = obs.aware(row["m"])
-                        except sqlite3.Error as e:
-                            warnings.append(f"物化表查询失败: {e}")
-                            rows = None
-                            mapped_at = None
-
-                        # batch_id 取自对象表的 _d2a_batch_id (物化数据来源)
-                        # source 通过 batch_id 匹配 d2a_run_step 反查 run.source
-                        source = None
-                        batch_id = None
-                        try:
-                            obj_batches = db.con.execute(
-                                f'SELECT DISTINCT "_d2a_batch_id" AS b '
-                                f'FROM "{table_name}" WHERE "_d2a_batch_id" IS NOT NULL'
-                            ).fetchall()
-                            if not obj_batches:
-                                warnings.append("对象表缺少 _d2a_batch_id,无法确定物化来源")
-                            elif len(obj_batches) > 1:
-                                # 多批次 → 无法确定物化来源
-                                warnings.append(
-                                    "对象表存在多个批次，无法确定物化来源")
-                            elif obj_batches[0]["b"]:
-                                batch_id = obj_batches[0]["b"]
-                                # 通过 batch_id 反查 run.source,限定 object 类型和当前对象
-                                step = db.con.execute(
-                                    "SELECT r.source FROM d2a_run_step s "
-                                    "JOIN d2a_sync_run r ON s.run_id = r.id "
-                                    "WHERE s.batch_id = ? AND r.run_type = 'apply' "
-                                    "AND s.kind = 'object' AND s.target = ? "
-                                    "ORDER BY s.id DESC LIMIT 1",
-                                    (batch_id, tpl.object)).fetchone()
-                                if step:
-                                    source = step["source"]
-                                else:
-                                    warnings.append(
-                                        f"对象表 batch_id={batch_id} 未匹配到 apply step,"
-                                        f"可能已被后续 step 覆盖")
-                        except sqlite3.Error as e:
-                            warnings.append(f"batch_id 查询失败: {e}")
-                        if source is None and batch_id is not None:
-                            warnings.append("无法可靠确定物化来源(batch_id 存在但无匹配 step)")
-
-                        materialized = {
-                            "state": "materialized",
-                            "source": source,
-                            "rows": rows,
-                            "mapped_at": mapped_at,
-                            "batch_id": batch_id,
-                            "warnings": list(warnings),
-                        }
-                else:
-                    materialized = {
-                        "state": "not_materialized",
-                        "source": None,
-                        "rows": None,
-                        "mapped_at": None,
-                        "batch_id": None,
-                        "warnings": [],
-                    }
-            except sqlite3.Error as e:
-                warnings.append(f"物化状态查询失败: {e}")
+            # -- materialized lookup (published snapshot only) --
+            st = stats.get(tpl.object, {})
+            if st.get("error"):
                 materialized = {
                     "state": "unknown",
                     "source": None,
                     "rows": None,
                     "mapped_at": None,
                     "batch_id": None,
-                    "warnings": [str(e)],
+                    "warnings": [st["error"]],
+                }
+            elif st.get("rows") is None:
+                materialized = {
+                    "state": "not_materialized",
+                    "source": None,
+                    "rows": None,
+                    "mapped_at": None,
+                    "batch_id": None,
+                    "warnings": [],
+                }
+            else:
+                batch_id = None
+                try:
+                    physical, _ov = br.resolve_published_object(db, src, tpl.object)
+                    batch_row = db.con.execute(
+                        f'SELECT DISTINCT "_d2a_batch_id" AS b '
+                        f'FROM "{physical}" WHERE "_d2a_batch_id" IS NOT NULL '
+                        f"LIMIT 2"
+                    ).fetchall()
+                    if len(batch_row) == 1 and batch_row[0]["b"]:
+                        batch_id = batch_row[0]["b"]
+                    elif len(batch_row) > 1:
+                        warnings.append("对象表存在多个批次，无法确定物化来源")
+                except (br.BrowseError, sqlite3.Error):
+                    pass
+                materialized = {
+                    "state": "materialized",
+                    "source": src,
+                    "rows": st["rows"],
+                    "mapped_at": st.get("mapped_at"),
+                    "batch_id": batch_id,
+                    "warnings": list(warnings),
                 }
 
             # -- quarantine_pending --
-            (qp,) = db.con.execute(
-                "SELECT COUNT(*) FROM d2a_quarantine "
-                "WHERE object = ? AND resolved_at IS NULL",
-                (tpl.object,)).fetchone()
+            qp = st.get("quarantined")
+            if qp is None:
+                (qp,) = db.con.execute(
+                    "SELECT COUNT(*) FROM d2a_quarantine "
+                    "WHERE object = ? AND resolved_at IS NULL",
+                    (tpl.object,)).fetchone()
 
             result.append({
                 "object": tpl.object,

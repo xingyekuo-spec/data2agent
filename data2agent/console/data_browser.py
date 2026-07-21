@@ -20,6 +20,11 @@ from datetime import datetime
 from typing import Any
 
 from ..connect.landing import LandingStore
+from ..connect.dataset_publish import (
+    PublishedSnapshotError,
+    resolve_published_snapshot,
+)
+from ..metamodel.dataset_publish_contract import validate_build_table
 from ..metamodel.schema import ObjectTemplate, TemplatePack
 from . import observability as obs
 
@@ -138,8 +143,27 @@ def physical_raw(source: str, table: str) -> str:
     return f"raw_{source}__{table}"
 
 
-def physical_object(obj: str) -> str:
-    return f"obj_{obj}"
+def resolve_published_object(
+    db: LandingStore, source: str, object_name: str,
+) -> tuple[str, str]:
+    """解析 published 快照中对象的物理表与 object_version。
+
+    无 published / 不在清单 / 快照损坏 → BrowseError(409),不回退 obj_*,
+    错误文案不含表名或 SQL。
+    """
+    try:
+        snap = resolve_published_snapshot(db, source)
+    except PublishedSnapshotError as e:
+        if e.reason_code == "not_published":
+            raise BrowseError(409, f"对象 '{object_name}' 尚未发布") from None
+        raise BrowseError(409, "数据集快照不可用") from None
+    entry = snap.objects.get(object_name)
+    if entry is None:
+        raise BrowseError(409, f"对象 '{object_name}' 尚未发布")
+    try:
+        return validate_build_table(entry.physical_table), entry.object_version
+    except ValueError:
+        raise BrowseError(409, "数据集快照不可用") from None
 
 
 def table_exists(db: LandingStore, physical: str) -> bool:
@@ -234,9 +258,12 @@ def raw_column_meta(db: LandingStore, pack: TemplatePack,
     return cols
 
 
-def object_column_meta(db: LandingStore, tpl: ObjectTemplate) -> list[dict[str, Any]]:
-    """对象列元数据:keys → business_key;敏感属性 → sensitive(脱敏)。"""
-    physical = physical_object(tpl.object)
+def object_column_meta(db: LandingStore, tpl: ObjectTemplate,
+                       physical: str) -> list[dict[str, Any]]:
+    """对象列元数据:keys → business_key;敏感属性 → sensitive(脱敏)。
+
+    physical 必须是已校验的 published 物理表名(不得猜测 obj_*)。
+    """
     actual = {name for name, _ in _all_columns(db, physical)}
     prop_meta = {p.name: p for p in tpl.properties}
     keys = set(tpl.keys)

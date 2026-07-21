@@ -17,9 +17,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 from data2agent.admin_common.home_layout import HomeLayout  # noqa: E402
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
 from data2agent.connect.config import load_config  # noqa: E402
+from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
 from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.connect.mapping_apply import apply_objects  # noqa: E402
 from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.console.contracts import (  # noqa: E402
@@ -125,7 +125,8 @@ def env(tmp_path):
     adapter = SqliteReadOnlyAdapter(
         str(src), whitelist_from_pack(pack, SOURCE), audit_hook=hook)
     incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
-    apply_objects(landing, pack, SOURCE)
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.published
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(
         f"templates: {ROOT / 'templates'}\n"
@@ -547,7 +548,8 @@ def test_overview_m3_blocks_present_and_tz_aware(env):
     # M3 块:带时区时间、版本、口径说明
     assert body.generated_at.tzinfo is not None
     assert body.versions.template
-    assert body.versions.dataset is None and body.versions.object is None
+    assert body.versions.dataset is not None
+    assert body.versions.object == body.versions.dataset
     assert isinstance(body.alerts, list)
     assert isinstance(body.sync_trend, list)
     assert {n.name for n in body.count_notes} >= {"raw_rows", "object_rows"}
@@ -557,7 +559,8 @@ def test_overview_m3_blocks_present_and_tz_aware(env):
     assert body.summary.template_objects >= body.summary.materialized_objects >= 1
     # 最近运行:T02 起写入真实 run_type,时间带时区
     assert body.recent_runs
-    assert body.recent_runs[0].run_type in ("sync", "apply", "reconcile", "ingest")
+    assert body.recent_runs[0].run_type in (
+        "sync", "apply", "reconcile", "ingest", "publish", "rollback")
     assert body.recent_runs[0].started_at.tzinfo is not None
 
 

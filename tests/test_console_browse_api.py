@@ -7,9 +7,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.connect.dataset_publish import build_dataset
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack
 from data2agent.connect.landing import LandingStore
-from data2agent.connect.mapping_apply import apply_objects
 from data2agent.connect.sync import whitelist_from_pack
 from data2agent.console import data_browser as br
 from data2agent.console.app import create_app
@@ -35,7 +35,8 @@ def env(tmp_path):
     landing = LandingStore(tmp_path / "landing.sqlite")
     adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE))
     incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
-    apply_objects(landing, pack, SOURCE)
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.published
     return landing
 
 
@@ -226,11 +227,19 @@ def test_objects_catalog_and_rows(env):
 def test_object_404_and_not_materialized(env):
     client = _client(env)
     assert client.get("/api/objects/Bogus", headers=_auth()).status_code == 404
-    # 删除物化表模拟未物化 → 具名 409
-    LandingStore(env.db_path).con.execute('DROP TABLE "obj_Material"')
+    # 退役 published 快照 → 具名 409(不回退遗留表)
+    pub = LandingStore(env.db_path).get_published_dataset(SOURCE)
+    assert pub is not None
+    store = LandingStore(env.db_path)
+    store.con.execute(
+        "UPDATE d2a_dataset_version SET status = 'retired' WHERE dataset_version = ?",
+        (pub.dataset_version,),
+    )
+    store.con.commit()
     r = client.get("/api/objects/Material", headers=_auth())
     assert r.status_code == 409
     HttpError.model_validate(r.json())
+    assert "obj_" not in r.json().get("detail", "")
 
 
 def test_browse_has_no_business_side_effects(env):

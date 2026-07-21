@@ -560,7 +560,8 @@ class ObjectSummary(BaseModel):
     rows: int | None = Field(description="尚未物化时为 null,不等于 0")
     mapped_at: datetime | None = Field(description=TZ_TIME_DESC)
     quarantined: int
-    version: str | None = Field(description="object version 属 v0.3,当前为空")
+    version: str | None = Field(
+        description="published 快照中的 object_version;尚未发布时为 null")
     searchable: bool = False
     warning: str | None = None
 
@@ -753,7 +754,8 @@ class OverviewSummary(BaseModel):
     """Dashboard 摘要计数;任一聚合不可检测时为 null,不用 0 掩盖错误。"""
 
     raw_rows: int | None = Field(description="当前配置范围内 raw 活跃行数合计")
-    object_rows: int | None = Field(description="已物化 obj_* 行数合计")
+    object_rows: int | None = Field(
+        description="当前 source published 快照物理表行数合计")
     materialized_objects: int = Field(description="覆盖率分子:已物化对象数")
     template_objects: int = Field(description="覆盖率分母:模板对象数")
     quarantine_pending: int | None = Field(description="未处理隔离(resolved 为空)")

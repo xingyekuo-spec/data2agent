@@ -16,9 +16,13 @@ from data2agent.console.contracts import (
     QuarantineGroup,
     QuarantineRecord,
 )
+from data2agent.metamodel.dataset_publish_contract import make_build_table
+from data2agent.metamodel.loader import load_pack
+from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
+PACK = load_pack(ROOT / "templates")
 
 _NOW = datetime.now().isoformat(timespec="seconds")
 
@@ -32,9 +36,64 @@ def _insert_q(landing: LandingStore, source: str, object: str,
     landing.con.commit()
 
 
+def _seed_published_objects(
+    landing: LandingStore,
+    objects: list[tuple[str, int, str]],
+    *,
+    version: str = "ds-q-1",
+    mapped_at: str = "2026-07-10T12:00:00",
+) -> dict[str, str]:
+    """objects: (name, rows, batch_id). Returns name → physical table."""
+    names = [n for n, _, _ in objects]
+    if landing.get_dataset_version(version) is None:
+        landing.insert_dataset_version(
+            DatasetVersionRecord(
+                dataset_version=version,
+                source=SOURCE,
+                template_version=PACK.version,
+                status="published",
+                built_at=mapped_at,
+                published_at=mapped_at,
+                object_manifest=json.dumps(names),
+                template_snapshot=PACK.model_dump_json(),
+            )
+        )
+    tables: dict[str, str] = {}
+    for i, (name, rows, batch) in enumerate(objects):
+        table = make_build_table(SOURCE, name, f"{abs(hash(version + name)):012x}"[:12])
+        landing.con.execute(f'DROP TABLE IF EXISTS "{table}"')
+        landing.con.execute(
+            f'CREATE TABLE "{table}" '
+            "(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)")
+        for j in range(rows):
+            landing.con.execute(
+                f'INSERT INTO "{table}" (id, _d2a_mapped_at, _d2a_batch_id) '
+                "VALUES (?, ?, ?)", (j + 1, mapped_at, batch))
+        landing.con.execute(
+            "DELETE FROM d2a_object_version WHERE dataset_version = ? AND object = ?",
+            (version, name),
+        )
+        landing.insert_object_version(
+            ObjectVersionRecord(
+                dataset_version=version,
+                object=name,
+                object_version=f"{version}-{name}",
+                binding_hash="sha256:" + f"{i:x}".rjust(64, "0"),
+                row_count=rows,
+                build_table=table,
+                status="published",
+                built_at=mapped_at,
+                published_at=mapped_at,
+            )
+        )
+        tables[name] = table
+    landing.con.commit()
+    return tables
+
+
 @pytest.fixture()
 def db(tmp_path):
-    """Create a landing db with seeded quarantine records, an apply run, and object tables."""
+    """Create a landing db with seeded quarantine records, an apply run, and published objects."""
     landing = LandingStore(tmp_path / "landing.sqlite")
 
     # Quarantine records across several groups
@@ -64,15 +123,11 @@ def db(tmp_path):
             quarantined=quarantined)
     landing.finish_run(run_id, tables=3, rows=180, status="ok")
 
-    # Object tables for SalesOrder and Customer (Material is not materialized)
-    for obj, rows in [("SalesOrder", 98), ("Customer", 47)]:
-        landing.con.execute(
-            f'CREATE TABLE IF NOT EXISTS "obj_{obj}" '
-            f'(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)')
-        for j in range(rows):
-            landing.con.execute(
-                f'INSERT INTO "obj_{obj}" (id, _d2a_mapped_at, _d2a_batch_id) '
-                f'VALUES (?, ?, ?)', (j + 1, "2026-07-10T12:00:00", "batch-1"))
+    # Published snapshot for SalesOrder and Customer (Material not published)
+    _seed_published_objects(
+        landing,
+        [("SalesOrder", 98, "batch-1"), ("Customer", 47, "batch-1")],
+    )
     # Raw tables for SalesOrder's binding tables (SALES_ORDER, CURRENCY)
     # needed for has_raw_evidence check in serving_state
     for bt in ["SALES_ORDER", "CURRENCY"]:
@@ -424,7 +479,7 @@ class TestQuarantineGroups:
         assert sales["serving_state"] == "stale"
 
     def test_serving_state_unavailable(self, db):
-        """存在但结构不完整的对象表 → unavailable。"""
+        """遗留 obj_* 无 published 元数据 → not_materialized(不回退)。"""
         db.con.execute('CREATE TABLE IF NOT EXISTS "obj_BrokenObj" (id INTEGER)')
         db.con.commit()
         _insert_q(db, SOURCE, "BrokenObj", None, "broken table obj")
@@ -432,8 +487,7 @@ class TestQuarantineGroups:
         client = _client(db)
         broken = next(g for g in client.get("/api/quarantine/groups").json()
                       if g["object"] == "BrokenObj")
-        # Table exists but missing _d2a_mapped_at column → read fails → unavailable
-        assert broken["serving_state"] == "unavailable"
+        assert broken["serving_state"] == "not_materialized"
 
     # -- mapped_at / object_rows --
 
@@ -519,10 +573,9 @@ class TestQuarantineGroups:
         assert sales["serving_state"] == "fresh"
 
     def test_serving_state_unknown_without_binding_tables(self, db):
-        """无 binding 表证据时即使 apply run ok 也不判 fresh。"""
+        """无 published 快照时即使有遗留 obj_* 也不判 fresh/unknown 表存在。"""
         landing = LandingStore(db.db_path)
-        # unknown_source 无模板匹配,故 binding_tables=None
-        # 但存在对象表且有 mapped_at
+        # unknown_source 无模板匹配,也无 published
         landing.con.execute(
             'CREATE TABLE IF NOT EXISTS "obj_UnknownObj" '
             '(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT)')
@@ -534,8 +587,8 @@ class TestQuarantineGroups:
         client = _client(db)
         unk = next(g for g in client.get("/api/quarantine/groups").json()
                    if g["object"] == "UnknownObj")
-        # binding_tables=None → 无法核实 raw 证据 → unknown
-        assert unk["serving_state"] == "unknown"
+        # 无 published → not_materialized(不回退遗留表)
+        assert unk["serving_state"] == "not_materialized"
 
 
 # ============================================================

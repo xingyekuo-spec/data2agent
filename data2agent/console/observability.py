@@ -16,7 +16,12 @@ from datetime import datetime, timedelta
 from typing import Any, Callable
 
 from ..connect.config import ConnectConfig, parse_duration_seconds
+from ..connect.dataset_publish import (
+    PublishedSnapshotError,
+    resolve_published_snapshot,
+)
 from ..connect.landing import LandingStore
+from ..metamodel.dataset_publish_contract import validate_build_table
 from ..metamodel.schema import TemplatePack
 
 # 固定节点顺序(契约;前端按此渲染)
@@ -180,32 +185,54 @@ def raw_stats(db: LandingStore, source: str,
         return None, None
 
 
-def object_stats(db: LandingStore, pack: TemplatePack) -> dict[str, dict[str, Any]]:
-    """每个对象的行数 / 最新物化时间 / 待处理隔离。
+def object_stats(
+    db: LandingStore, pack: TemplatePack, source: str,
+) -> dict[str, dict[str, Any]]:
+    """每个对象的行数 / 最新物化时间 / 对象版本 / 待处理隔离。
 
-    "表不存在"(no such table)= 尚未物化;其他查询异常记入 entry["error"],
-    由调用方降级为 unknown —— 查询失败不得表现为"未物化"。
+    只读 published snapshot 物理表;无 published 或不在清单中 → rows=None
+    (尚未发布)。不回退遗留 obj_*。快照损坏或表查询失败记入 entry["error"]
+    (安全摘要,无表名/SQL),由调用方降级为 unknown。
     """
+    snap = None
+    snap_error: str | None = None
+    try:
+        snap = resolve_published_snapshot(db, source)
+    except PublishedSnapshotError as e:
+        if e.reason_code == "snapshot_corrupt":
+            snap_error = "数据集快照不可用"
+        # not_published → 全部尚未发布,无 error
+    except sqlite3.Error:
+        snap_error = "对象数据查询失败"
+
     out: dict[str, dict[str, Any]] = {}
     for tpl in pack.objects:
-        entry: dict[str, Any] = {"rows": None, "mapped_at": None, "quarantined": None}
-        try:
-            row = db.con.execute(
-                f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m FROM "obj_{tpl.object}"'
-            ).fetchone()
-            entry["rows"] = row["n"]
-            entry["mapped_at"] = aware(row["m"])
-        except sqlite3.Error as e:
-            if "no such table" not in str(e).lower():
-                entry["error"] = f"obj_{tpl.object} 查询失败:{e}"
+        entry: dict[str, Any] = {
+            "rows": None, "mapped_at": None, "quarantined": None, "version": None,
+        }
+        if snap_error is not None:
+            entry["error"] = snap_error
+        elif snap is not None and tpl.object in snap.objects:
+            pe = snap.objects[tpl.object]
+            try:
+                table = validate_build_table(pe.physical_table)
+                row = db.con.execute(
+                    f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
+                    f'FROM "{table}"'
+                ).fetchone()
+                entry["rows"] = row["n"]
+                entry["mapped_at"] = aware(row["m"])
+                entry["version"] = pe.object_version
+            except (sqlite3.Error, ValueError):
+                entry["error"] = "对象数据查询失败"
         try:
             (q,) = db.con.execute(
                 "SELECT COUNT(*) FROM d2a_quarantine "
                 "WHERE object = ? AND resolved_at IS NULL",
                 (tpl.object,)).fetchone()
             entry["quarantined"] = q
-        except sqlite3.Error as e:
-            entry["error"] = f"隔离计数查询失败:{e}"
+        except sqlite3.Error:
+            entry["error"] = "隔离计数查询失败"
         out[tpl.object] = entry
     return out
 
@@ -509,14 +536,21 @@ def compute_nodes(
                                                          "running": None, "latest": None},
                                          source, now)))
 
-    # -- objects:物化时间 vs raw 最新时间;apply 失败但旧表保留 = stale --
+    # -- objects:published 快照 vs raw 最新时间;构建失败但旧版仍服务 = stale --
     # 传播规则:上游节点(raw / mapping)领域状态为 unknown 时,对象层无法证明
     # 自己与 raw 同步,必须同为 unknown —— 不只是查询异常这一种情形。
     raw_node_status = nodes[3]["status"]      # raw 是第 4 个节点
     map_node_status = nodes[4]["status"]      # mapping 是第 5 个节点
-    objs = object_stats(db, pack)
+    objs = object_stats(db, pack, source)
     obj_errors = [v["error"] for v in objs.values() if v.get("error")]
     materialized = {k: v for k, v in objs.items() if v["rows"] is not None}
+    published_version: str | None = None
+    try:
+        published = db.get_published_dataset(source)
+        if published is not None and published.status == "published":
+            published_version = published.dataset_version
+    except sqlite3.Error:
+        published_version = None
 
     # apply 对对象层的影响按真实状态区分:running/paused 是进行中,不是失败
     apply_status = (apply_facts["latest"]["status"]
@@ -527,22 +561,25 @@ def compute_nodes(
     elif apply_status == "paused":
         apply_impact = "apply 窗口暂停,对象层为部分更新结果"
     elif apply_status not in (None, "ok"):
-        apply_impact = "apply 失败,对象层继续使用上一稳定结果"
+        apply_impact = "对象层仍服务旧版本(新构建失败,上一稳定结果)"
 
     if obj_errors:
-        nodes.append(_node("objects", "unknown", obj_errors[0], source=source))
+        nodes.append(_node("objects", "unknown", obj_errors[0], source=source,
+                           version=published_version))
     elif map_node_status == "unknown":
         nodes.append(_node("objects", "unknown",
-                           "apply 状态不可检测,无法验证对象层状态", source=source))
+                           "apply 状态不可检测,无法验证对象层状态", source=source,
+                           version=published_version))
     elif materialized and raw_node_status == "unknown":
         nodes.append(_node("objects", "unknown",
-                           "raw 状态不可检测,无法验证对象层与 raw 同步", source=source))
+                           "raw 状态不可检测,无法验证对象层与 raw 同步",
+                           source=source, version=published_version))
     elif not materialized:
-        if apply_impact is not None and apply_impact.startswith("apply 失败"):
+        if apply_impact is not None and "新构建失败" in apply_impact:
             nodes.append(_node("objects", "failed",
-                               "apply 失败且对象表未物化", source=source))
+                               "apply 失败且对象层尚未发布", source=source))
         else:
-            nodes.append(_node("objects", "idle", "尚未物化", source=source))
+            nodes.append(_node("objects", "idle", "尚未发布", source=source))
     else:
         mapped_latest = max((v["mapped_at"] for v in materialized.values()
                              if v["mapped_at"] is not None), default=None)
@@ -550,16 +587,20 @@ def compute_nodes(
                      and raw_latest > mapped_latest)
         if mapped_latest is None:
             nodes.append(_node("objects", "unknown", "对象物化时间不可判定",
-                               source=source))
+                               source=source, version=published_version))
         elif apply_impact is not None or raw_newer:
-            reason = apply_impact or "raw 已更新,对象层尚未重新物化(旧结果)"
+            if apply_impact is not None:
+                reason = apply_impact
+            else:
+                reason = "对象层仍服务旧版本(raw 已更新,尚未重新发布)"
             nodes.append(_node("objects", "stale", reason,
-                               observed_at=mapped_latest, source=source))
+                               observed_at=mapped_latest, source=source,
+                               version=published_version))
         else:
             rows_total = sum(v["rows"] for v in materialized.values())
             nodes.append(_node("objects", "healthy", "对象层与 raw 同步",
                                observed_at=mapped_latest, rows_out=rows_total,
-                               source=source))
+                               source=source, version=published_version))
 
     # -- mcp:服务探测 + 对象层状态(服务健康 ≠ 数据健康)--
     mcp_ok: bool | None = None

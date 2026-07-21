@@ -115,11 +115,11 @@ def test_sensitive_business_key_stays_sensitive(env):
     prop.sensitive = True
     customer.bindings[0].field_map.pop("customer_code", None)
     raw_cols = {c["name"]: c for c in br.raw_column_meta(landing, pack, SOURCE, "CUSTOMER")}
-    obj_physical = br.physical_object("Customer")
+    obj_physical = "objv_test_customer_meta"
     landing.con.execute(
         f'CREATE TABLE "{obj_physical}" '
         '("customer_code" TEXT PRIMARY KEY, "name" TEXT, "contact" TEXT)')
-    obj_cols = {c["name"]: c for c in br.object_column_meta(landing, customer)}
+    obj_cols = {c["name"]: c for c in br.object_column_meta(landing, customer, obj_physical)}
     assert raw_cols["CUSTOMER_CODE"]["role"] == "business_key"
     assert raw_cols["CUSTOMER_CODE"]["classification"] == "sensitive"
     assert raw_cols["CUSTOMER_CODE"]["masked"] is True

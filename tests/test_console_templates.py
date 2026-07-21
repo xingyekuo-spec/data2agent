@@ -10,13 +10,64 @@ from fastapi.testclient import TestClient
 from data2agent.connect.landing import LandingStore
 from data2agent.console.app import create_app
 from data2agent.console.contracts import TemplateMetric, TemplateObject
+from data2agent.metamodel.dataset_publish_contract import make_build_table
+from data2agent.metamodel.loader import load_pack
+from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
+PACK = load_pack(ROOT / "templates")
 
 
 def _client(landing: LandingStore) -> TestClient:
     return TestClient(create_app(landing.db_path, str(ROOT / "templates")))
+
+
+def _seed_published(
+    landing: LandingStore,
+    objects: list[tuple[str, int, str]],
+    *,
+    version: str = "ds-tpl-1",
+) -> None:
+    """objects: (name, rows, batch_id) → published 快照物理表。"""
+    names = [n for n, _, _ in objects]
+    landing.insert_dataset_version(
+        DatasetVersionRecord(
+            dataset_version=version,
+            source=SOURCE,
+            template_version=PACK.version,
+            status="published",
+            built_at="2026-07-15T12:00:00",
+            published_at="2026-07-15T12:00:00",
+            object_manifest=__import__("json").dumps(names),
+            template_snapshot=PACK.model_dump_json(),
+        )
+    )
+    for i, (name, rows, batch) in enumerate(objects):
+        table = make_build_table(SOURCE, name, f"{i + 1:012x}")
+        landing.con.execute(
+            f'CREATE TABLE "{table}" '
+            "(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)")
+        for j in range(rows):
+            landing.con.execute(
+                f'INSERT INTO "{table}" (id, _d2a_mapped_at, _d2a_batch_id) '
+                "VALUES (?, ?, ?)",
+                (j + 1, "2026-07-15T12:00:00", batch),
+            )
+        landing.insert_object_version(
+            ObjectVersionRecord(
+                dataset_version=version,
+                object=name,
+                object_version=f"{version}-{name}",
+                binding_hash="sha256:" + f"{i:x}".rjust(64, "0"),
+                row_count=rows,
+                build_table=table,
+                status="published",
+                built_at="2026-07-15T12:00:00",
+                published_at="2026-07-15T12:00:00",
+            )
+        )
+    landing.con.commit()
 
 
 # ============================================================
@@ -31,17 +82,11 @@ class TestTemplatesList:
     def db(self, tmp_path):
         landing = LandingStore(tmp_path / "landing.sqlite")
 
-        # Materialize Customer, SalesOrder (各自使用不同 batch_id)
-        for obj, rows, batch in [("Customer", 100, "batch-cust"),
-                                  ("SalesOrder", 50, "batch-so")]:
-            landing.con.execute(
-                f'CREATE TABLE IF NOT EXISTS "obj_{obj}" '
-                f'(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)')
-            for j in range(rows):
-                landing.con.execute(
-                    f'INSERT INTO "obj_{obj}" (id, _d2a_mapped_at, _d2a_batch_id) '
-                    f'VALUES (?, ?, ?)', (j + 1, "2026-07-15T12:00:00", batch))
-        landing.con.commit()
+        # 发布 Customer / SalesOrder(各自不同 batch_id);其余对象未发布
+        _seed_published(
+            landing,
+            [("Customer", 100, "batch-cust"), ("SalesOrder", 50, "batch-so")],
+        )
 
         # Add an apply run with steps for SalesOrder (batch_id lookup)
         run_id = landing.start_run(SOURCE, "apply")
@@ -228,17 +273,14 @@ class TestTemplatesList:
         assert so["materialized"]["batch_id"] == "batch-so"
 
     def test_materialized_source_from_apply_step(self, db):
-        """materialized.source 通过 batch_id 匹配 step 反查 run.source。"""
+        """materialized.source 来自 published 快照所属 source。"""
         client = _client(db)
         body = client.get("/api/templates").json()
-        # SalesOrder 有匹配的 apply step(batch-so → source=digiwin_e10)
         so = next(o for o in body if o["object"] == "SalesOrder")
-        assert so["materialized"]["source"] == SOURCE  # digiwin_e10
+        assert so["materialized"]["source"] == SOURCE
 
-        # Customer 的 batch-cust 无匹配 step → source=None(+ 警告)
         cust = next(o for o in body if o["object"] == "Customer")
-        assert cust["materialized"]["source"] is None
-        assert any("未匹配到 apply step" in w for w in cust.get("warnings", []))
+        assert cust["materialized"]["source"] == SOURCE
 
     # -- quarantine_pending --
 
@@ -497,10 +539,40 @@ class TestTemplateErrorPaths:
         """创建 obj_SalesOrder 但缺少 _d2a_mapped_at → state=unknown + 警告。"""
         landing = LandingStore(tmp_path / "landing.sqlite")
 
-        # 创建物化表但缺少 _d2a_mapped_at 列
+        # published 元数据指向已删除的物理表 → 快照损坏 → unknown
+        table = make_build_table(SOURCE, "SalesOrder", "a" * 12)
         landing.con.execute(
-            'CREATE TABLE IF NOT EXISTS "obj_SalesOrder" '
-            '(id INTEGER PRIMARY KEY, some_data TEXT)')
+            f'CREATE TABLE "{table}" '
+            "(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)")
+        landing.con.execute(
+            f'INSERT INTO "{table}" (id, _d2a_mapped_at, _d2a_batch_id) '
+            "VALUES (1, '2026-07-15T12:00:00', 'b1')")
+        landing.insert_dataset_version(
+            DatasetVersionRecord(
+                dataset_version="ds-broken",
+                source=SOURCE,
+                template_version=PACK.version,
+                status="published",
+                built_at="2026-07-15T12:00:00",
+                published_at="2026-07-15T12:00:00",
+                object_manifest='["SalesOrder"]',
+                template_snapshot=PACK.model_dump_json(),
+            )
+        )
+        landing.insert_object_version(
+            ObjectVersionRecord(
+                dataset_version="ds-broken",
+                object="SalesOrder",
+                object_version="ds-broken-SalesOrder",
+                binding_hash="sha256:" + "c" * 64,
+                row_count=1,
+                build_table=table,
+                status="published",
+                built_at="2026-07-15T12:00:00",
+                published_at="2026-07-15T12:00:00",
+            )
+        )
+        landing.con.execute(f'DROP TABLE "{table}"')
         landing.con.commit()
 
         client = TestClient(create_app(
@@ -510,8 +582,8 @@ class TestTemplateErrorPaths:
         so = next(o for o in r.json() if o["object"] == "SalesOrder")
         assert so["materialized"]["state"] == "unknown"
         assert so["materialized"]["rows"] is None
-        assert any("_d2a_mapped_at" in w
-                   for w in so["materialized"].get("warnings", []))
+        assert so["materialized"].get("warnings")
+        assert "obj_" not in str(so["materialized"].get("warnings"))
 
 
 # ============================================================
@@ -527,25 +599,12 @@ class TestBatchIdLookup:
         return landing
 
     def test_batch_lookup_filters_by_object_kind_and_target(self, db):
-        """两个对象共用相同 batch_id 时,各自只匹配自己的 step。"""
-        # 创建两个对象的物化表,共用相同 batch_id
-        for obj in ["Customer", "SalesOrder"]:
-            db.con.execute(
-                f'CREATE TABLE IF NOT EXISTS "obj_{obj}" '
-                f'(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)')
-            db.con.execute(
-                f'INSERT INTO "obj_{obj}" (id, _d2a_mapped_at, _d2a_batch_id) '
-                f'VALUES (?, ?, ?)', (1, "2026-07-15T12:00:00", "shared-batch"))
-        db.con.commit()
-
-        # 两条 apply run step,同一个 batch_id 但不同 target
-        run_id = db.start_run(SOURCE, "apply")
-        for target in ["Customer", "SalesOrder"]:
-            step_id = db.add_step(run_id, 1, "object", target)
-            db.update_step(step_id, status="ok", rows_in=10, rows_out=10,
-                          quarantined=0, batch_id="shared-batch")
-        db.finish_run(run_id, tables=1, rows=20, status="ok")
-        db.con.commit()
+        """两个已发布对象各自带 batch_id 时均可读出。"""
+        _seed_published(
+            db,
+            [("Customer", 1, "shared-batch"), ("SalesOrder", 1, "shared-batch")],
+            version="ds-batch-1",
+        )
 
         client = _client(db)
         body = client.get("/api/templates").json()
@@ -553,65 +612,68 @@ class TestBatchIdLookup:
         for obj in body:
             if obj["object"] in ("Customer", "SalesOrder"):
                 mat = obj["materialized"]
-                # 应有正确的 source
                 assert mat["source"] == SOURCE, (
                     f"{obj['object']}: expected source={SOURCE}, got {mat['source']}")
                 assert mat["batch_id"] == "shared-batch"
-                # state 应为 materialized
                 assert mat["state"] == "materialized"
 
     def test_multiple_batches_yields_null_with_warning(self, db):
-        """对象表存在多个不同 batch_id → source=None, batch_id=None + 警告。"""
-        # 创建 Customer 对象表,包含两个不同 batch_id
+        """对象表存在多个不同 batch_id → batch_id=None + 警告。"""
+        table = make_build_table(SOURCE, "Customer", "b" * 12)
         db.con.execute(
-            'CREATE TABLE IF NOT EXISTS "obj_Customer" '
-            '(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)')
+            f'CREATE TABLE "{table}" '
+            "(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)")
         db.con.execute(
-            'INSERT INTO "obj_Customer" (id, _d2a_mapped_at, _d2a_batch_id) '
-            'VALUES (?, ?, ?)', (1, "2026-07-15T12:00:00", "batch-a"))
+            f'INSERT INTO "{table}" (id, _d2a_mapped_at, _d2a_batch_id) '
+            "VALUES (?, ?, ?)", (1, "2026-07-15T12:00:00", "batch-a"))
         db.con.execute(
-            'INSERT INTO "obj_Customer" (id, _d2a_mapped_at, _d2a_batch_id) '
-            'VALUES (?, ?, ?)', (2, "2026-07-15T12:00:00", "batch-b"))
+            f'INSERT INTO "{table}" (id, _d2a_mapped_at, _d2a_batch_id) '
+            "VALUES (?, ?, ?)", (2, "2026-07-15T12:00:00", "batch-b"))
+        db.insert_dataset_version(
+            DatasetVersionRecord(
+                dataset_version="ds-multi-batch",
+                source=SOURCE,
+                template_version=PACK.version,
+                status="published",
+                built_at="2026-07-15T12:00:00",
+                published_at="2026-07-15T12:00:00",
+                object_manifest='["Customer"]',
+                template_snapshot=PACK.model_dump_json(),
+            )
+        )
+        db.insert_object_version(
+            ObjectVersionRecord(
+                dataset_version="ds-multi-batch",
+                object="Customer",
+                object_version="ds-multi-batch-Customer",
+                binding_hash="sha256:" + "d" * 64,
+                row_count=2,
+                build_table=table,
+                status="published",
+                built_at="2026-07-15T12:00:00",
+                published_at="2026-07-15T12:00:00",
+            )
+        )
         db.con.commit()
 
         client = _client(db)
         body = client.get("/api/templates").json()
 
         cust = next(o for o in body if o["object"] == "Customer")
-        assert cust["materialized"]["source"] is None
+        assert cust["materialized"]["state"] == "materialized"
+        assert cust["materialized"]["source"] == SOURCE
         assert cust["materialized"]["batch_id"] is None
         assert any("多个批次" in w
                    for w in cust["materialized"].get("warnings", []))
 
     def test_single_batch_deterministic_lookup(self, db):
-        """单批次:使用 ORDER BY s.id DESC 确定性选最新 step。"""
-        db.con.execute(
-            'CREATE TABLE IF NOT EXISTS "obj_SalesOrder" '
-            '(id INTEGER PRIMARY KEY, _d2a_mapped_at TEXT, _d2a_batch_id TEXT)')
-        db.con.execute(
-            'INSERT INTO "obj_SalesOrder" (id, _d2a_mapped_at, _d2a_batch_id) '
-            'VALUES (?, ?, ?)', (1, "2026-07-15T12:00:00", "batch-so"))
-        db.con.commit()
-
-        # 两个 apply run,先创建 step_for_other 再创建 step_for_salesorder
-        run1 = db.start_run("other_source", "apply")
-        step1 = db.add_step(run1, 1, "object", "OtherObj")
-        db.update_step(step1, status="ok", rows_in=5, rows_out=5,
-                      quarantined=0, batch_id="batch-so")
-        db.finish_run(run1, tables=1, rows=5, status="ok")
-
-        run2 = db.start_run(SOURCE, "apply")
-        step2 = db.add_step(run2, 1, "object", "SalesOrder")
-        db.update_step(step2, status="ok", rows_in=50, rows_out=50,
-                      quarantined=0, batch_id="batch-so")
-        db.finish_run(run2, tables=1, rows=50, status="ok")
-        db.con.commit()
+        """单批次 published 对象可读出 source 与 batch_id。"""
+        _seed_published(
+            db, [("SalesOrder", 1, "batch-so")], version="ds-single-batch")
 
         client = _client(db)
         body = client.get("/api/templates").json()
 
         so = next(o for o in body if o["object"] == "SalesOrder")
-        # 应匹配到 SalesOrder 的 step(不是 OtherObj 的 step),source 应为 SOURCE
-        assert so["materialized"]["source"] == SOURCE, (
-            f"应通过 target='SalesOrder' 过滤,避免串到 OtherObj 的 step")
+        assert so["materialized"]["source"] == SOURCE
         assert so["materialized"]["batch_id"] == "batch-so"

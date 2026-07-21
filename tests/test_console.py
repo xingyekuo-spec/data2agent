@@ -10,9 +10,9 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
 from data2agent.connect.config import load_config  # noqa: E402
+from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
 from data2agent.connect.landing import LandingStore, raw_table_name  # noqa: E402
-from data2agent.connect.mapping_apply import apply_objects  # noqa: E402
 from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
@@ -33,7 +33,8 @@ def env(tmp_path):
     adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE),
                                     audit_hook=hook)
     incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
-    apply_objects(landing, pack, SOURCE)
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.published
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(
         f"templates: {ROOT / 'templates'}\n"
