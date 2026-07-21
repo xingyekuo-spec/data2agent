@@ -171,3 +171,15 @@ def test_portable_vue_dist_env_sets_d2a_vue_dist(tmp_path):
     env = mod.portable_vue_dist_env(tmp_path, {"D2A_HOME": str(tmp_path)})
     assert env["D2A_VUE_DIST"] == str(dist.resolve())
     assert mod.portable_vue_dist_env(tmp_path / "empty", {}) == {}
+
+
+def test_portable_vue_dist_env_preserves_explicit_override(tmp_path):
+    """显式 D2A_VUE_DIST 优先,不得被便携默认路径覆盖。"""
+    mod = _load_launcher()
+    dist = tmp_path / "app" / "console-ui" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+    explicit = "/custom/vue/dist"
+    assert mod.portable_vue_dist_env(
+        tmp_path, {"D2A_VUE_DIST": explicit},
+    ) == {}

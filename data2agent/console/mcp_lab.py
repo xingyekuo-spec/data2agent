@@ -36,8 +36,8 @@ def classify_mcp_error(exc: BaseException) -> tuple[int, McpLabReasonCode, str, 
     if "档位上限" in msg or "超出本网关档位" in msg:
         return 403, "tier_forbidden", "动作档位超出当前部署上限", False
     if any(k in msg for k in (
-        "取值须为", "未知筛选", "未知排序", "conclusion", "evidence",
-        "不能为空", "支持的 group_by", "未声明动作", "filters 须为",
+        "须为", "未知筛选", "未知排序", "未知参数", "conclusion", "evidence",
+        "不能为空", "支持的 group_by", "未声明动作",
         "参数无效", "unexpected keyword", "got an unexpected",
     )):
         return 422, "invalid_params", _safe_detail(msg, fallback="查询或建议卡参数无效"), False

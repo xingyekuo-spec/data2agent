@@ -282,6 +282,41 @@ def test_mcp_call_invalid_filters_shape_returns_invalid_params(env):
     assert err.retryable is False
 
 
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"object": "Customer", "limit": "bad"},
+        {"object": "Customer", "filters": {"region": {"bad": 1}}},
+        {"object": ["Customer"]},
+    ],
+)
+def test_mcp_call_malformed_params_return_invalid_params(env, params):
+    """工具参数类型错误统一 422 invalid_params,不得 500/503/误报 unknown_target。"""
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    r = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": params,
+    })
+    assert r.status_code == 422, r.text
+    err = McpLabError.model_validate(r.json())
+    assert err.reason_code == "invalid_params"
+    assert err.tool == "query_objects"
+
+
+def test_openapi_mcp_call_declares_mcp_lab_error_statuses(tmp_path):
+    """mcp-call OpenAPI 须声明 422/404/500 为 McpLabError,而非 HTTPValidationError。"""
+    landing = tmp_path / "empty.sqlite"
+    landing.touch()
+    app = create_app(str(landing), ROOT / "templates")
+    op = app.openapi()["paths"]["/api/debug/mcp-call"]["post"]["responses"]
+    for code in ("404", "422", "500"):
+        assert code in op, f"missing {code}"
+        schema = op[code]["content"]["application/json"]["schema"]
+        ref = schema.get("$ref", "")
+        assert ref.endswith("/McpLabError"), (code, schema)
+
+
 def test_proposal_empty_evidence_returns_mcp_lab_error(env):
     """空 evidence 须返回 McpLabError.invalid_params,而非裸 FastAPI 422。"""
     from data2agent.console.contracts import McpLabError

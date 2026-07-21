@@ -84,8 +84,11 @@ def detect_portable_root(start: Path | None = None) -> Path | None:
     return None
 
 
-def portable_vue_dist_env(home: Path, _env: dict | None = None) -> dict:
-    """若便携 home 含 Vue dist,返回应注入子进程的 D2A_VUE_DIST 映射。"""
+def portable_vue_dist_env(home: Path, env: dict | None = None) -> dict:
+    """仅在未显式设置 D2A_VUE_DIST 时注入便携默认路径。"""
+    current = env or {}
+    if (current.get("D2A_VUE_DIST") or "").strip():
+        return {}
     dist = Path(home) / "app" / "console-ui" / "dist"
     if (dist / "index.html").is_file():
         return {"D2A_VUE_DIST": str(dist.resolve())}
@@ -548,7 +551,7 @@ def main(argv: list[str] | None = None) -> int:
     env = os.environ.copy()
     env["D2A_HOME"] = str(home)
     env = _merge_secrets_env(home, env)
-    env.update(portable_vue_dist_env(home))
+    env.update(portable_vue_dist_env(home, env))
 
     admin_already_up = _port_open(host, port)
     if not admin_already_up:

@@ -653,7 +653,15 @@ def create_app(landing: str | None = None, templates: str = "templates",
     def _mcp_in_process(tool: str, params: dict[str, Any]) -> dict:
         svc = get_query_service()
         if tool == "query_objects":
+            allowed = {"object", "filters", "order_by", "desc", "limit"}
+            unknown = sorted(set(params) - allowed)
+            if unknown:
+                raise ValueError(f"未知参数 {unknown}")
             return svc.query_objects(**params)
+        allowed = {"metric", "group_by", "limit"}
+        unknown = sorted(set(params) - allowed)
+        if unknown:
+            raise ValueError(f"未知参数 {unknown}")
         return svc.query_metrics(**params)
 
     def _mcp_http(tool: str, params: dict[str, Any]) -> dict:
@@ -1665,8 +1673,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
             400: {"model": HttpError},
             401: _RESP_HTTP_ERROR[401],
             403: {"model": McpLabError, "description": "档位禁止或其他治理拒绝"},
+            404: {"model": McpLabError, "description": "未知对象/指标"},
             409: {"model": McpLabError, "description": "未配置/冲突/query 过期等"},
+            422: {"model": McpLabError, "description": "参数无效"},
             429: {"model": McpLabError, "description": "限流"},
+            500: {"model": McpLabError, "description": "执行失败"},
             502: {"model": McpLabError, "description": "上游 MCP 失败"},
             503: {"model": McpLabError, "description": "MCP 不可用"},
         },

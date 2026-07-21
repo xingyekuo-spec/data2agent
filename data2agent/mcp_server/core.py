@@ -103,13 +103,37 @@ class QueryService:
 
     # ---- query_objects ----
 
+    @staticmethod
+    def _require_scalar_filter_value(name: str, val: object) -> None:
+        if isinstance(val, (dict, list)):
+            raise ValueError(f"filters['{name}'] 须为标量值,不能为对象或数组")
+
+    @staticmethod
+    def _require_int_limit(limit: object) -> int:
+        # bool 是 int 子类,必须排除
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            raise ValueError("limit 须为整数")
+        return limit
+
     def query_objects(self, object: str | None = None, filters: dict | None = None,
                       order_by: str | None = None, desc: bool = False, limit: int = 20) -> dict:
         started = time.perf_counter()
+        if object is not None and not isinstance(object, str):
+            raise ValueError("object 须为字符串")
         if object is None:
             return self._object_catalog(started)
-        if filters is not None and not isinstance(filters, dict):
-            raise ValueError("filters 须为对象(属性→值映射),不能为数组或其他类型")
+        if filters is not None:
+            if not isinstance(filters, dict):
+                raise ValueError("filters 须为对象(属性→值映射),不能为数组或其他类型")
+            for name, val in filters.items():
+                if not isinstance(name, str):
+                    raise ValueError("filters 键须为字符串")
+                self._require_scalar_filter_value(name, val)
+        if order_by is not None and not isinstance(order_by, str):
+            raise ValueError("order_by 须为字符串")
+        if not isinstance(desc, bool):
+            raise ValueError("desc 须为布尔值")
+        limit = self._require_int_limit(limit)
 
         tpl = next((o for o in self.pack.objects if o.object == object), None)
         if tpl is None:
@@ -284,6 +308,11 @@ class QueryService:
     def query_metrics(self, metric: str | None = None, group_by: str | None = None,
                       limit: int = 24) -> dict:
         started = time.perf_counter()
+        if metric is not None and not isinstance(metric, str):
+            raise ValueError("metric 须为字符串")
+        if group_by is not None and not isinstance(group_by, str):
+            raise ValueError("group_by 须为字符串")
+        limit = self._require_int_limit(limit)
         if metric is None:
             return self._metric_catalog(started)
 

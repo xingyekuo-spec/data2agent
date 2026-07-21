@@ -2928,6 +2928,15 @@ export interface operations {
                     "application/json": components["schemas"]["McpLabError"];
                 };
             };
+            /** @description 未知对象/指标 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
             /** @description 未配置/冲突/query 过期等 */
             409: {
                 headers: {
@@ -2937,17 +2946,26 @@ export interface operations {
                     "application/json": components["schemas"]["McpLabError"];
                 };
             };
-            /** @description Validation Error */
+            /** @description 参数无效 */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
+                    "application/json": components["schemas"]["McpLabError"];
                 };
             };
             /** @description 限流 */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description 执行失败 */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

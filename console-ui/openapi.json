@@ -5204,6 +5204,16 @@
             },
             "description": "档位禁止或其他治理拒绝"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "未知对象/指标"
+          },
           "409": {
             "content": {
               "application/json": {
@@ -5218,11 +5228,11 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
+                  "$ref": "#/components/schemas/McpLabError"
                 }
               }
             },
-            "description": "Validation Error"
+            "description": "参数无效"
           },
           "429": {
             "content": {
@@ -5233,6 +5243,16 @@
               }
             },
             "description": "限流"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "执行失败"
           },
           "502": {
             "content": {
