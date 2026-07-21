@@ -1,6 +1,6 @@
 # 01 · 元模型与模板包
 
-> 状态:对象/绑定契约已实现;版本与验证目标已对齐产品路线(r1,2026-07-17)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py` · 当前消费者:映射引擎、MCP 网关、白名单推导、本地对账;后续消费者:v0.3 血缘/preview/数据集发布与 v0.4 跨机协议
+> 状态:对象/绑定契约已实现;v0.3 M1/M2 版本身份与原子发布已落地(r2,2026-07-21)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py` · 当前消费者:映射引擎、MCP 网关、白名单推导、本地对账、数据集发布/published 快照;后续消费者:v0.3 血缘/preview 与 v0.4 跨机协议
 > 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
 
 ## 1. 设计目标
@@ -101,7 +101,7 @@ derived:
 和一键验收提供机器辅助证据,在 v0.4 现场由实施人员按 docs 02 附录核对后将 binding
 置为 `verified`。COUNT/水位/主键 diff 等数据对账只负责记录一致性,不证明字段业务语义正确。
 
-## 6. 版本与发布标识(v0.3/v0.4 目标)
+## 6. 版本与发布标识(v0.3/v0.4)
 
 `pack.yaml: version` 继续表示模板包的人工语义版本,但不能单独承担运行数据版本。
 产品路线引入以下互不替代的标识:
@@ -120,7 +120,8 @@ derived:
 - `schema_fingerprint` 不兼容时 ingest 明确拒绝,不能静默丢列或改类型;
 - MCP 响应与字段血缘返回当前 `dataset_version/template_version/binding_hash`;
 - 一次建议卡引用的数据必须属于可解释的数据集版本,跨版本引用需显式警告;
-- 破坏性模板变更需要迁移说明,但 v0.3 初期允许通过 raw 重建对象层完成迁移。
+- 破坏性模板变更需要迁移说明,但 v0.3 初期允许通过 raw 重建对象层完成迁移;
+- 运行时“当前可见对象层”由 published `dataset_version` 解析,不是遗留 `obj_*` 表名;不得为 legacy `obj_*` 伪造 published 版本。
 
 ## 7. 演进规则
 

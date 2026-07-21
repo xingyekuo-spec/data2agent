@@ -1,6 +1,6 @@
 # 02 · 抽取框架(详设)
 
-> 状态:设计修订 r0.4(2026-07-17)· 实现目录:`data2agent/connect/` + `data2agent/ingest/` · 当前:E1–E5 + E6a 推送 sink 已实现;产品 v0.3 原子发布、v0.4 批次回执/E6b/TLS 门槛待建
+> 状态:设计修订 r0.5(2026-07-21)· 实现目录:`data2agent/connect/` + `data2agent/ingest/` · 当前:E1–E5 + E6a 推送 sink + v0.3 M2 原子发布已实现;v0.3 preview/血缘与 v0.4 批次回执/E6b/TLS 门槛待建
 > 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
 
 ## 1. 目标与非目标
@@ -119,7 +119,7 @@ preview 与正式 apply 使用同一解析、map、derived、类型校验和隔�
 
 - 输入为选定 raw 样本或临时 binding 草稿;
 - 输出仅包含预览结果、隔离原因、枚举未覆盖值、业务键问题和规则覆盖率;
-- 不修改正式 `obj_*`、水位、正式隔离区或当前数据集版本;
+- 不修改 published 物理表、水位、正式隔离区或当前数据集版本;
 - 返回 `template_version`、`binding_hash` 与样本批次,保证预览可复现。
 
 字段血缘由正式 apply 产生,至少记录:
@@ -133,21 +133,19 @@ transform(map/join/derived) / result_value / extract_batch_id / map_batch_id
 敏感源值遵循出口脱敏规则,不能因血缘接口绕过 `sensitive`。字典/字段语义是否正确仍需
 现场核对;血缘只证明系统实际读取和转换了什么。
 
-### 7.2 v0.3 对象层原子发布(待建)
+### 7.2 v0.3 对象层原子发布(已实现 · M2)
 
-当前 `mapping_apply` 对每个对象执行 `DROP → CREATE → INSERT`,适合展厅但不是 v0.3
-发布语义。目标流程:
+发布模型是“不可变物理版本表 + 原子元数据指针”,不是重命名共享 `obj_*`:
 
 ```text
-为全部目标对象构建 obj_{Object}__build_{version}
-  → 完整校验与熔断判断
-  → 任一关键对象失败则全部不发布,当前 obj_* 保持不变
-  → SQLite 短事务内切换全部稳定表名并写 dataset/object version 元数据
-  → 保留上一稳定版本用于回滚
+为全部目标对象构建不可变 objv_<opaque>_* 候选表
+  → 完整校验与熔断判断(冻结 object_manifest + template_snapshot)
+  → 任一关键对象失败则全体不发布,当前 published 元数据/物理表保持不变
+  → SQLite 短事务内只切换 published 元数据指针(不在临界区建表/删表/改名)
+  → 保留 current + immediate previous;rollback 仅允许 previous_dataset_version
 ```
 
-元数据至少包含 `dataset_version / object_version / template_version / binding_hash / source / built_at / published_at / status`。MCP 只能读取 `published` 数据集;raw 已更新但
-对象尚未发布时,控制台和 MCP metadata 必须显示 `stale`/旧版本,不能伪装成最新。
+元数据至少包含 `dataset_version / object_version / template_version / binding_hash / source / built_at / published_at / status / previous_dataset_version`。MCP、指标和 Console 对象读取在同一读事务内解析同一 `PublishedDatasetSnapshot`。遗留 `obj_*` 不是 published 事实源,升级后不得伪造版本;无 published 元数据时版本化读取 fail-closed。raw 已更新但对象尚未发布时,控制台和 MCP metadata 必须显示 `stale`/旧版本,不能伪装成最新。
 
 ## 8. 调度与运行(scheduler.py + __main__.py)
 

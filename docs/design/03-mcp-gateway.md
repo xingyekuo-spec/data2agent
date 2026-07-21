@@ -1,6 +1,6 @@
 # 03 · MCP 网关
 
-> 状态:lite 已实现;证据与试点认证目标已对齐产品路线(r1,2026-07-17)· 实现:`data2agent/mcp_server/`
+> 状态:lite 已实现;v0.3 M2 published 快照读取已落地;证据与试点认证目标已对齐产品路线(r2,2026-07-21)· 实现:`data2agent/mcp_server/`
 > 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
 
 ## 1. 定位
@@ -82,7 +82,7 @@ v0.3 单 Token 部署可先映射为唯一部署主体;v0.4 再扩展为可轮�
 
 ## 4. 指标实现(E4 后)
 
-指标 SQL 注册表位于独立模块 `metrics_impl.py`,按 MetricDef.metric 路由,**只面向对象层(obj_*)取数**,与源系统表形彻底解耦(E4 清偿直读展厅表形的债务;原毛利率订单有效性过滤的最后一处 raw 穿透,已随派生状态 SalesOrder.state 决策表落地而清除,等价性由回归锚点锁定)。
+指标 SQL 注册表位于独立模块 `metrics_impl.py`,按 MetricDef.metric 路由,**只面向已发布对象层物理表取数**(由 `PublishedDatasetSnapshot` 在同一读事务内解析并注入表名;不再直读无版本的遗留 `obj_*`),与源系统表形彻底解耦(E4 清偿直读展厅表形的债务;原毛利率订单有效性过滤的最后一处 raw 穿透,已随派生状态 SalesOrder.state 决策表落地而清除,等价性由回归锚点锁定)。无 published 数据集时指标/对象查询 fail-closed,不回退 legacy 表。
 
 ## 5. HTTP 基础安全件(已实现,不等于生产就绪)
 

@@ -127,7 +127,7 @@ Run
 
 ### 4.3 数据浏览
 
-- raw 表与对象层只读浏览;
+- raw 表与对象层只读浏览(对象层经 published snapshot 解析,与 MCP 同一规则);
 - 表、对象、字段只能来自后端白名单/元模型,请求不能拼任意 SQL;
 - 服务端分页、稳定排序、limit 上限和业务键搜索;
 - 显示批次、抽取/映射时间、数据集版本;
@@ -139,8 +139,8 @@ Run
 ### 4.4 隔离与模板
 
 - 隔离区按对象分组,显示业务键、原始值、原因、批次、时间和隔离率;
-- 熔断时显示当前仍服务的稳定对象版本;
-- retry 是对象级重新映射,UI 必须明确提示影响范围;
+- 熔断时显示当前仍服务的稳定数据集版本;
+- retry 触发完整数据集重建并走同一编排器(非单对象旁路发布),UI 必须明确提示影响范围;
 - 模板页展示对象、属性、敏感标记、binding 状态、field map、enum map、derived 和 watermark;
 - v0.2 模板只读,不提供在线编辑或自动 `verified`。
 
@@ -265,16 +265,16 @@ response model → OpenAPI → fixture → 页面全部状态 → 真实 API →
 ### v0.3 可验证
 
 ```text
-GET  /api/objects/{object}/{key}/lineage
-POST /api/mappings/{object}/preview
-GET  /api/datasets
-GET  /api/datasets/{version}
-POST /api/datasets/{version}/publish
-POST /api/datasets/{version}/rollback
-GET  /api/gateway/queries/{query_id}
-GET  /api/gateway/proposals/{proposal_id}
-POST /api/validation/run
-GET  /api/validation/runs/{run_id}
+GET  /api/objects/{object}/{key}/lineage          # M4
+POST /api/mappings/{object}/preview              # M3
+GET  /api/datasets                               # M1/M2 已实现
+GET  /api/datasets/{version}                     # M1/M2 已实现
+POST /api/datasets/{version}/publish             # M2 已实现
+POST /api/datasets/{version}/rollback            # M2 已实现(仅 previous)
+GET  /api/gateway/queries/{query_id}             # M5
+GET  /api/gateway/proposals/{proposal_id}        # M5
+POST /api/validation/run                         # M6
+GET  /api/validation/runs/{run_id}               # M6
 ```
 
 ### v0.4 可试点
