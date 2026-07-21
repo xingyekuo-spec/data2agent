@@ -196,8 +196,17 @@ def object_stats(
     (安全摘要,无表名/SQL),由调用方降级为 unknown。
     解析与后续 COUNT 在同一读事务内,避免并发 publish 混版。
     """
-    with published_read_tx(db):
-        return _object_stats_locked(db, pack, source)
+    try:
+        with published_read_tx(db):
+            return _object_stats_locked(db, pack, source)
+    except sqlite3.Error:
+        return {
+            tpl.object: {
+                "rows": None, "mapped_at": None, "quarantined": None,
+                "version": None, "error": "对象数据查询失败",
+            }
+            for tpl in pack.objects
+        }
 
 
 def _object_stats_locked(
@@ -550,17 +559,30 @@ def compute_nodes(
     # 自己与 raw 同步,必须同为 unknown —— 不只是查询异常这一种情形。
     raw_node_status = nodes[3]["status"]      # raw 是第 4 个节点
     map_node_status = nodes[4]["status"]      # mapping 是第 5 个节点
-    with published_read_tx(db):
-        objs = object_stats(db, pack, source)
-        obj_errors = [v["error"] for v in objs.values() if v.get("error")]
-        materialized = {k: v for k, v in objs.items() if v["rows"] is not None}
-        published_version: str | None = None
-        try:
-            published = db.get_published_dataset(source)
-            if published is not None and published.status == "published":
-                published_version = published.dataset_version
-        except sqlite3.Error:
-            published_version = None
+    objs: dict[str, dict[str, Any]] = {}
+    obj_errors: list[str] = []
+    materialized: dict[str, dict[str, Any]] = {}
+    published_version: str | None = None
+    try:
+        with published_read_tx(db):
+            objs = object_stats(db, pack, source)
+            obj_errors = [v["error"] for v in objs.values() if v.get("error")]
+            materialized = {k: v for k, v in objs.items() if v["rows"] is not None}
+            try:
+                published = db.get_published_dataset(source)
+                if published is not None and published.status == "published":
+                    published_version = published.dataset_version
+            except sqlite3.Error:
+                published_version = None
+    except sqlite3.Error:
+        obj_errors = ["对象数据查询失败"]
+        objs = {
+            tpl.object: {
+                "rows": None, "mapped_at": None, "quarantined": None,
+                "version": None, "error": "对象数据查询失败",
+            }
+            for tpl in pack.objects
+        }
 
     # apply 对对象层的影响按真实状态区分:running/paused 表示候选构建中,
     # 读侧仍只见上一完整 published(无部分更新)。

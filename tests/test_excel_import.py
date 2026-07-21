@@ -114,14 +114,52 @@ def test_end_to_end_apply_and_gateway(csv_file, pack, quotation, tmp_path):
     assert [r.object for r in report.results] == ["Quotation"], "其余对象无 excel binding,应跳过"
     result = report.results[0]
     assert result.mapped == 30 and result.quarantined == 1, "非法枚举值(中标)应隔离"
+    assert result.build_table
     reason = landing.con.execute(
         "SELECT reason FROM d2a_quarantine WHERE resolved_at IS NULL").fetchone()
     assert "中标" in reason["reason"]
+
+    # M2: gateway 只读 published 快照;将 excel apply 候选提升为唯一 published。
+    from data2agent.metamodel.versioning import (
+        DatasetVersionRecord,
+        ObjectVersionRecord,
+        binding_hash,
+    )
+
+    tpl = next(o for o in pack.objects if o.object == "Quotation")
+    binding = next(b for b in tpl.bindings if b.enabled and b.source == SOURCE)
+    landing.insert_dataset_version(
+        DatasetVersionRecord(
+            dataset_version="ds-excel-q",
+            source=SOURCE,
+            template_version=pack.version,
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+            object_manifest='["Quotation"]',
+            template_snapshot=pack.model_dump_json(),
+        )
+    )
+    landing.insert_object_version(
+        ObjectVersionRecord(
+            dataset_version="ds-excel-q",
+            object="Quotation",
+            object_version="obj-excel-q",
+            binding_hash=binding_hash(binding),
+            row_count=result.mapped,
+            build_table=result.build_table,
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+            batch_id=result.batch_id,
+        )
+    )
 
     svc = QueryService(landing.db_path, ROOT / "templates", source=SOURCE)
     res = svc.query_objects("Quotation", filters={"result": "成交"})
     assert res["rows"] and res["meta"]["source"] == SOURCE
     assert res["meta"]["quarantined"] == 1
+    assert res["meta"]["dataset_version"] == "ds-excel-q"
 
 
 def test_import_error_guidance(csv_file, quotation, tmp_path):
