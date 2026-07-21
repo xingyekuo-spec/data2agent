@@ -932,6 +932,14 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount}")
       expect(n > 0, `M6:八页面 ${path} 可见 ${testid}`)
     }
 
+    // Settings 只读辅助页(不计入八主页面)
+    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/settings`, { waitUntil: 'networkidle' })
+    await page.waitForTimeout(800)
+    expect((await page.locator('[data-testid="config-view"]').count()) === 1,
+      'M6:Settings 只读配置可见')
+    expect((await page.locator('button:has-text("保存"), button:has-text("Save"), input[type="password"]').count()) === 0,
+      'M6:Settings 无保存/密码写入口')
+
     await page.close()
   } finally {
     dev.stop()
