@@ -509,7 +509,7 @@
         "type": "object"
       },
       "DatasetActionResult": {
-        "description": "publish/rollback 成功形状(M2);引擎在 T06 落地前路由仍 fail-closed。",
+        "description": "publish/rollback 成功形状(M2-T06)。",
         "properties": {
           "dataset_version": {
             "title": "Dataset Version",
@@ -1035,6 +1035,7 @@
               "invalid_params",
               "unknown_target",
               "not_materialized",
+              "not_published",
               "query_expired",
               "tier_forbidden",
               "rate_limited",
@@ -3186,7 +3187,10 @@
               "circuit_broken",
               "execution_failed",
               "observation_failed",
-              "preflight_failed"
+              "preflight_failed",
+              "active_build",
+              "empty_manifest",
+              "empty_field_map"
             ],
             "title": "Reason Code",
             "type": "string"
@@ -5774,7 +5778,7 @@
     },
     "/api/datasets/{version}/publish": {
       "post": {
-        "description": "M2 原子发布;引擎落地前 fail-closed,不写对象表或版本状态。",
+        "description": "原子发布候选数据集版本。",
         "operationId": "datasets_publish_api_datasets__version__publish_post",
         "parameters": [
           {
@@ -5863,7 +5867,7 @@
     },
     "/api/datasets/{version}/rollback": {
       "post": {
-        "description": "M2 回滚上一稳定版本;引擎落地前 fail-closed,不写对象表或版本状态。",
+        "description": "回滚到直接上一稳定版本。",
         "operationId": "datasets_rollback_api_datasets__version__rollback_post",
         "parameters": [
           {

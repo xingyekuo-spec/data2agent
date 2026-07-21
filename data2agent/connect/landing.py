@@ -303,6 +303,17 @@ class LandingStore:
         self.con.executescript(_SYSTEM_DDL)
         self._migrate()
 
+    @classmethod
+    def open_readonly(cls, db_path: str | Path) -> "LandingStore":
+        """打开已有落地库的只读连接(无 DDL/migrate);供 MCP/Console 快照读取。"""
+        inst = cls.__new__(cls)
+        inst.db_path = str(db_path)
+        inst.con = sqlite3.connect(f"file:{inst.db_path}?mode=ro", uri=True)
+        inst.con.row_factory = sqlite3.Row
+        inst.con.execute("PRAGMA foreign_keys=ON")
+        inst.con.execute("PRAGMA busy_timeout=5000")
+        return inst
+
     def _migrate(self) -> None:
         """幂等兼容升级:运行元数据与 v0.3 版本列/不变量。
 

@@ -67,10 +67,11 @@ function rowsOf(data: Record<string, unknown> | null | undefined): Record<string
 
 function reasonLabel(err: McpLabApiError | null | undefined): string {
   if (!err || !('reason_code' in err) || !err.reason_code) return ''
-  const map: Record<string, string> = {
+    const map: Record<string, string> = {
     invalid_params: '参数错误',
     unknown_target: '未知目标',
     not_materialized: '尚未物化',
+    not_published: '未发布',
     query_expired: 'query 已失效',
     tier_forbidden: '档位禁止',
     rate_limited: '限流',

@@ -27,6 +27,8 @@ def _safe_detail(message: str, *, fallback: str) -> str:
 def classify_mcp_error(exc: BaseException) -> tuple[int, McpLabReasonCode, str, bool]:
     """将 QueryService/网关异常映射为 (status, reason_code, detail, retryable)。"""
     msg = str(exc)
+    if "not_published" in msg or "snapshot_corrupt" in msg:
+        return 409, "not_published", "当前来源没有可用的已发布数据集", False
     if "尚未物化" in msg:
         return 409, "not_materialized", "对象层尚未物化,请先完成 sync/apply", False
     if "未知对象" in msg or "未知指标" in msg:

@@ -123,6 +123,7 @@ McpLabReasonCode = Literal[
     "invalid_params",
     "unknown_target",
     "not_materialized",
+    "not_published",
     "query_expired",
     "tier_forbidden",
     "rate_limited",

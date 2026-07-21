@@ -269,7 +269,7 @@ export interface paths {
         put?: never;
         /**
          * Datasets Publish
-         * @description M2 原子发布;引擎落地前 fail-closed,不写对象表或版本状态。
+         * @description 原子发布候选数据集版本。
          */
         post: operations["datasets_publish_api_datasets__version__publish_post"];
         delete?: never;
@@ -289,7 +289,7 @@ export interface paths {
         put?: never;
         /**
          * Datasets Rollback
-         * @description M2 回滚上一稳定版本;引擎落地前 fail-closed,不写对象表或版本状态。
+         * @description 回滚到直接上一稳定版本。
          */
         post: operations["datasets_rollback_api_datasets__version__rollback_post"];
         delete?: never;
@@ -955,7 +955,7 @@ export interface components {
         };
         /**
          * DatasetActionResult
-         * @description publish/rollback 成功形状(M2);引擎在 T06 落地前路由仍 fail-closed。
+         * @description publish/rollback 成功形状(M2-T06)。
          */
         DatasetActionResult: {
             /** Dataset Version */
@@ -1171,7 +1171,7 @@ export interface components {
              * Reason Code
              * @enum {string}
              */
-            reason_code: "invalid_params" | "unknown_target" | "not_materialized" | "query_expired" | "tier_forbidden" | "rate_limited" | "mcp_unavailable" | "execution_failed";
+            reason_code: "invalid_params" | "unknown_target" | "not_materialized" | "not_published" | "query_expired" | "tier_forbidden" | "rate_limited" | "mcp_unavailable" | "execution_failed";
             /**
              * Retryable
              * @default false
@@ -2017,7 +2017,7 @@ export interface components {
              * Reason Code
              * @enum {string}
              */
-            reason_code: "circuit_broken" | "execution_failed" | "observation_failed" | "preflight_failed";
+            reason_code: "circuit_broken" | "execution_failed" | "observation_failed" | "preflight_failed" | "active_build" | "empty_manifest" | "empty_field_map";
             /** Run Id */
             run_id?: number | null;
             /**

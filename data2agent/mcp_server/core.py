@@ -1,6 +1,6 @@
 """只读查询服务 + "说"档建议卡,传输无关。
 
-E4 起网关消费完整管道的产物:源系统 → sync(raw_*)→ apply(obj_*)→ 本服务。
+E4 起网关消费完整管道的产物:源系统 → sync(raw_*)→ apply(objv_*)→ 本服务。
 枚举值 / 编码翻译在映射应用阶段已完成,网关只做属性校验、脱敏与口径警示。
 
 治理档位(看/说/做,docs/design/03 §3):
@@ -11,7 +11,8 @@ E4 起网关消费完整管道的产物:源系统 → sync(raw_*)→ apply(obj_*
 
 安全边界(lite):
 - 落地库以只读模式(mode=ro)打开;
-- SQL 只引用模板声明的属性列与 obj_ 表,天然白名单;
+- 对象/指标数据读取在同一 SQLite 读事务内 resolve_published_snapshot,
+  再查询该快照的物理表;无 published 不回退遗留 obj_*;
 - sensitive 属性一律脱敏为 "***",当前不提供解敏开关(解敏属"做"档治理,后续按权限模型提供)。
 """
 
@@ -22,9 +23,18 @@ import sqlite3
 import threading
 import time
 from collections import OrderedDict
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
+from typing import Iterator
 
+from ..connect.dataset_publish import (
+    PublishedDatasetSnapshot,
+    PublishedSnapshotError,
+    resolve_published_snapshot,
+)
+from ..connect.landing import LandingStore
+from ..metamodel.dataset_publish_contract import validate_build_table
 from ..metamodel.loader import load_pack
 from ..metamodel.schema import ObjectTemplate
 from .metrics_impl import registry
@@ -32,6 +42,10 @@ from .metrics_impl import registry
 MASK = "***"
 TIER_ORDER = {"看": 0, "说": 1, "做": 2}
 _QUERY_LOG_CAP = 500
+
+
+def _quote_ident(name: str) -> str:
+    return '"' + name.replace('"', '""') + '"'
 
 
 class QueryService:
@@ -59,7 +73,10 @@ class QueryService:
         if self.audit_sink:
             self.audit_sink(record)
 
-    def _log_query(self, tool: str, target: str, detail: str, warnings: list[str]) -> str:
+    def _log_query(
+        self, tool: str, target: str, detail: str, warnings: list[str],
+        *, dataset_version: str | None = None,
+    ) -> str:
         with self._lock:
             self._query_seq += 1
             qid = f"q{self._qid_epoch}-{self._query_seq}"
@@ -67,18 +84,39 @@ class QueryService:
                 "query_id": qid, "tool": tool, "target": target, "detail": detail,
                 "at": datetime.now().isoformat(timespec="seconds"),
                 "warnings": [w for w in warnings if w],
+                "dataset_version": dataset_version,
             }
             self._query_log[qid] = entry
             while len(self._query_log) > _QUERY_LOG_CAP:
                 self._query_log.popitem(last=False)
-            self._audit({k: entry[k] for k in ("query_id", "tool", "target", "detail", "at")})
+            self._audit({
+                k: entry[k]
+                for k in ("query_id", "tool", "target", "detail", "at", "dataset_version")
+            })
             return qid
 
-    def _connect(self) -> sqlite3.Connection:
-        con = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-        con.row_factory = sqlite3.Row
-        con.execute("PRAGMA busy_timeout=5000")  # WAL 检查点期间读锁竞争时等待而非报错
-        return con
+    @contextmanager
+    def _published_tx(self) -> Iterator[tuple[LandingStore, PublishedDatasetSnapshot]]:
+        """同一只读事务内解析并持有 published 快照。"""
+        store = LandingStore.open_readonly(self.db_path)
+        try:
+            store.con.execute("BEGIN")
+            try:
+                snap = resolve_published_snapshot(store, self.source)
+            except PublishedSnapshotError as e:
+                store.con.execute("ROLLBACK")
+                raise ValueError(f"{e.reason_code}: {e.detail}") from None
+            try:
+                yield store, snap
+                store.con.execute("COMMIT")
+            except Exception:
+                try:
+                    store.con.execute("ROLLBACK")
+                except Exception:
+                    pass
+                raise
+        finally:
+            store.con.close()
 
     def _public_meta(
         self, *, tool: str, target: str, query_id: str | None,
@@ -135,55 +173,63 @@ class QueryService:
         if object is None:
             return self._object_catalog(started)
 
-        tpl = next((o for o in self.pack.objects if o.object == object), None)
-        if tpl is None:
+        # 目录仍用磁盘模板识别对象名;实际字段/敏感/绑定以 published 快照为准。
+        disk_tpl = next((o for o in self.pack.objects if o.object == object), None)
+        if disk_tpl is None:
             raise ValueError(f"未知对象 '{object}',可用:{sorted(self.pack.object_names())}")
-        binding = next((b for b in tpl.bindings
-                        if b.source == self.source and b.enabled), None)
-        if binding is None:
-            raise ValueError(f"{object} 没有 source={self.source} 的可用 binding")
 
-        sql, params = self._object_sql(tpl, filters, order_by, desc, limit)
-        con = self._connect()
-        try:
-            try:
-                rows = [dict(r) for r in con.execute(sql, params)]
-            except sqlite3.OperationalError as e:
-                if "no such table" in str(e):
-                    raise ValueError(
-                        f"对象层尚未物化({object}):请先运行 "
-                        "python -m data2agent.connect sync 与 apply") from e
-                raise
-            quarantined = self._quarantine_count(con, object)
-        finally:
-            con.close()
+        with self._published_tx() as (store, snap):
+            tpl = next((o for o in snap.template_pack.objects if o.object == object), None)
+            entry = snap.objects.get(object)
+            if tpl is None or entry is None:
+                raise ValueError("not_published: 对象未包含在已发布数据集中")
+            binding = next(
+                (b for b in tpl.bindings if b.source == self.source and b.enabled),
+                None,
+            )
+            physical = validate_build_table(entry.physical_table)
+            sql, params = self._object_sql(tpl, filters, order_by, desc, limit, physical)
+            rows = [dict(r) for r in store.con.execute(sql, params)]
+            quarantined = self._quarantine_count(store.con, object)
+            dataset_version = snap.dataset_version
+            template_version = snap.template_version
+            binding_hashes = {object: entry.binding_hash}
+            binding_status = binding.status if binding is not None else "published"
+            display_name = tpl.display_name
+            sensitive = {p.name for p in tpl.properties if p.sensitive}
 
-        sensitive = {p.name for p in tpl.properties if p.sensitive}
         for row in rows:
             for prop in sensitive:
                 if row.get(prop) is not None:
                     row[prop] = MASK
         note = ("binding 为 draft:字段映射按参考表形构造,口径未经现场校准"
-                if binding.status == "draft" else "")
+                if binding is not None and binding.status == "draft" else "")
         warnings = [note] if note else []
-        qid = self._log_query("query_objects", object,
-                              f"filters={filters or {}} rows={len(rows)}", warnings)
+        qid = self._log_query(
+            "query_objects", object,
+            f"filters={filters or {}} rows={len(rows)}", warnings,
+            dataset_version=dataset_version,
+        )
         duration_ms = int((time.perf_counter() - started) * 1000)
         return {
             "object": object,
-            "display_name": tpl.display_name,
+            "display_name": display_name,
             "rows": rows,
             "meta": self._public_meta(
                 tool="query_objects", target=object, query_id=qid,
                 row_count=len(rows), duration_ms=duration_ms,
                 masked_fields=sorted(sensitive), warnings=warnings,
-                source=binding.source, binding_status=binding.status,
+                source=self.source, binding_status=binding_status,
                 quarantined=quarantined, note=note,
+                dataset_version=dataset_version,
+                template_version=template_version,
+                binding_hashes=binding_hashes,
             ),
         }
 
     def _object_sql(self, tpl: ObjectTemplate, filters: dict | None,
-                    order_by: str | None, desc: bool, limit: int) -> tuple[str, list]:
+                    order_by: str | None, desc: bool, limit: int,
+                    physical_table: str) -> tuple[str, list]:
         props = {p.name: p for p in tpl.properties}
         cols = ", ".join('"{}"'.format(n) for n in props)
         where, params = [], []
@@ -202,7 +248,8 @@ class QueryService:
             order = f' ORDER BY "{order_by}" {"DESC" if desc else "ASC"}'
         where_sql = f" WHERE {' AND '.join(where)}" if where else ""
         limit = max(1, min(int(limit), 200))
-        return (f'SELECT {cols} FROM "obj_{tpl.object}"{where_sql}{order} LIMIT {limit}',
+        table = _quote_ident(validate_build_table(physical_table))
+        return (f'SELECT {cols} FROM {table}{where_sql}{order} LIMIT {limit}',
                 params)
 
     def _quarantine_count(self, con: sqlite3.Connection, object_name: str) -> int:
@@ -316,19 +363,18 @@ class QueryService:
         if metric is None:
             return self._metric_catalog(started)
 
-        mdef = next((m for m in self.pack.metrics if m.metric == metric), None)
-        if mdef is None:
+        disk_def = next((m for m in self.pack.metrics if m.metric == metric), None)
+        if disk_def is None:
             raise ValueError(f"未知指标 '{metric}',可用:{[m.metric for m in self.pack.metrics]}")
-        definition = {
-            "metric": mdef.metric, "display_name": mdef.display_name, "status": mdef.status,
-            "formula": mdef.formula, "grain": mdef.grain, "caveats": mdef.caveats,
-            "freshness_sla": mdef.freshness_sla,
-        }
         impl = self.metrics.get(metric)
         if impl is None:
             duration_ms = int((time.perf_counter() - started) * 1000)
             return {
-                **definition, "implemented": False,
+                "metric": disk_def.metric, "display_name": disk_def.display_name,
+                "status": disk_def.status, "formula": disk_def.formula,
+                "grain": disk_def.grain, "caveats": disk_def.caveats,
+                "freshness_sla": disk_def.freshness_sla,
+                "implemented": False,
                 "reason": "依赖应收 / 回款对象,不在首批对象内;口径定义保留,待对象补齐后实现",
                 "meta": self._public_meta(
                     tool="query_metrics", target=metric, query_id=None,
@@ -342,21 +388,41 @@ class QueryService:
             raise ValueError(f"'{metric}' 支持的 group_by:{sorted(impl.dims)},got '{dim}'")
         order = '"group" DESC' if dim == "月" else "value DESC"
         limit = max(1, min(int(limit), 200))
-        con = self._connect()
-        try:
-            rows = [dict(r) for r in
-                    con.execute(impl.sql.format(dim=impl.dims[dim], order=order), (limit,))]
-        except sqlite3.OperationalError as e:
-            if "no such table" in str(e):
-                raise ValueError(
-                    "对象层尚未物化:请先运行 python -m data2agent.connect sync 与 apply") from e
-            raise
-        finally:
-            con.close()
-        warning = "口径为 draft(未经校准),数值仅供演示环境参考" if mdef.status != "certified" else ""
-        warnings = [w for w in (warning, mdef.caveats) if w]
-        qid = self._log_query("query_metrics", metric,
-                              f"group_by={dim} rows={len(rows)}", warnings)
+
+        with self._published_tx() as (store, snap):
+            mdef = next(
+                (m for m in snap.template_pack.metrics if m.metric == metric), None,
+            )
+            if mdef is None:
+                raise ValueError("not_published: 指标未包含在已发布数据集中")
+            tables = {
+                name: snap.objects[name].physical_table
+                for name in impl.depends_on
+                if name in snap.objects
+            }
+            sql = impl.render_sql(tables, dim=impl.dims[dim], order=order)
+            rows = [dict(r) for r in store.con.execute(sql, (limit,))]
+            dataset_version = snap.dataset_version
+            template_version = snap.template_version
+            binding_hashes = {
+                name: snap.objects[name].binding_hash for name in impl.depends_on
+            }
+            definition = {
+                "metric": mdef.metric, "display_name": mdef.display_name,
+                "status": mdef.status, "formula": mdef.formula,
+                "grain": mdef.grain, "caveats": mdef.caveats,
+                "freshness_sla": mdef.freshness_sla,
+            }
+            status = mdef.status
+            caveats = mdef.caveats
+
+        warning = "口径为 draft(未经校准),数值仅供演示环境参考" if status != "certified" else ""
+        warnings = [w for w in (warning, caveats) if w]
+        qid = self._log_query(
+            "query_metrics", metric,
+            f"group_by={dim} rows={len(rows)}", warnings,
+            dataset_version=dataset_version,
+        )
         duration_ms = int((time.perf_counter() - started) * 1000)
         return {
             **definition, "implemented": True, "unit": impl.unit,
@@ -365,6 +431,9 @@ class QueryService:
                 tool="query_metrics", target=metric, query_id=qid,
                 row_count=len(rows), duration_ms=duration_ms,
                 warnings=warnings, warning=warning,
+                dataset_version=dataset_version,
+                template_version=template_version,
+                binding_hashes=binding_hashes,
             ),
         }
 
