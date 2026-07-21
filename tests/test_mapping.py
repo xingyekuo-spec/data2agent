@@ -68,3 +68,16 @@ def test_limit_clamped():
     tpl, binding = _template_and_binding()
     sql, _, _ = build_select(tpl, binding, limit=9999)
     assert "LIMIT 200" in sql
+
+
+def test_extra_anchor_cols_must_be_safe_identifiers():
+    """derived.when 键进入 extra_anchor_cols 时不得改写 SELECT。"""
+    tpl, binding = _template_and_binding()
+    with pytest.raises(ValueError, match="非法额外锚表列"):
+        build_select(
+            tpl, binding,
+            extra_anchor_cols=['X" FROM sqlite_master --'],
+        )
+    sql, _, _ = build_select(tpl, binding, extra_anchor_cols=["STATUS"])
+    assert 'a."STATUS" AS "__STATUS"' in sql
+    assert "sqlite_master" not in sql

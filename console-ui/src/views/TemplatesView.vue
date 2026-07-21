@@ -38,6 +38,17 @@ const objects = computed(() =>
   templates.value.status === 'success' ? templates.value.data : [],
 )
 
+/** 模板包内全部声明源(含当前对象无 binding 的源),供 Preview 新草稿入口。 */
+const allowedPreviewSources = computed(() => {
+  const seen = new Set<string>()
+  for (const obj of objects.value) {
+    for (const b of obj.bindings ?? []) {
+      if (b.source) seen.add(b.source)
+    }
+  }
+  return [...seen].sort()
+})
+
 // ---- status tag helpers ----
 
 type TagType = 'success' | 'warning' | 'info' | 'danger'
@@ -218,6 +229,7 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
           <MappingPreviewPanel
             :object-name="selectedObject.object"
             :bindings="selectedObject.bindings"
+            :allowed-sources="allowedPreviewSources"
           />
 
           <div class="d2a-card">

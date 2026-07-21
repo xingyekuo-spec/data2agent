@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Literal, Mapping
 
-from ..mapping import build_select, parse_field_expr
+from ..mapping import FieldExpr, build_select, parse_field_expr
 from ..metamodel.schema import (
     DeriveRule,
     DerivedField,
@@ -285,6 +285,12 @@ def _table_exists(store: LandingStore, physical: str) -> bool:
         (physical,),
     ).fetchone()
     return row is not None
+
+
+def discover_table_columns(store: LandingStore, physical: str) -> set[str]:
+    """DDL 列名集合(含元数据列)。"""
+    rows = store.con.execute(f"PRAGMA table_info({_quote(physical)})").fetchall()
+    return {r["name"] for r in rows}
 
 
 def discover_pk_columns(store: LandingStore, physical: str) -> list[str]:
@@ -578,6 +584,7 @@ def build_draft_binding(
         raise PreviewError("draft_invalid", "key_map/field_map 须为对象")
 
     table_set = set(tables)
+    parsed_maps: list[tuple[str, str, object]] = []  # (label, prop, FieldExpr)
     for label, mapping in (("key_map", key_map), ("field_map", field_map)):
         for prop, expr in mapping.items():
             if not isinstance(expr, str):
@@ -596,9 +603,32 @@ def build_draft_binding(
                     "draft_invalid",
                     f"{label}.{prop} join 表 '{parsed.join_fk[0]}' 不在草稿 tables 内",
                 )
+            parsed_maps.append((label, str(prop), parsed))
+
+    # 列/FK 必须真实存在于落地 DDL,否则 422 draft_invalid(不得落到 SQLite 500)。
+    for label, prop, parsed in parsed_maps:
+        _validate_field_expr_schema(
+            store, source, parsed, label=f"{label}.{prop}",
+        )
 
     derived = _build_draft_derived(payload.get("derived") or {})
     prop_names = {p.name for p in template.properties}
+    anchor = tables[0]
+    anchor_cols = discover_table_columns(store, raw_table_name(source, anchor))
+
+    # current∪草稿 field/key 映射到敏感属性的 (table,col),以及 current 已声明引用。
+    draft_tmp = SourceBinding(
+        source=source,
+        tables=list(tables),
+        status="draft",
+        key_map={str(k): str(v) for k, v in key_map.items()},
+        field_map={str(k): str(v) for k, v in field_map.items()},
+        derived={},
+        watermark=None,
+        notes="",
+    )
+    policy_probe = _build_mask_policy(template, current, draft_tmp)
+
     for prop_name, spec in derived.items():
         if prop_name not in prop_names:
             raise PreviewError("draft_invalid", f"derived 属性 '{prop_name}' 不在对象属性中")
@@ -613,6 +643,30 @@ def build_draft_binding(
                     "draft_invalid",
                     f"derived.{prop_name} 取值 {bad} 不在枚举内",
                 )
+        for rule in spec.rules:
+            for col in rule.when:
+                col_s = str(col)
+                try:
+                    _require_ident(col_s, label="derived 条件列")
+                except PreviewSampleError as exc:
+                    raise PreviewError("draft_invalid", exc.detail) from exc
+                if col_s not in anchor_cols:
+                    raise PreviewError(
+                        "draft_invalid",
+                        f"derived.{prop_name} 条件列 '{anchor}.{col_s}' 不存在",
+                    )
+                ref = (anchor, col_s)
+                # 敏感或未分类列上的条件会形成命中数猜测通道,一律拒绝。
+                if ref in policy_probe.sensitive_raw_refs:
+                    raise PreviewError(
+                        "draft_invalid",
+                        f"derived.{prop_name} 不得基于敏感列构造条件",
+                    )
+                if ref not in policy_probe.known_raw_refs:
+                    raise PreviewError(
+                        "draft_invalid",
+                        f"derived.{prop_name} 不得基于未分类列构造条件",
+                    )
 
     watermark = payload.get("watermark")
     if watermark is not None and not isinstance(watermark, str):
@@ -624,6 +678,9 @@ def build_draft_binding(
             raise PreviewError("draft_invalid", str(exc)) from exc
         if parsed_wm.table not in table_set:
             raise PreviewError("draft_invalid", "watermark 引用表不在草稿 tables 内")
+        _validate_field_expr_schema(
+            store, source, parsed_wm, label="watermark",
+        )
 
     notes = payload.get("notes") or ""
     if not isinstance(notes, str):
@@ -644,6 +701,42 @@ def build_draft_binding(
         raise PreviewError("draft_invalid", f"草稿 binding 无效: {exc}") from exc
 
 
+def _validate_field_expr_schema(
+    store: LandingStore,
+    source: str,
+    parsed: FieldExpr,
+    *,
+    label: str,
+) -> None:
+    """校验表达式引用的表列/join FK 存在于落地 DDL。"""
+    physical = raw_table_name(source, parsed.table)
+    if not _table_exists(store, physical):
+        raise PreviewError("draft_invalid", f"{label} 表 '{parsed.table}' 尚未落地")
+    cols = discover_table_columns(store, physical)
+    if parsed.column not in cols:
+        raise PreviewError(
+            "draft_invalid",
+            f"{label} 列 '{parsed.table}.{parsed.column}' 不存在",
+        )
+    if parsed.join_fk is not None:
+        fk_table, fk_col = parsed.join_fk
+        fk_physical = raw_table_name(source, fk_table)
+        if not _table_exists(store, fk_physical):
+            raise PreviewError("draft_invalid", f"{label} join 表 '{fk_table}' 尚未落地")
+        fk_cols = discover_table_columns(store, fk_physical)
+        if fk_col not in fk_cols:
+            raise PreviewError(
+                "draft_invalid",
+                f"{label} join 外键 '{fk_table}.{fk_col}' 不存在",
+            )
+        # build_select 约定被 join 表以 Id 关联。
+        if "Id" not in cols:
+            raise PreviewError(
+                "draft_invalid",
+                f"{label} join 目标表 '{parsed.table}' 缺少 Id 主键列",
+            )
+
+
 def _sensitive_props(template: ObjectTemplate) -> set[str]:
     return {p.name for p in template.properties if p.sensitive}
 
@@ -652,33 +745,47 @@ def _template_prop_names(template: ObjectTemplate) -> list[str]:
     return [p.name for p in template.properties]
 
 
+RawRef = tuple[str, str]  # (table, column)
+
+
 @dataclass(frozen=True)
 class _MaskPolicy:
     """Preview 出口脱敏策略。
 
+    分类按 (table, column) 保留表身份,避免跨表同名列互相污染。
     - sensitive_props: Property.sensitive
-    - sensitive_raw_cols: current∪draft 中映射到敏感属性的 raw 列(并集)
-    - known_raw_cols: 当前 binding 已声明的 raw 列;草稿把未声明列映到非敏感属性时仍须遮罩
+    - sensitive_raw_refs: current∪draft 映射到敏感属性的 raw 引用并集
+    - known_raw_refs: 当前 binding 已声明的 raw 引用;无 current 时回退草稿声明
     """
 
     sensitive_props: frozenset[str]
-    sensitive_raw_cols: frozenset[str]
-    known_raw_cols: frozenset[str]
+    sensitive_raw_refs: frozenset[RawRef]
+    known_raw_refs: frozenset[RawRef]
+
+    @property
+    def sensitive_col_names(self) -> frozenset[str]:
+        return frozenset(col for _, col in self.sensitive_raw_refs)
+
+    @property
+    def known_col_names(self) -> frozenset[str]:
+        return frozenset(col for _, col in self.known_raw_refs)
 
 
-def _binding_raw_cols(binding: SourceBinding) -> dict[str, set[str]]:
-    """属性 → 其 key_map/field_map/derived.when 引用的 raw 列集合。"""
-    out: dict[str, set[str]] = {}
+def _binding_raw_refs(binding: SourceBinding) -> dict[str, set[RawRef]]:
+    """属性 → key_map/field_map/derived.when 引用的 (table, column) 集合。"""
+    out: dict[str, set[RawRef]] = {}
+    anchor = binding.tables[0] if binding.tables else ""
     for prop, expr in [*binding.key_map.items(), *binding.field_map.items()]:
         try:
-            col = parse_field_expr(str(expr)).column
+            parsed = parse_field_expr(str(expr))
         except ValueError:
             continue
-        out.setdefault(prop, set()).add(col)
+        out.setdefault(prop, set()).add((parsed.table, parsed.column))
     for prop, spec in binding.derived.items():
-        cols = out.setdefault(prop, set())
+        refs = out.setdefault(prop, set())
         for rule in spec.rules:
-            cols.update(str(col) for col in rule.when)
+            for col in rule.when:
+                refs.add((anchor, str(col)))
     return out
 
 
@@ -688,25 +795,25 @@ def _build_mask_policy(
     draft: SourceBinding | None,
 ) -> _MaskPolicy:
     sensitive_props = frozenset(_sensitive_props(template))
-    sensitive_raw: set[str] = set()
-    known_raw: set[str] = set()
+    sensitive_raw: set[RawRef] = set()
+    known_raw: set[RawRef] = set()
     for binding in (current, draft):
         if binding is None:
             continue
-        prop_cols = _binding_raw_cols(binding)
-        for prop, cols in prop_cols.items():
+        prop_refs = _binding_raw_refs(binding)
+        for prop, refs in prop_refs.items():
             if prop in sensitive_props:
-                sensitive_raw.update(cols)
+                sensitive_raw.update(refs)
             if binding is current:
-                known_raw.update(cols)
+                known_raw.update(refs)
     if current is None and draft is not None:
-        # 无 current 时以草稿声明列为已知,避免正常草稿列被误判为未分类。
-        for cols in _binding_raw_cols(draft).values():
-            known_raw.update(cols)
+        # 无 current 时以草稿声明引用为已知,避免正常草稿列被误判为未分类。
+        for refs in _binding_raw_refs(draft).values():
+            known_raw.update(refs)
     return _MaskPolicy(
         sensitive_props=sensitive_props,
-        sensitive_raw_cols=frozenset(sensitive_raw),
-        known_raw_cols=frozenset(known_raw),
+        sensitive_raw_refs=frozenset(sensitive_raw),
+        known_raw_refs=frozenset(known_raw),
     )
 
 
@@ -718,14 +825,14 @@ def _mask_props_for_binding(
     masked: set[str] = set(policy.sensitive_props)
     if binding is None:
         return masked
-    for prop, cols in _binding_raw_cols(binding).items():
+    for prop, refs in _binding_raw_refs(binding).items():
         if prop in masked:
             continue
-        if cols & policy.sensitive_raw_cols:
+        if refs & policy.sensitive_raw_refs:
             masked.add(prop)
             continue
-        # 未在 current 声明的 raw 列(含未知分类)不得以明文出现在非敏感属性上。
-        if any(col not in policy.known_raw_cols for col in cols):
+        # 未在 current 声明的 (table,col)(含未知分类)不得明文出现在非敏感属性上。
+        if any(ref not in policy.known_raw_refs for ref in refs):
             masked.add(prop)
     return masked
 
@@ -774,9 +881,9 @@ def _safe_detail(
             prefix = "业务键缺失" if issue.reason_code == "business_key_missing" else "业务键重复"
             return f"{prefix}:{masked}"
     detail = issue.detail
-    # 兜底:detail 中不得残留敏感 raw 列名。
-    for col in policy.sensitive_raw_cols:
-        if col and col in detail:
+    # 兜底:detail 中不得残留敏感 raw 列名或 table.column。
+    for table, col in policy.sensitive_raw_refs:
+        if col and (col in detail or f"{table}.{col}" in detail):
             label = field if field is not None else "?"
             return f"{label}: 映射失败"
     return detail
@@ -804,11 +911,13 @@ def _safe_source_value(
         return _issue_source_value_str(_mask_value(issue.source_value))
     if isinstance(issue.source_value, dict):
         keys = set(issue.source_value)
-        if keys & mask_props or keys & policy.sensitive_raw_cols:
+        sens_names = policy.sensitive_col_names
+        known_names = policy.known_col_names
+        if keys & mask_props or keys & sens_names:
             masked = {
                 k: (
                     MASKED
-                    if k in mask_props or k in policy.sensitive_raw_cols
+                    if k in mask_props or k in sens_names
                     else v
                 )
                 for k, v in issue.source_value.items()
@@ -817,13 +926,13 @@ def _safe_source_value(
             masked = {
                 k: v
                 for k, v in masked.items()
-                if k in mask_props or k in policy.known_raw_cols or k in policy.sensitive_props
+                if k in mask_props or k in known_names or k in policy.sensitive_props
             }
             if not masked:
                 return None
             return _issue_source_value_str(masked)
         # 纯 raw 列字典且含未知列 → 不回传
-        if any(k not in policy.known_raw_cols for k in keys):
+        if any(k not in known_names for k in keys):
             return None
     return _issue_source_value_str(issue.source_value)
 

@@ -718,3 +718,211 @@ def test_transform_wrapper_still_matches_after_derived_hits(tmp_path):
     assert len(quarantined) == evaluated.quarantined
     assert evaluated.rows[0].derived_hits[0].outcome == "rule"
     assert evaluated.rows[1].derived_hits[0].outcome == "default"
+
+
+def test_cross_table_same_column_name_is_masked(tmp_path):
+    """跨表同名列不得因 current 的 A.NAME 让草稿 B.NAME 绕过脱敏。"""
+    from data2agent.connect.landing import raw_table_name
+
+    pack = _pack()
+    # current 锚表白名单之外:通过同源其它对象声明 JOIN 表。
+    pack.objects.append(
+        ObjectTemplate(
+            object="Other",
+            display_name="其它",
+            domain="辅助",
+            keys=["code"],
+            properties=[Property(name="code", type="string")],
+            bindings=[
+                SourceBinding(
+                    source=SOURCE,
+                    tables=["OTHER"],
+                    status="verified",
+                    field_map={"code": "OTHER.CODE"},
+                ),
+            ],
+        ),
+    )
+    # current binding 也需能引用 JOIN 表 → 把 OTHER 加入 Item.tables
+    pack.objects[0].bindings[0].tables = [ANCHOR, "OTHER"]
+
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    item = TableInfo(
+        name=ANCHOR,
+        columns=[
+            ("Id", "int"),
+            ("CODE", "text"),
+            ("NAME", "text"),
+            ("STATUS", "text"),
+            ("SECRET", "text"),
+            ("ST", "text"),
+            ("OTHER_ID", "int"),
+        ],
+        pk=["Id"],
+    )
+    other = TableInfo(
+        name="OTHER",
+        columns=[("Id", "int"), ("CODE", "text"), ("NAME", "text")],
+        pk=["Id"],
+    )
+    landing.ensure_raw_table(SOURCE, item)
+    landing.ensure_raw_table(SOURCE, other)
+    landing.upsert_rows(
+        SOURCE, item,
+        [{
+            "Id": 1, "CODE": "A", "NAME": "anchor-name", "STATUS": "1",
+            "SECRET": "s1", "ST": "X", "OTHER_ID": 10,
+        }],
+        "b1",
+    )
+    landing.upsert_rows(
+        SOURCE, other,
+        [{"Id": 10, "CODE": "O1", "NAME": "joined-secret"}],
+        "b1",
+    )
+
+    draft = {
+        "tables": [ANCHOR, "OTHER"],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {
+            "code": f"{ANCHOR}.CODE",
+            "name": f"OTHER.NAME (join {ANCHOR}.OTHER_ID)",
+            "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+            "secret": f"{ANCHOR}.SECRET",
+        },
+        "derived": {},
+        "notes": "",
+    }
+    result = preview_mapping(
+        landing, pack, object_name="Item", source=SOURCE, draft_binding=draft,
+    )
+    assert result.candidate.rows, "应有候选行"
+    for row in result.candidate.rows:
+        if row.status == "mapped":
+            assert row.output.get("name") == MASKED
+            assert row.output.get("name") != "joined-secret"
+    # 确认落地值确实是 joined-secret(防止测试自欺)
+    phys = raw_table_name(SOURCE, "OTHER")
+    (got,) = landing.con.execute(f'SELECT "NAME" FROM "{phys}"').fetchone()
+    assert got == "joined-secret"
+
+
+def test_draft_derived_on_sensitive_col_rejected(tmp_path):
+    """草稿不得用敏感列构造 derived 条件(命中数猜测通道)。"""
+    pack = _pack()
+    landing = _seed(tmp_path, _default_rows())
+    draft = {
+        "tables": [ANCHOR],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {
+            "code": f"{ANCHOR}.CODE",
+            "name": f"{ANCHOR}.NAME",
+            "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+            "secret": f"{ANCHOR}.SECRET",
+            "phase": f"{ANCHOR}.STATUS",  # placeholder; overwritten by derived
+        },
+        "derived": {
+            "phase": {
+                "rules": [{"when": {"SECRET": "s1"}, "value": "A"}],
+                "default": "C",
+            },
+        },
+        "notes": "",
+    }
+    # phase is derived-only in template; remove bogus field_map entry if invalid.
+    # Object has phase as enum property filled by derived — field_map must not include it
+    # unless it's a real column map. Use status-only maps:
+    draft["field_map"] = {
+        "code": f"{ANCHOR}.CODE",
+        "name": f"{ANCHOR}.NAME",
+        "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+        "secret": f"{ANCHOR}.SECRET",
+    }
+    with pytest.raises(PreviewError) as ei:
+        preview_mapping(
+            landing, pack, object_name="Item", source=SOURCE, draft_binding=draft,
+        )
+    assert ei.value.reason_code == "draft_invalid"
+    assert "敏感" in ei.value.detail
+
+
+def test_draft_derived_on_unknown_col_rejected(tmp_path):
+    """草稿不得用未分类列构造 derived 条件。"""
+    pack = _pack()
+    landing = _seed(tmp_path, _default_rows())
+    draft = {
+        "tables": [ANCHOR],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {
+            "code": f"{ANCHOR}.CODE",
+            "name": f"{ANCHOR}.NAME",
+            "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+            "secret": f"{ANCHOR}.SECRET",
+        },
+        "derived": {
+            "phase": {
+                "rules": [{"when": {"ST": "X"}, "value": "A"}],
+                "default": "C",
+            },
+        },
+        "notes": "",
+    }
+    with pytest.raises(PreviewError) as ei:
+        preview_mapping(
+            landing, pack, object_name="Item", source=SOURCE, draft_binding=draft,
+        )
+    assert ei.value.reason_code == "draft_invalid"
+    assert "未分类" in ei.value.detail
+
+
+def test_draft_unknown_column_is_draft_invalid_not_500(tmp_path):
+    """不存在的草稿列须 422 draft_invalid,不得落到 SQLite OperationalError。"""
+    pack = _pack()
+    landing = _seed(tmp_path, _default_rows())
+    draft = {
+        "tables": [ANCHOR],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {
+            "code": f"{ANCHOR}.CODE",
+            "name": f"{ANCHOR}.NO_SUCH_COLUMN",
+            "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+            "secret": f"{ANCHOR}.SECRET",
+        },
+        "derived": {},
+        "notes": "",
+    }
+    with pytest.raises(PreviewError) as ei:
+        preview_mapping(
+            landing, pack, object_name="Item", source=SOURCE, draft_binding=draft,
+        )
+    assert ei.value.reason_code == "draft_invalid"
+    assert "NO_SUCH_COLUMN" in ei.value.detail
+
+
+def test_draft_derived_sql_injection_ident_rejected(tmp_path):
+    """derived.when 注入片段不得进入 SQL。"""
+    pack = _pack()
+    landing = _seed(tmp_path, _default_rows())
+    evil = 'X" FROM sqlite_master --'
+    draft = {
+        "tables": [ANCHOR],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {
+            "code": f"{ANCHOR}.CODE",
+            "name": f"{ANCHOR}.NAME",
+            "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+            "secret": f"{ANCHOR}.SECRET",
+        },
+        "derived": {
+            "phase": {
+                "rules": [{"when": {evil: "1"}, "value": "A"}],
+                "default": "C",
+            },
+        },
+        "notes": "",
+    }
+    with pytest.raises(PreviewError) as ei:
+        preview_mapping(
+            landing, pack, object_name="Item", source=SOURCE, draft_binding=draft,
+        )
+    assert ei.value.reason_code == "draft_invalid"

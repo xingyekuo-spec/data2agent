@@ -102,6 +102,52 @@ describe('MappingPreviewPanel(M3-T07)', () => {
     expect(parsed.field_map).toEqual({})
   })
 
+  it('allows submitting a new draft when source comes from allowedSources', async () => {
+    server.use(
+      http.post('*/api/mappings/:object/preview', async ({ request }) => {
+        const body = await request.json() as { source?: string; draft_binding?: unknown }
+        expect(body.source).toBe('crm_export')
+        expect(body.draft_binding).toBeTruthy()
+        return HttpResponse.json({
+          ...mappingPreviewDraft,
+          source: 'crm_export',
+          mode: 'draft',
+          current: null,
+          current_binding_hash: null,
+          diff: {
+            state: 'unavailable',
+            reason: 'no_current_binding',
+            summary: { rows_changed: 0, status_changed: 0, fields_changed: 0 },
+            rows: [],
+          },
+        })
+      }),
+    )
+    const pinia: Pinia = createPinia()
+    const wrapper = mount(MappingPreviewPanel, {
+      props: {
+        objectName: 'Customer',
+        bindings: [],
+        allowedSources: ['crm_export', 'digiwin_e10'],
+      },
+      global: { plugins: [pinia, ElementPlus] },
+    })
+    await flushPromises()
+
+    const source = wrapper.find('[data-testid="preview-source"]').element as HTMLSelectElement
+    expect(source.value).toBe('crm_export')
+    expect(wrapper.find('[data-testid="preview-draft-text"]').exists()).toBe(true)
+
+    const submit = wrapper.find('[data-testid="preview-submit"]')
+    expect((submit.element as HTMLButtonElement).disabled).toBe(false)
+    await submit.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="mapping-preview-drawer"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('draft')
+    expect(wrapper.text()).toContain('fp-preview-draft')
+  })
+
   it('shows local JSON syntax hint without calling semantics', async () => {
     const wrapper = await mountPanel()
     await wrapper.find('[data-testid="preview-use-draft"]').trigger('click')

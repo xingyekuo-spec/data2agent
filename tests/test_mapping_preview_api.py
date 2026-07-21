@@ -578,8 +578,8 @@ def test_draft_remap_unknown_phone_onto_name_is_masked(env):
     assert "CONTACT_PHONE" not in r.text
 
 
-def test_derived_unmatched_masks_sensitive_when_clause(env):
-    secrets = _sensitive_raw_values(env.db_path)
+def test_draft_derived_on_sensitive_col_rejected_by_api(env):
+    """草稿基于敏感列构造 derived 条件 → 422 draft_invalid(关闭命中数猜测通道)。"""
     draft = _customer_draft(
         field_map={
             "customer_code": "CUSTOMER.CUSTOMER_CODE",
@@ -598,23 +598,26 @@ def test_derived_unmatched_masks_sensitive_when_clause(env):
     )
     r = _client(env).post(
         PREVIEW_URL, json=_body(draft_binding=draft), headers=_auth())
-    assert r.status_code == 200, r.text
-    body = MappingPreviewResponse.model_validate(r.json())
-    unmatched = [
-        issue
-        for row in body.candidate.rows
-        for issue in row.issues
-        if issue.reason_code == "derived_unmatched"
-    ]
-    assert unmatched, "expected derived_unmatched issues"
-    for issue in unmatched:
-        assert "CONTACT_EMAIL" not in (issue.detail or "")
-        assert issue.source_value is None or "CONTACT_EMAIL" not in issue.source_value
-        for secret in secrets:
-            assert secret not in (issue.detail or "")
-            assert secret not in (issue.source_value or "")
-    _assert_no_secrets_in_blob(r.text, secrets, draft_notes=DRAFT_MARKER)
+    err = _assert_preview_error(r, status=422, reason_code="draft_invalid")
+    assert err.detail == "草稿不合法"
     assert "CONTACT_EMAIL" not in r.text
+    assert DRAFT_MARKER not in r.text
+
+
+def test_draft_unknown_column_is_draft_invalid_by_api(env):
+    draft = _customer_draft(field_map={
+        "customer_code": "CUSTOMER.CUSTOMER_CODE",
+        "name": "CUSTOMER.NO_SUCH_COLUMN",
+        "region": "CUSTOMER.COUNTRY_REGION",
+        "currency": "CURRENCY.CURRENCY_CODE (join CUSTOMER.CURRENCY_ID)",
+        "payment_days": "CUSTOMER.PAYMENT_TERM_DAYS",
+        "contact": "CUSTOMER.CONTACT_EMAIL",
+    })
+    r = _client(env).post(
+        PREVIEW_URL, json=_body(draft_binding=draft), headers=_auth())
+    _assert_preview_error(r, status=422, reason_code="draft_invalid")
+    assert "OperationalError" not in r.text
+    assert "NO_SUCH_COLUMN" not in r.text  # 安全摘要,不回传内部列细节到 detail 出口
 
 
 # ---- 零业务副作用 ----

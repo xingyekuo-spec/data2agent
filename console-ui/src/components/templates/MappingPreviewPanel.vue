@@ -15,6 +15,8 @@ type MappingPreviewDraftBinding = components['schemas']['MappingPreviewDraftBind
 const props = defineProps<{
   objectName: string
   bindings: TemplateBinding[]
+  /** 配置/模板允许的数据源(含无当前 binding 的源),用于新草稿入口 */
+  allowedSources?: string[]
 }>()
 
 const store = useMappingPreviewStore()
@@ -39,12 +41,24 @@ const sourceOptions = computed(() => {
     const tag = b.enabled === false ? '已停用' : b.status
     opts.push({ value: b.source, label: `${b.source} (${tag})` })
   }
+  for (const src of props.allowedSources ?? []) {
+    if (seen.has(src)) continue
+    seen.add(src)
+    opts.push({ value: src, label: `${src} (无当前绑定)` })
+  }
   return opts
 })
 
 const selectedBinding = computed(() =>
   props.bindings.find((b) => b.source === source.value) ?? null,
 )
+
+const canSubmit = computed(() => {
+  if (submitting.value || isLoading.value || !source.value) return false
+  // 无当前 binding 时必须走临时草稿
+  if (!selectedBinding.value && !useDraft.value) return false
+  return true
+})
 
 const localJsonHint = computed(() => {
   if (!useDraft.value) return null
@@ -127,7 +141,16 @@ watch(
 )
 
 watch(
-  () => [props.objectName, props.bindings] as const,
+  () => source.value,
+  () => {
+    if (source.value && !selectedBinding.value && !useDraft.value) {
+      enableTempDraft()
+    }
+  },
+)
+
+watch(
+  () => [props.objectName, props.bindings, props.allowedSources] as const,
   () => {
     const opts = sourceOptions.value
     if (!opts.length) {
@@ -139,6 +162,10 @@ watch(
         props.bindings.find((b) => b.enabled !== false)?.source
         ?? opts[0]!.value
       store.setSource(preferred)
+    }
+    // 选中源无当前 binding 时自动打开临时草稿,否则无法提交
+    if (source.value && !selectedBinding.value && !useDraft.value) {
+      enableTempDraft()
     }
   },
   { immediate: true, deep: true },
@@ -160,7 +187,7 @@ watch(
           data-testid="preview-source"
           @change="store.setSource(($event.target as HTMLSelectElement).value)"
         >
-          <option v-if="!sourceOptions.length" value="" disabled>无可用绑定</option>
+          <option v-if="!sourceOptions.length" value="" disabled>无可用数据源</option>
           <option
             v-for="opt in sourceOptions"
             :key="opt.value"
@@ -240,7 +267,7 @@ watch(
           type="primary"
           size="small"
           data-testid="preview-submit"
-          :disabled="submitting || isLoading || !source"
+          :disabled="!canSubmit"
           @click="onSubmit"
         >预览映射</el-button>
       </div>

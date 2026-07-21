@@ -110,7 +110,10 @@ def build_select(
         return f'a."{e.column}"'
 
     select = ", ".join(f'{sql_col(e)} AS "{p}"' for p, e in exprs.items())
+    # extra_anchor_cols 可能来自草稿 derived.when:必须先校验为合法标识符,
+    # 禁止把客户端字符串直接拼进 a."…"(否则可改写 SELECT)。
     for col in extra_anchor_cols or []:
+        col = _validate_ident(col, label="额外锚表列")
         select += f', a."{col}" AS "__{col}"'
 
     where, params = [], []
