@@ -33,12 +33,28 @@ class TransformIssue:
     source_value: Any | None = None
 
 
+@dataclass(frozen=True)
+class DerivedHit:
+    """单行单个 derived 字段的求值结果(供 Preview 覆盖率聚合)。
+
+    outcome:
+      rule — 有序规则首命中(rule_index 为规则下标)
+      default — 无规则命中但使用了 default
+      unmatched — 无规则且无 default(随后隔离)
+    """
+
+    field: str
+    outcome: Literal["rule", "default", "unmatched"]
+    rule_index: int | None = None
+
+
 @dataclass
 class RowEvaluation:
     status: Literal["mapped", "quarantined"]
     raw: dict
     output: dict | None = None
     issues: list[TransformIssue] = field(default_factory=list)
+    derived_hits: list[DerivedHit] = field(default_factory=list)
 
 
 @dataclass
@@ -106,40 +122,56 @@ def _apply_derived(
     binding: SourceBinding,
     props: dict[str, Property],
     row: dict,
-) -> TransformIssue | None:
-    """执行派生决策表(规则有序,首个匹配生效)。返回 issue 或 None。"""
+) -> tuple[TransformIssue | None, list[DerivedHit]]:
+    """执行派生决策表(规则有序,首个匹配生效)。
+
+    返回 (issue 或 None, 已求值字段的 DerivedHit 列表)。
+    命中元数据不影响隔离文案;format_quarantine_reason 仍只用 issue.detail。
+    """
+    hits: list[DerivedHit] = []
     for prop_name, spec in binding.derived.items():
         value = None
         matched = False
-        for rule in spec.rules:
+        rule_index: int | None = None
+        for idx, rule in enumerate(spec.rules):
             if all(row.get(f"__{col}") == expect for col, expect in rule.when.items()):
-                value, matched = rule.value, True
+                value, matched, rule_index = rule.value, True, idx
                 break
-        if not matched and spec.default is not None:
+        if matched:
+            hits.append(DerivedHit(field=prop_name, outcome="rule", rule_index=rule_index))
+        elif spec.default is not None:
             value, matched = spec.default, True
+            hits.append(DerivedHit(field=prop_name, outcome="default"))
         if not matched:
+            hits.append(DerivedHit(field=prop_name, outcome="unmatched"))
             seen = {
                 col: row.get(f"__{col}")
                 for s in binding.derived.values()
                 for r in s.rules
                 for col in r.when
             }
-            return TransformIssue(
-                reason_code="derived_unmatched",
-                field=prop_name,
-                detail=f"{prop_name}: 派生规则无匹配(源值 {seen})",
-                source_value=seen,
+            return (
+                TransformIssue(
+                    reason_code="derived_unmatched",
+                    field=prop_name,
+                    detail=f"{prop_name}: 派生规则无匹配(源值 {seen})",
+                    source_value=seen,
+                ),
+                hits,
             )
         prop = props.get(prop_name)
         if prop is not None and prop.type == "enum" and value not in prop.enum_values:
-            return TransformIssue(
-                reason_code="derived_invalid_enum",
-                field=prop_name,
-                detail=f"{prop_name}: 派生值 {value!r} 不在枚举 {prop.enum_values} 内",
-                source_value=value,
+            return (
+                TransformIssue(
+                    reason_code="derived_invalid_enum",
+                    field=prop_name,
+                    detail=f"{prop_name}: 派生值 {value!r} 不在枚举 {prop.enum_values} 内",
+                    source_value=value,
+                ),
+                hits,
             )
         row[prop_name] = value
-    return None
+    return None, hits
 
 
 def evaluate_object_rows(
@@ -156,6 +188,7 @@ def evaluate_object_rows(
     for raw in raw_rows:
         row: dict = dict(raw)
         issue: TransformIssue | None = None
+        derived_hits: list[DerivedHit] = []
         for name, expr in exprs.items():
             prop = props.get(name)
             if prop is None:
@@ -185,7 +218,7 @@ def evaluate_object_rows(
                 break
             row[name] = v
         if issue is None:
-            issue = _apply_derived(binding, props, row)
+            issue, derived_hits = _apply_derived(binding, props, row)
         if issue is None:
             key = tuple(row.get(k) for k in tpl.keys)
             if any(v is None for v in key):
@@ -211,11 +244,18 @@ def evaluate_object_rows(
                     raw=raw,
                     output=None,
                     issues=[issue],
+                    derived_hits=derived_hits,
                 )
             )
         else:
             evaluations.append(
-                RowEvaluation(status="mapped", raw=raw, output=row, issues=[])
+                RowEvaluation(
+                    status="mapped",
+                    raw=raw,
+                    output=row,
+                    issues=[],
+                    derived_hits=derived_hits,
+                )
             )
     return TransformEvaluation(rows=evaluations)
 
