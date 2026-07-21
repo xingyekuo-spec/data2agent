@@ -56,8 +56,18 @@ export function datasetStatusLabel(
   }
 }
 
-export function canPublish(summary: Pick<DatasetSummary, 'status'>): boolean {
-  return summary.status === 'building'
+export function canPublish(
+  summary: Pick<DatasetSummary, 'status' | 'object_manifest'>,
+  objects?: ObjectVersionSummary[],
+): boolean {
+  if (summary.status !== 'building') {
+    return false
+  }
+  // 有对象明细时必须 building-ready;列表无明细时仅允许有完整 manifest 的候选入口。
+  if (objects !== undefined) {
+    return isBuildingReady(summary, objects)
+  }
+  return Boolean(summary.object_manifest?.length)
 }
 
 export function canRollback(summary: Pick<DatasetSummary, 'status' | 'previous_dataset_version'>): boolean {

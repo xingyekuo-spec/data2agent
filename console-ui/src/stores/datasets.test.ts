@@ -109,9 +109,9 @@ describe('datasets store', () => {
     vi.mocked(getDatasetDetail).mockResolvedValue(
       ok({ ...summary({ dataset_version: 'ds-1', status: 'published' }), objects: [] }),
     )
-    const okRollback = await store.rollback('ds-2')
+    const okRollback = await store.rollback('ds-1')
     expect(okRollback).toBe(true)
-    expect(postDatasetRollback).toHaveBeenCalledWith('ds-2')
+    expect(postDatasetRollback).toHaveBeenCalledWith('ds-1')
     expect(getDatasetDetail).toHaveBeenCalledWith('ds-1')
   })
 

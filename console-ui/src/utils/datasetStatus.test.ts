@@ -44,10 +44,25 @@ describe('datasetStatus', () => {
     ])).toBe('构建中')
   })
 
-  it('gates publish on building and rollback on published+previous', () => {
-    expect(canPublish({ status: 'building' })).toBe(true)
-    expect(canPublish({ status: 'failed' })).toBe(false)
-    expect(canPublish({ status: 'published' })).toBe(false)
+  it('gates publish on building-ready and rollback on published+previous', () => {
+    expect(canPublish({ status: 'building', object_manifest: ['Customer'] })).toBe(true)
+    expect(canPublish({ status: 'building', object_manifest: null })).toBe(false)
+    expect(canPublish(
+      { status: 'building', object_manifest: ['Customer', 'Material'] },
+      [
+        obj({ object: 'Customer', status: 'built' }),
+        obj({ object: 'Material', status: 'building' }),
+      ],
+    )).toBe(false)
+    expect(canPublish(
+      { status: 'building', object_manifest: ['Customer', 'Material'] },
+      [
+        obj({ object: 'Customer', status: 'built' }),
+        obj({ object: 'Material', status: 'built' }),
+      ],
+    )).toBe(true)
+    expect(canPublish({ status: 'failed', object_manifest: ['Customer'] })).toBe(false)
+    expect(canPublish({ status: 'published', object_manifest: ['Customer'] })).toBe(false)
     expect(canRollback({ status: 'published', previous_dataset_version: 'ds-1' })).toBe(true)
     expect(canRollback({ status: 'published', previous_dataset_version: null })).toBe(false)
     expect(canRollback({ status: 'retired', previous_dataset_version: 'ds-1' })).toBe(false)

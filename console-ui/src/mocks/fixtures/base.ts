@@ -74,6 +74,7 @@ const T = '2026-07-18T09:12:00+08:00'
 const DS_PUBLISHED = 'ds-20260718-091100-a1b2'
 const DS_PREVIOUS = 'ds-20260717-220000-c3d4'
 const DS_READY = 'ds-20260718-095000-e5f6'
+const DS_FAILED = 'ds-20260718-083000-f9a0'
 
 const publishedObjectVersions = [
   {
@@ -167,6 +168,18 @@ const baseDatasets: DatasetSummary[] = [
     error_id: null,
     object_manifest: ['Customer', 'Material', 'Quotation', 'SalesOrder'],
   },
+  {
+    dataset_version: DS_FAILED,
+    source: 'digiwin_e10',
+    template_version: '0.1.0',
+    status: 'failed',
+    built_at: '2026-07-18T08:30:00+08:00',
+    published_at: null,
+    previous_dataset_version: DS_PUBLISHED,
+    error: 'build_failed',
+    error_id: 'err-fixture-failed',
+    object_manifest: ['Customer', 'Material', 'Quotation', 'SalesOrder'],
+  },
 ]
 
 const baseDatasetDetails: Record<string, DatasetDetail> = {
@@ -184,6 +197,15 @@ const baseDatasetDetails: Record<string, DatasetDetail> = {
       ...o,
       status: 'retired' as const,
       published_at: '2026-07-17T22:00:00+08:00',
+    })),
+  },
+  [DS_FAILED]: {
+    ...baseDatasets[3]!,
+    objects: readyObjectVersions.map((o) => ({
+      ...o,
+      status: o.object === 'Quotation' ? 'failed' as const : 'built' as const,
+      object_version: `${o.object_version}-failed`,
+      build_table: null,
     })),
   },
 }

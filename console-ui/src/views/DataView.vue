@@ -14,6 +14,7 @@ import { useDatasetsStore } from '@/stores/datasets'
 import {
   canPublish,
   canRollback,
+  rollbackTarget,
   datasetStatusLabel,
 } from '@/utils/datasetStatus'
 import { formatDateTime } from '@/utils/time'
@@ -258,8 +259,12 @@ async function onPublish(version: string): Promise<void> {
   await datasetsStore.publish(version)
 }
 
-async function onRollback(version: string): Promise<void> {
-  await datasetsStore.rollback(version)
+async function onRollback(row: { previous_dataset_version?: string | null }): Promise<void> {
+  const target = rollbackTarget(row)
+  if (!target) {
+    return
+  }
+  await datasetsStore.rollback(target)
 }
 
 async function onApply(): Promise<void> {
@@ -664,7 +669,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                     type="warning"
                     text
                     :data-testid="`dataset-rollback-${row.dataset_version}`"
-                    @click="onRollback(row.dataset_version)"
+                    @click="onRollback(row)"
                   >
                     回滚
                   </el-button>

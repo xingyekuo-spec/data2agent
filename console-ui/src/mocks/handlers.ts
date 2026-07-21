@@ -327,6 +327,17 @@ export function buildHandlers(): HttpHandler[] {
       if (detail.status !== 'building') {
         return json({ detail: 'not_ready' } satisfies HttpError, 409)
       }
+      const manifest = detail.object_manifest ?? []
+      const objects = detail.objects ?? []
+      const ready =
+        manifest.length > 0
+        && objects.length === manifest.length
+        && manifest.every(
+          (name) => objects.find((o) => o.object === name)?.status === 'built',
+        )
+      if (!ready) {
+        return json({ detail: 'not_ready' } satisfies HttpError, 409)
+      }
       return json(
         { executed: true, dataset_version: version, note: 'published' },
         fixture.datasetActionStatus ?? 200,
@@ -337,17 +348,28 @@ export function buildHandlers(): HttpHandler[] {
       if (fail) return fail
       const fixture = scenarioFixtures[getScenario()]
       const version = String(params.version)
-      const detail = fixture.datasetDetails[version]
-      if (!detail) {
+      // `{version}` 是要恢复的 retired 目标(current.previous),不是当前 published。
+      const target = fixture.datasetDetails[version]
+      if (!target) {
         return json({ detail: `数据集版本 ${version} 不存在` } satisfies HttpError, 404)
       }
-      if (detail.status !== 'published' || !detail.previous_dataset_version) {
-        return json({ detail: 'no_previous' } satisfies HttpError, 409)
+      const current = fixture.datasets.find((d) => d.status === 'published')
+      if (current && current.dataset_version === version) {
+        return json(
+          { executed: false, dataset_version: version, note: 'already current' },
+          fixture.datasetActionStatus ?? 200,
+        )
+      }
+      if (target.status !== 'retired') {
+        return json({ detail: 'illegal_state' } satisfies HttpError, 409)
+      }
+      if (!current || current.previous_dataset_version !== version) {
+        return json({ detail: 'not_immediate_previous' } satisfies HttpError, 409)
       }
       return json(
         {
           executed: true,
-          dataset_version: detail.previous_dataset_version,
+          dataset_version: version,
           note: 'rolled back',
         },
         fixture.datasetActionStatus ?? 200,

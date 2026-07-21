@@ -63,6 +63,7 @@ describe('DataView(M4)', () => {
     expect(table.text()).toContain('待发布')
     expect(table.text()).toContain('已发布')
     expect(table.text()).toContain('已退役')
+    expect(table.text()).toContain('失败')
     expect(wrapper.find('[data-testid="dataset-publish-ds-20260718-095000-e5f6"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="dataset-rollback-ds-20260718-091100-a1b2"]').exists()).toBe(true)
 
