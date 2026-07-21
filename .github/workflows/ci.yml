@@ -58,29 +58,7 @@ jobs:
       - run: npm run test:e2e
 
   # M6:完整多阶段 runner 镜像含 Vue dist,并验证容器内 /v1
-  # 默认仅手动/推送到主分支触发(构建含 ODBC,较重);也可 workflow_dispatch。
-  docker-v1:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' &&
-       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build runner image and verify /v1
-        run: python scripts/check_docker_v1_distribution.py --image data2agent:m6
-      - name: Upload evidence log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: docker-v1-evidence
-          path: |
-            # script prints evidence.json to stdout; also keep Dockerfile for audit
-            deploy/runner.Dockerfile
-          if-no-files-found: ignore
-
-  # M6:完整多阶段 runner 镜像含 Vue dist,并验证容器内 /v1
-  # 默认仅手动或推送到主分支触发(构建含 ODBC,较重)。
+  # workflow_dispatch 任意分支可跑;push 到 main/master 也会跑(构建含 ODBC,较重)。
   docker-v1:
     if: >
       github.event_name == 'workflow_dispatch' ||
