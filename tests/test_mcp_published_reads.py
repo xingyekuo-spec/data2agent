@@ -138,6 +138,25 @@ def test_mcp_rejects_legacy_obj_without_published(tmp_path):
     assert "obj_" not in str(exc2.value)
 
 
+def test_query_execution_errors_do_not_leak_schema(tmp_path, monkeypatch):
+    """Unexpected SQLite errors must not leak table/SQL fragments to MCP clients."""
+    db = _publish(tmp_path)
+    leak = "objv_should_not_appear_in_error_zzzz"
+    monkeypatch.setattr(
+        QueryService,
+        "_object_sql",
+        lambda self, *a, **k: (f'SELECT 1 FROM "{leak}" LIMIT 1', []),
+    )
+    svc = QueryService(db, ROOT / "templates", source=SOURCE)
+    with pytest.raises(ValueError, match="execution_failed") as exc:
+        svc.query_objects("Customer", limit=1)
+    err = str(exc.value)
+    assert leak not in err
+    assert "no such table" not in err.lower()
+    assert "SELECT" not in err.upper()
+    assert "objv_" not in err
+
+
 # ---- Gate 2: multi-object metric uses one snapshot ----
 
 

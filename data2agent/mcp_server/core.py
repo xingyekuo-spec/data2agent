@@ -48,6 +48,14 @@ def _quote_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def _safe_execute(con: sqlite3.Connection, sql: str, params: object = ()) -> list:
+    """Execute published-data SQL; never surface SQLite messages to clients."""
+    try:
+        return list(con.execute(sql, params))
+    except sqlite3.Error as e:
+        raise ValueError("execution_failed: 数据集查询失败") from e
+
+
 class QueryService:
     def __init__(self, db_path: str | Path, templates_root: str | Path = "templates",
                  source: str = "digiwin_e10", max_tier: str = "说",
@@ -189,7 +197,7 @@ class QueryService:
             )
             physical = validate_build_table(entry.physical_table)
             sql, params = self._object_sql(tpl, filters, order_by, desc, limit, physical)
-            rows = [dict(r) for r in store.con.execute(sql, params)]
+            rows = [dict(r) for r in _safe_execute(store.con, sql, params)]
             quarantined = self._quarantine_count(store.con, object)
             dataset_version = snap.dataset_version
             template_version = snap.template_version
@@ -401,7 +409,7 @@ class QueryService:
                 if name in snap.objects
             }
             sql = impl.render_sql(tables, dim=impl.dims[dim], order=order)
-            rows = [dict(r) for r in store.con.execute(sql, (limit,))]
+            rows = [dict(r) for r in _safe_execute(store.con, sql, (limit,))]
             dataset_version = snap.dataset_version
             template_version = snap.template_version
             binding_hashes = {
