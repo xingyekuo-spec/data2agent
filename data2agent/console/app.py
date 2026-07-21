@@ -2183,12 +2183,14 @@ def create_app(landing: str | None = None, templates: str = "templates",
         response_model=DatasetActionResult,
         responses={
             401: _RESP_HTTP_ERROR[401],
-            **_RESP_HTTP_ERROR_STUB,
+            404: {"model": HttpError, "description": "候选版本不存在"},
+            409: _RESP_HTTP_ERROR[409],
+            500: _RESP_HTTP_ERROR[500],
         },
         tags=["v0.3"],
     )
     def datasets_publish(version: str) -> None:
-        """M2 原子发布;M1 fail-closed,不写对象表或版本状态。"""
+        """M2 原子发布;引擎落地前 fail-closed,不写对象表或版本状态。"""
         raise HTTPException(501, _STUB_501)
 
     @api.post(
@@ -2196,12 +2198,14 @@ def create_app(landing: str | None = None, templates: str = "templates",
         response_model=DatasetActionResult,
         responses={
             401: _RESP_HTTP_ERROR[401],
-            **_RESP_HTTP_ERROR_STUB,
+            404: {"model": HttpError, "description": "目标版本不存在"},
+            409: _RESP_HTTP_ERROR[409],
+            500: _RESP_HTTP_ERROR[500],
         },
         tags=["v0.3"],
     )
     def datasets_rollback(version: str) -> None:
-        """M2 回滚上一稳定版本;M1 fail-closed,不写对象表或版本状态。"""
+        """M2 回滚上一稳定版本;引擎落地前 fail-closed,不写对象表或版本状态。"""
         raise HTTPException(501, _STUB_501)
 
     # ---- v0.2 数据浏览与模板(已实现)----

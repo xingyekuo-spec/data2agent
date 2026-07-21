@@ -29,9 +29,12 @@ DEFAULT_BREAKER_THRESHOLD = 0.05
 """默认熔断阈值:单对象隔离率 >= 5% 触发熔断,保留旧数据并中止。"""
 
 # 统一运行模型(M3 起):validation 属 v0.3,但进入同一 Run 模型,避免另造验收记录。
-RunType = Literal["sync", "apply", "reconcile", "ingest", "validation"]
+# M2 追加 publish/rollback；step 增加 dataset 以承载数据集级动作。
+RunType = Literal[
+    "sync", "apply", "reconcile", "ingest", "validation", "publish", "rollback",
+]
 RunStatus = Literal["running", "ok", "paused", "failed", "aborted"]
-StepKind = Literal["table", "object", "segment", "batch"]
+StepKind = Literal["table", "object", "segment", "batch", "dataset"]
 StepsState = Literal["available", "legacy_unavailable"]
 
 
@@ -89,6 +92,13 @@ class ActionBody(BaseModel):
     source: str = "digiwin_e10"
     object: str | None = None
     deep: bool = False
+
+
+class ApplyActionBody(BaseModel):
+    """apply 专用请求体；publish 不得进入 sync/reconcile/retry 共用的 ActionBody。"""
+
+    source: str = "digiwin_e10"
+    publish: bool = True
 
 
 class ConfigPatch(BaseModel):
@@ -389,6 +399,9 @@ class ApplyActionResult(BaseModel):
     executed: bool
     results: list[ObjectApplyResultModel]
     aborted: list[str]
+    dataset_version: str | None = None
+    published: bool | None = None
+    previous_dataset_version: str | None = None
 
 
 class RetryActionResult(BaseModel):
@@ -403,6 +416,7 @@ class RetryActionResult(BaseModel):
     run_id: int
     step_id: int
     detail_path: str
+    dataset_version: str | None = None
 
 
 class RetryActionError(BaseModel):
@@ -802,7 +816,7 @@ class CountNote(BaseModel):
     source: str
 
 
-# ---- v0.3 datasets 版本契约(M1:只读;publish/rollback 在 M2 前 501)----
+# ---- v0.3 datasets 版本契约(M1 只读;M2-T01 冻结动作契约,引擎 T06 落地)----
 
 DatasetStatus = Literal["building", "published", "failed", "retired"]
 ObjectBuildStatus = Literal["building", "built", "failed", "published", "retired"]
@@ -861,7 +875,7 @@ class DatasetDetail(DatasetSummary):
 
 
 class DatasetActionResult(BaseModel):
-    """publish/rollback 成功形状(M2);M1 仅声明 schema,运行时 501。"""
+    """publish/rollback 成功形状(M2);引擎在 T06 落地前路由仍 fail-closed。"""
 
     executed: bool
     dataset_version: str

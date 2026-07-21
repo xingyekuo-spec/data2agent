@@ -218,7 +218,9 @@ def _row_to_object_version(row: sqlite3.Row) -> ObjectVersionRecord:
 
 
 class LandingStore:
-    RUN_TYPES = frozenset({"sync", "apply", "reconcile", "ingest", "validation"})
+    RUN_TYPES = frozenset({
+        "sync", "apply", "reconcile", "ingest", "validation", "publish", "rollback",
+    })
 
     def __init__(self, db_path: str | Path):
         db_path = Path(db_path)
@@ -443,8 +445,8 @@ class LandingStore:
     # ---- run steps(M4)----
 
     def add_step(self, run_id: int, ordinal: int, kind: str, target: str, **fields) -> int:
-        """新建 step(默认 running);kind∈table|object|segment|batch。"""
-        if kind not in ("table", "object", "segment", "batch"):
+        """新建 step(默认 running);kind∈table|object|segment|batch|dataset。"""
+        if kind not in ("table", "object", "segment", "batch", "dataset"):
             raise ValueError(f"非法 step kind '{kind}'")
         cur = self.con.execute(
             "INSERT INTO d2a_run_step (run_id, ordinal, kind, target, status,"

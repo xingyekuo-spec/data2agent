@@ -92,22 +92,27 @@ NAMED_SUCCESS_SCHEMAS = {
     ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
 }
 
-# v0.3 M1 契约桩:publish/rollback schema 先行,运行时在 M2 前一律 501。
-STUB_API_ROUTES: set[tuple[str, str]] = {
+# v0.3 M2-T01: publish/rollback OpenAPI 已冻结最终错误码;运行时引擎在 T06 前仍 501。
+DATASET_ACTION_ROUTES: set[tuple[str, str]] = {
     ("POST", "/api/datasets/{version}/publish"),
     ("POST", "/api/datasets/{version}/rollback"),
 }
 
-STUB_SUCCESS_SCHEMAS: dict[tuple[str, str], str] = {
+DATASET_ACTION_SUCCESS_SCHEMAS: dict[tuple[str, str], str] = {
     ("post", "/api/datasets/{version}/publish"): "DatasetActionResult",
     ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
 }
 
-# (method, concrete path, kwargs) for runtime 501 checks
-STUB_RUNTIME_CALLS: list[tuple[str, str, dict]] = [
+# (method, concrete path, kwargs) for runtime fail-closed checks until T06
+DATASET_ACTION_RUNTIME_STUBS: list[tuple[str, str, dict]] = [
     ("post", "/api/datasets/ds-demo/publish", {}),
     ("post", "/api/datasets/ds-demo/rollback", {}),
 ]
+
+# 兼容旧测试名:STUB_* 仍指向数据集动作路由
+STUB_API_ROUTES = DATASET_ACTION_ROUTES
+STUB_SUCCESS_SCHEMAS = DATASET_ACTION_SUCCESS_SCHEMAS
+STUB_RUNTIME_CALLS = DATASET_ACTION_RUNTIME_STUBS
 
 
 @pytest.fixture()
@@ -471,23 +476,26 @@ def test_openapi_snapshot_roundtrip(tmp_path, monkeypatch):
 # ---- v0.3 datasets 契约桩 ----
 
 
-def test_v03_dataset_stub_routes_declare_501(tmp_path):
-    """publish/rollback schema 先行;M2 前运行时必须 501,不得伪造成功。"""
-    assert STUB_API_ROUTES == {
+def test_v03_dataset_action_openapi_declares_final_errors(tmp_path):
+    """M2-T01: OpenAPI 冻结 200/404/409/500;不再声明 501。运行时引擎前仍 501。"""
+    assert DATASET_ACTION_ROUTES == {
         ("POST", "/api/datasets/{version}/publish"),
         ("POST", "/api/datasets/{version}/rollback"),
     }
-    assert STUB_SUCCESS_SCHEMAS == {
+    assert DATASET_ACTION_SUCCESS_SCHEMAS == {
         ("post", "/api/datasets/{version}/publish"): "DatasetActionResult",
         ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
     }
     spec = _openapi_app(tmp_path).openapi()
-    for method, path in STUB_API_ROUTES:
+    for method, path in DATASET_ACTION_ROUTES:
         op = spec["paths"][path][method.lower()]
-        assert "501" in op["responses"], path
         assert "200" in op["responses"], path
+        assert "404" in op["responses"], path
+        assert "409" in op["responses"], path
+        assert "500" in op["responses"], path
+        assert "501" not in op["responses"], path
     client = TestClient(_openapi_app(tmp_path))
-    for method, path, kwargs in STUB_RUNTIME_CALLS:
+    for method, path, kwargs in DATASET_ACTION_RUNTIME_STUBS:
         r = getattr(client, method)(path, **kwargs)
         assert r.status_code == 501, path
         assert "契约桩" in r.json()["detail"]
@@ -574,7 +582,7 @@ def test_m4_run_summary_shape(tmp_path):
     schemas = spec["components"]["schemas"]
     props = schemas["RunSummary"]["properties"]
     assert set(props["type"]["anyOf"][0]["enum"]) == {
-        "sync", "apply", "reconcile", "ingest", "validation"}
+        "sync", "apply", "reconcile", "ingest", "validation", "publish", "rollback"}
     assert set(props["status"]["anyOf"][0]["enum"]) == {
         "running", "ok", "paused", "failed", "aborted"}
     for field in ("duration_ms", "quarantined", "dataset_version", "error", "error_id"):
@@ -582,7 +590,8 @@ def test_m4_run_summary_shape(tmp_path):
     detail = schemas["RunDetailResponse"]["properties"]
     assert set(detail["steps_state"]["enum"]) == {"available", "legacy_unavailable"}
     step_props = schemas["RunStep"]["properties"]
-    assert set(step_props["kind"]["enum"]) == {"table", "object", "segment", "batch"}
+    assert set(step_props["kind"]["enum"]) == {
+        "table", "object", "segment", "batch", "dataset"}
     for field in ("ordinal", "batch_id", "repaired", "soft_deleted",
                   "watermark_before", "watermark_after"):
         assert field in step_props, field
@@ -591,7 +600,7 @@ def test_m4_run_summary_shape(tmp_path):
         for p in spec["paths"]["/api/runs"]["get"]["parameters"]
     }
     assert set(run_params["type"]["anyOf"][0]["enum"]) == {
-        "sync", "apply", "reconcile", "ingest", "validation"}
+        "sync", "apply", "reconcile", "ingest", "validation", "publish", "rollback"}
     assert set(run_params["status"]["anyOf"][0]["enum"]) == {
         "running", "ok", "paused", "failed", "aborted"}
 

@@ -200,9 +200,42 @@
             "title": "Aborted",
             "type": "array"
           },
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Version"
+          },
           "executed": {
             "title": "Executed",
             "type": "boolean"
+          },
+          "previous_dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Dataset Version"
+          },
+          "published": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published"
           },
           "results": {
             "items": {
@@ -459,7 +492,7 @@
         "type": "object"
       },
       "DatasetActionResult": {
-        "description": "publish/rollback 成功形状(M2);M1 仅声明 schema,运行时 501。",
+        "description": "publish/rollback 成功形状(M2);引擎在 T06 落地前路由仍 fail-closed。",
         "properties": {
           "dataset_version": {
             "title": "Dataset Version",
@@ -2947,7 +2980,9 @@
                   "apply",
                   "reconcile",
                   "ingest",
-                  "validation"
+                  "validation",
+                  "publish",
+                  "rollback"
                 ],
                 "type": "string"
               },
@@ -3194,6 +3229,17 @@
       "RetryActionResult": {
         "description": "重试成功响应(M5 起 status 收窄为 Literal[\"ok\"])。",
         "properties": {
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Version"
+          },
           "detail_path": {
             "title": "Detail Path",
             "type": "string"
@@ -3414,7 +3460,9 @@
                   "apply",
                   "reconcile",
                   "ingest",
-                  "validation"
+                  "validation",
+                  "publish",
+                  "rollback"
                 ],
                 "type": "string"
               },
@@ -3503,7 +3551,8 @@
               "table",
               "object",
               "segment",
-              "batch"
+              "batch",
+              "dataset"
             ],
             "title": "Kind",
             "type": "string"
@@ -3782,7 +3831,9 @@
                   "apply",
                   "reconcile",
                   "ingest",
-                  "validation"
+                  "validation",
+                  "publish",
+                  "rollback"
                 ],
                 "type": "string"
               },
@@ -5706,7 +5757,7 @@
     },
     "/api/datasets/{version}/publish": {
       "post": {
-        "description": "M2 原子发布;M1 fail-closed,不写对象表或版本状态。",
+        "description": "M2 原子发布;引擎落地前 fail-closed,不写对象表或版本状态。",
         "operationId": "datasets_publish_api_datasets__version__publish_post",
         "parameters": [
           {
@@ -5740,6 +5791,26 @@
             },
             "description": "缺少或无效的 Bearer Token"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "候选版本不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -5750,7 +5821,7 @@
             },
             "description": "Validation Error"
           },
-          "501": {
+          "500": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5758,7 +5829,7 @@
                 }
               }
             },
-            "description": "契约桩:端点在所属里程碑实现前返回 501"
+            "description": "未处理异常"
           }
         },
         "security": [
@@ -5775,7 +5846,7 @@
     },
     "/api/datasets/{version}/rollback": {
       "post": {
-        "description": "M2 回滚上一稳定版本;M1 fail-closed,不写对象表或版本状态。",
+        "description": "M2 回滚上一稳定版本;引擎落地前 fail-closed,不写对象表或版本状态。",
         "operationId": "datasets_rollback_api_datasets__version__rollback_post",
         "parameters": [
           {
@@ -5809,6 +5880,26 @@
             },
             "description": "缺少或无效的 Bearer Token"
           },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "目标版本不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -5819,7 +5910,7 @@
             },
             "description": "Validation Error"
           },
-          "501": {
+          "500": {
             "content": {
               "application/json": {
                 "schema": {
@@ -5827,7 +5918,7 @@
                 }
               }
             },
-            "description": "契约桩:端点在所属里程碑实现前返回 501"
+            "description": "未处理异常"
           }
         },
         "security": [
@@ -6860,7 +6951,9 @@
                     "apply",
                     "reconcile",
                     "ingest",
-                    "validation"
+                    "validation",
+                    "publish",
+                    "rollback"
                   ],
                   "type": "string"
                 },

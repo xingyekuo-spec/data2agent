@@ -269,7 +269,7 @@ export interface paths {
         put?: never;
         /**
          * Datasets Publish
-         * @description M2 原子发布;M1 fail-closed,不写对象表或版本状态。
+         * @description M2 原子发布;引擎落地前 fail-closed,不写对象表或版本状态。
          */
         post: operations["datasets_publish_api_datasets__version__publish_post"];
         delete?: never;
@@ -289,7 +289,7 @@ export interface paths {
         put?: never;
         /**
          * Datasets Rollback
-         * @description M2 回滚上一稳定版本;M1 fail-closed,不写对象表或版本状态。
+         * @description M2 回滚上一稳定版本;引擎落地前 fail-closed,不写对象表或版本状态。
          */
         post: operations["datasets_rollback_api_datasets__version__rollback_post"];
         delete?: never;
@@ -820,8 +820,14 @@ export interface components {
         ApplyActionResult: {
             /** Aborted */
             aborted: string[];
+            /** Dataset Version */
+            dataset_version?: string | null;
             /** Executed */
             executed: boolean;
+            /** Previous Dataset Version */
+            previous_dataset_version?: string | null;
+            /** Published */
+            published?: boolean | null;
             /** Results */
             results: components["schemas"]["ObjectApplyResultModel"][];
         };
@@ -933,7 +939,7 @@ export interface components {
         };
         /**
          * DatasetActionResult
-         * @description publish/rollback 成功形状(M2);M1 仅声明 schema,运行时 501。
+         * @description publish/rollback 成功形状(M2);引擎在 T06 落地前路由仍 fail-closed。
          */
         DatasetActionResult: {
             /** Dataset Version */
@@ -1937,7 +1943,7 @@ export interface components {
              * Run Type
              * @description 结构化运行类型;历史记录为 NULL(类型未知),不回填猜测
              */
-            run_type: ("sync" | "apply" | "reconcile" | "ingest" | "validation") | null;
+            run_type: ("sync" | "apply" | "reconcile" | "ingest" | "validation" | "publish" | "rollback") | null;
             /** Source */
             source: string;
             /**
@@ -2013,6 +2019,8 @@ export interface components {
          * @description 重试成功响应(M5 起 status 收窄为 Literal["ok"])。
          */
         RetryActionResult: {
+            /** Dataset Version */
+            dataset_version?: string | null;
             /** Detail Path */
             detail_path: string;
             /** Executed */
@@ -2091,7 +2099,7 @@ export interface components {
              * Type
              * @description 结构化运行类型;历史记录为 NULL(类型未知),不回填猜测
              */
-            type?: ("sync" | "apply" | "reconcile" | "ingest" | "validation") | null;
+            type?: ("sync" | "apply" | "reconcile" | "ingest" | "validation" | "publish" | "rollback") | null;
         };
         /** RunStep */
         RunStep: {
@@ -2114,7 +2122,7 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "table" | "object" | "segment" | "batch";
+            kind: "table" | "object" | "segment" | "batch" | "dataset";
             /**
              * Name
              * @description 步骤对象:表名 / 对象名 / segment / batch
@@ -2189,7 +2197,7 @@ export interface components {
              * Type
              * @description 结构化运行类型;历史记录为 NULL(类型未知),不回填猜测
              */
-            type?: ("sync" | "apply" | "reconcile" | "ingest" | "validation") | null;
+            type?: ("sync" | "apply" | "reconcile" | "ingest" | "validation" | "publish" | "rollback") | null;
         };
         /** ServiceProbe */
         ServiceProbe: {
@@ -3259,6 +3267,24 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
+            /** @description 候选版本不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -3268,8 +3294,8 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
-            501: {
+            /** @description 未处理异常 */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3308,6 +3334,24 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
+            /** @description 目标版本不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -3317,8 +3361,8 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
-            501: {
+            /** @description 未处理异常 */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4001,7 +4045,7 @@ export interface operations {
             query?: {
                 limit?: number;
                 offset?: number;
-                type?: ("sync" | "apply" | "reconcile" | "ingest" | "validation") | null;
+                type?: ("sync" | "apply" | "reconcile" | "ingest" | "validation" | "publish" | "rollback") | null;
                 status?: ("running" | "ok" | "paused" | "failed" | "aborted") | null;
             };
             header?: never;
