@@ -239,6 +239,17 @@ def test_rollback_requires_direct_previous_only():
     assert no_prev.http_status == 409
 
 
+def test_rollback_rejects_non_retired_target():
+    current = _ds(version="ds-2", status="published", previous="ds-1")
+    building = evaluate_rollback(
+        target=_ds(version="ds-1", status="building"),
+        current_published=current,
+    )
+    assert building.outcome == "conflict"
+    assert building.reason_code == "illegal_state"
+    assert building.http_status == 409
+
+
 def test_rollback_idempotent_and_not_found():
     current = _ds(version="ds-1", status="published", previous=None)
     idem = evaluate_rollback(target=current, current_published=current)

@@ -816,6 +816,22 @@ export interface components {
              */
             note: string;
         };
+        /**
+         * ApplyActionBody
+         * @description apply 专用请求体；publish 不得进入 sync/reconcile/retry 共用的 ActionBody。
+         */
+        ApplyActionBody: {
+            /**
+             * Publish
+             * @default true
+             */
+            publish: boolean;
+            /**
+             * Source
+             * @default digiwin_e10
+             */
+            source: string;
+        };
         /** ApplyActionResult */
         ApplyActionResult: {
             /** Aborted */
@@ -2498,7 +2514,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ActionBody"];
+                "application/json": components["schemas"]["ApplyActionBody"];
             };
         };
         responses: {

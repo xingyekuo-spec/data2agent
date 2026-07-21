@@ -476,6 +476,21 @@ def test_openapi_snapshot_roundtrip(tmp_path, monkeypatch):
 # ---- v0.3 datasets 契约桩 ----
 
 
+def test_apply_action_body_is_dedicated_in_openapi(tmp_path):
+    """apply 使用 ApplyActionBody;publish 不得出现在共用 ActionBody。"""
+    spec = _openapi_app(tmp_path).openapi()
+    schemas = spec["components"]["schemas"]
+    assert "ApplyActionBody" in schemas
+    apply_props = schemas["ApplyActionBody"]["properties"]
+    assert set(apply_props) == {"source", "publish"}
+    assert apply_props["publish"]["default"] is True
+    action_props = schemas["ActionBody"]["properties"]
+    assert "publish" not in action_props
+    apply_op = spec["paths"]["/api/actions/apply"]["post"]
+    body_ref = apply_op["requestBody"]["content"]["application/json"]["schema"]
+    assert body_ref.get("$ref", "").endswith("/ApplyActionBody")
+
+
 def test_v03_dataset_action_openapi_declares_final_errors(tmp_path):
     """M2-T01: OpenAPI 冻结 200/404/409/500;不再声明 501。运行时引擎前仍 501。"""
     assert DATASET_ACTION_ROUTES == {

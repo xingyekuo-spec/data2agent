@@ -191,6 +191,23 @@
         "title": "ActionExecutionResult",
         "type": "object"
       },
+      "ApplyActionBody": {
+        "description": "apply 专用请求体；publish 不得进入 sync/reconcile/retry 共用的 ActionBody。",
+        "properties": {
+          "publish": {
+            "default": true,
+            "title": "Publish",
+            "type": "boolean"
+          },
+          "source": {
+            "default": "digiwin_e10",
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "title": "ApplyActionBody",
+        "type": "object"
+      },
       "ApplyActionResult": {
         "properties": {
           "aborted": {
@@ -4565,7 +4582,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ActionBody"
+                "$ref": "#/components/schemas/ApplyActionBody"
               }
             }
           },

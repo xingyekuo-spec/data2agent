@@ -59,6 +59,7 @@ from .contracts import (
     AccessAuditPage,
     ActionBody,
     ActionExecutionResult,
+    ApplyActionBody,
     ApplyActionResult,
     AuditRecord,
     ConfigPatch,
@@ -1878,7 +1879,9 @@ def create_app(landing: str | None = None, templates: str = "templates",
             409: _RESP_HTTP_ERROR[409],
         },
     )
-    def action_apply(body: ActionBody) -> dict:
+    def action_apply(body: ApplyActionBody) -> dict:
+        # publish 参数已进入契约;T07 前仍走旧 apply_objects,忽略 publish。
+        _ = body.publish
         report = apply_objects(store(), require_pack(), body.source)
         return {"executed": True, "results": [asdict(r) for r in report.results],
                 "aborted": [r.object for r in report.aborted]}
