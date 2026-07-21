@@ -918,6 +918,12 @@ PreviewMapStr = Annotated[
 ]
 """Preview 草稿 map 键/值字符串上限(512)。"""
 
+PreviewTableStr = Annotated[
+    str,
+    Field(min_length=1, max_length=_PREVIEW_MAP_ENTRY_MAX),
+]
+"""草稿表名:非空且 ≤512。"""
+
 
 MappingPreviewIssueReasonCode = Literal[
     "enum_unmapped",
@@ -1002,9 +1008,10 @@ class MappingPreviewDraftBinding(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    tables: list[PreviewMapStr] = Field(
+    tables: list[PreviewTableStr] = Field(
+        min_length=1,
         max_length=_PREVIEW_TABLES_MAX,
-        description="raw 表白名单引用,最多 16;tables[0] 为锚表",
+        description="raw 表白名单引用,1..16;tables[0] 为锚表;表名非空",
     )
     key_map: dict[PreviewMapStr, PreviewMapStr] = Field(
         default_factory=dict,
@@ -1047,8 +1054,7 @@ class MappingPreviewError(BaseModel):
     reason_code: MappingPreviewErrorReasonCode
     detail: str
     error_id: str | None = Field(
-        default=None,
-        description="内部失败时的稳定短标识;非 500 通常为 null",
+        description="内部失败时的稳定短标识;非 500 为 null(必填可空)",
     )
 
 

@@ -141,6 +141,7 @@ def test_openapi_request_limit_offset_bounds(tmp_path):
 
 
 def test_openapi_security_is_bearer_only(tmp_path):
+    """OpenAPI 声明强制 Bearer;运行时 401/403 + 审计由 T05 接入 require_raw_browse_auth。"""
     op = _openapi_app(tmp_path).openapi()["paths"][PREVIEW_PATH]["post"]
     assert op.get("security") == [{"HTTPBearer": []}]
     assert {} not in (op.get("security") or [])
@@ -192,6 +193,7 @@ def test_openapi_required_nullable_fields(tmp_path):
     _assert_required_nullable(schemas, "MappingPreviewSampleInfo", "requested_batch_id")
     _assert_required_nullable(schemas, "MappingPreviewDerivedCoverage", "row_coverage")
     _assert_required_nullable(schemas, "MappingPreviewIssue", "field")
+    _assert_required_nullable(schemas, "MappingPreviewError", "error_id")
     # §3.5: detail required; source_value optional
     issue_req = schemas["MappingPreviewIssue"]["required"]
     assert "detail" in issue_req
@@ -202,9 +204,39 @@ def test_valid_shaped_request_is_fail_closed_501(tmp_path):
     client = _client(tmp_path)
     r = client.post(PREVIEW_URL, json=_valid_body())
     assert r.status_code == 501
-    assert r.json().get("detail")
-    # 不得伪装成功或返回伪造成功体
-    assert "object" not in r.json() or r.status_code != 200
+    body = r.json()
+    assert body.get("detail")
+    # 不得伪装 MappingPreviewResponse 成功体
+    assert "candidate" not in body
+    assert "sample" not in body
+    assert "mode" not in body
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        {"limit": 0, "offset": 0},
+        {"limit": 201, "offset": 0},
+        {"limit": 50, "offset": -1},
+        {"limit": 50, "offset": 10001},
+    ],
+)
+def test_illegal_sample_bounds_return_422(tmp_path, sample):
+    r = _client(tmp_path).post(PREVIEW_URL, json=_valid_body(sample=sample))
+    assert r.status_code == 422
+
+
+def test_empty_draft_tables_return_422(tmp_path):
+    draft = {
+        "tables": [],
+        "key_map": {},
+        "field_map": {},
+        "derived": {},
+        "watermark": None,
+        "notes": "",
+    }
+    r = _client(tmp_path).post(PREVIEW_URL, json=_valid_body(draft_binding=draft))
+    assert r.status_code == 422
 
 
 @pytest.mark.parametrize(

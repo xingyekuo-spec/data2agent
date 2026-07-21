@@ -2253,6 +2253,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         """映射 Preview:T01 仅冻结契约;实现前 fail-closed 返回 501。
 
         请求体经 Pydantic 边界校验后拒绝非法草稿/样本;成功路径待后续任务实现。
+        OpenAPI 已强制 Bearer-only;运行时 401/403 + require_raw_browse_auth/审计归 T05。
         """
         raise HTTPException(501, "mapping preview 尚未实现")
 

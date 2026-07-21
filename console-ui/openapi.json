@@ -1368,12 +1368,14 @@
             "type": "string"
           },
           "tables": {
-            "description": "raw 表白名单引用,最多 16;tables[0] 为锚表",
+            "description": "raw 表白名单引用,1..16;tables[0] 为锚表;表名非空",
             "items": {
               "maxLength": 512,
+              "minLength": 1,
               "type": "string"
             },
             "maxItems": 16,
+            "minItems": 1,
             "title": "Tables",
             "type": "array"
           },
@@ -1436,7 +1438,7 @@
                 "type": "null"
               }
             ],
-            "description": "内部失败时的稳定短标识;非 500 通常为 null",
+            "description": "内部失败时的稳定短标识;非 500 为 null(必填可空)",
             "title": "Error Id"
           },
           "reason_code": {
@@ -1466,7 +1468,8 @@
         "required": [
           "status",
           "reason_code",
-          "detail"
+          "detail",
+          "error_id"
         ],
         "title": "MappingPreviewError",
         "type": "object"
@@ -7272,7 +7275,7 @@
     },
     "/api/mappings/{object}/preview": {
       "post": {
-        "description": "映射 Preview:T01 仅冻结契约;实现前 fail-closed 返回 501。\n\n请求体经 Pydantic 边界校验后拒绝非法草稿/样本;成功路径待后续任务实现。",
+        "description": "映射 Preview:T01 仅冻结契约;实现前 fail-closed 返回 501。\n\n请求体经 Pydantic 边界校验后拒绝非法草稿/样本;成功路径待后续任务实现。\nOpenAPI 已强制 Bearer-only;运行时 401/403 + require_raw_browse_auth/审计归 T05。",
         "operationId": "mappings_preview_api_mappings__object__preview_post",
         "parameters": [
           {
