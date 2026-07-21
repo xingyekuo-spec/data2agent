@@ -1990,7 +1990,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
             )
             result = apply_object(db, tpl, body.source, build_table=cand)
         except MappingCircuitBreaker as e:
-            # 熔断:关闭 step 与 run；旧对象表已保留
+            # 熔断:关闭 step 与 run；候选表未写入,已发布快照不变
             try:
                 db.update_step(
                     step_id, status="aborted",

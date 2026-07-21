@@ -234,7 +234,14 @@ def test_write_candidate_rejects_legacy_obj_name(landing, pack):
 
 
 def test_candidate_build_does_not_touch_published_baseline(landing, pack):
-    """候选构建不得改写已有 published 元数据或遗留 obj_*。"""
+    """候选构建不得改写已有 published 元数据、遗留 obj_* 或已发布物理表。"""
+    pub_table = "objv_deadbeef0001_deadbeef0002_deadbeef0003"
+    landing.con.execute(
+        f'CREATE TABLE "{pub_table}" (customer_code TEXT PRIMARY KEY, name TEXT)'
+    )
+    landing.con.execute(
+        f'INSERT INTO "{pub_table}" VALUES ("KEEP", "Published")'
+    )
     landing.con.execute('CREATE TABLE "obj_Customer" (customer_code TEXT PRIMARY KEY)')
     landing.con.execute('INSERT INTO "obj_Customer" VALUES ("KEEP")')
     landing.insert_dataset_version(
@@ -256,7 +263,7 @@ def test_candidate_build_does_not_touch_published_baseline(landing, pack):
             object_version="obj-keep",
             binding_hash="sha256:" + "ab" * 32,
             row_count=1,
-            build_table="objv_deadbeef0001_deadbeef0002_deadbeef0003",
+            build_table=pub_table,
             status="published",
             built_at="2026-07-21T10:00:00",
             published_at="2026-07-21T10:05:00",
@@ -267,6 +274,9 @@ def test_candidate_build_does_not_touch_published_baseline(landing, pack):
     before_legacy = landing.con.execute(
         'SELECT customer_code FROM "obj_Customer"'
     ).fetchone()[0]
+    before_pub_rows = list(landing.con.execute(
+        f'SELECT customer_code, name FROM "{pub_table}" ORDER BY customer_code'
+    ))
 
     apply_objects(landing, pack, SOURCE)
 
@@ -275,6 +285,11 @@ def test_candidate_build_does_not_touch_published_baseline(landing, pack):
     after_legacy = landing.con.execute(
         'SELECT customer_code FROM "obj_Customer"'
     ).fetchone()[0]
+    after_pub_rows = list(landing.con.execute(
+        f'SELECT customer_code, name FROM "{pub_table}" ORDER BY customer_code'
+    ))
     assert after_ds == before_ds
     assert after_obj == before_obj
     assert after_legacy == before_legacy == "KEEP"
+    assert after_pub_rows == before_pub_rows
+    assert after_pub_rows == [("KEEP", "Published")]
