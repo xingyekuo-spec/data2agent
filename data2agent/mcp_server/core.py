@@ -31,6 +31,7 @@ from typing import Iterator
 from ..connect.dataset_publish import (
     PublishedDatasetSnapshot,
     PublishedSnapshotError,
+    published_read_tx,
     resolve_published_snapshot,
 )
 from ..connect.landing import LandingStore
@@ -108,21 +109,12 @@ class QueryService:
         """同一只读事务内解析并持有 published 快照。"""
         store = LandingStore.open_readonly(self.db_path)
         try:
-            store.con.execute("BEGIN")
-            try:
-                snap = resolve_published_snapshot(store, self.source)
-            except PublishedSnapshotError as e:
-                store.con.execute("ROLLBACK")
-                raise ValueError(f"{e.reason_code}: {e.detail}") from None
-            try:
-                yield store, snap
-                store.con.execute("COMMIT")
-            except Exception:
+            with published_read_tx(store):
                 try:
-                    store.con.execute("ROLLBACK")
-                except Exception:
-                    pass
-                raise
+                    snap = resolve_published_snapshot(store, self.source)
+                except PublishedSnapshotError as e:
+                    raise ValueError(f"{e.reason_code}: {e.detail}") from None
+                yield store, snap
         finally:
             store.con.close()
 

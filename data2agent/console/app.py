@@ -46,7 +46,12 @@ from ..admin_common.secrets_file import apply_secrets_to_environ, save_secrets
 from ..admin_common.setup_yaml import build_platform_yaml, write_yaml
 from ..connect.config import ConnectConfig, load_config
 from ..connect.landing import LandingStore
-from ..connect.dataset_publish import build_dataset, publish_dataset, rollback_dataset
+from ..connect.dataset_publish import (
+    build_dataset,
+    publish_dataset,
+    published_read_tx,
+    rollback_dataset,
+)
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..mapping import parse_field_expr
 from ..metamodel.loader import load_pack
@@ -1047,67 +1052,68 @@ def create_app(landing: str | None = None, templates: str = "templates",
             out_sources.append({"source": s, "state": sync_state, "quarantined": quarantined})
         # 与 Pipeline / MCP / QueryService 共用配置顺序首源。
         default_src = default_source()
-        obj_stats = obs.object_stats(db, pack, default_src)
-        objects = []
-        for o in pack.objects:
-            st = obj_stats.get(o.object, {})
-            mapped = st.get("mapped_at")
-            objects.append({
-                "object": o.object, "display_name": o.display_name,
-                "rows": st.get("rows"),
-                "mapped_at": mapped.isoformat() if mapped is not None else None,
-                "quarantined": st.get("quarantined") or 0,
-            })
+        with published_read_tx(db):
+            obj_stats = obs.object_stats(db, pack, default_src)
+            objects = []
+            for o in pack.objects:
+                st = obj_stats.get(o.object, {})
+                mapped = st.get("mapped_at")
+                objects.append({
+                    "object": o.object, "display_name": o.display_name,
+                    "rows": st.get("rows"),
+                    "mapped_at": mapped.isoformat() if mapped is not None else None,
+                    "quarantined": st.get("quarantined") or 0,
+                })
 
-        # ---- M3 观测聚合(observability;查询失败按字段降级为 null + 告警)----
-        query_failures: list[str] = []
-        # raw 行数:任一源查询失败则整体为 null,部分合计不得冒充总数
-        raw_rows_total = 0
-        raw_failed = False
-        agg_sources = sorted(set(cfg.sources) if cfg else {s["source"] for s in out_sources})
-        for s in agg_sources:
+            # ---- M3 观测聚合(observability;查询失败按字段降级为 null + 告警)----
+            query_failures: list[str] = []
+            # raw 行数:任一源查询失败则整体为 null,部分合计不得冒充总数
+            raw_rows_total = 0
+            raw_failed = False
+            agg_sources = sorted(set(cfg.sources) if cfg else {s["source"] for s in out_sources})
+            for s in agg_sources:
+                try:
+                    tables = obs.raw_table_names(db, s)
+                except Exception:
+                    raw_failed = True
+                    continue
+                r_rows, _r_latest = obs.raw_stats(db, s, tables)
+                if r_rows is None:
+                    raw_failed = True
+                else:
+                    raw_rows_total += r_rows
+            if raw_failed:
+                query_failures.append("raw 行数查询失败(部分源),raw_rows 置为不可检测")
+            obj_errors = [v["error"] for v in obj_stats.values() if v.get("error")]
+            if obj_errors:
+                query_failures.append(obj_errors[0])
+            materialized = [v for v in obj_stats.values() if v["rows"] is not None]
+            object_rows = (
+                sum(v["rows"] for v in materialized)
+                if materialized and not obj_errors
+                else None
+            )
             try:
-                tables = obs.raw_table_names(db, s)
-            except Exception:
-                raw_failed = True
-                continue
-            r_rows, _r_latest = obs.raw_stats(db, s, tables)
-            if r_rows is None:
-                raw_failed = True
-            else:
-                raw_rows_total += r_rows
-        if raw_failed:
-            query_failures.append("raw 行数查询失败(部分源),raw_rows 置为不可检测")
-        obj_errors = [v["error"] for v in obj_stats.values() if v.get("error")]
-        if obj_errors:
-            query_failures.append(obj_errors[0])
-        materialized = [v for v in obj_stats.values() if v["rows"] is not None]
-        object_rows = (
-            sum(v["rows"] for v in materialized)
-            if materialized and not obj_errors
-            else None
-        )
-        try:
-            (lr,) = db.con.execute("SELECT MAX(last_run_at) FROM d2a_sync_state").fetchone()
-            last_run_at = obs.aware(lr)
-        except sqlite3.Error:
-            last_run_at = None
-            query_failures.append("最近运行时间查询失败(d2a_sync_state)")
-        mapped_vals = [v["mapped_at"] for v in obj_stats.values() if v["mapped_at"] is not None]
-        try:
-            app_version = importlib.metadata.version("data2agent")
-        except importlib.metadata.PackageNotFoundError:
-            app_version = None  # 开发环境无包元数据:明确 null(unknown)
-        bs = obs.binding_summary(pack)
-        qp = obs.quarantine_pending(db)
-        published = db.get_published_dataset(default_src)
-        dataset_version = published.dataset_version if published else None
-        # 原子发布:以数据集冻结 object_manifest 为分母;清单不全/有额外/非 published → 未发布。
-        object_version = None
-        if published is not None:
-            obj_rows = db.list_object_versions(published.dataset_version)
-            if object_layer_fully_published(published, obj_rows):
-                object_version = published.dataset_version
+                (lr,) = db.con.execute("SELECT MAX(last_run_at) FROM d2a_sync_state").fetchone()
+                last_run_at = obs.aware(lr)
+            except sqlite3.Error:
+                last_run_at = None
+                query_failures.append("最近运行时间查询失败(d2a_sync_state)")
+            mapped_vals = [v["mapped_at"] for v in obj_stats.values() if v["mapped_at"] is not None]
+            try:
+                app_version = importlib.metadata.version("data2agent")
+            except importlib.metadata.PackageNotFoundError:
+                app_version = None  # 开发环境无包元数据:明确 null(unknown)
+            bs = obs.binding_summary(pack)
+            qp = obs.quarantine_pending(db)
+            published = db.get_published_dataset(default_src)
+            dataset_version = published.dataset_version if published else None
+            # 原子发布:以数据集冻结 object_manifest 为分母;清单不全/有额外/非 published → 未发布。
+            object_version = None
+            if published is not None:
+                obj_rows = db.list_object_versions(published.dataset_version)
+                if object_layer_fully_published(published, obj_rows):
+                    object_version = published.dataset_version
         nodes = obs.compute_nodes(db, pack, cfg, default_src,
                                   component_version=app_version)
         recent = obs.recent_runs(db)
@@ -1313,124 +1319,125 @@ def create_app(landing: str | None = None, templates: str = "templates",
             f"FROM d2a_quarantine {where} "
             f"GROUP BY source, object ORDER BY source, object", gparams).fetchall()
         result: list[dict] = []
-        for g in groups:
-            src = g["source"]
-            obj = g["object"]
-            warnings: list[str] = []
-            # latest record (batch_id, reason)
-            latest = db.con.execute(
-                "SELECT batch_id, reason FROM d2a_quarantine "
-                "WHERE source = ? AND object = ? AND resolved_at IS NULL "
-                "ORDER BY id DESC LIMIT 1", (src, obj)).fetchone()
-            # display_name from template pack
-            display_name = None
-            if pack is not None:
-                tpl = next((o for o in pack.objects if o.object == obj), None)
-                if tpl is not None:
-                    display_name = tpl.display_name
-            # quarantine rate from most recent apply object step (按源隔离)
-            quarantine_rate = None
-            latest_apply_run_id = None
-            step_aborted = False
-            step = db.con.execute(
-                "SELECT s.id, s.run_id, s.status, s.quarantined, s.rows_in "
-                "FROM d2a_run_step s "
-                "JOIN d2a_sync_run r ON s.run_id = r.id "
-                "WHERE s.kind = 'object' AND s.target = ? "
-                "AND r.source = ? AND r.run_type = 'apply' "
-                "ORDER BY s.id DESC LIMIT 1", (obj, src)).fetchone()
-            if step is not None:
-                latest_apply_run_id = step["run_id"]
-                step_aborted = step["status"] == "aborted"
-                if step["rows_in"] and step["rows_in"] > 0:
-                    quarantine_rate = (step["quarantined"] or 0) / step["rows_in"]
-            rate_state = _compute_rate_state(quarantine_rate, DEFAULT_BREAKER_THRESHOLD)
-            # published 快照物理表(不回退遗留 obj_*)
-            object_rows = None
-            mapped_at = None
-            table_exists = False
-            table_ok = False
-            try:
-                physical, _ov = br.resolve_published_object(db, src, obj)
-                table_exists = True
+        with published_read_tx(db):
+            for g in groups:
+                src = g["source"]
+                obj = g["object"]
+                warnings: list[str] = []
+                # latest record (batch_id, reason)
+                latest = db.con.execute(
+                    "SELECT batch_id, reason FROM d2a_quarantine "
+                    "WHERE source = ? AND object = ? AND resolved_at IS NULL "
+                    "ORDER BY id DESC LIMIT 1", (src, obj)).fetchone()
+                # display_name from template pack
+                display_name = None
+                if pack is not None:
+                    tpl = next((o for o in pack.objects if o.object == obj), None)
+                    if tpl is not None:
+                        display_name = tpl.display_name
+                # quarantine rate from most recent apply object step (按源隔离)
+                quarantine_rate = None
+                latest_apply_run_id = None
+                step_aborted = False
+                step = db.con.execute(
+                    "SELECT s.id, s.run_id, s.status, s.quarantined, s.rows_in "
+                    "FROM d2a_run_step s "
+                    "JOIN d2a_sync_run r ON s.run_id = r.id "
+                    "WHERE s.kind = 'object' AND s.target = ? "
+                    "AND r.source = ? AND r.run_type = 'apply' "
+                    "ORDER BY s.id DESC LIMIT 1", (obj, src)).fetchone()
+                if step is not None:
+                    latest_apply_run_id = step["run_id"]
+                    step_aborted = step["status"] == "aborted"
+                    if step["rows_in"] and step["rows_in"] > 0:
+                        quarantine_rate = (step["quarantined"] or 0) / step["rows_in"]
+                rate_state = _compute_rate_state(quarantine_rate, DEFAULT_BREAKER_THRESHOLD)
+                # published 快照物理表(不回退遗留 obj_*)
+                object_rows = None
+                mapped_at = None
+                table_exists = False
+                table_ok = False
                 try:
-                    cols = {r[1] for r in db.con.execute(
-                        f'PRAGMA table_info("{physical}")')}
-                    if "_d2a_mapped_at" in cols:
-                        table_ok = True
-                except sqlite3.Error:
-                    pass
-                if table_ok:
+                    physical, _ov = br.resolve_published_object(db, src, obj)
+                    table_exists = True
                     try:
-                        row = db.con.execute(
-                            f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
-                            f'FROM "{physical}"'
-                        ).fetchone()
-                        object_rows = row["n"]
-                        mapped_at = obs.aware(row["m"])
+                        cols = {r[1] for r in db.con.execute(
+                            f'PRAGMA table_info("{physical}")')}
+                        if "_d2a_mapped_at" in cols:
+                            table_ok = True
                     except sqlite3.Error:
-                        warnings.append("对象数据查询失败")
-            except br.BrowseError:
-                pass
-            # 收集该对象在此源的 binding 表集合(supply serving_state 用)
-            binding_tables: list[str] | None = None
-            if pack is not None:
-                tpl = next((o for o in pack.objects if o.object == obj), None)
-                if tpl is not None:
-                    bt_list: list[str] = []
-                    for binding in tpl.bindings:
-                        if binding.enabled and binding.source == src:
-                            bt_list.extend(binding.tables)
-                    if bt_list:
-                        binding_tables = bt_list
-            serving_state = _compute_serving_state(
-                db, table_exists, table_ok, object_rows, mapped_at,
-                src, latest_apply_run_id, step_aborted, binding_tables)
-            if serving_state == "unavailable":
-                warnings.append("对象表存在但结构不完整或无法读取")
-            # ---- retry_allowed 条件 ----
-            retry_allowed: bool = True
-            retry_disabled_reason: str | None = None
-            cfg = state.get("config")
-            if cfg is None:
-                retry_allowed = False
-                retry_disabled_reason = "只读模式"
-            elif src not in cfg.sources:
-                retry_allowed = False
-                retry_disabled_reason = "未知数据源"
-            else:
-                tpl_b = next((o for o in pack.objects if o.object == obj), None) if pack else None
-                if tpl_b is None:
+                        pass
+                    if table_ok:
+                        try:
+                            row = db.con.execute(
+                                f'SELECT COUNT(*) AS n, MAX("_d2a_mapped_at") AS m '
+                                f'FROM "{physical}"'
+                            ).fetchone()
+                            object_rows = row["n"]
+                            mapped_at = obs.aware(row["m"])
+                        except sqlite3.Error:
+                            warnings.append("对象数据查询失败")
+                except br.BrowseError:
+                    pass
+                # 收集该对象在此源的 binding 表集合(supply serving_state 用)
+                binding_tables: list[str] | None = None
+                if pack is not None:
+                    tpl = next((o for o in pack.objects if o.object == obj), None)
+                    if tpl is not None:
+                        bt_list: list[str] = []
+                        for binding in tpl.bindings:
+                            if binding.enabled and binding.source == src:
+                                bt_list.extend(binding.tables)
+                        if bt_list:
+                            binding_tables = bt_list
+                serving_state = _compute_serving_state(
+                    db, table_exists, table_ok, object_rows, mapped_at,
+                    src, latest_apply_run_id, step_aborted, binding_tables)
+                if serving_state == "unavailable":
+                    warnings.append("对象表存在但结构不完整或无法读取")
+                # ---- retry_allowed 条件 ----
+                retry_allowed: bool = True
+                retry_disabled_reason: str | None = None
+                cfg = state.get("config")
+                if cfg is None:
                     retry_allowed = False
-                    retry_disabled_reason = "模板未识别此对象，无法重试"
-                elif not any(
-                    b.enabled and b.source == src for b in tpl_b.bindings
-                ):
+                    retry_disabled_reason = "只读模式"
+                elif src not in cfg.sources:
                     retry_allowed = False
-                    retry_disabled_reason = "无启用的映射绑定"
-            result.append({
-                "source": src,
-                "object": obj,
-                "display_name": display_name,
-                "pending": g["pending"],
-                "latest_created_at": obs.aware(g["latest_created_at"]),
-                "latest_batch_id": latest["batch_id"] if latest else None,
-                "latest_reason": (
-                    br._sanitize_quarantine_reason(
-                        latest["reason"], pack, src, obj)
-                    if latest and latest["reason"] else None
-                ),
-                "quarantine_rate": quarantine_rate,
-                "breaker_threshold": DEFAULT_BREAKER_THRESHOLD,
-                "rate_state": rate_state,
-                "serving_state": serving_state,
-                "latest_apply_run_id": latest_apply_run_id,
-                "object_rows": object_rows,
-                "mapped_at": mapped_at,
-                "retry_allowed": retry_allowed,
-                "retry_disabled_reason": retry_disabled_reason,
-                "warnings": warnings,
-            })
+                    retry_disabled_reason = "未知数据源"
+                else:
+                    tpl_b = next((o for o in pack.objects if o.object == obj), None) if pack else None
+                    if tpl_b is None:
+                        retry_allowed = False
+                        retry_disabled_reason = "模板未识别此对象，无法重试"
+                    elif not any(
+                        b.enabled and b.source == src for b in tpl_b.bindings
+                    ):
+                        retry_allowed = False
+                        retry_disabled_reason = "无启用的映射绑定"
+                result.append({
+                    "source": src,
+                    "object": obj,
+                    "display_name": display_name,
+                    "pending": g["pending"],
+                    "latest_created_at": obs.aware(g["latest_created_at"]),
+                    "latest_batch_id": latest["batch_id"] if latest else None,
+                    "latest_reason": (
+                        br._sanitize_quarantine_reason(
+                            latest["reason"], pack, src, obj)
+                        if latest and latest["reason"] else None
+                    ),
+                    "quarantine_rate": quarantine_rate,
+                    "breaker_threshold": DEFAULT_BREAKER_THRESHOLD,
+                    "rate_state": rate_state,
+                    "serving_state": serving_state,
+                    "latest_apply_run_id": latest_apply_run_id,
+                    "object_rows": object_rows,
+                    "mapped_at": mapped_at,
+                    "retry_allowed": retry_allowed,
+                    "retry_disabled_reason": retry_disabled_reason,
+                    "warnings": warnings,
+                })
         return result
 
     @api.get(
@@ -2314,29 +2321,30 @@ def create_app(landing: str | None = None, templates: str = "templates",
         db = store()
         pack = require_pack()
         src = default_source()
-        stats = obs.object_stats(db, pack, src)
-        out = []
-        for tpl in pack.objects:
-            st = stats.get(tpl.object, {})
-            rows = st.get("rows")
-            mapped_at = st.get("mapped_at")
-            warning = None
-            if st.get("error"):
-                warning = st["error"]
-            elif rows is None:
-                warning = "尚未发布"
-            out.append({
-                "object": tpl.object,
-                "display_name": tpl.display_name,
-                "domain": tpl.domain,
-                "rows": rows,
-                "mapped_at": mapped_at,
-                "quarantined": st.get("quarantined") or 0,
-                "version": st.get("version"),
-                "searchable": bool(tpl.keys),
-                "warning": warning,
-            })
-        return out
+        with published_read_tx(db):
+            stats = obs.object_stats(db, pack, src)
+            out = []
+            for tpl in pack.objects:
+                st = stats.get(tpl.object, {})
+                rows = st.get("rows")
+                mapped_at = st.get("mapped_at")
+                warning = None
+                if st.get("error"):
+                    warning = st["error"]
+                elif rows is None:
+                    warning = "尚未发布"
+                out.append({
+                    "object": tpl.object,
+                    "display_name": tpl.display_name,
+                    "domain": tpl.domain,
+                    "rows": rows,
+                    "mapped_at": mapped_at,
+                    "quarantined": st.get("quarantined") or 0,
+                    "version": st.get("version"),
+                    "searchable": bool(tpl.keys),
+                    "warning": warning,
+                })
+            return out
     @api.get(
         "/objects/{object}",
         response_model=ObjectRowsPageResponse,
@@ -2355,33 +2363,34 @@ def create_app(landing: str | None = None, templates: str = "templates",
         tpl = next((o for o in pack.objects if o.object == object), None)
         if tpl is None:
             raise HTTPException(404, f"未知对象 '{object}'")
-        try:
-            physical, _ov = br.resolve_published_object(db, default_source(), object)
-        except br.BrowseError as e:
-            raise HTTPException(e.status, e.detail) from e
-        cols = br.object_column_meta(db, tpl, physical)
-        try:
-            page = br.browse_table(
-                db, physical, cols,
-                limit=limit, offset=offset, q=q)
-        except br.BrowseError as e:
-            raise HTTPException(e.status, e.detail) from e
-        warnings = [f"列 {c['name']} 分类未知,按未确认处理展示"
-                    for c in cols if c["classification"] == "unknown"]
-        return {
-            "object": object,
-            "columns": cols,
-            "rows": page["rows"],
-            "truncations": page["truncations"],
-            "offset": offset,
-            "limit": limit,
-            "total": page["total"],
-            "sort": page["sort"],
-            "query": q,
-            "searchable": page["searchable"],
-            "warnings": warnings,
-            "generated_at": datetime.now().astimezone(),
-        }
+        with published_read_tx(db):
+            try:
+                physical, _ov = br.resolve_published_object(db, default_source(), object)
+            except br.BrowseError as e:
+                raise HTTPException(e.status, e.detail) from e
+            cols = br.object_column_meta(db, tpl, physical)
+            try:
+                page = br.browse_table(
+                    db, physical, cols,
+                    limit=limit, offset=offset, q=q)
+            except br.BrowseError as e:
+                raise HTTPException(e.status, e.detail) from e
+            warnings = [f"列 {c['name']} 分类未知,按未确认处理展示"
+                        for c in cols if c["classification"] == "unknown"]
+            return {
+                "object": object,
+                "columns": cols,
+                "rows": page["rows"],
+                "truncations": page["truncations"],
+                "offset": offset,
+                "limit": limit,
+                "total": page["total"],
+                "sort": page["sort"],
+                "query": q,
+                "searchable": page["searchable"],
+                "warnings": warnings,
+                "generated_at": datetime.now().astimezone(),
+            }
 
     @api.get(
         "/templates",
@@ -2398,130 +2407,131 @@ def create_app(landing: str | None = None, templates: str = "templates",
         db = store()
         pack = require_pack()
         src = default_source()
-        stats = obs.object_stats(db, pack, src)
-        result: list[dict] = []
-        for tpl in pack.objects:
-            warnings: list[str] = []
+        with published_read_tx(db):
+            stats = obs.object_stats(db, pack, src)
+            result: list[dict] = []
+            for tpl in pack.objects:
+                warnings: list[str] = []
 
-            # -- properties --
-            properties = []
-            for p in tpl.properties:
-                properties.append({
-                    "name": p.name,
-                    "type": p.type,
-                    "desc": p.desc,
-                    "sensitive": p.sensitive,
-                    "ref": p.ref,
-                    "enum_values": p.enum_values,
-                })
+                # -- properties --
+                properties = []
+                for p in tpl.properties:
+                    properties.append({
+                        "name": p.name,
+                        "type": p.type,
+                        "desc": p.desc,
+                        "sensitive": p.sensitive,
+                        "ref": p.ref,
+                        "enum_values": p.enum_values,
+                    })
 
-            # -- bindings --
-            bindings = []
-            for b in tpl.bindings:
-                # Parse enum_map from field_map expressions
-                enum_map: dict[str, dict[str, str]] = {}
-                for prop_name, expr_str in b.field_map.items():
+                # -- bindings --
+                bindings = []
+                for b in tpl.bindings:
+                    # Parse enum_map from field_map expressions
+                    enum_map: dict[str, dict[str, str]] = {}
+                    for prop_name, expr_str in b.field_map.items():
+                        try:
+                            fexpr = parse_field_expr(expr_str)
+                            if fexpr.value_map:
+                                enum_map[prop_name] = fexpr.value_map
+                        except ValueError:
+                            pass  # expression parse failure: no enum_map
+
+                    # Convert derived decision tables
+                    derived: dict[str, dict] = {}
+                    for prop_name, df in b.derived.items():
+                        rules = []
+                        for rule in df.rules:
+                            rules.append({
+                                "when": rule.when,
+                                "value": rule.value,
+                            })
+                        derived[prop_name] = {
+                            "rules": rules,
+                            "default": df.default,
+                        }
+
+                    bindings.append({
+                        "source": b.source,
+                        "tables": b.tables,
+                        "status": b.status,
+                        "key_map": b.key_map,
+                        "field_map": b.field_map,
+                        "watermark": b.watermark,
+                        "notes": b.notes,
+                        "enabled": b.enabled,
+                        "enum_map": enum_map,
+                        "derived": derived,
+                    })
+
+                # -- materialized lookup (published snapshot only) --
+                st = stats.get(tpl.object, {})
+                if st.get("error"):
+                    materialized = {
+                        "state": "unknown",
+                        "source": None,
+                        "rows": None,
+                        "mapped_at": None,
+                        "batch_id": None,
+                        "warnings": [st["error"]],
+                    }
+                elif st.get("rows") is None:
+                    materialized = {
+                        "state": "not_materialized",
+                        "source": None,
+                        "rows": None,
+                        "mapped_at": None,
+                        "batch_id": None,
+                        "warnings": [],
+                    }
+                else:
+                    batch_id = None
                     try:
-                        fexpr = parse_field_expr(expr_str)
-                        if fexpr.value_map:
-                            enum_map[prop_name] = fexpr.value_map
-                    except ValueError:
-                        pass  # expression parse failure: no enum_map
-
-                # Convert derived decision tables
-                derived: dict[str, dict] = {}
-                for prop_name, df in b.derived.items():
-                    rules = []
-                    for rule in df.rules:
-                        rules.append({
-                            "when": rule.when,
-                            "value": rule.value,
-                        })
-                    derived[prop_name] = {
-                        "rules": rules,
-                        "default": df.default,
+                        physical, _ov = br.resolve_published_object(db, src, tpl.object)
+                        batch_row = db.con.execute(
+                            f'SELECT DISTINCT "_d2a_batch_id" AS b '
+                            f'FROM "{physical}" WHERE "_d2a_batch_id" IS NOT NULL '
+                            f"LIMIT 2"
+                        ).fetchall()
+                        if len(batch_row) == 1 and batch_row[0]["b"]:
+                            batch_id = batch_row[0]["b"]
+                        elif len(batch_row) > 1:
+                            warnings.append("对象表存在多个批次，无法确定物化来源")
+                    except (br.BrowseError, sqlite3.Error):
+                        pass
+                    materialized = {
+                        "state": "materialized",
+                        "source": src,
+                        "rows": st["rows"],
+                        "mapped_at": st.get("mapped_at"),
+                        "batch_id": batch_id,
+                        "warnings": list(warnings),
                     }
 
-                bindings.append({
-                    "source": b.source,
-                    "tables": b.tables,
-                    "status": b.status,
-                    "key_map": b.key_map,
-                    "field_map": b.field_map,
-                    "watermark": b.watermark,
-                    "notes": b.notes,
-                    "enabled": b.enabled,
-                    "enum_map": enum_map,
-                    "derived": derived,
+                # -- quarantine_pending --
+                qp = st.get("quarantined")
+                if qp is None:
+                    (qp,) = db.con.execute(
+                        "SELECT COUNT(*) FROM d2a_quarantine "
+                        "WHERE object = ? AND resolved_at IS NULL",
+                        (tpl.object,)).fetchone()
+
+                result.append({
+                    "object": tpl.object,
+                    "display_name": tpl.display_name,
+                    "description": tpl.description,
+                    "domain": tpl.domain,
+                    "keys": tpl.keys,
+                    "properties": properties,
+                    "bindings": bindings,
+                    "source_of_truth": tpl.source_of_truth,
+                    "knowledge_refs": tpl.knowledge_refs,
+                    "materialized": materialized,
+                    "quarantine_pending": qp,
+                    "warnings": warnings,
                 })
-
-            # -- materialized lookup (published snapshot only) --
-            st = stats.get(tpl.object, {})
-            if st.get("error"):
-                materialized = {
-                    "state": "unknown",
-                    "source": None,
-                    "rows": None,
-                    "mapped_at": None,
-                    "batch_id": None,
-                    "warnings": [st["error"]],
-                }
-            elif st.get("rows") is None:
-                materialized = {
-                    "state": "not_materialized",
-                    "source": None,
-                    "rows": None,
-                    "mapped_at": None,
-                    "batch_id": None,
-                    "warnings": [],
-                }
-            else:
-                batch_id = None
-                try:
-                    physical, _ov = br.resolve_published_object(db, src, tpl.object)
-                    batch_row = db.con.execute(
-                        f'SELECT DISTINCT "_d2a_batch_id" AS b '
-                        f'FROM "{physical}" WHERE "_d2a_batch_id" IS NOT NULL '
-                        f"LIMIT 2"
-                    ).fetchall()
-                    if len(batch_row) == 1 and batch_row[0]["b"]:
-                        batch_id = batch_row[0]["b"]
-                    elif len(batch_row) > 1:
-                        warnings.append("对象表存在多个批次，无法确定物化来源")
-                except (br.BrowseError, sqlite3.Error):
-                    pass
-                materialized = {
-                    "state": "materialized",
-                    "source": src,
-                    "rows": st["rows"],
-                    "mapped_at": st.get("mapped_at"),
-                    "batch_id": batch_id,
-                    "warnings": list(warnings),
-                }
-
-            # -- quarantine_pending --
-            qp = st.get("quarantined")
-            if qp is None:
-                (qp,) = db.con.execute(
-                    "SELECT COUNT(*) FROM d2a_quarantine "
-                    "WHERE object = ? AND resolved_at IS NULL",
-                    (tpl.object,)).fetchone()
-
-            result.append({
-                "object": tpl.object,
-                "display_name": tpl.display_name,
-                "description": tpl.description,
-                "domain": tpl.domain,
-                "keys": tpl.keys,
-                "properties": properties,
-                "bindings": bindings,
-                "source_of_truth": tpl.source_of_truth,
-                "knowledge_refs": tpl.knowledge_refs,
-                "materialized": materialized,
-                "quarantine_pending": qp,
-                "warnings": warnings,
-            })
-        return result
+            return result
 
     @api.get(
         "/templates/metrics",

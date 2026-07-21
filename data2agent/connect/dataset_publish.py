@@ -11,9 +11,10 @@ import hashlib
 import json
 import logging
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable, Literal
+from typing import Callable, Iterator, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -46,6 +47,36 @@ logger = logging.getLogger(__name__)
 SnapshotReason = Literal["not_published", "snapshot_corrupt"]
 BuildOutcome = Literal["ok", "conflict", "failed"]
 ActionOutcome = Literal["ok", "idempotent", "not_found", "conflict", "error"]
+
+
+@contextmanager
+def published_read_tx(store: LandingStore) -> Iterator[LandingStore]:
+    """同一 SQLite 读快照内完成 resolve + 后续对象/指标查询;可重入。
+
+    MCP / Console 读路径应包裹 resolve_published_snapshot 与跟随查询,
+    避免并发 publish 时单次请求内混版。嵌套调用共用外层事务。
+    """
+    depth = getattr(store, "_published_read_depth", 0)
+    if depth > 0:
+        yield store
+        return
+    isolation = store.con.isolation_level
+    store.con.isolation_level = None
+    store._published_read_depth = 1
+    try:
+        store.con.execute("BEGIN")
+        try:
+            yield store
+            store.con.execute("COMMIT")
+        except Exception:
+            try:
+                store.con.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+    finally:
+        store._published_read_depth = 0
+        store.con.isolation_level = isolation
 
 
 class PublishedSnapshotError(Exception):

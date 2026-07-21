@@ -172,7 +172,7 @@ END;
 _VERSION_FREEZE_TRIGGERS = """
 DROP TRIGGER IF EXISTS trg_d2a_dataset_freeze_upd;
 DROP TRIGGER IF EXISTS trg_d2a_object_freeze_upd;
-CREATE TRIGGER trg_d2a_dataset_freeze_upd
+CREATE TRIGGER IF NOT EXISTS trg_d2a_dataset_freeze_upd
 BEFORE UPDATE ON d2a_dataset_version
 FOR EACH ROW
 WHEN NEW.source IS NOT OLD.source
@@ -183,7 +183,7 @@ WHEN NEW.source IS NOT OLD.source
 BEGIN
   SELECT RAISE(ABORT, 'frozen dataset fields are immutable');
 END;
-CREATE TRIGGER trg_d2a_object_freeze_upd
+CREATE TRIGGER IF NOT EXISTS trg_d2a_object_freeze_upd
 BEFORE UPDATE ON d2a_object_version
 FOR EACH ROW
 WHEN NEW.dataset_version IS NOT OLD.dataset_version

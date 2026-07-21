@@ -22,6 +22,7 @@ from typing import Any
 from ..connect.landing import LandingStore
 from ..connect.dataset_publish import (
     PublishedSnapshotError,
+    published_read_tx,
     resolve_published_snapshot,
 )
 from ..metamodel.dataset_publish_contract import validate_build_table
@@ -149,21 +150,22 @@ def resolve_published_object(
     """解析 published 快照中对象的物理表与 object_version。
 
     无 published / 不在清单 / 快照损坏 → BrowseError(409),不回退 obj_*,
-    错误文案不含表名或 SQL。
+    错误文案不含表名或 SQL。与调用方共享 published_read_tx 时保持同一快照。
     """
-    try:
-        snap = resolve_published_snapshot(db, source)
-    except PublishedSnapshotError as e:
-        if e.reason_code == "not_published":
-            raise BrowseError(409, f"对象 '{object_name}' 尚未发布") from None
-        raise BrowseError(409, "数据集快照不可用") from None
-    entry = snap.objects.get(object_name)
-    if entry is None:
-        raise BrowseError(409, f"对象 '{object_name}' 尚未发布")
-    try:
-        return validate_build_table(entry.physical_table), entry.object_version
-    except ValueError:
-        raise BrowseError(409, "数据集快照不可用") from None
+    with published_read_tx(db):
+        try:
+            snap = resolve_published_snapshot(db, source)
+        except PublishedSnapshotError as e:
+            if e.reason_code == "not_published":
+                raise BrowseError(409, f"对象 '{object_name}' 尚未发布") from None
+            raise BrowseError(409, "数据集快照不可用") from None
+        entry = snap.objects.get(object_name)
+        if entry is None:
+            raise BrowseError(409, f"对象 '{object_name}' 尚未发布")
+        try:
+            return validate_build_table(entry.physical_table), entry.object_version
+        except ValueError:
+            raise BrowseError(409, "数据集快照不可用") from None
 
 
 def table_exists(db: LandingStore, physical: str) -> bool:
