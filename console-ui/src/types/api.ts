@@ -261,7 +261,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Gateway Proposals */
+        /**
+         * Gateway Proposals
+         * @description 说档建议卡:复用进程内 QueryService,不创建 Run、不写业务表。
+         */
         post: operations["gateway_proposals_api_gateway_proposals_post"];
         delete?: never;
         options?: never;
@@ -907,6 +910,16 @@ export interface components {
          *     Do not use pydantic.JsonValue or Any here: those emit empty `{}` schemas that
          *     become `unknown` after openapi-typescript.
          */
+        JsonValue: string | number | boolean | components["schemas"]["JsonValue"][] | {
+            [key: string]: components["schemas"]["JsonValue"];
+        } | null;
+        /**
+         * JsonValue
+         * @description Recursive JSON value with an explicit anyOf schema for OpenAPI/TS.
+         *
+         *     Do not use pydantic.JsonValue or Any here: those emit empty `{}` schemas that
+         *     become `unknown` after openapi-typescript.
+         */
         "JsonValue-Input": JsonValueInput;
         /**
          * JsonValue
@@ -937,6 +950,129 @@ export interface components {
              * @enum {string}
              */
             tool: "query_objects" | "query_metrics";
+        };
+        /**
+         * McpLabError
+         * @description MCP Lab 安全错误:前端按 status/reason_code 分支,不解析中文 detail。
+         */
+        McpLabError: {
+            /** Detail */
+            detail: string;
+            /** Error Id */
+            error_id?: string | null;
+            /**
+             * Reason Code
+             * @enum {string}
+             */
+            reason_code: "invalid_params" | "unknown_target" | "not_materialized" | "query_expired" | "tier_forbidden" | "rate_limited" | "mcp_unavailable" | "execution_failed";
+            /**
+             * Retryable
+             * @default false
+             */
+            retryable: boolean;
+            /** Tool */
+            tool?: string | null;
+        };
+        /**
+         * McpMetricsQueryResult
+         * @description query_metrics 数据查询成功形状。
+         */
+        McpMetricsQueryResult: {
+            /**
+             * Caveats
+             * @default
+             */
+            caveats: string;
+            /** Display Name */
+            display_name: string;
+            /** Formula */
+            formula: string;
+            /**
+             * Freshness Sla
+             * @default
+             */
+            freshness_sla: string;
+            /** Grain */
+            grain?: string[];
+            /**
+             * Group By
+             * @default null
+             */
+            group_by: string | null;
+            /** Implemented */
+            implemented: boolean;
+            meta: components["schemas"]["McpQueryMeta"];
+            /** Metric */
+            metric: string;
+            /** Rows */
+            rows?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Status */
+            status: string;
+            /**
+             * Unit
+             * @default null
+             */
+            unit: string | null;
+        };
+        /**
+         * McpObjectQueryResult
+         * @description query_objects 数据查询成功形状(目录查询另见宽表结果)。
+         */
+        McpObjectQueryResult: {
+            /** Display Name */
+            display_name: string;
+            meta: components["schemas"]["McpQueryMeta"];
+            /** Object */
+            object: string;
+            /** Rows */
+            rows: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+        };
+        /**
+         * McpQueryMeta
+         * @description 查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。
+         */
+        McpQueryMeta: {
+            /**
+             * Duration Ms
+             * @description 服务端耗时毫秒
+             */
+            duration_ms: number;
+            /**
+             * Evidence Scope
+             * @description v0.2:query ID 仅在当前 Console 进程/配置签名内有效
+             * @default process
+             * @constant
+             */
+            evidence_scope: "process";
+            /** Masked Fields */
+            masked_fields?: string[];
+            /**
+             * Query Id
+             * @description 可被建议卡引用的查询 ID;目录查询或无可引用结果时为 null
+             * @default null
+             */
+            query_id: string | null;
+            /**
+             * Row Count
+             * @default null
+             */
+            row_count: number | null;
+            /**
+             * Target
+             * @description 对象名或指标名;目录查询可用空串
+             */
+            target: string;
+            /**
+             * Tool
+             * @enum {string}
+             */
+            tool: "query_objects" | "query_metrics";
+            /** Warnings */
+            warnings?: string[];
         };
         /**
          * McpToolResult
@@ -2785,13 +2921,22 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description 冲突/未配置/只读/熔断 */
+            /** @description 档位禁止或其他治理拒绝 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description 未配置/冲突/query 过期等 */
             409: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HttpError"];
+                    "application/json": components["schemas"]["McpLabError"];
                 };
             };
             /** @description Validation Error */
@@ -2803,22 +2948,31 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
-            /** @description Bad Gateway */
+            /** @description 限流 */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description 上游 MCP 失败 */
             502: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HttpError"];
+                    "application/json": components["schemas"]["McpLabError"];
                 };
             };
-            /** @description Service Unavailable */
+            /** @description MCP 不可用 */
             503: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HttpError"];
+                    "application/json": components["schemas"]["McpLabError"];
                 };
             };
         };
@@ -2923,22 +3077,49 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
+            /** @description 档位禁止 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description 未知对象/动作 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description query 过期/配置冲突 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description 参数无效 */
             422: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RequestError"];
+                    "application/json": components["schemas"]["McpLabError"];
                 };
             };
-            /** @description 契约桩:端点在所属里程碑实现前返回 501 */
-            501: {
+            /** @description 执行失败 */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["HttpError"];
+                    "application/json": components["schemas"]["McpLabError"];
                 };
             };
         };
