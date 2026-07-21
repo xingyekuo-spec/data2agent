@@ -235,6 +235,42 @@ def test_resolve_rejects_manifest_mismatch_and_rowcount(tmp_path):
     assert exc.value.reason_code == "snapshot_corrupt"
 
 
+def test_resolve_rejects_missing_object_in_manifest(tmp_path):
+    store = LandingStore(tmp_path / "landing.sqlite")
+    pack = _pack("Customer", "Order")
+    table = make_build_table("src_a", "Customer", "aabbccddeeff")
+    store.con.execute(f'CREATE TABLE "{table}" (id TEXT PRIMARY KEY)')
+    store.con.execute(f'INSERT INTO "{table}" VALUES ("1")')
+    store.insert_dataset_version(
+        DatasetVersionRecord(
+            dataset_version="ds-1",
+            source="src_a",
+            template_version=pack.version,
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+            object_manifest='["Customer", "Order"]',
+            template_snapshot=pack.model_dump_json(),
+        )
+    )
+    store.insert_object_version(
+        ObjectVersionRecord(
+            dataset_version="ds-1",
+            object="Customer",
+            object_version="obj-1",
+            binding_hash="sha256:" + "ab" * 32,
+            row_count=1,
+            build_table=table,
+            status="published",
+            built_at="2026-07-21T10:00:00",
+            published_at="2026-07-21T10:05:00",
+        )
+    )
+    with pytest.raises(PublishedSnapshotError) as exc:
+        resolve_published_snapshot(store, "src_a")
+    assert exc.value.reason_code == "snapshot_corrupt"
+
+
 def test_resolve_isolates_sources(tmp_path):
     store = LandingStore(tmp_path / "landing.sqlite")
     tables_a = _seed_published(
