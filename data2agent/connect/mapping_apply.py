@@ -7,11 +7,12 @@ M2-T04:不再 DROP/CREATE 稳定 obj_{Object};物化只写入调用方提供的
 1. 用 mapping.build_select 在 raw_* 上取数(物理表名解析 + 软删过滤);
 2. 纯转换:解码/校验/派生/业务键(transform_object_rows);
 3. 坏行进 d2a_quarantine;隔离率超阈值 → 熔断,不写候选表;
-4. 好行写入不可变候选物理表(write_candidate_table)。
+4. 好行写入不可变候选物理表(write_candidate_table;已存在则冲突失败)。
 """
 
 from __future__ import annotations
 
+import sqlite3
 import uuid
 from dataclasses import dataclass, field
 
@@ -179,8 +180,14 @@ def write_candidate_table(
         + ['    "_d2a_mapped_at" TEXT', '    "_d2a_batch_id" TEXT'])
     pk = ", ".join(f'"{k}"' for k in tpl.keys)
     con = landing.con
-    con.execute(f'DROP TABLE IF EXISTS "{table}"')
-    con.execute(f'CREATE TABLE "{table}" (\n{col_defs},\n    PRIMARY KEY ({pk})\n)')
+    try:
+        con.execute(
+            f'CREATE TABLE "{table}" (\n{col_defs},\n    PRIMARY KEY ({pk})\n)'
+        )
+    except sqlite3.OperationalError as e:
+        if "already exists" in str(e).lower():
+            raise ValueError(f"候选物理表已存在,拒绝覆盖: {table}") from e
+        raise
     now = _now()
     all_cols = cols + ["_d2a_mapped_at", "_d2a_batch_id"]
     col_sql = ", ".join('"{}"'.format(c) for c in all_cols)

@@ -357,4 +357,3 @@ def test_retry_forwards_build_conflict_reason_code(synced, tmp_path, monkeypatch
     error = RetryActionError.model_validate(r.json())
     assert error.reason_code == "active_build"
     assert error.executed is False
-

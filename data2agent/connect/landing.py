@@ -540,23 +540,27 @@ class LandingStore:
             (_now(), source, action, sql, rows, round(duration_ms, 2), batch_id))
         self.con.commit()
 
-    def start_run(self, source: str, run_type: str) -> int:
+    def start_run(self, source: str, run_type: str, *, commit: bool = True) -> int:
         if run_type not in self.RUN_TYPES:
             raise ValueError(f"未知 run_type '{run_type}',可用:{sorted(self.RUN_TYPES)}")
         cur = self.con.execute(
             "INSERT INTO d2a_sync_run (source, started_at, status, run_type, steps_recorded) "
             "VALUES (?, ?, 'running', ?, 1)",
             (source, _now(), run_type))
-        self.con.commit()
+        if commit:
+            self.con.commit()
         return cur.lastrowid
 
-    def finish_run(self, run_id: int, *, tables: int, rows: int,
-                   status: str = "ok", detail: str = "") -> None:
+    def finish_run(
+        self, run_id: int, *, tables: int, rows: int,
+        status: str = "ok", detail: str = "", commit: bool = True,
+    ) -> None:
         self.con.execute(
             "UPDATE d2a_sync_run SET finished_at = ?, tables = ?, rows = ?, "
             "status = ?, detail = ? WHERE id = ?",
             (_now(), tables, rows, status, detail, run_id))
-        self.con.commit()
+        if commit:
+            self.con.commit()
 
     # ---- run steps(M4)----
 
@@ -635,8 +639,13 @@ class LandingStore:
 
     # ---- 数据集/对象版本 CRUD(v0.3 M2)----
 
-    def insert_dataset_version(self, record: DatasetVersionRecord) -> None:
-        """插入数据集版本行;冻结字段此后仅能通过生命周期/激活路径变更。"""
+    def insert_dataset_version(
+        self, record: DatasetVersionRecord, *, commit: bool = True,
+    ) -> None:
+        """插入数据集版本行;冻结字段此后仅能通过生命周期/激活路径变更。
+
+        commit=False 供构建预占与 Run 绑定同一短事务。
+        """
         self.con.execute(
             "INSERT INTO d2a_dataset_version ("
             "dataset_version, source, template_version, status, built_at, "
@@ -656,7 +665,8 @@ class LandingStore:
                 record.template_snapshot,
             ),
         )
-        self.con.commit()
+        if commit:
+            self.con.commit()
 
     def update_dataset_lifecycle(
         self,

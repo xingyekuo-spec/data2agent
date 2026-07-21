@@ -173,15 +173,18 @@ class QueryService:
         if object is None:
             return self._object_catalog(started)
 
-        # 目录仍用磁盘模板识别对象名;实际字段/敏感/绑定以 published 快照为准。
-        disk_tpl = next((o for o in self.pack.objects if o.object == object), None)
-        if disk_tpl is None:
-            raise ValueError(f"未知对象 '{object}',可用:{sorted(self.pack.object_names())}")
-
+        # 实际数据读取以 published 冻结快照为准;磁盘模板仅用于目录展示。
         with self._published_tx() as (store, snap):
             tpl = next((o for o in snap.template_pack.objects if o.object == object), None)
             entry = snap.objects.get(object)
             if tpl is None or entry is None:
+                known = set(self.pack.object_names()) | set(
+                    snap.template_pack.object_names()
+                )
+                if object not in known:
+                    raise ValueError(
+                        f"未知对象 '{object}',可用:{sorted(known)}"
+                    )
                 raise ValueError("not_published: 对象未包含在已发布数据集中")
             binding = next(
                 (b for b in tpl.bindings if b.source == self.source and b.enabled),
@@ -363,45 +366,53 @@ class QueryService:
         if metric is None:
             return self._metric_catalog(started)
 
-        disk_def = next((m for m in self.pack.metrics if m.metric == metric), None)
-        if disk_def is None:
-            raise ValueError(f"未知指标 '{metric}',可用:{[m.metric for m in self.pack.metrics]}")
-        impl = self.metrics.get(metric)
-        if impl is None:
-            duration_ms = int((time.perf_counter() - started) * 1000)
-            return {
-                "metric": disk_def.metric, "display_name": disk_def.display_name,
-                "status": disk_def.status, "formula": disk_def.formula,
-                "grain": disk_def.grain, "caveats": disk_def.caveats,
-                "freshness_sla": disk_def.freshness_sla,
-                "implemented": False,
-                "reason": "依赖应收 / 回款对象,不在首批对象内;口径定义保留,待对象补齐后实现",
-                "meta": self._public_meta(
-                    tool="query_metrics", target=metric, query_id=None,
-                    row_count=None, duration_ms=duration_ms,
-                    warnings=["指标尚未实现"],
-                ),
-            }
-
-        dim = group_by or impl.default_dim
-        if dim not in impl.dims:
-            raise ValueError(f"'{metric}' 支持的 group_by:{sorted(impl.dims)},got '{dim}'")
-        order = '"group" DESC' if dim == "月" else "value DESC"
-        limit = max(1, min(int(limit), 200))
-
+        # 实际指标读取以 published 冻结快照为准;磁盘模板仅用于目录展示。
         with self._published_tx() as (store, snap):
             mdef = next(
                 (m for m in snap.template_pack.metrics if m.metric == metric), None,
             )
             if mdef is None:
+                known = {m.metric for m in self.pack.metrics} | {
+                    m.metric for m in snap.template_pack.metrics
+                }
+                if metric not in known:
+                    raise ValueError(
+                        f"未知指标 '{metric}',可用:{sorted(known)}"
+                    )
                 raise ValueError("not_published: 指标未包含在已发布数据集中")
+            impl = self.metrics.get(metric)
+            if impl is None:
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                return {
+                    "metric": mdef.metric, "display_name": mdef.display_name,
+                    "status": mdef.status, "formula": mdef.formula,
+                    "grain": mdef.grain, "caveats": mdef.caveats,
+                    "freshness_sla": mdef.freshness_sla,
+                    "implemented": False,
+                    "reason": "依赖应收 / 回款对象,不在首批对象内;口径定义保留,待对象补齐后实现",
+                    "meta": self._public_meta(
+                        tool="query_metrics", target=metric, query_id=None,
+                        row_count=None, duration_ms=duration_ms,
+                        warnings=["指标尚未实现"],
+                        dataset_version=snap.dataset_version,
+                        template_version=snap.template_version,
+                    ),
+                }
+
+            dim = group_by or impl.default_dim
+            if dim not in impl.dims:
+                raise ValueError(
+                    f"'{metric}' 支持的 group_by:{sorted(impl.dims)},got '{dim}'"
+                )
+            order = '"group" DESC' if dim == "月" else "value DESC"
+            limit_n = max(1, min(int(limit), 200))
             tables = {
                 name: snap.objects[name].physical_table
                 for name in impl.depends_on
                 if name in snap.objects
             }
             sql = impl.render_sql(tables, dim=impl.dims[dim], order=order)
-            rows = [dict(r) for r in _safe_execute(store.con, sql, (limit,))]
+            rows = [dict(r) for r in _safe_execute(store.con, sql, (limit_n,))]
             dataset_version = snap.dataset_version
             template_version = snap.template_version
             binding_hashes = {
@@ -415,18 +426,19 @@ class QueryService:
             }
             status = mdef.status
             caveats = mdef.caveats
+            dim_out = dim
 
         warning = "口径为 draft(未经校准),数值仅供演示环境参考" if status != "certified" else ""
         warnings = [w for w in (warning, caveats) if w]
         qid = self._log_query(
             "query_metrics", metric,
-            f"group_by={dim} rows={len(rows)}", warnings,
+            f"group_by={dim_out} rows={len(rows)}", warnings,
             dataset_version=dataset_version,
         )
         duration_ms = int((time.perf_counter() - started) * 1000)
         return {
             **definition, "implemented": True, "unit": impl.unit,
-            "group_by": dim, "rows": rows,
+            "group_by": dim_out, "rows": rows,
             "meta": self._public_meta(
                 tool="query_metrics", target=metric, query_id=qid,
                 row_count=len(rows), duration_ms=duration_ms,

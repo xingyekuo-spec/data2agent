@@ -230,6 +230,45 @@ def test_mcp_serves_frozen_template_after_failed_rebuild(tmp_path):
     assert margin["rows"]
 
 
+def test_mcp_serves_object_removed_from_disk_template(tmp_path):
+    """磁盘模板删除对象后,仍可按冻结快照查询 published 对象。"""
+    landing, pack = _sync_landing(tmp_path)
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.published
+    version = result.dataset_version
+
+    svc = QueryService(landing.db_path, ROOT / "templates", source=SOURCE)
+    # 模拟升级后磁盘包不再声明 Customer(目录无此项),查询仍走冻结快照。
+    svc.pack = svc.pack.model_copy(
+        update={"objects": [o for o in svc.pack.objects if o.object != "Customer"]},
+    )
+    assert "Customer" not in svc.pack.object_names()
+    rows = svc.query_objects("Customer", limit=2)
+    assert rows["meta"]["dataset_version"] == version
+    assert rows["rows"]
+    assert rows["meta"]["masked_fields"] == ["contact"]
+
+
+def test_mcp_serves_metric_removed_from_disk_template(tmp_path):
+    """磁盘模板删除指标后,仍可按冻结快照查询 published 指标。"""
+    landing, pack = _sync_landing(tmp_path)
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.published
+    version = result.dataset_version
+
+    svc = QueryService(landing.db_path, ROOT / "templates", source=SOURCE)
+    svc.pack = svc.pack.model_copy(
+        update={
+            "metrics": [m for m in svc.pack.metrics if m.metric != "gross_margin_rate"],
+        },
+    )
+    assert all(m.metric != "gross_margin_rate" for m in svc.pack.metrics)
+    margin = svc.query_metrics("gross_margin_rate", limit=2)
+    assert margin["meta"]["dataset_version"] == version
+    assert margin["implemented"] is True
+    assert margin["rows"]
+
+
 # ---- Gate 4: response metadata matches physical tables used ----
 
 

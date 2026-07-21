@@ -180,9 +180,10 @@ def _safe_action_error(detail: str) -> tuple[str, str]:
     return "数据集发布操作失败", error_id
 
 
-def _drop_table_best_effort(store: LandingStore, table: str | None) -> None:
+def _drop_table_best_effort(store: LandingStore, table: str | None) -> bool:
+    """尝试删除物理表。仅在确认表已不存在时返回 True。"""
     if not table or not is_valid_build_table(table):
-        return
+        return False
     try:
         store.con.execute(f"DROP TABLE IF EXISTS {_quote_ident(table)}")
         store.con.commit()
@@ -191,6 +192,8 @@ def _drop_table_best_effort(store: LandingStore, table: str | None) -> None:
             store.con.rollback()
         except Exception:
             pass
+        return False
+    return not _table_exists(store, table)
 
 
 def _new_dataset_version() -> str:
@@ -276,6 +279,52 @@ def _recover_stale_building(store: LandingStore, source: str) -> str | None:
         )
     return None
 
+
+def _claim_building_candidate(
+    store: LandingStore,
+    *,
+    dataset_version: str,
+    source: str,
+    pack: TemplatePack,
+    previous: str | None,
+    manifest: list[str],
+    now: str,
+) -> int:
+    """同一 IMMEDIATE 事务内预占 building 候选并绑定 running Run。
+
+    避免“building 已提交、Run 尚未绑定”窗口被并发 _recover_stale_building 误判。
+    """
+    run_ids: list[int] = []
+
+    def _txn() -> None:
+        building_rows, _ = store.list_dataset_versions(
+            source=source, status="building", limit=50, offset=0,
+        )
+        for ds in building_rows:
+            if _has_active_build_run(store, ds.dataset_version):
+                raise _TxnRecheckAbort("conflict", "active_build", 409)
+        store.insert_dataset_version(
+            DatasetVersionRecord(
+                dataset_version=dataset_version,
+                source=source,
+                template_version=pack.version,
+                status="building",
+                built_at=now,
+                previous_dataset_version=previous,
+                object_manifest=json.dumps(manifest, ensure_ascii=False),
+                template_snapshot=pack.model_dump_json(),
+            ),
+            commit=False,
+        )
+        run_id = store.start_run(source, "apply", commit=False)
+        store.set_run_dataset_version(run_id, dataset_version, commit=False)
+        run_ids.append(run_id)
+
+    try:
+        _run_immediate_txn(store, _txn)
+    except _TxnRecheckAbort:
+        raise
+    return run_ids[0]
 
 def _parse_template_snapshot(
     raw: str | None, *, expected_version: str, manifest: list[str],
@@ -373,7 +422,12 @@ def _gc_retired_physical_tables(store: LandingStore, source: str) -> None:
             if not table or obj.purged_at is not None:
                 continue
             try:
-                _drop_table_best_effort(store, table)
+                if not _drop_table_best_effort(store, table):
+                    logger.warning(
+                        "retention GC drop failed for %s/%s table=%s",
+                        ds.dataset_version, obj.object, table,
+                    )
+                    continue
                 store.purge_object_build_table(
                     ds.dataset_version, obj.object, purged_at=now,
                 )
@@ -519,6 +573,14 @@ def publish_dataset(store: LandingStore, version: str) -> DatasetMutationResult:
             version, status="published", published_at=now, commit=False,
         )
         store.set_run_dataset_version(run_id, version, commit=False)
+        store.finish_run(
+            run_id,
+            tables=len(objects),
+            rows=sum(o.row_count for o in objects),
+            status="ok",
+            detail=f"published: {version}",
+            commit=False,
+        )
 
     try:
         _run_immediate_txn(store, _txn)
@@ -563,13 +625,6 @@ def publish_dataset(store: LandingStore, version: str) -> DatasetMutationResult:
             note=summary,
         )
 
-    store.finish_run(
-        run_id,
-        tables=len(objects),
-        rows=sum(o.row_count for o in objects),
-        status="ok",
-        detail=f"published: {version}",
-    )
     # 仅在完整发布成功后取代旧隔离;保留本轮 build 的 quarantine batch。
     for obj in objects:
         keep = {obj.batch_id} if obj.batch_id else set()
@@ -677,6 +732,14 @@ def rollback_dataset(store: LandingStore, version: str) -> DatasetMutationResult
             commit=False,
         )
         store.set_run_dataset_version(run_id, version, commit=False)
+        store.finish_run(
+            run_id,
+            tables=len(target_objs),
+            rows=sum(o.row_count for o in target_objs),
+            status="ok",
+            detail=f"rolled back to: {version}",
+            commit=False,
+        )
 
     try:
         _run_immediate_txn(store, _txn)
@@ -721,13 +784,6 @@ def rollback_dataset(store: LandingStore, version: str) -> DatasetMutationResult
             note=summary,
         )
 
-    store.finish_run(
-        run_id,
-        tables=len(target_objs),
-        rows=sum(o.row_count for o in target_objs),
-        status="ok",
-        detail=f"rolled back to: {version}",
-    )
     try:
         _gc_retired_physical_tables(store, source)
     except Exception:
@@ -796,21 +852,28 @@ def build_dataset(
     dataset_version = _new_dataset_version()
     manifest = [tpl.object for tpl, _ in members]
     now = _now()
-    store.insert_dataset_version(
-        DatasetVersionRecord(
+    try:
+        run_id = _claim_building_candidate(
+            store,
             dataset_version=dataset_version,
             source=source,
-            template_version=pack.version,
-            status="building",
-            built_at=now,
-            previous_dataset_version=previous,
-            object_manifest=json.dumps(manifest, ensure_ascii=False),
-            template_snapshot=pack.model_dump_json(),
+            pack=pack,
+            previous=previous,
+            manifest=manifest,
+            now=now,
         )
-    )
-
-    run_id = store.start_run(source, "apply")
-    store.set_run_dataset_version(run_id, dataset_version)
+    except _TxnRecheckAbort as e:
+        return BuildDatasetResult(
+            source=source,
+            dataset_version=None,
+            previous_dataset_version=None,
+            status=None,
+            ready=False,
+            published=False,
+            outcome="conflict",
+            reason_code=e.reason_code or "active_build",
+            error="已有运行中的数据集构建",
+        )
 
     results: list[ObjectApplyResult] = []
     step_ids: dict[str, int] = {}

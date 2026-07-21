@@ -377,6 +377,61 @@ def test_gc_failure_does_not_undo_publish(landing, pack, monkeypatch):
     assert snap.dataset_version == v3.dataset_version
 
 
+def test_publish_finish_run_failure_rolls_back_switch(landing, pack, monkeypatch):
+    """Run 终态与元数据切换同事务:finish_run 失败则不得留下 published。"""
+    staged = _stage(landing, pack)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("observability boom")
+
+    monkeypatch.setattr(LandingStore, "finish_run", boom)
+    result = publish_dataset(landing, staged.dataset_version)
+    assert result.outcome == "error"
+    assert result.executed is False
+    assert landing.get_published_dataset(SOURCE) is None
+    cand = landing.get_dataset_version(staged.dataset_version)
+    assert cand is not None and cand.status == "building"
+
+
+def test_successful_publish_marks_run_ok(landing, pack):
+    staged = _stage(landing, pack)
+    result = publish_dataset(landing, staged.dataset_version)
+    assert result.outcome == "ok"
+    run = landing.con.execute(
+        "SELECT status, detail FROM d2a_sync_run WHERE run_type = 'publish' "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert run[0] == "ok"
+    assert staged.dataset_version in (run[1] or "")
+
+
+def test_gc_does_not_tombstone_when_drop_fails(landing, pack, monkeypatch):
+    """DROP 失败时不得写入 purged_at / 清空 build_table。"""
+    v1 = _stage(landing, pack)
+    assert publish_dataset(landing, v1.dataset_version).executed is True
+    v2 = _stage(landing, pack)
+    assert publish_dataset(landing, v2.dataset_version).executed is True
+    v3 = _stage(landing, pack)
+
+    def drop_fail(_store, _table):
+        return False
+
+    monkeypatch.setattr(
+        "data2agent.connect.dataset_publish._drop_table_best_effort", drop_fail,
+    )
+    assert publish_dataset(landing, v3.dataset_version).executed is True
+
+    for obj in landing.list_object_versions(v1.dataset_version):
+        assert obj.build_table is not None
+        assert obj.purged_at is None
+        exists = landing.con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (obj.build_table,),
+        ).fetchone()
+        assert exists is not None
+    assert landing.get_published_dataset(SOURCE).dataset_version == v3.dataset_version
+
+
 def test_auto_publish_via_build_dataset(landing, pack):
     result = build_dataset(landing, pack, SOURCE, auto_publish=True)
     assert result.outcome == "ok"

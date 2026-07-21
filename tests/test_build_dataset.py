@@ -344,3 +344,32 @@ def test_auto_publish_via_build_dataset(landing, pack):
     assert pub.dataset_version == result.dataset_version
     objs = landing.list_object_versions(result.dataset_version)
     assert all(o.status == "published" for o in objs)
+
+
+def test_building_claim_atomic_survives_concurrent_recover(landing, pack, monkeypatch):
+    """building 与 running Run 同事务提交后,并发 recover 只能看到 active_build。"""
+    from data2agent.connect import dataset_publish as dp
+
+    recover_codes: list[str | None] = []
+    saw_active_run: list[bool] = []
+    real_claim = dp._claim_building_candidate
+
+    def claim_then_recover(*args, **kwargs):
+        run_id = real_claim(*args, **kwargs)
+        other = LandingStore(landing.db_path)
+        try:
+            version = kwargs["dataset_version"]
+            saw_active_run.append(dp._has_active_build_run(other, version))
+            recover_codes.append(dp._recover_stale_building(other, SOURCE))
+        finally:
+            other.con.close()
+        return run_id
+
+    monkeypatch.setattr(dp, "_claim_building_candidate", claim_then_recover)
+    result = build_dataset(landing, pack, SOURCE, auto_publish=False)
+    assert result.outcome == "ok"
+    assert result.status == "building"
+    ds = landing.get_dataset_version(result.dataset_version)
+    assert ds is not None and ds.status == "building"
+    assert saw_active_run == [True]
+    assert recover_codes == ["active_build"]

@@ -299,3 +299,20 @@ def test_candidate_build_does_not_touch_published_baseline(landing, pack):
     assert after_legacy == before_legacy == "KEEP"
     assert after_pub_rows == before_pub_rows
     assert after_pub_rows == [("KEEP", "Published")]
+
+
+def test_write_candidate_refuses_existing_table(landing, pack):
+    """不可变候选表不得 DROP 覆盖已存在物理表。"""
+    tpl = _quotation_tpl(pack)
+    table = _cand("Quotation", "deadbeef0001")
+    landing.con.execute(f'CREATE TABLE "{table}" (x TEXT PRIMARY KEY)')
+    landing.con.execute(f'INSERT INTO "{table}" VALUES ("KEEP")')
+    landing.con.commit()
+
+    with pytest.raises(ValueError, match="已存在"):
+        write_candidate_table(
+            landing, tpl, [{"quote_no": "NEW"}], batch_id="b1", build_table=table,
+        )
+
+    row = landing.con.execute(f'SELECT x FROM "{table}"').fetchone()
+    assert row[0] == "KEEP"

@@ -47,13 +47,16 @@ from ..admin_common.setup_yaml import build_platform_yaml, write_yaml
 from ..connect.config import ConnectConfig, load_config
 from ..connect.landing import LandingStore
 from ..connect.dataset_publish import (
+    PublishedSnapshotError,
     build_dataset,
     publish_dataset,
     published_read_tx,
+    resolve_published_snapshot,
     rollback_dataset,
 )
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..mapping import parse_field_expr
+from ..metamodel.dataset_publish_contract import validate_build_table
 from ..metamodel.loader import load_pack
 from ..metamodel.versioning import object_layer_fully_published, parse_object_manifest
 from . import data_browser as br
@@ -2361,15 +2364,23 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     limit: int = 50, q: str = "") -> dict:
         """对象分页浏览(敏感属性服务端永久脱敏);读 published 快照物理表。"""
         db = store()
-        pack = require_pack()
-        tpl = next((o for o in pack.objects if o.object == object), None)
-        if tpl is None:
-            raise HTTPException(404, f"未知对象 '{object}'")
         with published_read_tx(db):
             try:
-                physical, _ov = br.resolve_published_object(db, default_source(), object)
-            except br.BrowseError as e:
-                raise HTTPException(e.status, e.detail) from e
+                snap = resolve_published_snapshot(db, default_source())
+            except PublishedSnapshotError as e:
+                if e.reason_code == "not_published":
+                    raise HTTPException(409, "对象尚未发布") from e
+                raise HTTPException(409, e.detail) from e
+            tpl = next(
+                (o for o in snap.template_pack.objects if o.object == object), None,
+            )
+            entry = snap.objects.get(object)
+            if tpl is None or entry is None:
+                raise HTTPException(404, f"未知对象 '{object}'")
+            try:
+                physical = validate_build_table(entry.physical_table)
+            except ValueError as e:
+                raise HTTPException(409, "数据集快照不可用") from e
             cols = br.object_column_meta(db, tpl, physical)
             try:
                 page = br.browse_table(
