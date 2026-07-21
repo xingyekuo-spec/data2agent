@@ -47,6 +47,7 @@ from ..admin_common.setup_yaml import build_platform_yaml, write_yaml
 from ..connect.config import ConnectConfig, load_config
 from ..connect.landing import LandingStore
 from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_objects
+from ..metamodel.dataset_publish_contract import make_build_table
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..mapping import parse_field_expr
 from ..metamodel.loader import load_pack
@@ -1982,9 +1983,12 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     error_id=error_id,
                 ).model_dump())
 
-        # ---- 执行 apply_object ----
+        # ---- 执行 apply_object(T04:候选表;完整数据集编排见 T05/T07)----
         try:
-            result = apply_object(db, tpl, body.source)
+            cand = make_build_table(
+                body.source, tpl.object, uuid.uuid4().hex[:12],
+            )
+            result = apply_object(db, tpl, body.source, build_table=cand)
         except MappingCircuitBreaker as e:
             # 熔断:关闭 step 与 run；旧对象表已保留
             try:

@@ -1,35 +1,32 @@
-"""映射应用(E4):binding → 落地库物化对象表 obj_{Object},带隔离区与熔断。
+"""映射应用(E4):binding → 不可变候选表 objv_*,带隔离区与熔断。
 
-流程(docs/design/02-extraction.md §2/§7):
-1. 用 mapping.build_select 在 raw_* 上取数(物理表名解析 + 软删过滤,不限行);
-2. 逐行解码(map)与校验:业务键非空且唯一、枚举取值合法、数值类型可转换;
-   坏行进 d2a_quarantine(原样 JSON + 原因),批次继续;
-3. 熔断:单对象隔离率超阈值(默认 5%)→ 该对象回滚保留旧数据并中止,
-   防止系统性口径错误(如源表结构变更)被静默吞掉;
-4. 好行重建 obj_{Object}(主键 = 模板 keys),供 MCP 网关与指标消费。
+M2-T04:不再 DROP/CREATE 稳定 obj_{Object};物化只写入调用方提供的
+已校验 build_table。数据集级发布由 T05/T06 编排。
 
-已知边界:ref 解析失败(外键悬空 vs 本身为空)在解码后无法区分,暂不隔离;
-兜底靠上游对账与下游指标口径警示。
+流程:
+1. 用 mapping.build_select 在 raw_* 上取数(物理表名解析 + 软删过滤);
+2. 纯转换:解码/校验/派生/业务键(transform_object_rows);
+3. 坏行进 d2a_quarantine;隔离率超阈值 → 熔断,不写候选表;
+4. 好行写入不可变候选物理表(write_candidate_table)。
 """
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass, field
 
 from ..mapping import build_select
-from ..metamodel.schema import ObjectTemplate, TemplatePack
+from ..metamodel.dataset_publish_contract import make_build_table, validate_build_table
+from ..metamodel.schema import ObjectTemplate, SourceBinding, TemplatePack
 from .landing import LandingStore, _now, raw_table_name
 
 DEFAULT_BREAKER_THRESHOLD = 0.05
 
 _TYPE_SQL = {"int": "INTEGER", "decimal": "REAL", "money": "REAL", "bool": "INTEGER"}
-# 其余类型(string/text/date/datetime/ref/enum)落 TEXT
 
 
 class MappingCircuitBreaker(Exception):
-    """单对象隔离率超阈值,映射中止,旧对象表保留。"""
+    """单对象隔离率超阈值,映射中止,不写候选表。"""
 
     def __init__(
         self,
@@ -53,8 +50,9 @@ class ObjectApplyResult:
     total: int
     mapped: int
     quarantined: int
-    status: str = "ok"          # ok / aborted
+    status: str = "ok"          # ok / aborted / skipped(...)
     batch_id: str | None = None
+    build_table: str | None = None
 
 
 @dataclass
@@ -68,6 +66,7 @@ class ApplyReport:
 
 
 def obj_table_name(object_name: str) -> str:
+    """遗留稳定表名;M2 起不得作为发布写入目标。"""
     return f"obj_{object_name}"
 
 
@@ -89,23 +88,37 @@ def _coerce(prop, value):
         return None, f"{prop.name}: 类型 {prop.type} 转换失败,值 {value!r}"
 
 
-def apply_object(landing: LandingStore, tpl: ObjectTemplate, source: str,
-                 threshold: float = DEFAULT_BREAKER_THRESHOLD) -> ObjectApplyResult:
-    binding = next((b for b in tpl.bindings if b.source == source and b.enabled), None)
-    if binding is None or not binding.field_map:
-        return ObjectApplyResult(tpl.object, 0, 0, 0, status="skipped(无可用 binding)")
+def _apply_derived(binding, props: dict, row: dict) -> str | None:
+    """执行派生决策表(规则有序,首个匹配生效)。返回隔离原因或 None。"""
+    for prop_name, spec in binding.derived.items():
+        value = None
+        matched = False
+        for rule in spec.rules:
+            if all(row.get(f"__{col}") == expect for col, expect in rule.when.items()):
+                value, matched = rule.value, True
+                break
+        if not matched and spec.default is not None:
+            value, matched = spec.default, True
+        if not matched:
+            seen = {col: row.get(f"__{col}")
+                    for s in binding.derived.values()
+                    for r in s.rules for col in r.when}
+            return f"{prop_name}: 派生规则无匹配(源值 {seen})"
+        prop = props.get(prop_name)
+        if prop is not None and prop.type == "enum" and value not in prop.enum_values:
+            return f"{prop_name}: 派生值 {value!r} 不在枚举 {prop.enum_values} 内"
+        row[prop_name] = value
+    return None
 
-    derive_cols = sorted({col for spec in binding.derived.values()
-                          for rule in spec.rules for col in rule.when})
-    sql, params, exprs = build_select(
-        tpl, binding, limit=None,
-        physical=lambda t: raw_table_name(source, t),
-        active_col="_d2a_deleted_at",
-        extra_anchor_cols=derive_cols)
-    raw_rows = [dict(r) for r in landing.con.execute(sql, params)]
 
+def transform_object_rows(
+    tpl: ObjectTemplate,
+    binding: SourceBinding,
+    raw_rows: list[dict],
+    exprs: dict,
+) -> tuple[list[dict], list[dict]]:
+    """纯转换:返回 (good_rows, quarantined_records)。不读写数据库。"""
     props = {p.name: p for p in tpl.properties}
-    batch_id = uuid.uuid4().hex[:12]
     good: list[dict] = []
     quarantined: list[dict] = []
     seen_keys: set[tuple] = set()
@@ -141,56 +154,25 @@ def apply_object(landing: LandingStore, tpl: ObjectTemplate, source: str,
             else:
                 seen_keys.add(key)
         if reason is not None:
-            quarantined.append({"keys": {k: raw.get(k) for k in tpl.keys},
-                                "reason": reason, "raw": raw})
+            quarantined.append({
+                "keys": {k: raw.get(k) for k in tpl.keys},
+                "reason": reason,
+                "raw": raw,
+            })
         else:
             good.append(row)
-
-    total = len(raw_rows)
-    landing.quarantine_supersede(source, tpl.object)
-    landing.quarantine_add(source, tpl.object, quarantined, batch_id)
-
-    if total and len(quarantined) / total > threshold:
-        raise MappingCircuitBreaker(
-            f"{tpl.object}: 隔离率 {len(quarantined)}/{total} 超过阈值 {threshold:.0%},"
-            f"映射中止,旧对象表保留;隔离明细见 d2a_quarantine(batch {batch_id})",
-            total=total, mapped=len(good), quarantined=len(quarantined), batch_id=batch_id)
-
-    _rebuild_obj_table(landing, tpl, good, batch_id)
-    return ObjectApplyResult(tpl.object, total, len(good), len(quarantined),
-                             batch_id=batch_id)
+    return good, quarantined
 
 
-def _apply_derived(binding, props: dict, row: dict) -> str | None:
-    """执行派生决策表(规则有序,首个匹配生效)。返回隔离原因或 None。
-
-    条件值与落地原样值做等值比较(None = IS NULL);无匹配且无 default
-    视为契约不完整 → 隔离,而不是静默给空值。
-    """
-    for prop_name, spec in binding.derived.items():
-        value = None
-        matched = False
-        for rule in spec.rules:
-            if all(row.get(f"__{col}") == expect for col, expect in rule.when.items()):
-                value, matched = rule.value, True
-                break
-        if not matched and spec.default is not None:
-            value, matched = spec.default, True
-        if not matched:
-            seen = {col: row.get(f"__{col}")
-                    for s in binding.derived.values()
-                    for r in s.rules for col in r.when}
-            return f"{prop_name}: 派生规则无匹配(源值 {seen})"
-        prop = props.get(prop_name)
-        if prop is not None and prop.type == "enum" and value not in prop.enum_values:
-            return f"{prop_name}: 派生值 {value!r} 不在枚举 {prop.enum_values} 内"
-        row[prop_name] = value
-    return None
-
-
-def _rebuild_obj_table(landing: LandingStore, tpl: ObjectTemplate,
-                       rows: list[dict], batch_id: str) -> None:
-    table = obj_table_name(tpl.object)
+def write_candidate_table(
+    landing: LandingStore,
+    tpl: ObjectTemplate,
+    rows: list[dict],
+    batch_id: str,
+    build_table: str,
+) -> str:
+    """写入不可变候选物理表;只接受严格校验过的 objv_* 名。"""
+    table = validate_build_table(build_table)
     cols = [p.name for p in tpl.properties]
     col_defs = ",\n".join(
         [f'    "{p.name}" {_TYPE_SQL.get(p.type, "TEXT")}' for p in tpl.properties]
@@ -208,19 +190,70 @@ def _rebuild_obj_table(landing: LandingStore, tpl: ObjectTemplate,
         [{**{c: r.get(c) for c in cols}, "_d2a_mapped_at": now, "_d2a_batch_id": batch_id}
          for r in rows])
     con.commit()
+    return table
+
+
+def apply_object(
+    landing: LandingStore,
+    tpl: ObjectTemplate,
+    source: str,
+    *,
+    build_table: str,
+    threshold: float = DEFAULT_BREAKER_THRESHOLD,
+) -> ObjectApplyResult:
+    binding = next((b for b in tpl.bindings if b.source == source and b.enabled), None)
+    if binding is None or not binding.field_map:
+        return ObjectApplyResult(
+            tpl.object, 0, 0, 0, status="skipped(无可用 binding)",
+            build_table=None,
+        )
+
+    table = validate_build_table(build_table)
+    derive_cols = sorted({col for spec in binding.derived.values()
+                          for rule in spec.rules for col in rule.when})
+    sql, params, exprs = build_select(
+        tpl, binding, limit=None,
+        physical=lambda t: raw_table_name(source, t),
+        active_col="_d2a_deleted_at",
+        extra_anchor_cols=derive_cols)
+    raw_rows = [dict(r) for r in landing.con.execute(sql, params)]
+    good, quarantined = transform_object_rows(tpl, binding, raw_rows, exprs)
+
+    total = len(raw_rows)
+    batch_id = uuid.uuid4().hex[:12]
+    landing.quarantine_supersede(source, tpl.object)
+    landing.quarantine_add(source, tpl.object, quarantined, batch_id)
+
+    if total and len(quarantined) / total > threshold:
+        raise MappingCircuitBreaker(
+            f"{tpl.object}: 隔离率 {len(quarantined)}/{total} 超过阈值 {threshold:.0%},"
+            f"映射中止,候选表未写入;隔离明细见 d2a_quarantine(batch {batch_id})",
+            total=total, mapped=len(good), quarantined=len(quarantined), batch_id=batch_id)
+
+    write_candidate_table(landing, tpl, good, batch_id, table)
+    return ObjectApplyResult(
+        tpl.object, total, len(good), len(quarantined),
+        batch_id=batch_id, build_table=table,
+    )
 
 
 def apply_objects(landing: LandingStore, pack: TemplatePack, source: str,
                   threshold: float = DEFAULT_BREAKER_THRESHOLD) -> ApplyReport:
-    """物化全部有 binding 的对象;单对象熔断记为 aborted,不阻塞其他对象。"""
+    """为每个对象写入独立候选表;不触碰稳定 obj_* 或 published 元数据。
+
+    单对象熔断记为 aborted,不阻塞其他对象(数据集级全体失败由 T05 接管)。
+    """
     report = ApplyReport(source=source)
     run_id = landing.start_run(source, "apply")
     aborted_msgs = []
     for ordinal, tpl in enumerate(pack.objects, start=1):
         step_id: int | None = None
+        build_table = make_build_table(source, tpl.object, uuid.uuid4().hex[:12])
         try:
             step_id = landing.add_step(run_id, ordinal, "object", tpl.object)
-            result = apply_object(landing, tpl, source, threshold)
+            result = apply_object(
+                landing, tpl, source, build_table=build_table, threshold=threshold,
+            )
             landing.update_step(
                 step_id, status="ok",
                 rows_in=result.total, rows_out=result.mapped,
@@ -228,7 +261,9 @@ def apply_objects(landing: LandingStore, pack: TemplatePack, source: str,
                 error=None if result.status == "ok" else result.status)
         except MappingCircuitBreaker as e:
             result = ObjectApplyResult(
-                tpl.object, e.total, e.mapped, e.quarantined, status="aborted")
+                tpl.object, e.total, e.mapped, e.quarantined, status="aborted",
+                batch_id=e.batch_id, build_table=None,
+            )
             if step_id is not None:
                 try:
                     landing.update_step(

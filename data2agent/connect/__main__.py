@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import uuid
 
 from ..metamodel.loader import load_pack
 from .increment import DEFAULT_LOOKBACK_DAYS, incremental_sync, watermarks_from_pack
@@ -295,13 +296,15 @@ def _quarantine(args, ap) -> int:
     if not args.object:
         ap.error("quarantine retry 需要 --object")
     from ..metamodel.loader import load_pack as _load
+    from ..metamodel.dataset_publish_contract import make_build_table
     from .mapping_apply import MappingCircuitBreaker, apply_object
     pack = _load(args.templates)
     tpl = next((o for o in pack.objects if o.object == args.object), None)
     if tpl is None:
         ap.error(f"未知对象 {args.object}")
     try:
-        result = apply_object(landing, tpl, args.source)
+        cand = make_build_table(args.source, tpl.object, uuid.uuid4().hex[:12])
+        result = apply_object(landing, tpl, args.source, build_table=cand)
     except MappingCircuitBreaker as e:
         print(f"重试失败(熔断):{e}")
         return 1
