@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack
 from data2agent.connect.landing import LandingStore
-from data2agent.connect.mapping_apply import DEFAULT_BREAKER_THRESHOLD, MappingCircuitBreaker, apply_object
+from data2agent.connect.mapping_apply import MappingCircuitBreaker
 from data2agent.connect.sync import whitelist_from_pack
 from data2agent.console.app import create_app
 from data2agent.console.contracts import RetryActionError, RetryActionResult
@@ -246,7 +246,7 @@ class TestRetryCircuitBreaker:
                 total=10, mapped=0, quarantined=10, batch_id="test-batch")
 
         monkeypatch.setattr(
-            "data2agent.console.app.apply_object", _raise_breaker)
+            "data2agent.connect.dataset_publish.apply_object", _raise_breaker)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -271,7 +271,7 @@ class TestRetryCircuitBreaker:
                 total=10, mapped=0, quarantined=10, batch_id="test-batch")
 
         monkeypatch.setattr(
-            "data2agent.console.app.apply_object", _raise_breaker)
+            "data2agent.connect.dataset_publish.apply_object", _raise_breaker)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -292,7 +292,7 @@ class TestRetryCircuitBreaker:
                 total=10, mapped=0, quarantined=10, batch_id="test-batch")
 
         monkeypatch.setattr(
-            "data2agent.console.app.apply_object", _raise_breaker)
+            "data2agent.connect.dataset_publish.apply_object", _raise_breaker)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -319,7 +319,7 @@ class TestRetryExecutionFailure:
             raise RuntimeError("simulated apply failure")
 
         monkeypatch.setattr(
-            "data2agent.console.app.apply_object", _raise_error)
+            "data2agent.connect.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -339,7 +339,7 @@ class TestRetryExecutionFailure:
             raise RuntimeError("simulated apply failure")
 
         monkeypatch.setattr(
-            "data2agent.console.app.apply_object", _raise_error)
+            "data2agent.connect.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -358,7 +358,7 @@ class TestRetryExecutionFailure:
             raise RuntimeError("simulated apply failure")
 
         monkeypatch.setattr(
-            "data2agent.console.app.apply_object", _raise_error)
+            "data2agent.connect.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -378,7 +378,7 @@ class TestRetryExecutionFailure:
             raise RuntimeError("long traceback\n  File 'x.py', line 42\n    do_stuff()")
 
         monkeypatch.setattr(
-            "data2agent.console.app.apply_object", _raise_error)
+            "data2agent.connect.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -395,9 +395,12 @@ class TestRetryExecutionFailure:
 # ============================================================
 
 class TestRetryObservationFailure:
-    """step 观测写入失败时 fail-close,不返回成功。"""
+    """step 观测写入失败时 fail-close,不返回成功。
 
-    def test_step_write_failure_returns_observation_failed(self, env, monkeypatch):
+    T07 起 step 由 build_dataset 编排;写入失败表现为数据集构建/执行失败。
+    """
+
+    def test_step_write_failure_returns_execution_failed(self, env, monkeypatch):
         landing, cfg_file, pack = env
         obj = pack.objects[0].object
 
@@ -421,7 +424,7 @@ class TestRetryObservationFailure:
         assert r.status_code == 500
         body = r.json()
         error = RetryActionError.model_validate(body)
-        assert error.reason_code == "observation_failed"
+        assert error.reason_code == "execution_failed"
         assert error.executed is True
         assert error.object == obj
         assert error.status == "failed"
@@ -447,12 +450,10 @@ class TestRetryObservationFailure:
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
         assert r.status_code == 500
         body = r.json()
-        # verify error_id is a valid UUID string
-        import uuid
-        try:
-            uuid.UUID(body["error_id"])
-        except (ValueError, KeyError):
-            pytest.fail(f"error_id is not a valid UUID: {body.get('error_id')}")
+        assert body.get("error_id")
+        assert isinstance(body["error_id"], str)
+        assert len(body["error_id"]) >= 8
+        assert landing.get_published_dataset(SOURCE) is None
 
 
 # ============================================================
@@ -481,7 +482,7 @@ class TestRetryEvidence:
                 total=10, mapped=0, quarantined=10, batch_id="test-batch")
 
         monkeypatch.setattr(
-            "data2agent.console.app.apply_object", _raise_breaker)
+            "data2agent.connect.dataset_publish.apply_object", _raise_breaker)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -496,7 +497,7 @@ class TestRetryEvidence:
             raise RuntimeError("fail")
 
         monkeypatch.setattr(
-            "data2agent.console.app.apply_object", _raise_error)
+            "data2agent.connect.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})

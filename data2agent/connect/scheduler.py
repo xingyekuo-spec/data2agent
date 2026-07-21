@@ -14,9 +14,9 @@ from datetime import datetime
 from ..metamodel.loader import load_pack
 from ..metamodel.schema import TemplatePack
 from .config import ConnectConfig, SourceConfig, in_window
+from .dataset_publish import build_dataset
 from .increment import incremental_sync, watermarks_from_pack
 from .landing import LandingStore
-from .mapping_apply import apply_objects
 from .reconcile import reconcile
 from .sync import whitelist_from_pack
 
@@ -79,11 +79,16 @@ def run_sync_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
              report.paused, scfg.sink.type)
     # sink=http:raw 已推给平台,映射在平台侧跑,不在中间 apply
     if scfg.apply_after_sync and not report.paused and scfg.sink.type == "local":
-        apply_report = apply_objects(landing, pack, name)
-        log.info("apply source=%s objects=%s quarantined=%s aborted=%s",
-                 name, len(apply_report.results),
-                 sum(r.quarantined for r in apply_report.results),
-                 [r.object for r in apply_report.aborted])
+        apply_report = build_dataset(landing, pack, name, auto_publish=True)
+        log.info(
+            "apply source=%s objects=%s quarantined=%s aborted=%s "
+            "dataset_version=%s published=%s",
+            name, len(apply_report.results),
+            sum(r.quarantined for r in apply_report.results),
+            [r.object for r in apply_report.results if r.status == "aborted"],
+            apply_report.dataset_version,
+            apply_report.published,
+        )
     return True
 
 

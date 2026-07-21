@@ -200,6 +200,7 @@ def apply_object(
     *,
     build_table: str,
     threshold: float = DEFAULT_BREAKER_THRESHOLD,
+    supersede_quarantine: bool = True,
 ) -> ObjectApplyResult:
     binding = next((b for b in tpl.bindings if b.source == source and b.enabled), None)
     if binding is None or not binding.field_map:
@@ -221,7 +222,9 @@ def apply_object(
 
     total = len(raw_rows)
     batch_id = uuid.uuid4().hex[:12]
-    landing.quarantine_supersede(source, tpl.object)
+    # 数据集编排(build_dataset)延后到原子发布成功后再取代旧隔离。
+    if supersede_quarantine:
+        landing.quarantine_supersede(source, tpl.object)
     landing.quarantine_add(source, tpl.object, quarantined, batch_id)
 
     if total and len(quarantined) / total > threshold:

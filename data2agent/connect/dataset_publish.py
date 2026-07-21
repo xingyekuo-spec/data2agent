@@ -102,6 +102,8 @@ class BuildDatasetResult:
     reason_code: str | None = None
     error: str | None = None
     error_id: str | None = None
+    run_id: int | None = None
+    step_ids: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -537,6 +539,17 @@ def publish_dataset(store: LandingStore, version: str) -> DatasetMutationResult:
         status="ok",
         detail=f"published: {version}",
     )
+    # 仅在完整发布成功后取代旧隔离;保留本轮 build 的 quarantine batch。
+    for obj in objects:
+        keep = {obj.batch_id} if obj.batch_id else set()
+        try:
+            store.quarantine_supersede_except(source, obj.object, keep)
+        except Exception:
+            logger.warning(
+                "quarantine supersede after publish failed object=%s",
+                obj.object,
+                exc_info=True,
+            )
     try:
         _gc_retired_physical_tables(store, source)
     except Exception:
@@ -769,12 +782,13 @@ def build_dataset(
     store.set_run_dataset_version(run_id, dataset_version)
 
     results: list[ObjectApplyResult] = []
+    step_ids: dict[str, int] = {}
     any_failed = False
     internal_errors: list[str] = []
     # 延后写 built:对象保持 building,失败时可在冻结规则内清空 build_table。
     pending_ok: list[tuple[str, ObjectApplyResult, str]] = []
 
-    for tpl, binding in members:
+    for ordinal, (tpl, binding) in enumerate(members, start=1):
         object_version = f"ov_{uuid.uuid4().hex[:16]}"
         store.insert_object_version(
             ObjectVersionRecord(
@@ -789,15 +803,35 @@ def build_dataset(
             )
         )
         table = make_build_table(source, tpl.object, uuid.uuid4().hex[:12])
+        step_id: int | None = None
         try:
+            step_id = store.add_step(run_id, ordinal, "object", tpl.object)
+            step_ids[tpl.object] = step_id
             result = apply_object(
                 store, tpl, source, build_table=table, threshold=threshold,
+                supersede_quarantine=False,
+            )
+            store.update_step(
+                step_id, status="ok",
+                rows_in=result.total, rows_out=result.mapped,
+                quarantined=result.quarantined, batch_id=result.batch_id,
+                error=None if result.status == "ok" else result.status,
             )
             pending_ok.append((tpl.object, result, result.build_table or table))
             results.append(result)
         except MappingCircuitBreaker as e:
             any_failed = True
             internal_errors.append(str(e))
+            if step_id is not None:
+                try:
+                    store.update_step(
+                        step_id, status="aborted",
+                        rows_in=e.total, rows_out=e.mapped,
+                        quarantined=e.quarantined, batch_id=e.batch_id,
+                        error=str(e)[:500],
+                    )
+                except Exception:
+                    pass
             store.update_object_build_result(
                 dataset_version,
                 tpl.object,
@@ -814,6 +848,11 @@ def build_dataset(
         except Exception as e:
             any_failed = True
             internal_errors.append(f"{tpl.object}: {e}")
+            if step_id is not None:
+                try:
+                    store.update_step(step_id, status="failed", error=str(e)[:500])
+                except Exception:
+                    pass
             try:
                 store.update_object_build_result(
                     dataset_version,
@@ -826,7 +865,7 @@ def build_dataset(
                 pass
             _drop_table_best_effort(store, table)
             results.append(ObjectApplyResult(
-                tpl.object, 0, 0, 0, status="aborted",
+                tpl.object, 0, 0, 0, status="failed",
             ))
 
     if any_failed:
@@ -868,6 +907,8 @@ def build_dataset(
             reason_code="build_failed",
             error=summary,
             error_id=error_id,
+            run_id=run_id,
+            step_ids=step_ids,
         )
 
     for object_name, result, table in pending_ok:
@@ -902,6 +943,8 @@ def build_dataset(
                 published=True,
                 results=results,
                 outcome="ok",
+                run_id=run_id,
+                step_ids=step_ids,
             )
         return BuildDatasetResult(
             source=source,
@@ -915,6 +958,8 @@ def build_dataset(
             reason_code=pub.reason_code or "publish_failed",
             error=pub.error or pub.note or "发布失败",
             error_id=pub.error_id,
+            run_id=run_id,
+            step_ids=step_ids,
         )
     return BuildDatasetResult(
         source=source,
@@ -925,4 +970,6 @@ def build_dataset(
         published=False,
         results=results,
         outcome="ok",
+        run_id=run_id,
+        step_ids=step_ids,
     )

@@ -46,9 +46,7 @@ from ..admin_common.secrets_file import apply_secrets_to_environ, save_secrets
 from ..admin_common.setup_yaml import build_platform_yaml, write_yaml
 from ..connect.config import ConnectConfig, load_config
 from ..connect.landing import LandingStore
-from ..connect.dataset_publish import publish_dataset, rollback_dataset
-from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_objects
-from ..metamodel.dataset_publish_contract import make_build_table
+from ..connect.dataset_publish import build_dataset, publish_dataset, rollback_dataset
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..mapping import parse_field_expr
 from ..metamodel.loader import load_pack
@@ -1882,11 +1880,24 @@ def create_app(landing: str | None = None, templates: str = "templates",
         },
     )
     def action_apply(body: ApplyActionBody) -> dict:
-        # publish 参数已进入契约;T07 前仍走旧 apply_objects,忽略 publish。
-        _ = body.publish
-        report = apply_objects(store(), require_pack(), body.source)
-        return {"executed": True, "results": [asdict(r) for r in report.results],
-                "aborted": [r.object for r in report.aborted]}
+        result = build_dataset(
+            store(), require_pack(), body.source, auto_publish=body.publish,
+        )
+        if result.outcome == "conflict":
+            raise HTTPException(
+                409, result.error or result.reason_code or "数据集构建冲突",
+            )
+        return {
+            "executed": True,
+            "results": [asdict(r) for r in result.results],
+            "aborted": [
+                r.object for r in result.results
+                if r.status in ("aborted", "failed")
+            ],
+            "dataset_version": result.dataset_version,
+            "published": result.published,
+            "previous_dataset_version": result.previous_dataset_version,
+        }
 
     @api.post(
         "/actions/retry",
@@ -1951,134 +1962,77 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     status="aborted",
                 ).model_dump())
 
-        # ---- 创建 Run + step ----
+        # ---- 完整数据集重建 + 自动发布(object 仅定位/审计/结果聚焦)----
         db = store()
-        run_id: int | None = None
-        step_id: int | None = None
         try:
-            run_id = db.start_run(body.source, "apply")
+            result = build_dataset(db, pack, body.source, auto_publish=True)
         except Exception:
-            raise HTTPException(500, "创建运行记录失败")
-
-        try:
-            step_id = db.add_step(run_id, 1, "object", body.object)
-        except Exception:
-            # step 写入失败,关闭 run 为 failed 并 fail-close
-            try:
-                db.finish_run(run_id, tables=0, rows=0, status="failed",
-                             detail="apply step observation failed")
-            except Exception:
-                pass
             error_id = str(uuid.uuid4())
             return JSONResponse(
                 status_code=500,
                 content=RetryActionError(
-                    detail="写入 step 观测记录失败",
-                    reason_code="observation_failed",
-                    executed=False,
-                    object=body.object,
-                    status="failed",
-                    run_id=run_id,
-                    step_id=None,
-                    detail_path=f"/api/runs/{run_id}",
-                    error_id=error_id,
-                ).model_dump())
-
-        # ---- 执行 apply_object(T04:候选表;完整数据集编排见 T05/T07)----
-        try:
-            cand = make_build_table(
-                body.source, tpl.object, uuid.uuid4().hex[:12],
-            )
-            result = apply_object(db, tpl, body.source, build_table=cand)
-        except MappingCircuitBreaker as e:
-            # 熔断:关闭 step 与 run；候选表未写入,已发布快照不变
-            try:
-                db.update_step(
-                    step_id, status="aborted",
-                    rows_in=e.total, rows_out=e.mapped,
-                    quarantined=e.quarantined, batch_id=e.batch_id,
-                    error=str(e)[:500])
-            except Exception:
-                pass
-            try:
-                db.finish_run(run_id, tables=1, rows=e.mapped, status="failed",
-                             detail=f"apply retry breaker: {e}")
-            except Exception:
-                pass
-            return JSONResponse(
-                status_code=409,
-                content=RetryActionError(
-                    detail=f"重试触发熔断: {tpl.object} 隔离率 {e.quarantined}/{e.total}",
-                    reason_code="circuit_broken",
-                    executed=True,
-                    object=body.object,
-                    total=e.total,
-                    mapped=e.mapped,
-                    quarantined=e.quarantined,
-                    status="aborted",
-                    run_id=run_id,
-                    step_id=step_id,
-                    detail_path=f"/api/runs/{run_id}",
-                ).model_dump())
-        except Exception as exc:
-            # 执行异常:关闭 step 与 run
-            try:
-                db.update_step(step_id, status="failed", error=str(exc)[:500])
-            except Exception:
-                pass
-            try:
-                db.finish_run(run_id, tables=1, rows=0, status="failed",
-                             detail=f"apply retry failed: {exc}")
-            except Exception:
-                pass
-            return JSONResponse(
-                status_code=500,
-                content=RetryActionError(
-                    detail=f"重试执行失败: {tpl.object}",
+                    detail=f"重试执行失败: {body.object}",
                     reason_code="execution_failed",
                     executed=True,
                     object=body.object,
                     status="failed",
-                    run_id=run_id,
-                    step_id=step_id,
-                    detail_path=f"/api/runs/{run_id}",
-                ).model_dump())
-
-        # ---- 成功:关闭 step 与 run ----
-        try:
-            db.update_step(
-                step_id, status="ok",
-                rows_in=result.total, rows_out=result.mapped,
-                quarantined=result.quarantined, batch_id=result.batch_id)
-        except Exception:
-            try:
-                db.finish_run(run_id, tables=1, rows=result.mapped,
-                             status="failed",
-                             detail="apply step observation failed")
-            except Exception:
-                pass
-            error_id = str(uuid.uuid4())
-            return JSONResponse(
-                status_code=500,
-                content=RetryActionError(
-                    detail="写入 step 观测记录失败",
-                    reason_code="observation_failed",
-                    executed=True,
-                    object=body.object,
-                    total=result.total,
-                    mapped=result.mapped,
-                    quarantined=result.quarantined,
-                    status="failed",
-                    run_id=run_id,
-                    step_id=step_id,
-                    detail_path=f"/api/runs/{run_id}",
                     error_id=error_id,
                 ).model_dump())
 
-        try:
-            db.finish_run(run_id, tables=1, rows=result.mapped, status="ok",
-                         detail=f"apply retry: {body.object} ({result.mapped}/{result.total})")
-        except Exception:
+        focus = next((r for r in result.results if r.object == body.object), None)
+        run_id = result.run_id
+        step_id = result.step_ids.get(body.object) if result.step_ids else None
+        detail_path = f"/api/runs/{run_id}" if run_id is not None else None
+
+        if result.outcome == "conflict":
+            return JSONResponse(
+                status_code=409,
+                content=RetryActionError(
+                    detail=result.error or result.reason_code or "数据集构建冲突",
+                    reason_code="preflight_failed",
+                    executed=False,
+                    object=body.object,
+                    status="aborted",
+                    run_id=run_id,
+                    step_id=step_id,
+                    detail_path=detail_path,
+                    error_id=result.error_id,
+                ).model_dump())
+
+        aborted = focus is not None and focus.status == "aborted"
+        failed_focus = focus is not None and focus.status == "failed"
+        if result.outcome != "ok" or not result.published or aborted or failed_focus:
+            if aborted:
+                reason = "circuit_broken"
+                status_code = 409
+                err_status = "aborted"
+            else:
+                reason = "execution_failed"
+                status_code = 500
+                err_status = "failed"
+            return JSONResponse(
+                status_code=status_code,
+                content=RetryActionError(
+                    detail=(
+                        f"重试触发熔断: {body.object} 隔离率 "
+                        f"{focus.quarantined}/{focus.total}"
+                        if aborted and focus is not None
+                        else (result.error or f"重试执行失败: {body.object}")
+                    ),
+                    reason_code=reason,  # type: ignore[arg-type]
+                    executed=True,
+                    object=body.object,
+                    total=focus.total if focus else None,
+                    mapped=focus.mapped if focus else None,
+                    quarantined=focus.quarantined if focus else None,
+                    status=err_status,  # type: ignore[arg-type]
+                    run_id=run_id,
+                    step_id=step_id,
+                    detail_path=detail_path,
+                    error_id=result.error_id,
+                ).model_dump())
+
+        if focus is None or run_id is None or step_id is None:
             error_id = str(uuid.uuid4())
             return JSONResponse(
                 status_code=500,
@@ -2087,13 +2041,10 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     reason_code="observation_failed",
                     executed=True,
                     object=body.object,
-                    total=result.total,
-                    mapped=result.mapped,
-                    quarantined=result.quarantined,
                     status="failed",
                     run_id=run_id,
                     step_id=step_id,
-                    detail_path=f"/api/runs/{run_id}",
+                    detail_path=detail_path,
                     error_id=error_id,
                 ).model_dump())
 
@@ -2102,13 +2053,14 @@ def create_app(landing: str | None = None, templates: str = "templates",
             content=RetryActionResult(
                 executed=True,
                 object=body.object,
-                total=result.total,
-                mapped=result.mapped,
-                quarantined=result.quarantined,
+                total=focus.total,
+                mapped=focus.mapped,
+                quarantined=focus.quarantined,
                 status="ok",
                 run_id=run_id,
                 step_id=step_id,
                 detail_path=f"/api/runs/{run_id}",
+                dataset_version=result.dataset_version,
             ).model_dump())
 
     # ---- v0.2 M3:真实观测端点 ----

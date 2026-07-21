@@ -143,8 +143,8 @@ def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
     scfg_open = SourceConfig(adapter="sqlite_readonly", path=str(src))
     assert sched.run_sync_cycle(SOURCE, scfg_open, pack, landing.db_path) is True
     assert landing.count(SOURCE, "SALES_ORDER") == 97
-    (n,) = landing.con.execute('SELECT COUNT(*) FROM "obj_SalesOrder"').fetchone()
-    assert n > 0, "apply_after_sync 应自动物化对象层"
+    pub = landing.get_published_dataset(SOURCE)
+    assert pub is not None and pub.status == "published", "apply_after_sync 应自动发布数据集"
 
 
 def test_serve_once(env, pack, tmp_path):

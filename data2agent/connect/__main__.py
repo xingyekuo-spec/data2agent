@@ -2,12 +2,12 @@
 
 sync       默认水位增量(binding.watermark 推导,无水位表 full_refresh),--full 强制全量
 reconcile  分段对账 L1(--deep 全段 L2 修复);抓物理删除与不动水位的原地改动
-apply      映射应用:raw_* → 物化对象表 obj_*(隔离区 + 熔断),纯落地库操作;
-           --every N 秒常驻循环(拆机部署平台侧:ingest 只收 raw,需要它周期物化)
+apply      映射应用:raw_* → 数据集候选并默认发布(隔离区 + 熔断);
+           --stage-only 只构建候选;--every N 秒常驻循环(拆机部署平台侧)
 backfill   指定表的水位区间重抽(upsert 幂等,不动水位)
 serve      按 connect.yaml 调度常驻(错峰窗口硬约束;--once 立即各跑一轮)
 status     水位 / 最近运行 / 隔离区概览
-quarantine list 查看隔离明细;retry 修复后重新映射对象
+quarantine list 查看隔离明细;retry 修复后完整重建数据集并自动发布
 excel-suggest 读 Excel/CSV 表头,生成 列→属性 映射建议(人工确认一次)
 excel-import  按映射文件导入报价历史到落地库(之后 apply 物化)
 """
@@ -16,12 +16,12 @@ from __future__ import annotations
 
 import argparse
 import os
-import uuid
 
 from ..metamodel.loader import load_pack
+from .dataset_publish import build_dataset
 from .increment import DEFAULT_LOOKBACK_DAYS, incremental_sync, watermarks_from_pack
 from .landing import LandingStore
-from .mapping_apply import DEFAULT_BREAKER_THRESHOLD, apply_objects
+from .mapping_apply import DEFAULT_BREAKER_THRESHOLD
 from .reconcile import reconcile
 from .sync import whitelist_from_pack
 
@@ -76,12 +76,14 @@ def main() -> int:
     rp.add_argument("--deep", action="store_true",
                     help="全段 L2 修复(兜底不动水位的原地改动)")
 
-    mp = sub.add_parser("apply", help="映射应用:raw_* → obj_*(隔离区 + 熔断)")
+    mp = sub.add_parser("apply", help="映射应用:raw_* → 数据集候选/发布(隔离区 + 熔断)")
     mp.add_argument("--source", default="digiwin_e10", help="binding 数据源名")
     mp.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径")
     mp.add_argument("--templates", default="templates", help="模板包目录")
     mp.add_argument("--threshold", type=float, default=DEFAULT_BREAKER_THRESHOLD,
                     help=f"熔断阈值(隔离率,默认 {DEFAULT_BREAKER_THRESHOLD * 100:.0f}%%)")
+    mp.add_argument("--stage-only", action="store_true",
+                    help="只构建候选数据集,不自动发布(默认成功即发布)")
     mp.add_argument("--every", type=float, default=None,
                     help="常驻循环:每隔 N 秒重跑一次(拆机部署平台侧用,"
                          "配合 Windows 服务 / systemd 常驻;不填 = 跑一次退出")
@@ -218,16 +220,24 @@ def main() -> int:
 def _run_apply_once(args) -> bool:
     """跑一轮 apply,打印结果。返回是否有对象熔断(供循环模式判断是否继续)。"""
     pack = load_pack(args.templates)
-    report = apply_objects(LandingStore(args.landing), pack, args.source,
-                           threshold=args.threshold)
-    for r in report.results:
+    result = build_dataset(
+        LandingStore(args.landing), pack, args.source,
+        auto_publish=not getattr(args, "stage_only", False),
+        threshold=args.threshold,
+    )
+    for r in result.results:
         mark = "⚠ 熔断" if r.status == "aborted" else "ok"
         print(f"  - {r.object:<16} 映射 {r.mapped:>5} 行, 隔离 {r.quarantined} 行  [{mark}]")
-    if report.aborted:
-        print(f"映射中止对象:{[r.object for r in report.aborted]}(候选表未写入,"
+    aborted = [r.object for r in result.results if r.status in ("aborted", "failed")]
+    if aborted or result.outcome != "ok":
+        print(f"映射中止对象:{aborted or ['(数据集构建失败)']}(候选未发布,"
               "明细见 d2a_quarantine)")
+        if result.dataset_version:
+            print(f"  dataset_version={result.dataset_version} published={result.published}")
         return True
-    print(f"映射应用完成:{len(report.results)} 个对象 → {args.landing}")
+    mode = "已发布" if result.published else "仅候选(stage-only)"
+    print(f"映射应用完成:{len(result.results)} 个对象 → {args.landing}"
+          f" [{mode}] version={result.dataset_version}")
     return False
 
 
@@ -292,24 +302,27 @@ def _quarantine(args, ap) -> int:
                   f"  ({r['created_at']})")
         print(f"共 {len(rows)} 行未处理")
         return 0
-    # retry:修好源数据 / binding 后,对该对象重新映射(成功则旧记录自动标记取代)
+    # retry:修好源数据 / binding 后,重建完整数据集并自动发布(object 仅定位/审计)
     if not args.object:
         ap.error("quarantine retry 需要 --object")
     from ..metamodel.loader import load_pack as _load
-    from ..metamodel.dataset_publish_contract import make_build_table
-    from .mapping_apply import MappingCircuitBreaker, apply_object
     pack = _load(args.templates)
     tpl = next((o for o in pack.objects if o.object == args.object), None)
     if tpl is None:
         ap.error(f"未知对象 {args.object}")
-    try:
-        cand = make_build_table(args.source, tpl.object, uuid.uuid4().hex[:12])
-        result = apply_object(landing, tpl, args.source, build_table=cand)
-    except MappingCircuitBreaker as e:
-        print(f"重试失败(熔断):{e}")
+    result = build_dataset(landing, pack, args.source, auto_publish=True)
+    focus = next((r for r in result.results if r.object == args.object), None)
+    if result.outcome != "ok" or not result.published:
+        print(f"重试失败(数据集未发布):{result.error or result.reason_code or result.outcome}")
+        if focus is not None:
+            print(f"  焦点对象 {focus.object}: 映射 {focus.mapped} 行,"
+                  f" 隔离 {focus.quarantined} 行 [{focus.status}]")
         return 1
-    print(f"重试完成:{result.object} 映射 {result.mapped} 行, 仍隔离 {result.quarantined} 行")
-    return 0 if result.quarantined == 0 else 1
+    mapped = focus.mapped if focus else 0
+    quarantined = focus.quarantined if focus else 0
+    print(f"重试完成:{args.object} 映射 {mapped} 行, 仍隔离 {quarantined} 行"
+          f" (dataset_version={result.dataset_version})")
+    return 0 if quarantined == 0 else 1
 
 
 if __name__ == "__main__":

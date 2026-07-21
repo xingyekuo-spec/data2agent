@@ -475,6 +475,26 @@ class LandingStore:
             (_now(), source, object_name))
         self.con.commit()
 
+    def quarantine_supersede_except(
+        self,
+        source: str,
+        object_name: str,
+        keep_batch_ids: set[str] | frozenset[str] | None = None,
+    ) -> None:
+        """发布成功后取代旧隔离;保留本轮 build 写入的 batch 记录。"""
+        keep = {b for b in (keep_batch_ids or set()) if b}
+        if not keep:
+            self.quarantine_supersede(source, object_name)
+            return
+        placeholders = ",".join("?" * len(keep))
+        self.con.execute(
+            f"UPDATE d2a_quarantine SET resolved_at = ? "
+            f"WHERE source = ? AND object = ? AND resolved_at IS NULL "
+            f"AND (batch_id IS NULL OR batch_id NOT IN ({placeholders}))",
+            (_now(), source, object_name, *keep),
+        )
+        self.con.commit()
+
     def quarantine_add(self, source: str, object_name: str, records: list[dict],
                        batch_id: str) -> None:
         if not records:
