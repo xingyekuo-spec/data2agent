@@ -274,9 +274,12 @@ def test_candidate_build_does_not_touch_published_baseline(landing, pack):
     before_legacy = landing.con.execute(
         'SELECT customer_code FROM "obj_Customer"'
     ).fetchone()[0]
-    before_pub_rows = list(landing.con.execute(
-        f'SELECT customer_code, name FROM "{pub_table}" ORDER BY customer_code'
-    ))
+    before_pub_rows = [
+        (r["customer_code"], r["name"])
+        for r in landing.con.execute(
+            f'SELECT customer_code, name FROM "{pub_table}" ORDER BY customer_code'
+        )
+    ]
 
     apply_objects(landing, pack, SOURCE)
 
@@ -285,9 +288,12 @@ def test_candidate_build_does_not_touch_published_baseline(landing, pack):
     after_legacy = landing.con.execute(
         'SELECT customer_code FROM "obj_Customer"'
     ).fetchone()[0]
-    after_pub_rows = list(landing.con.execute(
-        f'SELECT customer_code, name FROM "{pub_table}" ORDER BY customer_code'
-    ))
+    after_pub_rows = [
+        (r["customer_code"], r["name"])
+        for r in landing.con.execute(
+            f'SELECT customer_code, name FROM "{pub_table}" ORDER BY customer_code'
+        )
+    ]
     assert after_ds == before_ds
     assert after_obj == before_obj
     assert after_legacy == before_legacy == "KEEP"
