@@ -463,6 +463,110 @@ def test_masking_output_issues_diff_draft_cannot_unmask(tmp_path):
                 assert f.before != "s1" and f.after != "s1"
 
 
+def test_draft_remap_sensitive_or_unknown_col_onto_nonsensitive_is_masked(tmp_path):
+    """草稿把敏感/未分类 raw 列映到非敏感属性时仍须遮罩,不能降敏。"""
+    pack = _pack()
+    info = _item_info()
+    # 追加未分类列 PHONE(不在 current field_map)
+    info = TableInfo(
+        name=ANCHOR,
+        columns=[*info.columns, ("PHONE", "text")],
+        pk=list(info.pk),
+    )
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    landing.ensure_raw_table(SOURCE, info)
+    rows = []
+    for row in _default_rows():
+        rows.append({**row, "PHONE": f"phone-{row['CODE']}"})
+    landing.upsert_rows(SOURCE, info, rows, "b1")
+
+    # 1) 敏感列 SECRET → name
+    draft_secret = {
+        "tables": [ANCHOR],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {
+            "code": f"{ANCHOR}.CODE",
+            "name": f"{ANCHOR}.SECRET",
+            "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+            "secret": f"{ANCHOR}.SECRET",
+        },
+        "derived": {},
+        "notes": "",
+    }
+    result = preview_mapping(
+        landing, pack, object_name="Item", source=SOURCE, draft_binding=draft_secret,
+    )
+    for row in result.candidate.rows:
+        if row.status == "mapped":
+            assert row.output.get("name") == MASKED
+            assert row.output.get("secret") == MASKED
+            assert row.output.get("name") != "s1"
+    for drow in result.diff.rows:
+        for f in drow.fields:
+            if f.field == "name" and f.after is not None:
+                assert f.after == MASKED
+
+    # 2) 未分类列 PHONE → name
+    draft_phone = {
+        "tables": [ANCHOR],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {
+            "code": f"{ANCHOR}.CODE",
+            "name": f"{ANCHOR}.PHONE",
+            "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+            "secret": f"{ANCHOR}.SECRET",
+        },
+        "derived": {},
+        "notes": "",
+    }
+    result2 = preview_mapping(
+        landing, pack, object_name="Item", source=SOURCE, draft_binding=draft_phone,
+    )
+    for row in result2.candidate.rows:
+        if row.status == "mapped":
+            assert row.output.get("name") == MASKED
+            assert not str(row.output.get("name", "")).startswith("phone-")
+
+
+def test_derived_unmatched_does_not_leak_raw_cols_or_values(tmp_path):
+    """derived_unmatched 不得把 raw 列名/敏感原值打进 detail/source_value。"""
+    pack = _pack(
+        derived={
+            "phase": DerivedField(
+                rules=[DeriveRule(when={"ST": "MATCH_NEVER"}, value="A")],
+                default=None,
+            ),
+        },
+    )
+    # current field_map 不含 phase(由 derived 填);ST 未出现在 field_map → 未分类
+    pack.objects[0].bindings[0].field_map = {
+        "code": f"{ANCHOR}.CODE",
+        "name": f"{ANCHOR}.NAME",
+        "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed)",
+        "secret": f"{ANCHOR}.SECRET",
+    }
+    pack.objects[0].bindings[0].derived = {
+        "phase": DerivedField(
+            rules=[DeriveRule(when={"SECRET": "__no_match__"}, value="A")],
+            default=None,
+        ),
+    }
+    landing = _seed(tmp_path, _default_rows())
+    result = preview_mapping(landing, pack, object_name="Item", source=SOURCE)
+    blob_parts: list[str] = []
+    for row in result.candidate.rows:
+        for issue in row.issues:
+            if issue.reason_code != "derived_unmatched":
+                continue
+            assert "SECRET" not in (issue.detail or "")
+            assert "s1" not in (issue.detail or "")
+            assert issue.source_value is None or "s1" not in issue.source_value
+            assert issue.source_value is None or "SECRET" not in issue.source_value
+            blob_parts.append(issue.detail or "")
+            blob_parts.append(issue.source_value or "")
+    assert any("派生规则无匹配" in p for p in blob_parts)
+
+
 def test_empty_sample_success_zeros(tmp_path):
     pack = _pack()
     landing = _seed(tmp_path, [])

@@ -652,6 +652,84 @@ def _template_prop_names(template: ObjectTemplate) -> list[str]:
     return [p.name for p in template.properties]
 
 
+@dataclass(frozen=True)
+class _MaskPolicy:
+    """Preview 出口脱敏策略。
+
+    - sensitive_props: Property.sensitive
+    - sensitive_raw_cols: current∪draft 中映射到敏感属性的 raw 列(并集)
+    - known_raw_cols: 当前 binding 已声明的 raw 列;草稿把未声明列映到非敏感属性时仍须遮罩
+    """
+
+    sensitive_props: frozenset[str]
+    sensitive_raw_cols: frozenset[str]
+    known_raw_cols: frozenset[str]
+
+
+def _binding_raw_cols(binding: SourceBinding) -> dict[str, set[str]]:
+    """属性 → 其 key_map/field_map/derived.when 引用的 raw 列集合。"""
+    out: dict[str, set[str]] = {}
+    for prop, expr in [*binding.key_map.items(), *binding.field_map.items()]:
+        try:
+            col = parse_field_expr(str(expr)).column
+        except ValueError:
+            continue
+        out.setdefault(prop, set()).add(col)
+    for prop, spec in binding.derived.items():
+        cols = out.setdefault(prop, set())
+        for rule in spec.rules:
+            cols.update(str(col) for col in rule.when)
+    return out
+
+
+def _build_mask_policy(
+    template: ObjectTemplate,
+    current: SourceBinding | None,
+    draft: SourceBinding | None,
+) -> _MaskPolicy:
+    sensitive_props = frozenset(_sensitive_props(template))
+    sensitive_raw: set[str] = set()
+    known_raw: set[str] = set()
+    for binding in (current, draft):
+        if binding is None:
+            continue
+        prop_cols = _binding_raw_cols(binding)
+        for prop, cols in prop_cols.items():
+            if prop in sensitive_props:
+                sensitive_raw.update(cols)
+            if binding is current:
+                known_raw.update(cols)
+    if current is None and draft is not None:
+        # 无 current 时以草稿声明列为已知,避免正常草稿列被误判为未分类。
+        for cols in _binding_raw_cols(draft).values():
+            known_raw.update(cols)
+    return _MaskPolicy(
+        sensitive_props=sensitive_props,
+        sensitive_raw_cols=frozenset(sensitive_raw),
+        known_raw_cols=frozenset(known_raw),
+    )
+
+
+def _mask_props_for_binding(
+    binding: SourceBinding | None,
+    policy: _MaskPolicy,
+) -> set[str]:
+    """对本 binding 求值结果需要遮罩的属性集合。"""
+    masked: set[str] = set(policy.sensitive_props)
+    if binding is None:
+        return masked
+    for prop, cols in _binding_raw_cols(binding).items():
+        if prop in masked:
+            continue
+        if cols & policy.sensitive_raw_cols:
+            masked.add(prop)
+            continue
+        # 未在 current 声明的 raw 列(含未知分类)不得以明文出现在非敏感属性上。
+        if any(col not in policy.known_raw_cols for col in cols):
+            masked.add(prop)
+    return masked
+
+
 def _mask_value(value: Any) -> Any:
     if value is None:
         return None
@@ -662,10 +740,19 @@ def _mask_value(value: Any) -> Any:
     return MASKED
 
 
-def _safe_detail(issue: TransformIssue, sensitive: set[str]) -> str:
-    """对外 detail:敏感字段不嵌入原值。"""
+def _safe_detail(
+    issue: TransformIssue,
+    mask_props: set[str],
+    *,
+    policy: _MaskPolicy,
+) -> str:
+    """对外 detail:敏感/未分类源值与 raw 列名不嵌入响应。"""
     field = issue.field
-    if field is not None and field in sensitive:
+    # derived_unmatched 的 detail/source_value 常含 raw 列字典,一律改为安全摘要。
+    if issue.reason_code == "derived_unmatched":
+        label = field if field is not None else "?"
+        return f"{label}: 派生规则无匹配"
+    if field is not None and field in mask_props:
         code = issue.reason_code
         if code == "enum_unmapped":
             return f"{field}: 源码值未在 map 中声明"
@@ -673,22 +760,26 @@ def _safe_detail(issue: TransformIssue, sensitive: set[str]) -> str:
             return f"{field}: 取值不在枚举内"
         if code == "type_coercion":
             return f"{field}: 类型转换失败"
-        if code == "derived_unmatched":
-            return f"{field}: 派生规则无匹配"
         if code == "derived_invalid_enum":
             return f"{field}: 派生值不在枚举内"
         return f"{field}: 映射失败"
     if issue.reason_code in ("business_key_missing", "business_key_duplicate"):
-        # 键字典可能含敏感属性:对敏感键遮罩后再渲染。
+        # 键字典可能含敏感属性或敏感列污染键:对须遮罩键遮罩后再渲染。
         src = issue.source_value
         if isinstance(src, dict):
             masked = {
-                k: (MASKED if k in sensitive else v)
+                k: (MASKED if k in mask_props else v)
                 for k, v in src.items()
             }
             prefix = "业务键缺失" if issue.reason_code == "business_key_missing" else "业务键重复"
             return f"{prefix}:{masked}"
-    return issue.detail
+    detail = issue.detail
+    # 兜底:detail 中不得残留敏感 raw 列名。
+    for col in policy.sensitive_raw_cols:
+        if col and col in detail:
+            label = field if field is not None else "?"
+            return f"{label}: 映射失败"
+    return detail
 
 
 def _issue_source_value_str(value: Any) -> str:
@@ -697,23 +788,51 @@ def _issue_source_value_str(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=str)
 
 
-def _safe_source_value(issue: TransformIssue, sensitive: set[str]) -> str | None:
+def _safe_source_value(
+    issue: TransformIssue,
+    mask_props: set[str],
+    *,
+    policy: _MaskPolicy,
+) -> str | None:
     if issue.source_value is None:
         return None
+    # 含 raw 列字典的 issue 不回传列名或原值。
+    if issue.reason_code == "derived_unmatched":
+        return None
     field = issue.field
-    if field is not None and field in sensitive:
+    if field is not None and field in mask_props:
         return _issue_source_value_str(_mask_value(issue.source_value))
     if isinstance(issue.source_value, dict):
-        if any(k in sensitive for k in issue.source_value):
+        keys = set(issue.source_value)
+        if keys & mask_props or keys & policy.sensitive_raw_cols:
             masked = {
-                k: (MASKED if k in sensitive else v)
+                k: (
+                    MASKED
+                    if k in mask_props or k in policy.sensitive_raw_cols
+                    else v
+                )
                 for k, v in issue.source_value.items()
             }
+            # 未分类 raw 列键直接丢弃,不出现在响应。
+            masked = {
+                k: v
+                for k, v in masked.items()
+                if k in mask_props or k in policy.known_raw_cols or k in policy.sensitive_props
+            }
+            if not masked:
+                return None
             return _issue_source_value_str(masked)
+        # 纯 raw 列字典且含未知列 → 不回传
+        if any(k not in policy.known_raw_cols for k in keys):
+            return None
     return _issue_source_value_str(issue.source_value)
 
 
-def _mask_output(output: dict | None, prop_names: list[str], sensitive: set[str]) -> dict[str, Any]:
+def _mask_output(
+    output: dict | None,
+    prop_names: list[str],
+    mask_props: set[str],
+) -> dict[str, Any]:
     if not output:
         return {}
     out: dict[str, Any] = {}
@@ -721,7 +840,7 @@ def _mask_output(output: dict | None, prop_names: list[str], sensitive: set[str]
         if name not in output:
             continue
         value = output[name]
-        out[name] = MASKED if name in sensitive else _json_norm(value)
+        out[name] = MASKED if name in mask_props else _json_norm(value)
     return out
 
 
@@ -759,7 +878,8 @@ def _build_evaluation_view(
     binding: SourceBinding,
     evaluation: TransformEvaluation,
     sample: FrozenSample,
-    sensitive: set[str],
+    policy: _MaskPolicy,
+    mask_props: set[str],
     breaker_threshold: float,
 ) -> PreviewEvaluationView:
     prop_names = _template_prop_names(template)
@@ -776,8 +896,8 @@ def _build_evaluation_view(
                 PreviewIssueView(
                     reason_code=issue.reason_code,
                     field=issue.field,
-                    detail=_safe_detail(issue, sensitive),
-                    source_value=_safe_source_value(issue, sensitive),
+                    detail=_safe_detail(issue, mask_props, policy=policy),
+                    source_value=_safe_source_value(issue, mask_props, policy=policy),
                 )
             )
             if issue.reason_code == "enum_unmapped" and issue.field is not None:
@@ -794,7 +914,7 @@ def _build_evaluation_view(
             PreviewRowView(
                 sample_row_id=sample_row_id,
                 status=row_eval.status,
-                output=_mask_output(row_eval.output, prop_names, sensitive),
+                output=_mask_output(row_eval.output, prop_names, mask_props),
                 issues=issues_out,
             )
         )
@@ -817,7 +937,7 @@ def _build_evaluation_view(
     enum_gaps = [
         PreviewEnumGapView(
             field=field,
-            source_value=MASKED if field in sensitive else value,
+            source_value=MASKED if field in mask_props else value,
             count=count,
         )
         for (field, value), count in sorted(enum_counts.items())
@@ -893,7 +1013,8 @@ def _build_diff(
     before_eval: TransformEvaluation | None,
     after_eval: TransformEvaluation,
     sample: FrozenSample,
-    sensitive: set[str],
+    mask_before: set[str],
+    mask_after: set[str],
 ) -> PreviewDiffView:
     empty_summary = PreviewDiffSummaryView(0, 0, 0)
     if before_eval is None:
@@ -928,8 +1049,12 @@ def _build_diff(
             field_diffs.append(
                 PreviewDiffFieldView(
                     field=name,
-                    before=MASKED if name in sensitive and bv is not None else _json_norm(bv),
-                    after=MASKED if name in sensitive and av is not None else _json_norm(av),
+                    before=(
+                        MASKED if name in mask_before and bv is not None else _json_norm(bv)
+                    ),
+                    after=(
+                        MASKED if name in mask_after and av is not None else _json_norm(av)
+                    ),
                 )
             )
         status_differs = before.status != after.status
@@ -1073,7 +1198,9 @@ def preview_mapping(
             batch_id=batch_id,
         )
 
-        sensitive = _sensitive_props(tpl)
+        policy = _build_mask_policy(tpl, current, draft)
+        mask_current = _mask_props_for_binding(current, policy)
+        mask_candidate = _mask_props_for_binding(candidate_binding, policy)
         current_eval: TransformEvaluation | None = None
         if current is not None:
             current_eval = _run_binding_eval(
@@ -1094,7 +1221,8 @@ def preview_mapping(
                 binding=current,
                 evaluation=current_eval,
                 sample=sample,
-                sensitive=sensitive,
+                policy=policy,
+                mask_props=mask_current,
                 breaker_threshold=breaker_threshold,
             )
             if current is not None and current_eval is not None
@@ -1105,7 +1233,8 @@ def preview_mapping(
             binding=candidate_binding,
             evaluation=candidate_eval,
             sample=sample,
-            sensitive=sensitive,
+            policy=policy,
+            mask_props=mask_candidate,
             breaker_threshold=breaker_threshold,
         )
         diff = _build_diff(
@@ -1113,7 +1242,8 @@ def preview_mapping(
             before_eval=current_eval,
             after_eval=candidate_eval,
             sample=sample,
-            sensitive=sensitive,
+            mask_before=mask_current,
+            mask_after=mask_candidate,
         )
 
         warnings = [SAMPLE_DUPLICATE_WARNING]

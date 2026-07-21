@@ -523,6 +523,100 @@ def test_draft_cannot_cross_source_tables(env):
     assert "traceback" not in r.text.lower()
 
 
+def test_draft_remap_sensitive_email_onto_name_is_masked(env):
+    secrets = _sensitive_raw_values(env.db_path)
+    assert secrets, "fixture must contain sensitive contact values"
+    draft = _customer_draft(field_map={
+        "customer_code": "CUSTOMER.CUSTOMER_CODE",
+        "name": "CUSTOMER.CONTACT_EMAIL",
+        "region": "CUSTOMER.COUNTRY_REGION",
+        "currency": "CURRENCY.CURRENCY_CODE (join CUSTOMER.CURRENCY_ID)",
+        "payment_days": "CUSTOMER.PAYMENT_TERM_DAYS",
+        "contact": "CUSTOMER.CONTACT_EMAIL",
+    })
+    r = _client(env).post(
+        PREVIEW_URL, json=_body(draft_binding=draft), headers=_auth())
+    assert r.status_code == 200, r.text
+    body = MappingPreviewResponse.model_validate(r.json())
+    for row in body.candidate.rows:
+        if row.status == "mapped":
+            assert _plain(row.output.get("name")) == MASKED
+            assert _plain(row.output.get("contact")) == MASKED
+    _assert_no_secrets_in_blob(r.text, secrets, draft_notes=DRAFT_MARKER)
+    assert "CONTACT_EMAIL" not in r.text
+
+
+def test_draft_remap_unknown_phone_onto_name_is_masked(env):
+    secrets = _sensitive_raw_values(env.db_path)
+    phones = [
+        str(v) for v in LandingStore(env.db_path).con.execute(
+            'SELECT CONTACT_PHONE FROM "raw_digiwin_e10__CUSTOMER" '
+            "WHERE CONTACT_PHONE IS NOT NULL"
+        ).fetchall()
+        for v in v
+        if v
+    ]
+    assert phones, "fixture must contain CONTACT_PHONE values"
+    draft = _customer_draft(field_map={
+        "customer_code": "CUSTOMER.CUSTOMER_CODE",
+        "name": "CUSTOMER.CONTACT_PHONE",
+        "region": "CUSTOMER.COUNTRY_REGION",
+        "currency": "CURRENCY.CURRENCY_CODE (join CUSTOMER.CURRENCY_ID)",
+        "payment_days": "CUSTOMER.PAYMENT_TERM_DAYS",
+        "contact": "CUSTOMER.CONTACT_EMAIL",
+    })
+    r = _client(env).post(
+        PREVIEW_URL, json=_body(draft_binding=draft), headers=_auth())
+    assert r.status_code == 200, r.text
+    body = MappingPreviewResponse.model_validate(r.json())
+    for row in body.candidate.rows:
+        if row.status == "mapped":
+            assert _plain(row.output.get("name")) == MASKED
+    for phone in phones:
+        assert phone not in r.text
+    _assert_no_secrets_in_blob(r.text, secrets, draft_notes=DRAFT_MARKER)
+    assert "CONTACT_PHONE" not in r.text
+
+
+def test_derived_unmatched_masks_sensitive_when_clause(env):
+    secrets = _sensitive_raw_values(env.db_path)
+    draft = _customer_draft(
+        field_map={
+            "customer_code": "CUSTOMER.CUSTOMER_CODE",
+            "name": "CUSTOMER.CUSTOMER_NAME",
+            "region": "CUSTOMER.COUNTRY_REGION",
+            "currency": "CURRENCY.CURRENCY_CODE (join CUSTOMER.CURRENCY_ID)",
+            "payment_days": "CUSTOMER.PAYMENT_TERM_DAYS",
+            "contact": "CUSTOMER.CONTACT_EMAIL",
+        },
+        derived={
+            "name": {
+                "rules": [{"when": {"CONTACT_EMAIL": "__no_match__"}, "value": "x"}],
+                "default": None,
+            },
+        },
+    )
+    r = _client(env).post(
+        PREVIEW_URL, json=_body(draft_binding=draft), headers=_auth())
+    assert r.status_code == 200, r.text
+    body = MappingPreviewResponse.model_validate(r.json())
+    unmatched = [
+        issue
+        for row in body.candidate.rows
+        for issue in row.issues
+        if issue.reason_code == "derived_unmatched"
+    ]
+    assert unmatched, "expected derived_unmatched issues"
+    for issue in unmatched:
+        assert "CONTACT_EMAIL" not in (issue.detail or "")
+        assert issue.source_value is None or "CONTACT_EMAIL" not in issue.source_value
+        for secret in secrets:
+            assert secret not in (issue.detail or "")
+            assert secret not in (issue.source_value or "")
+    _assert_no_secrets_in_blob(r.text, secrets, draft_notes=DRAFT_MARKER)
+    assert "CONTACT_EMAIL" not in r.text
+
+
 # ---- 零业务副作用 ----
 
 
