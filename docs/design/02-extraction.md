@@ -25,12 +25,12 @@ Landing 原样落地(raw_{source}__{table},按源主键 upsert)
    │                          ├─ increment:水位状态机
    │                          ├─ reconcile:分段对账(L1/L2)
    ▼                          └─ quarantine:隔离区
-mapping_apply:binding → 对象视图 obj_{object}(复用 data2agent/mapping.py)
+mapping_apply:binding → 候选物化表 objv_<opaque>_* → 数据集原子发布(见 §7.2)
    ▼
-MCP 网关改读对象视图(现直读展厅库,属过渡形态)
+MCP / Console / 指标在同一读事务内解析 PublishedDatasetSnapshot(不回退遗留 obj_*)
 ```
 
-关键取舍:**ELT 而非 ETL** —— 源数据原样落地、不做任何转换,映射在落地库内以视图/物化表完成。理由:① 源侧只跑最简单的 SELECT,把对生产库的压力和停留时间压到最低;② 映射错了改 binding 重建视图即可,不必重抽;③ 落地层原样数据是对账和审计的证据。
+关键取舍:**ELT 而非 ETL** —— 源数据原样落地、不做任何转换,映射在落地库内以物化表完成。理由:① 源侧只跑最简单的 SELECT,把对生产库的压力和停留时间压到最低;② 映射错了改 binding 后重建候选并原子发布即可,不必重抽;③ 落地层原样数据是对账和审计的证据。
 
 > 上图是**逻辑管道**(与部署位置无关)。现场的**物理部署**会把它拆到"中间服务器 + 数据平台"两台机器上 —— 见 §12 部署拓扑。
 
@@ -238,7 +238,7 @@ Informatica Secure Agent、Fivetran Hybrid 皆同形):
 中间服务器(薄,无状态流式转发)      ← 持有 ERP 只读凭据;数据流过不落盘
    │ 出站推送 raw 批次(当前 HTTP sink;正式试点经反向代理使用 HTTPS/TLS)
    ▼
-数据平台(内网,有外网)            ← 落地 raw_* → apply obj_* → MCP 网关(出口脱敏)
+数据平台(内网,有外网)            ← 落地 raw_* → 构建 objv_* 并原子发布 → MCP 网关(出口脱敏)
    ▼
 Agent(经 MCP 网关,拿到脱敏数据)
 ```
