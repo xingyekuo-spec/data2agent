@@ -50,6 +50,7 @@ from ..mapping import parse_field_expr
 from ..metamodel.loader import load_pack
 from . import data_browser as br
 from . import observability as obs
+from .mcp_lab import mcp_lab_error_response, proposal_response_from_service
 from .contracts import (
     DEFAULT_BREAKER_THRESHOLD,
     AccessAuditPage,
@@ -1623,22 +1624,29 @@ def create_app(landing: str | None = None, templates: str = "templates",
             503: {"model": McpLabError, "description": "MCP 不可用"},
         },
     )
-    def debug_mcp_call(body: McpCallBody) -> dict:
+    def debug_mcp_call(body: McpCallBody) -> dict | JSONResponse:
         if body.tool not in _MCP_TOOLS:
             raise HTTPException(400, f"工具 '{body.tool}' 不在白名单,可用:{sorted(_MCP_TOOLS)}")
         # model_dump 解开 JsonValue RootModel,避免 object=root='Customer' 一类参数污染
         params = body.model_dump().get("params") or {}
         try:
             return _mcp_in_process(body.tool, params)
-        except Exception as inproc_err:
-            try:
-                return _mcp_http(body.tool, params)
-            except HTTPException:
-                raise
-            except Exception:
-                raise HTTPException(
-                    503,
-                    f"MCP 不可用(进程内:{inproc_err};HTTP 亦失败,请确认 d2a-mcp 已启动)") from inproc_err
+        except ValueError as e:
+            # 业务错误直接映射;不回落到远端 HTTP(远端 query ID 无法被本进程 proposal 引用)
+            return mcp_lab_error_response(e, tool=body.tool)
+        except HTTPException:
+            raise
+        except Exception:
+            return JSONResponse(
+                status_code=503,
+                content=McpLabError(
+                    detail="MCP 进程内查询不可用",
+                    reason_code="mcp_unavailable",
+                    tool=body.tool,
+                    retryable=True,
+                    error_id=None,
+                ).model_dump(),
+            )
 
     # ---- 动作(复用 connect 引擎,窗口 / 白名单原样生效)----
 
@@ -2379,14 +2387,40 @@ def create_app(landing: str | None = None, templates: str = "templates",
         responses={
             401: _RESP_HTTP_ERROR[401],
             403: {"model": McpLabError, "description": "档位禁止"},
+            404: {"model": McpLabError, "description": "未知对象/动作"},
             409: {"model": McpLabError, "description": "query 过期/配置冲突"},
-            422: _RESP_HTTP_ERROR[422],
-            501: _RESP_HTTP_ERROR_STUB[501],
+            422: {"model": McpLabError, "description": "参数无效"},
+            500: {"model": McpLabError, "description": "执行失败"},
         },
-        tags=["v0.2-stub"],
+        tags=["v0.2"],
     )
-    def gateway_proposals(body: ProposalRequest) -> ProposalResponse:
-        raise HTTPException(501, f"{_STUB_501}(M6 MCP Lab 建议卡)")
+    def gateway_proposals(body: ProposalRequest) -> ProposalResponse | JSONResponse:
+        """说档建议卡:复用进程内 QueryService,不创建 Run、不写业务表。"""
+        try:
+            svc = get_query_service()
+        except HTTPException as e:
+            if e.status_code == 409:
+                return JSONResponse(
+                    status_code=409,
+                    content=McpLabError(
+                        detail="尚未完成首次配置或落地库不可用",
+                        reason_code="mcp_unavailable",
+                        tool="propose_action",
+                        retryable=False,
+                        error_id=None,
+                    ).model_dump(),
+                )
+            raise
+        evidence = [{"claim": e.claim, "query_id": e.query_id} for e in body.evidence]
+        try:
+            card = svc.propose_action(
+                body.object, body.action, body.conclusion, evidence)
+            return ProposalResponse.model_validate(proposal_response_from_service(card))
+        except ValueError as e:
+            return mcp_lab_error_response(e, tool="propose_action")
+        except Exception:
+            return mcp_lab_error_response(
+                RuntimeError("proposal failed"), tool="propose_action")
 
     app.include_router(api)
 

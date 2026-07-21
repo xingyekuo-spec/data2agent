@@ -114,8 +114,8 @@ def test_mcp_call_error_responses_use_mcp_lab_error(env):
         assert ref.endswith("/McpLabError"), f"{code} should use McpLabError, got {schema}"
 
 
-def test_proposal_schema_frozen_and_still_stub(env):
-    """建议卡契约保持 ProposalResponse;T01 运行时仍为 501 桩。"""
+def test_proposal_schema_frozen(env):
+    """建议卡契约保持 ProposalResponse;运行时不再是 501 桩。"""
     schemas = _openapi(env)["components"]["schemas"]
     assert "ProposalRequest" in schemas
     assert "ProposalResponse" in schemas
@@ -124,18 +124,9 @@ def test_proposal_schema_frozen_and_still_stub(env):
     assert "governance" in resp_props
     assert "evidence" in resp_props
     assert "tier" in resp_props
+    op = _openapi(env)["paths"]["/api/gateway/proposals"]["post"]
+    assert "501" not in op["responses"]
 
-    landing, cfg_file = env
-    cfg = load_config(cfg_file)
-    client = TestClient(create_app(cfg.landing, cfg.templates, cfg))
-    r = client.post("/api/gateway/proposals", json={
-        "object": "SalesOrder", "action": "review", "conclusion": "需复核",
-        "evidence": [{"claim": "订单偏高", "query_id": "q1"}],
-    })
-    assert r.status_code == 501
-    assert "契约桩" in r.json()["detail"]
-
-    # 请求模型仍拒绝空 evidence
     with pytest.raises(ValidationError):
         ProposalRequest(
             object="SalesOrder", action="review", conclusion="c", evidence=[])
@@ -264,3 +255,106 @@ def test_query_service_resets_when_config_signature_changes(env, tmp_path):
         new_svc.propose_action(
             "Quotation", "quote_review", "新服务不应看见旧 ID",
             [{"claim": "x", "query_id": stale_qid}])
+
+
+# ---- M6-T03 / T04: 查询 API 与 proposal gateway ----
+
+
+def test_mcp_call_meta_includes_duration_and_process_scope(env):
+    client, _app, _cfg = _client(env)
+    r = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+    assert r.status_code == 200, r.text
+    meta = r.json()["meta"]
+    assert meta["query_id"] == "q1"
+    assert meta["tool"] == "query_objects"
+    assert meta["target"] == "Customer"
+    assert meta["evidence_scope"] == "process"
+    assert isinstance(meta["duration_ms"], int) and meta["duration_ms"] >= 0
+    assert "contact" in meta["masked_fields"]
+    assert any("draft" in w for w in meta["warnings"])
+
+
+def test_mcp_call_unknown_target_returns_mcp_lab_error(env):
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    r = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Nope"}})
+    assert r.status_code == 404
+    err = McpLabError.model_validate(r.json())
+    assert err.reason_code == "unknown_target"
+    assert err.tool == "query_objects"
+
+
+def test_mcp_call_not_materialized_returns_mcp_lab_error(tmp_path):
+    from data2agent.console.contracts import McpLabError
+
+    landing = LandingStore(tmp_path / "empty.sqlite")
+    app = create_app(str(landing.db_path), ROOT / "templates")
+    client = TestClient(app)
+    r = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+    assert r.status_code == 409
+    err = McpLabError.model_validate(r.json())
+    assert err.reason_code == "not_materialized"
+
+
+def test_proposal_gateway_success_and_expired_query(env):
+    from data2agent.console.contracts import McpLabError, ProposalResponse
+
+    client, _app, _cfg = _client(env)
+    q = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}})
+    assert q.status_code == 200
+    qid = q.json()["meta"]["query_id"]
+
+    ok = client.post("/api/gateway/proposals", json={
+        "object": "Quotation", "action": "quote_review",
+        "conclusion": "谨慎接",
+        "evidence": [{"claim": "报价可见", "query_id": qid}],
+    })
+    assert ok.status_code == 200, ok.text
+    card = ProposalResponse.model_validate(ok.json())
+    assert card.tier == "说"
+    assert "未执行" in card.governance
+    assert card.evidence[0].query.query_id == qid
+
+    expired = client.post("/api/gateway/proposals", json={
+        "object": "Quotation", "action": "quote_review",
+        "conclusion": "谨慎接",
+        "evidence": [{"claim": "编造", "query_id": "q99999"}],
+    })
+    assert expired.status_code == 409
+    err = McpLabError.model_validate(expired.json())
+    assert err.reason_code == "query_expired"
+
+
+def test_proposal_gateway_no_side_effects(env):
+    client, _app, cfg = _client(env)
+
+    def counts():
+        import sqlite3
+        con = sqlite3.connect(cfg.landing)
+        try:
+            q = con.execute(
+                "SELECT COUNT(*) FROM d2a_quarantine").fetchone()[0]
+            runs = con.execute(
+                "SELECT COUNT(*) FROM d2a_sync_run").fetchone()[0]
+            cust = con.execute(
+                'SELECT COUNT(*) FROM "obj_Customer"').fetchone()[0]
+            return q, runs, cust
+        finally:
+            con.close()
+
+    before = counts()
+    q = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}})
+    qid = q.json()["meta"]["query_id"]
+    r = client.post("/api/gateway/proposals", json={
+        "object": "Quotation", "action": "quote_review",
+        "conclusion": "不写库",
+        "evidence": [{"claim": "x", "query_id": qid}],
+    })
+    assert r.status_code == 200
+    assert counts() == before

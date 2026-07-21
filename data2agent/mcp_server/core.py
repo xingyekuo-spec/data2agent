@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import time
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
@@ -76,12 +77,34 @@ class QueryService:
         con.execute("PRAGMA busy_timeout=5000")  # WAL 检查点期间读锁竞争时等待而非报错
         return con
 
+    def _public_meta(
+        self, *, tool: str, target: str, query_id: str | None,
+        row_count: int | None, duration_ms: int,
+        masked_fields: list[str] | None = None,
+        warnings: list[str] | None = None,
+        **extra: object,
+    ) -> dict:
+        """Console/MCP Lab 公共 meta;保留额外兼容字段(source/binding_status 等)。"""
+        meta = {
+            "query_id": query_id,
+            "tool": tool,
+            "target": target,
+            "row_count": row_count,
+            "duration_ms": max(0, int(duration_ms)),
+            "masked_fields": list(masked_fields or []),
+            "warnings": [w for w in (warnings or []) if w],
+            "evidence_scope": "process",
+        }
+        meta.update(extra)
+        return meta
+
     # ---- query_objects ----
 
     def query_objects(self, object: str | None = None, filters: dict | None = None,
                       order_by: str | None = None, desc: bool = False, limit: int = 20) -> dict:
+        started = time.perf_counter()
         if object is None:
-            return self._object_catalog()
+            return self._object_catalog(started)
 
         tpl = next((o for o in self.pack.objects if o.object == object), None)
         if tpl is None:
@@ -113,21 +136,21 @@ class QueryService:
                     row[prop] = MASK
         note = ("binding 为 draft:字段映射按参考表形构造,口径未经现场校准"
                 if binding.status == "draft" else "")
+        warnings = [note] if note else []
         qid = self._log_query("query_objects", object,
-                              f"filters={filters or {}} rows={len(rows)}", [note])
+                              f"filters={filters or {}} rows={len(rows)}", warnings)
+        duration_ms = int((time.perf_counter() - started) * 1000)
         return {
             "object": object,
             "display_name": tpl.display_name,
             "rows": rows,
-            "meta": {
-                "query_id": qid,
-                "source": binding.source,
-                "binding_status": binding.status,
-                "masked_fields": sorted(sensitive),
-                "row_count": len(rows),
-                "quarantined": quarantined,
-                "note": note,
-            },
+            "meta": self._public_meta(
+                tool="query_objects", target=object, query_id=qid,
+                row_count=len(rows), duration_ms=duration_ms,
+                masked_fields=sorted(sensitive), warnings=warnings,
+                source=binding.source, binding_status=binding.status,
+                quarantined=quarantined, note=note,
+            ),
         }
 
     def _object_sql(self, tpl: ObjectTemplate, filters: dict | None,
@@ -163,7 +186,9 @@ class QueryService:
         except sqlite3.OperationalError:
             return 0
 
-    def _object_catalog(self) -> dict:
+    def _object_catalog(self, started: float | None = None) -> dict:
+        t0 = time.perf_counter() if started is None else started
+        duration_ms = int((time.perf_counter() - t0) * 1000)
         return {
             "objects": [
                 {
@@ -182,8 +207,12 @@ class QueryService:
                 }
                 for o in self.pack.objects
             ],
-            "meta": {"active_source": self.source,
-                     "usage": "带 object 参数查询数据;filters 为 属性→值 等值筛选"},
+            "meta": self._public_meta(
+                tool="query_objects", target="", query_id=None,
+                row_count=None, duration_ms=duration_ms,
+                active_source=self.source,
+                usage="带 object 参数查询数据;filters 为 属性→值 等值筛选",
+            ),
         }
 
     # ---- propose_action("说"档)----
@@ -249,8 +278,9 @@ class QueryService:
 
     def query_metrics(self, metric: str | None = None, group_by: str | None = None,
                       limit: int = 24) -> dict:
+        started = time.perf_counter()
         if metric is None:
-            return self._metric_catalog()
+            return self._metric_catalog(started)
 
         mdef = next((m for m in self.pack.metrics if m.metric == metric), None)
         if mdef is None:
@@ -262,9 +292,15 @@ class QueryService:
         }
         impl = self.metrics.get(metric)
         if impl is None:
+            duration_ms = int((time.perf_counter() - started) * 1000)
             return {
                 **definition, "implemented": False,
                 "reason": "依赖应收 / 回款对象,不在首批对象内;口径定义保留,待对象补齐后实现",
+                "meta": self._public_meta(
+                    tool="query_metrics", target=metric, query_id=None,
+                    row_count=None, duration_ms=duration_ms,
+                    warnings=["指标尚未实现"],
+                ),
             }
 
         dim = group_by or impl.default_dim
@@ -284,15 +320,23 @@ class QueryService:
         finally:
             con.close()
         warning = "口径为 draft(未经校准),数值仅供演示环境参考" if mdef.status != "certified" else ""
+        warnings = [w for w in (warning, mdef.caveats) if w]
         qid = self._log_query("query_metrics", metric,
-                              f"group_by={dim} rows={len(rows)}", [warning, mdef.caveats])
+                              f"group_by={dim} rows={len(rows)}", warnings)
+        duration_ms = int((time.perf_counter() - started) * 1000)
         return {
             **definition, "implemented": True, "unit": impl.unit,
             "group_by": dim, "rows": rows,
-            "meta": {"query_id": qid, "row_count": len(rows), "warning": warning},
+            "meta": self._public_meta(
+                tool="query_metrics", target=metric, query_id=qid,
+                row_count=len(rows), duration_ms=duration_ms,
+                warnings=warnings, warning=warning,
+            ),
         }
 
-    def _metric_catalog(self) -> dict:
+    def _metric_catalog(self, started: float | None = None) -> dict:
+        t0 = time.perf_counter() if started is None else started
+        duration_ms = int((time.perf_counter() - t0) * 1000)
         return {
             "metrics": [
                 {
@@ -304,5 +348,9 @@ class QueryService:
                 }
                 for m in self.pack.metrics
             ],
-            "meta": {"usage": "带 metric 参数取数;group_by 见各指标 group_by_options"},
+            "meta": self._public_meta(
+                tool="query_metrics", target="", query_id=None,
+                row_count=None, duration_ms=duration_ms,
+                usage="带 metric 参数取数;group_by 见各指标 group_by_options",
+            ),
         }
