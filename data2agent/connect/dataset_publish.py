@@ -1,4 +1,4 @@
-"""数据集发布域服务:快照解析(T03)与候选构建(T05);发布/回滚见 T06。
+"""数据集发布域服务:快照解析(T03)、候选构建(T05)、原子发布/回滚与保留(T06)。
 
 调用约定(T08/T09):resolve_published_snapshot 与后续对象/指标查询必须位于同一
 SQLite 读事务(BEGIN … COMMIT)内,避免并发发布时看到混版。本模块不自动开事务,
@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -24,6 +25,8 @@ from data2agent.connect.mapping_apply import (
     apply_object,
 )
 from data2agent.metamodel.dataset_publish_contract import (
+    evaluate_publish,
+    evaluate_rollback,
     is_dataset_ready,
     is_valid_build_table,
     make_build_table,
@@ -38,8 +41,11 @@ from data2agent.metamodel.versioning import (
     parse_object_manifest,
 )
 
+logger = logging.getLogger(__name__)
+
 SnapshotReason = Literal["not_published", "snapshot_corrupt"]
 BuildOutcome = Literal["ok", "conflict", "failed"]
+ActionOutcome = Literal["ok", "idempotent", "not_found", "conflict", "error"]
 
 
 class PublishedSnapshotError(Exception):
@@ -78,7 +84,7 @@ class BuildDatasetResult:
     source: str
     dataset_version: str | None
     previous_dataset_version: str | None
-    status: Literal["building", "failed"] | None
+    status: Literal["building", "failed", "published"] | None
     ready: bool
     published: bool
     results: list[ObjectApplyResult] = field(default_factory=list)
@@ -86,6 +92,20 @@ class BuildDatasetResult:
     reason_code: str | None = None
     error: str | None = None
     error_id: str | None = None
+
+
+@dataclass
+class DatasetMutationResult:
+    """publish/rollback 领域结果;HTTP 层映射 200/404/409/500。"""
+
+    executed: bool
+    dataset_version: str
+    outcome: ActionOutcome
+    reason_code: str | None = None
+    http_status: int | None = None
+    error: str | None = None
+    error_id: str | None = None
+    note: str = ""
 
 
 def _quote_ident(name: str) -> str:
@@ -110,6 +130,11 @@ def _count_rows(store: LandingStore, table: str) -> int:
 def _safe_error(detail: str) -> tuple[str, str]:
     error_id = hashlib.sha256(detail.encode("utf-8")).hexdigest()[:12]
     return "数据集构建失败", error_id
+
+
+def _safe_action_error(detail: str) -> tuple[str, str]:
+    error_id = hashlib.sha256(detail.encode("utf-8")).hexdigest()[:12]
+    return "数据集发布操作失败", error_id
 
 
 def _drop_table_best_effort(store: LandingStore, table: str | None) -> None:
@@ -227,6 +252,95 @@ def _parse_template_snapshot(
     return pack
 
 
+def _validate_version_tables(
+    store: LandingStore,
+    ds: DatasetVersionRecord,
+    objs: list[ObjectVersionRecord],
+    *,
+    expected_status: str,
+) -> str | None:
+    """物理表完整性校验(临界事务外)。失败返回 reason_code,成功返回 None。"""
+    manifest = parse_object_manifest(ds.object_manifest)
+    if not manifest:
+        return "not_ready"
+    by_name = {o.object: o for o in objs if o.dataset_version == ds.dataset_version}
+    if set(by_name) != set(manifest):
+        return "not_ready"
+    try:
+        _parse_template_snapshot(
+            ds.template_snapshot,
+            expected_version=ds.template_version,
+            manifest=manifest,
+        )
+    except PublishedSnapshotError:
+        return "not_ready"
+    for name in manifest:
+        row = by_name[name]
+        if row.status != expected_status:
+            return "not_ready"
+        if row.purged_at is not None or not row.build_table:
+            return "not_ready"
+        try:
+            table = validate_build_table(row.build_table)
+        except ValueError:
+            return "not_ready"
+        if not _table_exists(store, table):
+            return "not_ready"
+        if _count_rows(store, table) != row.row_count:
+            return "not_ready"
+    return None
+
+
+def _run_immediate_txn(store: LandingStore, body: Callable[[], None]) -> None:
+    """BEGIN IMMEDIATE 短事务;失败整段 ROLLBACK。禁止在 body 内扫对象数据表。"""
+    isolation = store.con.isolation_level
+    store.con.isolation_level = None
+    try:
+        store.con.execute("BEGIN IMMEDIATE")
+        try:
+            body()
+            store.con.execute("COMMIT")
+        except Exception:
+            try:
+                store.con.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+    finally:
+        store.con.isolation_level = isolation
+
+
+def _gc_retired_physical_tables(store: LandingStore, source: str) -> None:
+    """临界事务外 best-effort GC:永不清理 current 与 current.previous。"""
+    published = store.get_published_dataset(source)
+    if published is None:
+        return
+    protected = {published.dataset_version}
+    if published.previous_dataset_version:
+        protected.add(published.previous_dataset_version)
+    retired, _ = store.list_dataset_versions(
+        source=source, status="retired", limit=500, offset=0,
+    )
+    now = _now()
+    for ds in retired:
+        if ds.dataset_version in protected:
+            continue
+        for obj in store.list_object_versions(ds.dataset_version):
+            table = obj.build_table
+            if not table or obj.purged_at is not None:
+                continue
+            try:
+                _drop_table_best_effort(store, table)
+                store.purge_object_build_table(
+                    ds.dataset_version, obj.object, purged_at=now,
+                )
+            except Exception:
+                logger.warning(
+                    "retention GC failed for %s/%s",
+                    ds.dataset_version, obj.object, exc_info=True,
+                )
+
+
 def resolve_published_snapshot(
     store: LandingStore, source: str,
 ) -> PublishedDatasetSnapshot:
@@ -280,6 +394,247 @@ def resolve_published_snapshot(
     )
 
 
+def publish_dataset(store: LandingStore, version: str) -> DatasetMutationResult:
+    """原子发布候选数据集;幂等、陈旧 previous→409;成功后 best-effort GC。"""
+    candidate = store.get_dataset_version(version)
+    if candidate is None:
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome="not_found",
+            reason_code="not_found",
+            http_status=404,
+            note="数据集版本不存在",
+        )
+    source = candidate.source
+    objects = store.list_object_versions(version)
+    current = store.get_published_dataset(source)
+    decision = evaluate_publish(
+        candidate=candidate, objects=objects, current_published=current,
+    )
+    if decision.outcome == "idempotent":
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome="idempotent",
+            note="already published",
+        )
+    if decision.outcome != "execute":
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome=decision.outcome,  # type: ignore[arg-type]
+            reason_code=decision.reason_code,
+            http_status=decision.http_status,
+            note=decision.reason_code or "conflict",
+        )
+
+    physical = _validate_version_tables(
+        store, candidate, objects, expected_status="built",
+    )
+    if physical is not None:
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome="conflict",
+            reason_code=physical,
+            http_status=409,
+            note=physical,
+        )
+
+    run_id = store.start_run(source, "publish")
+    now = _now()
+
+    def _txn() -> None:
+        cand = store.get_dataset_version(version)
+        objs = store.list_object_versions(version)
+        cur = store.get_published_dataset(source)
+        again = evaluate_publish(
+            candidate=cand, objects=objs, current_published=cur,
+        )
+        if again.outcome != "execute":
+            raise RuntimeError(f"publish recheck:{again.outcome}:{again.reason_code}")
+        if cur is not None:
+            for obj in store.list_object_versions(cur.dataset_version):
+                store.update_object_lifecycle(
+                    cur.dataset_version, obj.object,
+                    status="retired", commit=False,
+                )
+            store.update_dataset_lifecycle(
+                cur.dataset_version, status="retired", commit=False,
+            )
+        for obj in objs:
+            store.update_object_lifecycle(
+                version, obj.object,
+                status="published", published_at=now, commit=False,
+            )
+        store.update_dataset_lifecycle(
+            version, status="published", published_at=now, commit=False,
+        )
+        store.set_run_dataset_version(run_id, version, commit=False)
+
+    try:
+        _run_immediate_txn(store, _txn)
+    except Exception as e:
+        summary, error_id = _safe_action_error(str(e))
+        try:
+            store.finish_run(
+                run_id, tables=0, rows=0, status="failed", detail=summary,
+            )
+        except Exception:
+            pass
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome="error",
+            http_status=500,
+            error=summary,
+            error_id=error_id,
+            note=summary,
+        )
+
+    store.finish_run(
+        run_id,
+        tables=len(objects),
+        rows=sum(o.row_count for o in objects),
+        status="ok",
+        detail=f"published: {version}",
+    )
+    try:
+        _gc_retired_physical_tables(store, source)
+    except Exception:
+        logger.warning("retention GC after publish failed", exc_info=True)
+
+    return DatasetMutationResult(
+        executed=True,
+        dataset_version=version,
+        outcome="ok",
+        note="published",
+    )
+
+
+def rollback_dataset(store: LandingStore, version: str) -> DatasetMutationResult:
+    """一步回滚到 current.previous;幂等;成功后 best-effort GC。"""
+    target = store.get_dataset_version(version)
+    if target is None:
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome="not_found",
+            reason_code="not_found",
+            http_status=404,
+            note="数据集版本不存在",
+        )
+    source = target.source
+    current = store.get_published_dataset(source)
+    decision = evaluate_rollback(target=target, current_published=current)
+    if decision.outcome == "idempotent":
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome="idempotent",
+            note="already current",
+        )
+    if decision.outcome != "execute":
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome=decision.outcome,  # type: ignore[arg-type]
+            reason_code=decision.reason_code,
+            http_status=decision.http_status,
+            note=decision.reason_code or "conflict",
+        )
+
+    assert current is not None
+    target_objs = store.list_object_versions(version)
+    physical = _validate_version_tables(
+        store, target, target_objs, expected_status="retired",
+    )
+    if physical is not None:
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome="conflict",
+            reason_code=physical,
+            http_status=409,
+            note=physical,
+        )
+
+    leaving = current.dataset_version
+    run_id = store.start_run(source, "rollback")
+    now = _now()
+
+    def _txn() -> None:
+        tgt = store.get_dataset_version(version)
+        cur = store.get_published_dataset(source)
+        again = evaluate_rollback(target=tgt, current_published=cur)
+        if again.outcome != "execute":
+            raise RuntimeError(
+                f"rollback recheck:{again.outcome}:{again.reason_code}"
+            )
+        assert cur is not None
+        for obj in store.list_object_versions(cur.dataset_version):
+            store.update_object_lifecycle(
+                cur.dataset_version, obj.object,
+                status="retired", commit=False,
+            )
+        store.update_dataset_lifecycle(
+            cur.dataset_version, status="retired", commit=False,
+        )
+        for obj in store.list_object_versions(version):
+            store.update_object_lifecycle(
+                version, obj.object,
+                status="published", published_at=now, commit=False,
+            )
+        store.update_dataset_lifecycle(
+            version,
+            status="published",
+            published_at=now,
+            previous_dataset_version=leaving,
+            commit=False,
+        )
+        store.set_run_dataset_version(run_id, version, commit=False)
+
+    try:
+        _run_immediate_txn(store, _txn)
+    except Exception as e:
+        summary, error_id = _safe_action_error(str(e))
+        try:
+            store.finish_run(
+                run_id, tables=0, rows=0, status="failed", detail=summary,
+            )
+        except Exception:
+            pass
+        return DatasetMutationResult(
+            executed=False,
+            dataset_version=version,
+            outcome="error",
+            http_status=500,
+            error=summary,
+            error_id=error_id,
+            note=summary,
+        )
+
+    store.finish_run(
+        run_id,
+        tables=len(target_objs),
+        rows=sum(o.row_count for o in target_objs),
+        status="ok",
+        detail=f"rolled back to: {version}",
+    )
+    try:
+        _gc_retired_physical_tables(store, source)
+    except Exception:
+        logger.warning("retention GC after rollback failed", exc_info=True)
+
+    return DatasetMutationResult(
+        executed=True,
+        dataset_version=version,
+        outcome="ok",
+        note="rolled back",
+    )
+
+
 def build_dataset(
     store: LandingStore,
     pack: TemplatePack,
@@ -288,7 +643,7 @@ def build_dataset(
     auto_publish: bool = False,
     threshold: float = DEFAULT_BREAKER_THRESHOLD,
 ) -> BuildDatasetResult:
-    """构建完整候选数据集;成功后保持 building+ready,auto_publish 由 T06 落地。"""
+    """构建完整候选数据集;成功后保持 building+ready,或 auto_publish 原子发布。"""
     members = enabled_object_bindings(pack, source)
     if not members:
         return BuildDatasetResult(
@@ -474,7 +829,31 @@ def build_dataset(
     objs = store.list_object_versions(dataset_version)
     ready = bool(ds and is_dataset_ready(ds, objs))
     if auto_publish:
-        raise NotImplementedError("publish_dataset is M2-T06")
+        pub = publish_dataset(store, dataset_version)
+        if pub.outcome in ("ok", "idempotent"):
+            return BuildDatasetResult(
+                source=source,
+                dataset_version=dataset_version,
+                previous_dataset_version=previous,
+                status="published",
+                ready=False,
+                published=True,
+                results=results,
+                outcome="ok",
+            )
+        return BuildDatasetResult(
+            source=source,
+            dataset_version=dataset_version,
+            previous_dataset_version=previous,
+            status="building",
+            ready=ready,
+            published=False,
+            results=results,
+            outcome="failed",
+            reason_code=pub.reason_code or "publish_failed",
+            error=pub.error or pub.note or "发布失败",
+            error_id=pub.error_id,
+        )
     return BuildDatasetResult(
         source=source,
         dataset_version=dataset_version,

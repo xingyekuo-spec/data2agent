@@ -46,6 +46,7 @@ from ..admin_common.secrets_file import apply_secrets_to_environ, save_secrets
 from ..admin_common.setup_yaml import build_platform_yaml, write_yaml
 from ..connect.config import ConnectConfig, load_config
 from ..connect.landing import LandingStore
+from ..connect.dataset_publish import publish_dataset, rollback_dataset
 from ..connect.mapping_apply import MappingCircuitBreaker, apply_object, apply_objects
 from ..metamodel.dataset_publish_contract import make_build_table
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
@@ -2141,9 +2142,24 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return obs.build_pipeline(db, require_pack(), cfg, default_source(),
                                   probes=probes, component_version=component_version)
 
-    # ---- v0.3 datasets(M1 只读;publish/rollback 在 M2 前 fail-closed)----
+    # ---- v0.3 datasets(M1 只读;M2-T06 publish/rollback 原子引擎)----
 
-    _STUB_501 = "契约桩:端点已声明,将在所属里程碑实现;不得视为成功或空数据"
+    def _map_dataset_mutation(result) -> DatasetActionResult:
+        if result.outcome in ("ok", "idempotent"):
+            return DatasetActionResult(
+                executed=result.executed,
+                dataset_version=result.dataset_version,
+                note=result.note or "",
+            )
+        if result.outcome == "not_found":
+            raise HTTPException(404, f"数据集版本 {result.dataset_version} 不存在")
+        if result.outcome == "conflict":
+            detail = result.reason_code or result.note or "冲突"
+            raise HTTPException(409, detail)
+        error_id = result.error_id or uuid.uuid4().hex[:12]
+        raise HTTPException(
+            500, f"数据集发布操作失败(error_id={error_id})",
+        )
 
     @api.get(
         "/datasets",
@@ -2196,9 +2212,9 @@ def create_app(landing: str | None = None, templates: str = "templates",
         },
         tags=["v0.3"],
     )
-    def datasets_publish(version: str) -> None:
-        """M2 原子发布;引擎落地前 fail-closed,不写对象表或版本状态。"""
-        raise HTTPException(501, _STUB_501)
+    def datasets_publish(version: str) -> DatasetActionResult:
+        """原子发布候选数据集版本。"""
+        return _map_dataset_mutation(publish_dataset(store(), version))
 
     @api.post(
         "/datasets/{version}/rollback",
@@ -2211,13 +2227,12 @@ def create_app(landing: str | None = None, templates: str = "templates",
         },
         tags=["v0.3"],
     )
-    def datasets_rollback(version: str) -> None:
-        """M2 回滚上一稳定版本;引擎落地前 fail-closed,不写对象表或版本状态。"""
-        raise HTTPException(501, _STUB_501)
+    def datasets_rollback(version: str) -> DatasetActionResult:
+        """回滚到直接上一稳定版本。"""
+        return _map_dataset_mutation(rollback_dataset(store(), version))
 
     # ---- v0.2 数据浏览与模板(已实现)----
-    # 历史注释曾把下列端点标为契约桩;M4–M6 已落地,publish/rollback 以外
-    # 的 501 桩已清空。
+    # 历史注释曾把下列端点标为契约桩;M4–M6 已落地,publish/rollback 已由 T06 接通。
 
     @api.get(
         "/data/raw",

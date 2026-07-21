@@ -92,7 +92,7 @@ NAMED_SUCCESS_SCHEMAS = {
     ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
 }
 
-# v0.3 M2-T01: publish/rollback OpenAPI 已冻结最终错误码;运行时引擎在 T06 前仍 501。
+# v0.3 M2-T06: publish/rollback OpenAPI 冻结 200/404/409/500;运行时映射真实引擎结果。
 DATASET_ACTION_ROUTES: set[tuple[str, str]] = {
     ("POST", "/api/datasets/{version}/publish"),
     ("POST", "/api/datasets/{version}/rollback"),
@@ -103,16 +103,16 @@ DATASET_ACTION_SUCCESS_SCHEMAS: dict[tuple[str, str], str] = {
     ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
 }
 
-# (method, concrete path, kwargs) for runtime fail-closed checks until T06
-DATASET_ACTION_RUNTIME_STUBS: list[tuple[str, str, dict]] = [
+# 缺失版本应 404(不再是 501 契约桩)
+DATASET_ACTION_RUNTIME_MISSING: list[tuple[str, str, dict]] = [
     ("post", "/api/datasets/ds-demo/publish", {}),
     ("post", "/api/datasets/ds-demo/rollback", {}),
 ]
 
-# 兼容旧测试名:STUB_* 仍指向数据集动作路由
+# 兼容旧测试名
 STUB_API_ROUTES = DATASET_ACTION_ROUTES
 STUB_SUCCESS_SCHEMAS = DATASET_ACTION_SUCCESS_SCHEMAS
-STUB_RUNTIME_CALLS = DATASET_ACTION_RUNTIME_STUBS
+STUB_RUNTIME_CALLS = DATASET_ACTION_RUNTIME_MISSING
 
 
 @pytest.fixture()
@@ -492,7 +492,7 @@ def test_apply_action_body_is_dedicated_in_openapi(tmp_path):
 
 
 def test_v03_dataset_action_openapi_declares_final_errors(tmp_path):
-    """M2-T01: OpenAPI 冻结 200/404/409/500;不再声明 501。运行时引擎前仍 501。"""
+    """M2-T06: OpenAPI 冻结 200/404/409/500;缺失版本运行时 404。"""
     assert DATASET_ACTION_ROUTES == {
         ("POST", "/api/datasets/{version}/publish"),
         ("POST", "/api/datasets/{version}/rollback"),
@@ -510,10 +510,9 @@ def test_v03_dataset_action_openapi_declares_final_errors(tmp_path):
         assert "500" in op["responses"], path
         assert "501" not in op["responses"], path
     client = TestClient(_openapi_app(tmp_path))
-    for method, path, kwargs in DATASET_ACTION_RUNTIME_STUBS:
+    for method, path, kwargs in DATASET_ACTION_RUNTIME_MISSING:
         r = getattr(client, method)(path, **kwargs)
-        assert r.status_code == 501, path
-        assert "契约桩" in r.json()["detail"]
+        assert r.status_code == 404, path
 
 
 def test_proposals_no_longer_stubbed(tmp_path):

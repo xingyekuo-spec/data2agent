@@ -67,7 +67,19 @@ def test_datasets_list_and_detail_with_objects(tmp_path):
     assert missing.status_code == 404
 
 
-def test_datasets_publish_and_rollback_are_fail_closed(tmp_path):
+def test_datasets_publish_and_rollback_map_missing_to_404(tmp_path):
+    store = LandingStore(tmp_path / "landing.sqlite")
+    client = _client(store)
+    for path in (
+        "/api/datasets/ds-missing/publish",
+        "/api/datasets/ds-missing/rollback",
+    ):
+        r = client.post(path)
+        assert r.status_code == 404
+        assert "不存在" in r.json()["detail"] or "not_found" in r.json()["detail"]
+
+
+def test_datasets_publish_conflict_when_not_ready(tmp_path):
     store = LandingStore(tmp_path / "landing.sqlite")
     con = store.con
     con.execute(
@@ -77,26 +89,11 @@ def test_datasets_publish_and_rollback_are_fail_closed(tmp_path):
         (SOURCE,),
     )
     con.commit()
-    before = con.execute("SELECT status FROM d2a_dataset_version").fetchone()[0]
-
     client = _client(store)
-    for path in (
-        "/api/datasets/ds-build/publish",
-        "/api/datasets/ds-build/rollback",
-    ):
-        r = client.post(path)
-        assert r.status_code == 501
-        assert "契约桩" in r.json()["detail"]
-
+    r = client.post("/api/datasets/ds-build/publish")
+    assert r.status_code == 409
     after = con.execute("SELECT status FROM d2a_dataset_version").fetchone()[0]
-    assert after == before == "building"
-    tables = {
-        row[0]
-        for row in con.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'obj_%'"
-        )
-    }
-    assert tables == set()
+    assert after == "building"
 
 
 def test_datasets_error_is_sanitized_and_has_error_id(tmp_path):

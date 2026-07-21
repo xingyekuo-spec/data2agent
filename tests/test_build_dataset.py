@@ -334,6 +334,13 @@ def test_active_build_run_blocks_new_candidate(landing, pack):
     assert total == 1 and rows[0].dataset_version == "ds-active"
 
 
-def test_auto_publish_not_implemented_yet(landing, pack):
-    with pytest.raises(NotImplementedError, match="T06"):
-        build_dataset(landing, pack, SOURCE, auto_publish=True)
+def test_auto_publish_via_build_dataset(landing, pack):
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.outcome == "ok"
+    assert result.published is True
+    assert result.status == "published"
+    pub = landing.get_published_dataset(SOURCE)
+    assert pub is not None
+    assert pub.dataset_version == result.dataset_version
+    objs = landing.list_object_versions(result.dataset_version)
+    assert all(o.status == "published" for o in objs)

@@ -636,8 +636,12 @@ class LandingStore:
         previous_dataset_version: str | None = None,
         error: str | None = None,
         clear_error: bool = False,
+        commit: bool = True,
     ) -> None:
-        """仅更新状态机字段;不得改写冻结的模板/清单/built_at。"""
+        """仅更新状态机字段;不得改写冻结的模板/清单/built_at。
+
+        commit=False 供发布/回滚临界事务批量提交。
+        """
         sets = ["status = ?"]
         params: list[object] = [status]
         if published_at is not None:
@@ -659,7 +663,8 @@ class LandingStore:
         )
         if cur.rowcount != 1:
             raise ValueError(f"数据集版本 {dataset_version} 不存在")
-        self.con.commit()
+        if commit:
+            self.con.commit()
 
     def insert_object_version(self, record: ObjectVersionRecord) -> None:
         self.con.execute(
@@ -691,6 +696,7 @@ class LandingStore:
         status: str,
         published_at: str | None = None,
         batch_id: str | None = None,
+        commit: bool = True,
     ) -> None:
         """更新对象状态/发布时间/批次;不得改写 binding/row_count/build_table。"""
         sets = ["status = ?"]
@@ -710,7 +716,8 @@ class LandingStore:
         if cur.rowcount != 1:
             raise ValueError(
                 f"对象版本 {dataset_version}/{object_name} 不存在")
-        self.con.commit()
+        if commit:
+            self.con.commit()
 
     def update_object_build_result(
         self,
@@ -754,6 +761,7 @@ class LandingStore:
         object_name: str,
         *,
         purged_at: str,
+        commit: bool = True,
     ) -> None:
         """GC tombstone:仅 retired 对象可将 build_table 置空并写入 purged_at。"""
         cur = self.con.execute(
@@ -767,9 +775,12 @@ class LandingStore:
             raise ValueError(
                 f"无法清理对象物理表 {dataset_version}/{object_name}"
             )
-        self.con.commit()
+        if commit:
+            self.con.commit()
 
-    def set_run_dataset_version(self, run_id: int, dataset_version: str) -> None:
+    def set_run_dataset_version(
+        self, run_id: int, dataset_version: str, *, commit: bool = True,
+    ) -> None:
         """将 Run 绑定到真实数据集版本;未知版本 fail-closed。"""
         if self.get_dataset_version(dataset_version) is None:
             raise ValueError(f"数据集版本 {dataset_version} 不存在")
@@ -779,7 +790,8 @@ class LandingStore:
         )
         if cur.rowcount != 1:
             raise ValueError(f"运行 {run_id} 不存在")
-        self.con.commit()
+        if commit:
+            self.con.commit()
 
     def list_dataset_versions(
         self,

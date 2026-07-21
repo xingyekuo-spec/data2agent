@@ -875,7 +875,7 @@ class DatasetDetail(DatasetSummary):
 
 
 class DatasetActionResult(BaseModel):
-    """publish/rollback 成功形状(M2);引擎在 T06 落地前路由仍 fail-closed。"""
+    """publish/rollback 成功形状(M2-T06)。"""
 
     executed: bool
     dataset_version: str
