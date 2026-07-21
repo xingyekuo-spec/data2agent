@@ -492,7 +492,7 @@ def publish_dataset(store: LandingStore, version: str) -> DatasetMutationResult:
     except _TxnRecheckAbort as e:
         try:
             store.finish_run(
-                run_id, tables=0, rows=0, status="ok",
+                run_id, tables=0, rows=0, status="aborted",
                 detail=f"publish recheck:{e.outcome}",
             )
         except Exception:
@@ -639,7 +639,7 @@ def rollback_dataset(store: LandingStore, version: str) -> DatasetMutationResult
     except _TxnRecheckAbort as e:
         try:
             store.finish_run(
-                run_id, tables=0, rows=0, status="ok",
+                run_id, tables=0, rows=0, status="aborted",
                 detail=f"rollback recheck:{e.outcome}",
             )
         except Exception:
