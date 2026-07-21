@@ -224,7 +224,7 @@ def _run_apply_once(args) -> bool:
         mark = "⚠ 熔断" if r.status == "aborted" else "ok"
         print(f"  - {r.object:<16} 映射 {r.mapped:>5} 行, 隔离 {r.quarantined} 行  [{mark}]")
     if report.aborted:
-        print(f"映射中止对象:{[r.object for r in report.aborted]}(旧对象表保留,"
+        print(f"映射中止对象:{[r.object for r in report.aborted]}(候选表未写入,"
               "明细见 d2a_quarantine)")
         return True
     print(f"映射应用完成:{len(report.results)} 个对象 → {args.landing}")
