@@ -49,8 +49,8 @@ export function datasetStatusLabel(
       if (objects && isBuildingReady(summary, objects)) {
         return '待发布'
       }
-      // 列表无对象明细时,building 候选统一标「待发布」语义入口(后端 not_ready → 409)
-      return objects ? '构建中' : '待发布'
+      // 无对象明细或未就绪时保守标「构建中」。
+      return '构建中'
     default:
       return '构建中'
   }
@@ -63,11 +63,11 @@ export function canPublish(
   if (summary.status !== 'building') {
     return false
   }
-  // 有对象明细时必须 building-ready;列表无明细时仅允许有完整 manifest 的候选入口。
-  if (objects !== undefined) {
-    return isBuildingReady(summary, objects)
+  // 无对象明细时不开放发布;有明细时必须 building-ready。
+  if (objects === undefined) {
+    return false
   }
-  return Boolean(summary.object_manifest?.length)
+  return isBuildingReady(summary, objects)
 }
 
 export function canRollback(summary: Pick<DatasetSummary, 'status' | 'previous_dataset_version'>): boolean {

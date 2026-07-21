@@ -45,8 +45,7 @@ describe('datasetStatus', () => {
   })
 
   it('gates publish on building-ready and rollback on published+previous', () => {
-    expect(canPublish({ status: 'building', object_manifest: ['Customer'] })).toBe(true)
-    expect(canPublish({ status: 'building', object_manifest: null })).toBe(false)
+    expect(canPublish({ status: 'building', object_manifest: ['Customer'] })).toBe(false)
     expect(canPublish(
       { status: 'building', object_manifest: ['Customer', 'Material'] },
       [

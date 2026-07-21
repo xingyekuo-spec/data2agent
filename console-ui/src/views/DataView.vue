@@ -36,6 +36,7 @@ const {
   list: datasetList,
   total: datasetTotal,
   listRefreshError,
+  objectsByVersion,
   detail: datasetDetail,
   detailRefreshError,
   actionResult,
@@ -630,7 +631,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               <el-table-column label="状态" width="100">
                 <template #default="{ row }">
                   <span :data-testid="`dataset-status-${row.dataset_version}`">
-                    {{ datasetStatusLabel(row) }}
+                    {{ datasetStatusLabel(row, objectsByVersion[row.dataset_version]) }}
                   </span>
                 </template>
               </el-table-column>
@@ -654,7 +655,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                     详情
                   </el-button>
                   <el-button
-                    v-if="canPublish(row)"
+                    v-if="canPublish(row, objectsByVersion[row.dataset_version])"
                     size="small"
                     type="primary"
                     text

@@ -58,6 +58,7 @@ describe('DataView(M4)', () => {
     const panes = wrapper.findAll('.el-tabs__item')
     await panes.find((p) => p.text().includes('数据集'))?.trigger('click')
     await flushPromises()
+    await flushPromises()
     const table = wrapper.find('[data-testid="datasets-table"]')
     expect(table.exists()).toBe(true)
     expect(table.text()).toContain('待发布')
@@ -75,6 +76,19 @@ describe('DataView(M4)', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="dataset-objects-table"]').text()).toContain('Customer')
     expect(wrapper.find('[data-testid="dataset-objects-table"]').text()).toContain('built')
+  })
+
+  it('stage-only apply 返回 published=false', async () => {
+    const wrapper = await mountView()
+    const panes = wrapper.findAll('.el-tabs__item')
+    await panes.find((p) => p.text().includes('数据集'))?.trigger('click')
+    await flushPromises()
+    await flushPromises()
+    const toggle = wrapper.find('[data-testid="stage-only-toggle"] input')
+    await toggle.setValue(true)
+    await wrapper.find('[data-testid="apply-run"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="apply-result"]').text()).toContain('published=false')
   })
 
   it('对象目录展示 published object_version', async () => {

@@ -20,6 +20,7 @@ type DatasetSummary = components['schemas']['DatasetSummary']
 type DatasetDetail = components['schemas']['DatasetDetail']
 type DatasetActionResult = components['schemas']['DatasetActionResult']
 type ApplyActionResult = components['schemas']['ApplyActionResult']
+type ObjectVersionSummary = components['schemas']['ObjectVersionSummary']
 
 export const useDatasetsStore = defineStore('datasets', () => {
   const filters = reactive<{ source: string; status: DatasetSummary['status'] | '' }>({
@@ -30,6 +31,8 @@ export const useDatasetsStore = defineStore('datasets', () => {
   const list = ref<RequestState<DatasetSummary[]>>({ status: 'idle' })
   const total = ref(0)
   const listRefreshError = ref<ApiError | null>(null)
+  /** building 候选的对象明细缓存,用于列表 building-ready 门禁。 */
+  const objectsByVersion = ref<Record<string, ObjectVersionSummary[]>>({})
   let listGen = 0
 
   const detail = ref<RequestState<DatasetDetail> | null>(null)
@@ -64,6 +67,25 @@ export const useDatasetsStore = defineStore('datasets', () => {
       list.value = { status: 'success', data: result.data.items }
       total.value = result.data.total
       listRefreshError.value = null
+      const building = result.data.items.filter((item) => item.status === 'building')
+      if (building.length > 0) {
+        const details = await Promise.all(
+          building.map(async (item) => {
+            const detailResult = await getDatasetDetail(item.dataset_version)
+            return [item.dataset_version, detailResult] as const
+          }),
+        )
+        if (gen !== listGen) {
+          return
+        }
+        const next: Record<string, ObjectVersionSummary[]> = { ...objectsByVersion.value }
+        for (const [version, detailResult] of details) {
+          if (detailResult.ok) {
+            next[version] = detailResult.data.objects ?? []
+          }
+        }
+        objectsByVersion.value = next
+      }
     } else if (firstLoad) {
       list.value = { status: 'error', error: result.error }
     } else {
@@ -85,6 +107,10 @@ export const useDatasetsStore = defineStore('datasets', () => {
     if (result.ok) {
       detail.value = { status: 'success', data: result.data }
       detailRefreshError.value = null
+      objectsByVersion.value = {
+        ...objectsByVersion.value,
+        [version]: result.data.objects ?? [],
+      }
     } else if (firstLoad || !detail.value || detail.value.status !== 'success') {
       detail.value = { status: 'error', error: result.error }
     } else {
@@ -166,6 +192,7 @@ export const useDatasetsStore = defineStore('datasets', () => {
     list,
     total,
     listRefreshError,
+    objectsByVersion,
     detail,
     detailVersion,
     detailRefreshError,

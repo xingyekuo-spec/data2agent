@@ -66,6 +66,8 @@ export interface ScenarioFixture {
   datasetActionStatus: number
   applyAction: ApplyActionResult
   applyActionStatus: number
+  /** stage-only(publish=false) 专用响应;缺省时由 handler 派生 published=false。 */
+  applyStageOnlyAction?: ApplyActionResult
   retryAction: RetryActionResult | { detail: string; reason_code?: string; run_id?: number | null; step_id?: number | null; detail_path?: string | null }
   retryActionStatus: number
 }
@@ -980,4 +982,14 @@ export const baseFixture: ScenarioFixture = {
     previous_dataset_version: DS_PREVIOUS,
   },
   applyActionStatus: 200,
+  applyStageOnlyAction: {
+    executed: true,
+    results: [
+      { object: 'Customer', total: 36, mapped: 36, quarantined: 0, status: 'ok' },
+    ],
+    aborted: [],
+    dataset_version: DS_READY,
+    published: false,
+    previous_dataset_version: DS_PUBLISHED,
+  },
 }

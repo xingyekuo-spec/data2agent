@@ -86,6 +86,9 @@ describe('datasets store', () => {
 
   it('publish refreshes list; rollback follows activated version', async () => {
     vi.mocked(getDatasets).mockResolvedValue(ok({ items: [], total: 0 }))
+    vi.mocked(getDatasetDetail).mockResolvedValue(
+      ok({ ...summary({ dataset_version: 'ds-1', status: 'published' }), objects: [] }),
+    )
     const published: DatasetActionResult = {
       executed: true,
       dataset_version: 'ds-2',
@@ -128,6 +131,20 @@ describe('datasets store', () => {
     vi.mocked(getDatasets).mockResolvedValue(
       ok({ items: [summary({ dataset_version: 'ds-stage', status: 'building' })], total: 1 }),
     )
+    vi.mocked(getDatasetDetail).mockResolvedValue(
+      ok({
+        ...summary({ dataset_version: 'ds-stage', status: 'building' }),
+        objects: [{
+          object: 'Customer',
+          object_version: 'ov-1',
+          binding_hash: 'sha256:aa',
+          row_count: 10,
+          status: 'built',
+          built_at: '2026-07-21T10:00:00+08:00',
+          published_at: null,
+        }],
+      }),
+    )
 
     const store = useDatasetsStore()
     const okApply = await store.apply({ source: 'digiwin_e10', publish: false })
@@ -138,5 +155,6 @@ describe('datasets store', () => {
       expect(store.applyResult.data.published).toBe(false)
       expect(store.applyResult.data.dataset_version).toBe('ds-stage')
     }
+    expect(store.objectsByVersion['ds-stage']?.[0]?.status).toBe('built')
   })
 })

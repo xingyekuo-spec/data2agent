@@ -270,8 +270,8 @@ async function runMock(browser) {
     await page.locator('[data-testid="stage-only-toggle"] input').check()
     await page.locator('[data-testid="apply-run"]').click()
     await page.locator('[data-testid="apply-result"]').waitFor({ state: 'visible' })
-    expect((await page.textContent('[data-testid="apply-result"]')).includes('published='),
-      'M2:stage-only/apply 结果含 published 标志')
+    expect((await page.textContent('[data-testid="apply-result"]')).includes('published=false'),
+      'M2:stage-only/apply 结果含 published=false')
 
     // M6:MCP Lab Mock —— 查询表单、结果、建议卡入口,无写回控件
     await page.goto(`http://localhost:${MOCK_PORT}/v1/mcp`, { waitUntil: 'networkidle' })

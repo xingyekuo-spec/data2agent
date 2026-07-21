@@ -364,7 +364,7 @@ export function buildHandlers(): HttpHandler[] {
         return json({ detail: 'illegal_state' } satisfies HttpError, 409)
       }
       if (!current || current.previous_dataset_version !== version) {
-        return json({ detail: 'not_immediate_previous' } satisfies HttpError, 409)
+          return json({ detail: 'not_direct_previous' } satisfies HttpError, 409)
       }
       return json(
         {
@@ -375,11 +375,29 @@ export function buildHandlers(): HttpHandler[] {
         fixture.datasetActionStatus ?? 200,
       )
     }),
-    http.post('*/api/actions/apply', () => {
+    http.post('*/api/actions/apply', async ({ request }) => {
       const fail = transportFailure()
       if (fail) return fail
       const fixture = scenarioFixtures[getScenario()]
-      return json(fixture.applyAction, fixture.applyActionStatus ?? 200)
+      let publish = true
+      try {
+        const body = await request.json() as { publish?: boolean }
+        if (body && body.publish === false) {
+          publish = false
+        }
+      } catch {
+        publish = true
+      }
+      if (publish) {
+        return json(fixture.applyAction, fixture.applyActionStatus ?? 200)
+      }
+      const stage = fixture.applyStageOnlyAction ?? {
+        ...fixture.applyAction,
+        published: false,
+        dataset_version: 'ds-20260718-095000-e5f6',
+        previous_dataset_version: fixture.applyAction.previous_dataset_version,
+      }
+      return json(stage, fixture.applyActionStatus ?? 200)
     }),
   ]
 }
