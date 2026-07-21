@@ -425,7 +425,7 @@ class RetryActionError(BaseModel):
     detail: str  # safe summary, no traceback/SQL/sensitive values
     reason_code: Literal[
         "circuit_broken", "execution_failed", "observation_failed",
-        "preflight_failed",
+        "preflight_failed", "active_build", "empty_manifest", "empty_field_map",
     ]
     executed: bool  # whether apply_object started executing
     object: str

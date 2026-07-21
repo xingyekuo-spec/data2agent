@@ -1985,11 +1985,17 @@ def create_app(landing: str | None = None, templates: str = "templates",
         detail_path = f"/api/runs/{run_id}" if run_id is not None else None
 
         if result.outcome == "conflict":
+            conflict_code = result.reason_code or "preflight_failed"
+            if conflict_code not in (
+                "preflight_failed", "active_build",
+                "empty_manifest", "empty_field_map",
+            ):
+                conflict_code = "preflight_failed"
             return JSONResponse(
                 status_code=409,
                 content=RetryActionError(
                     detail=result.error or result.reason_code or "数据集构建冲突",
-                    reason_code="preflight_failed",
+                    reason_code=conflict_code,  # type: ignore[arg-type]
                     executed=False,
                     object=body.object,
                     status="aborted",

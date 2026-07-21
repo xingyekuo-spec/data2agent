@@ -325,3 +325,36 @@ def test_publish_supersedes_prior_quarantine_stage_only_does_not(synced):
         (SOURCE, "Customer"),
     ).fetchall()
     assert all(r["batch_id"] != "old-batch" for r in unresolved)
+
+
+def test_retry_forwards_build_conflict_reason_code(synced, tmp_path, monkeypatch):
+    from data2agent.connect.config import load_config
+    from data2agent.connect.dataset_publish import BuildDatasetResult
+    from data2agent.console.contracts import RetryActionError
+
+    _src, landing, pack = synced
+    monkeypatch.setattr(
+        "data2agent.console.app.build_dataset",
+        lambda *_a, **_k: BuildDatasetResult(
+            source=SOURCE,
+            dataset_version=None,
+            previous_dataset_version=None,
+            status=None,
+            ready=False,
+            published=False,
+            outcome="conflict",
+            reason_code="active_build",
+            error="已有运行中的数据集构建",
+        ),
+    )
+    cfg = load_config(_cfg_file(tmp_path, _src, landing))
+    client = TestClient(create_app(landing.db_path, ROOT / "templates", cfg))
+    r = client.post(
+        "/api/actions/retry",
+        json={"source": SOURCE, "object": "Customer"},
+    )
+    assert r.status_code == 409
+    error = RetryActionError.model_validate(r.json())
+    assert error.reason_code == "active_build"
+    assert error.executed is False
+
