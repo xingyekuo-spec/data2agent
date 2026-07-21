@@ -552,14 +552,15 @@ def compute_nodes(
     except sqlite3.Error:
         published_version = None
 
-    # apply 对对象层的影响按真实状态区分:running/paused 是进行中,不是失败
+    # apply 对对象层的影响按真实状态区分:running/paused 表示候选构建中,
+    # 读侧仍只见上一完整 published(无部分更新)。
     apply_status = (apply_facts["latest"]["status"]
                     if apply_facts and apply_facts["latest"] else None)
     apply_impact: str | None = None
     if apply_status == "running":
-        apply_impact = "apply 运行中,对象层为进行中/部分更新结果"
+        apply_impact = "对象层仍服务旧版本(构建进行中)"
     elif apply_status == "paused":
-        apply_impact = "apply 窗口暂停,对象层为部分更新结果"
+        apply_impact = "对象层仍服务旧版本(构建窗口暂停)"
     elif apply_status not in (None, "ok"):
         apply_impact = "对象层仍服务旧版本(新构建失败,上一稳定结果)"
 

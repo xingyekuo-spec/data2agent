@@ -581,25 +581,28 @@ def test_objects_propagate_unknown_when_apply_type_legacy(db, pack, tmp_path):
 
 
 def test_apply_paused_is_not_failure_for_objects(db, pack, tmp_path):
-    """apply paused:对象层是"部分更新"(stale),不是"apply 失败"。"""
+    """apply paused:对象层仍服务旧完整版本(stale),不是 apply 失败或部分更新。"""
     _mk_obj(db, pack, "Customer", 5, FRESH)
     _run(db, "apply", "paused", FRESH, FRESH)
     nodes = _nodes(db, pack, _cfg(tmp_path), probes={"mcp": lambda: (True, "http")})
     assert nodes["mapping"]["status"] == "warning"
     assert nodes["objects"]["status"] == "stale"
-    assert "部分更新" in nodes["objects"]["status_reason"]
+    assert "对象层仍服务旧版本" in nodes["objects"]["status_reason"]
+    assert "部分更新" not in nodes["objects"]["status_reason"]
     assert "apply 失败" not in nodes["objects"]["status_reason"]
     assert nodes["mcp"]["status"] == "stale"
 
 
 def test_apply_running_is_not_failure_for_objects(db, pack, tmp_path):
-    """apply running:对象层是"进行中",不是"失败"。"""
+    """apply running:对象层仍服务旧完整版本,不是失败或部分更新。"""
     _mk_obj(db, pack, "Customer", 5, FRESH)
     _run(db, "apply", "running", FRESH)
     nodes = _nodes(db, pack, _cfg(tmp_path))
     assert nodes["mapping"]["status"] == "running"
     assert nodes["objects"]["status"] == "stale"
-    assert "进行中" in nodes["objects"]["status_reason"] or "部分更新" in nodes["objects"]["status_reason"]
+    assert "对象层仍服务旧版本" in nodes["objects"]["status_reason"]
+    assert "构建进行中" in nodes["objects"]["status_reason"]
+    assert "部分更新" not in nodes["objects"]["status_reason"]
     assert "apply 失败" not in nodes["objects"]["status_reason"]
 
 
