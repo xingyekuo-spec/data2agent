@@ -20,10 +20,26 @@ from ..mapping import build_select
 from ..metamodel.dataset_publish_contract import make_build_table, validate_build_table
 from ..metamodel.schema import ObjectTemplate, SourceBinding, TemplatePack
 from .landing import LandingStore, _now, raw_table_name
-
-DEFAULT_BREAKER_THRESHOLD = 0.05
+from .mapping_transform import (
+    DEFAULT_BREAKER_THRESHOLD,
+    transform_object_rows,
+    would_trip_breaker,
+)
 
 _TYPE_SQL = {"int": "INTEGER", "decimal": "REAL", "money": "REAL", "bool": "INTEGER"}
+
+__all__ = [
+    "ApplyReport",
+    "DEFAULT_BREAKER_THRESHOLD",
+    "MappingCircuitBreaker",
+    "ObjectApplyResult",
+    "apply_object",
+    "apply_objects",
+    "obj_table_name",
+    "transform_object_rows",
+    "would_trip_breaker",
+    "write_candidate_table",
+]
 
 
 class MappingCircuitBreaker(Exception):
@@ -69,100 +85,6 @@ class ApplyReport:
 def obj_table_name(object_name: str) -> str:
     """遗留稳定表名;M2 起不得作为发布写入目标。"""
     return f"obj_{object_name}"
-
-
-def _coerce(prop, value):
-    """按属性类型转换;返回 (值, 错误原因或 None)。"""
-    if value is None:
-        return None, None
-    try:
-        if prop.type == "int":
-            return int(value), None
-        if prop.type in ("decimal", "money"):
-            return float(value), None
-        if prop.type == "bool":
-            if value in (0, 1, True, False):
-                return int(bool(value)), None
-            return None, f"{prop.name}: 无法解释为 bool 的值 {value!r}"
-        return value, None
-    except (TypeError, ValueError):
-        return None, f"{prop.name}: 类型 {prop.type} 转换失败,值 {value!r}"
-
-
-def _apply_derived(binding, props: dict, row: dict) -> str | None:
-    """执行派生决策表(规则有序,首个匹配生效)。返回隔离原因或 None。"""
-    for prop_name, spec in binding.derived.items():
-        value = None
-        matched = False
-        for rule in spec.rules:
-            if all(row.get(f"__{col}") == expect for col, expect in rule.when.items()):
-                value, matched = rule.value, True
-                break
-        if not matched and spec.default is not None:
-            value, matched = spec.default, True
-        if not matched:
-            seen = {col: row.get(f"__{col}")
-                    for s in binding.derived.values()
-                    for r in s.rules for col in r.when}
-            return f"{prop_name}: 派生规则无匹配(源值 {seen})"
-        prop = props.get(prop_name)
-        if prop is not None and prop.type == "enum" and value not in prop.enum_values:
-            return f"{prop_name}: 派生值 {value!r} 不在枚举 {prop.enum_values} 内"
-        row[prop_name] = value
-    return None
-
-
-def transform_object_rows(
-    tpl: ObjectTemplate,
-    binding: SourceBinding,
-    raw_rows: list[dict],
-    exprs: dict,
-) -> tuple[list[dict], list[dict]]:
-    """纯转换:返回 (good_rows, quarantined_records)。不读写数据库。"""
-    props = {p.name: p for p in tpl.properties}
-    good: list[dict] = []
-    quarantined: list[dict] = []
-    seen_keys: set[tuple] = set()
-
-    for raw in raw_rows:
-        row, reason = dict(raw), None
-        for name, expr in exprs.items():
-            prop = props.get(name)
-            if prop is None:
-                continue
-            v = row.get(name)
-            if expr.value_map is not None and v is not None:
-                if v not in expr.value_map:
-                    reason = f"{name}: 源码值 {v!r} 未在 map 中声明"
-                    break
-                v = expr.value_map[v]
-            if prop.type == "enum" and v is not None and v not in prop.enum_values:
-                reason = f"{name}: 取值 {v!r} 不在枚举 {prop.enum_values} 内"
-                break
-            v, err = _coerce(prop, v)
-            if err:
-                reason = err
-                break
-            row[name] = v
-        if reason is None:
-            reason = _apply_derived(binding, props, row)
-        if reason is None:
-            key = tuple(row.get(k) for k in tpl.keys)
-            if any(v is None for v in key):
-                reason = f"业务键缺失:{dict(zip(tpl.keys, key))}"
-            elif key in seen_keys:
-                reason = f"业务键重复:{dict(zip(tpl.keys, key))}"
-            else:
-                seen_keys.add(key)
-        if reason is not None:
-            quarantined.append({
-                "keys": {k: raw.get(k) for k in tpl.keys},
-                "reason": reason,
-                "raw": raw,
-            })
-        else:
-            good.append(row)
-    return good, quarantined
 
 
 def write_candidate_table(
@@ -234,7 +156,7 @@ def apply_object(
         landing.quarantine_supersede(source, tpl.object)
     landing.quarantine_add(source, tpl.object, quarantined, batch_id)
 
-    if total and len(quarantined) / total > threshold:
+    if would_trip_breaker(len(quarantined), total, threshold):
         raise MappingCircuitBreaker(
             f"{tpl.object}: 隔离率 {len(quarantined)}/{total} 超过阈值 {threshold:.0%},"
             f"映射中止,候选表未写入;隔离明细见 d2a_quarantine(batch {batch_id})",
