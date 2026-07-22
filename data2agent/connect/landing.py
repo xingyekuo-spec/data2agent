@@ -1,6 +1,6 @@
 """原样落地层:raw_{source}__{table},按源主键 upsert,幂等。
 
-落地库为 SQLite(开发 / 展厅 / 首个工厂现场验证);单写者 + 多只读者,
+落地库为 SQLite(开发 / 参考链 / 首个工厂现场验证);单写者 + 多只读者,
 初始化即开 WAL + busy_timeout。PostgreSQL 属后续切片(触发信号见设计 §4)。
 系统表:d2a_audit_log(逐条源 SQL)、d2a_sync_run(逐轮汇总)。
 """

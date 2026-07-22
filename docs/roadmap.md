@@ -18,7 +18,7 @@ Completed:
 - Field lineage from object fields back to raw records, source columns, transforms, batches and dataset/object versions.
 - MCP evidence with principal/session/query/proposal records, unpredictable query IDs, result digests and proposal evidence checks.
 - Validation Run and JSON report covering the v0.3 release gate.
-- Docker showroom, Windows portable path and local SQLite demo chain remain available.
+- Windows portable path and local E10-like reference chain remain available for regression and acceptance checks.
 
 Still intentionally not claimed:
 
@@ -48,12 +48,12 @@ Recommended milestone order:
 
 Before v0.4 is complete, use v0.3 only as a controlled shadow trial:
 
-- single factory or showroom-like environment;
+- single factory or reference-chain-like environment;
 - read-only source account and whitelisted tables;
 - no ERP writeback and no replacement of existing business decisions;
 - human review of Agent conclusions;
 - daily backup of the landing database;
-- explicit `MOCK` / `DEMO` / `REAL` mode awareness in Console.
+- explicit `MOCK` / `REAL` mode awareness in Console.
 
 After v0.4 passes, the project can enter a formal factory production pilot with documented receipt, reconciliation, transport, capacity and recovery evidence.
 
@@ -65,3 +65,4 @@ After v0.4 passes, the project can enter a formal factory production pilot with 
 - Full RBAC beyond the pilot credential/principal controls.
 - PostgreSQL migration before SQLite thresholds are exceeded.
 - Expanding all 18 manufacturing objects without a real scenario pulling them.
+- Renaming `data2agent/showroom` to a test fixture package is deferred until v0.4 has stable factory acceptance data; before then it remains a regression asset, not a product mode.

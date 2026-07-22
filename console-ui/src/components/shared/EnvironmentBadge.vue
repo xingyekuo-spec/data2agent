@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 顶栏持续展示环境模式:MOCK / DEMO / REAL,大写,不可被滚动或切换隐藏。
+// 顶栏持续展示环境模式:MOCK / REAL,大写,不可被滚动或切换隐藏。
 import { computed } from 'vue'
 import { MODE } from '@/config/mode'
 
@@ -7,7 +7,6 @@ const label = computed(() => MODE.toUpperCase())
 
 const hints: Record<string, string> = {
   mock: '全部数据来自本地 fixture,不是真实后端',
-  demo: '数据来自展厅演示环境,不是生产',
   real: '数据来自真实后端',
 }
 </script>
@@ -34,10 +33,6 @@ const hints: Record<string, string> = {
 
 .env-badge--mock {
   background: var(--d2a-env-mock);
-}
-
-.env-badge--demo {
-  background: var(--d2a-env-demo);
 }
 
 .env-badge--real {

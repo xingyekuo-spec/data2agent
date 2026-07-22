@@ -5,7 +5,7 @@
  *
  * Part A(Mock):dev server + 10 场景 —— healthy 摘要、刷新失败保留旧数据、
  *   apply 熔断双节点定位;
- * Part B(Real):临时 SQLite(展厅 seed → sync → apply → reconcile → ingest)
+ * Part B(Real):临时 SQLite(参考库 seed → sync → apply → reconcile → ingest)
  *   + 真实 FastAPI console + dev:real —— REAL 标识、真实计数、M4 运行/审计/数据验收。
  *
  * 用法:

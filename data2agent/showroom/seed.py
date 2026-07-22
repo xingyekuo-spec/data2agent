@@ -1,6 +1,6 @@
-"""展厅模拟数据生成:python -m data2agent.showroom.seed [--db 路径] [--dict-md 路径]
+"""E10-like 参考数据生成:python -m data2agent.showroom.seed [--db 路径] [--dict-md 路径]
 
-按 E10 参考表形(e10_schema.TABLES)生成一座渔具外销工厂的模拟数据库。
+按 E10 参考表形(e10_schema.TABLES)生成一份渔具外销业务参考数据库。
 数据确定性生成(--seed 固定随机种子、--asof 固定时间锚点),且自洽:
 - 订单总额 = 单身金额合计;
 - 报出时间 >= 询单接收时间(报价响应时长指标的数据基础);
@@ -326,7 +326,7 @@ def write_db(db_path: str | Path, data: dict[str, list[dict]]) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="生成展厅模拟数据库(E10 参考表形)")
+    ap = argparse.ArgumentParser(description="生成 E10-like 参考数据库")
     ap.add_argument("--db", default="showroom/e10.sqlite", help="输出 SQLite 路径(已存在则重建)")
     ap.add_argument("--seed", type=int, default=42, help="随机种子(默认 42,确定性输出)")
     ap.add_argument("--asof", default="2026-07-10", help="数据窗口锚点日期(默认固定,保证可复现)")
@@ -335,7 +335,7 @@ def main() -> int:
 
     data = build(args.seed, date.fromisoformat(args.asof))
     write_db(args.db, data)
-    print(f"展厅模拟库已生成:{args.db}")
+    print(f"E10-like 参考库已生成:{args.db}")
     for table, rows in data.items():
         print(f"  - {table:<14} {len(rows):>4} 行  ({TABLES[table][0]})")
 

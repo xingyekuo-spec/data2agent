@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" role="img" aria-label="data2agent 接单评审建议卡演示">
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" role="img" aria-label="data2agent 接单评审建议卡参考输出">
 <rect width="1000" height="530" rx="10" fill="#0d1117" stroke="#30363d"/>
 <circle cx="24" cy="22" r="6" fill="#ff5f57"/><circle cx="44" cy="22" r="6" fill="#febc2e"/><circle cx="64" cy="22" r="6" fill="#28c840"/>
-<text x="500.0" y="27" text-anchor="middle" fill="#8b949e" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="12">data2agent · 接单评审演示链(数字可溯源)</text>
+<text x="500.0" y="27" text-anchor="middle" fill="#8b949e" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="12">data2agent · 接单评审参考链(数字可溯源)</text>
 <line x1="0" y1="40" x2="1000" y2="40" stroke="#30363d"/>
 <text x="18" y="68" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#3fb950" font-weight="normal">$ python -m data2agent.showroom.review_demo</text>
 <text x="18" y="112" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#8b949e" font-weight="normal">┌─ 接单评审建议卡 p1 · 2026-07-15T18:57:36 ────────────────────</text>
@@ -19,7 +19,7 @@
 <text x="18" y="376" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#58a6ff" font-weight="normal">│      ↳ [q3] query_metrics(gross_margin_rate) @ 2026-07-15T18:57:36</text>
 <text x="18" y="398" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#8b949e" font-weight="normal">│ 口径警示:</text>
 <text x="18" y="420" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#d29922" font-weight="normal">│   - binding 为 draft:字段映射按参考表形构造,口径未经现场校准</text>
-<text x="18" y="442" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#d29922" font-weight="normal">│   - 口径为 draft(未经校准),数值仅供演示环境参考</text>
+<text x="18" y="442" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#d29922" font-weight="normal">│   - 口径为 draft(未经校准),数值仅供参考环境核对</text>
 <text x="18" y="464" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#d29922" font-weight="normal">│   - 营业成本是否含运费与模具摊销,校准时逐项确认;春节所在月建议合并解读</text>
 <text x="18" y="486" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#8b949e" font-weight="normal">│ 治理:「说」档建议卡:未执行任何写操作;落地执行(做档)需审批治理</text>
 <text x="18" y="508" xml:space="preserve" font-family="SF Mono, Menlo, Monaco, 'Cascadia Mono', 'Sarasa Mono SC', 'Noto Sans Mono CJK SC', monospace" font-size="13.5" fill="#8b949e" font-weight="normal">└────────────────────────────────────────────────────────────</text>

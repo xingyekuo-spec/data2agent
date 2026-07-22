@@ -274,7 +274,7 @@ describe('TemplatesView(M5)', () => {
 
     expect(wrapper.text()).toContain('水位线')
     expect(wrapper.text()).toContain('CUSTOMER.LAST_MODIFIED_DATE')
-    expect(wrapper.text()).toContain('展厅模拟表形')
+    expect(wrapper.text()).toContain('E10-like 参考表形')
   })
 
   it('metrics tab shows calibration_state tags with correct colors', async () => {

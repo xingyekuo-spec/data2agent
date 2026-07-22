@@ -1,6 +1,6 @@
-"""向 SQL Server 灌入 E10 表形 + 展厅 seed 数据,并创建只读账号。
+"""向 SQL Server 灌入 E10-like 表形 + seed 数据,并创建只读账号。
 
-双重用途:展厅 compose 的 seed 服务(根 docker-compose.yml)与 MSSQL 适配器
+双重用途:参考链 compose 的 seed 服务(根 docker-compose.yml)与 MSSQL 适配器
 集成测试(tests/integration/mssql)。等待 MSSQL 就绪 → 建库 → 建只读账号
 (d2a_reader,db_datareader)→ 按 e10_schema.TABLES 建表(_DATE 列用 DATETIME2,
 其余 TEXT→NVARCHAR、NUMERIC→DECIMAL)→ 插入 build() 数据。幂等:重跑先删表。

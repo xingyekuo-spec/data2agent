@@ -1,5 +1,5 @@
 /**
- * 唯一 API 客户端:Mock(MSW 拦截 fetch)与 DEMO/REAL(真实 /api)共用,
+ * 唯一 API 客户端:Mock(MSW 拦截 fetch)与 Real(真实 /api)共用,
  * 保证路径、请求体、错误处理与响应解析在三种模式下一致。
  *
  * baseUrl 取当前源(浏览器为页面源,jsdom 为测试源),等价于同源空字符串且

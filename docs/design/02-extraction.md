@@ -46,7 +46,7 @@ class SourceAdapter(Protocol):
 | 适配器 | 场景 | 说明 |
 | --- | --- | --- |
 | `mssql_readonly` | 鼎捷 E10 / 易飞(底层均为 SQL Server) | pyodbc;首个生产适配器 |
-| `sqlite_readonly` | 开发 / 展厅 / 测试 | 与 mssql 行为等价,mode=ro |
+| `sqlite_readonly` | 开发 / 参考库 / 测试 | 与 mssql 行为等价,mode=ro |
 | `api_poll`(规划) | 有 API 的源(SRM 等) | 尚未实现;按需拉动,待首个真实 API 源出现再定义接口 |
 | `excel_import`(非 SourceAdapter,CLI 导入流程,见 `connect/excel_import.py`) | 报价历史 Excel/CSV(MVP,已实现) | 三步工作流:`excel-suggest` 启发式建议列映射(YAML)→ 人工确认一次 → `excel-import` 快照落地(raw 表结构由 binding 契约决定,文件缺列落 NULL、缺业务键跳过并逐行报告、重导入按业务键幂等)→ 标准 apply 物化,校验 / 隔离 / 熔断原样生效;值翻译写 binding 的 (map ...) |
 
@@ -70,7 +70,7 @@ class SourceAdapter(Protocol):
 | `_d2a_deleted_at` | 软删标记(对账发现源侧消失时打标,永不物理删) |
 
 - 写入语义:按源主键 **upsert**(E10 为 `Id`),幂等 —— 回看窗口和对账重抽天然安全;
-- 落地库:当前实现为 **SQLite**(零依赖、单文件、零运维),覆盖开发与展厅,并作为首个工厂试点的候选落地库。能否用于正式试点取决于 v0.4 对容量、并发、WAL checkpoint、备份与恢复的量化基线,不能仅凭“单写多读”直接宣告生产适用。当前访问模式是 connector/ingest/apply 写入 + MCP/控制台读取;必须验证实际多进程写争用。`LandingStore` 初始化开启 `journal_mode=WAL` + `busy_timeout`。
+- 落地库:当前实现为 **SQLite**(零依赖、单文件、零运维),覆盖开发、参考链和首个工厂试点候选路径。能否用于正式试点取决于 v0.4 对容量、并发、WAL checkpoint、备份与恢复的量化基线,不能仅凭“单写多读”直接宣告生产适用。当前访问模式是 connector/ingest/apply 写入 + MCP/控制台读取;必须验证实际多进程写争用。`LandingStore` 初始化开启 `journal_mode=WAL` + `busy_timeout`。
 - 并发上界(需换库的信号):平台托管**多源 / 多工厂并发写同一落地库**、落地库需**跨机远程访问**、或 Agent 读并发大到单文件读锁成瓶颈 —— 任一出现再切 PostgreSQL(装 `.[postgres]` extra 引入 psycopg;当前 `connect`/`ingest` 不含它)。因落地库不是数据主体(ERP 才是),切库是一次性倒库 / `backfill` 重抽 + 一遍 `apply` 重建对象层,非持续迁移负担。
 - 迁移面控制:方言用法(`INSERT ... ON CONFLICT`、`PRAGMA`、`file:...?mode=ro`)集中在 `landing.py` 与各读取方的 `_connect`,统一参数化 SQL 薄封装、不引 ORM,把将来 PG 切片的改造面圈在可控范围。
 
@@ -162,7 +162,7 @@ templates: templates
 landing: landing/factory.sqlite     # 当前为 SQLite;PostgreSQL 属后续切片(见 §4 换库信号)
 sources:
   digiwin_e10:
-    adapter: mssql_readonly         # 开发 / 展厅:sqlite_readonly + path
+    adapter: mssql_readonly         # 开发 / 参考库:sqlite_readonly + path
     dsn_env: D2A_E10_DSN            # 凭据只从环境变量读,绝不落配置文件/仓库
     whitelist_from_bindings: true
     extra_whitelist: []
@@ -205,12 +205,12 @@ sources:
 
 | 切片 | 内容 | 验证方式 |
 | --- | --- | --- |
-| E1 | 适配器接口 + sqlite/mssql 适配器 + 落地层(全量) | 展厅 SQLite;容器化 MSSQL 灌入同一份 seed 数据跑集成测试 |
+| E1 | 适配器接口 + sqlite/mssql 适配器 + 落地层(全量) | 参考库 SQLite;容器化 MSSQL 灌入同一份 seed 数据跑集成测试 |
 | E2 | 水位增量 + 回看 + keyset 分页 | seed 数据改动若干行,断言只拉增量、水位正确前进 |
 | E3 | 分段对账 L1/L2 + 软删 | 源侧删行/改行不动水位,断言对账修复 |
 | E4 | 映射应用(binding→对象视图)+ 隔离区 + 熔断 | 注入坏行断言隔离;MCP 网关切换到对象视图 |
 | E5 | 调度 + 窗口 + 限流 + CLI + 审计完备 | 窗口/限流行为测试;E10 真实环境预演清单 |
-| E6a | 部署(§12):推送 sink（Sink 抽象 + ingest 接收端） | ✅ 中间/平台双进程集成通过(展厅);推送落地与直连逐行一致 |
+| E6a | 部署(§12):推送 sink（Sink 抽象 + ingest 接收端） | ✅ 中间/平台双进程集成通过(参考链);推送落地与直连逐行一致 |
 | E6b | 部署(§12):对账劈开(中间源侧统计 ↔ 平台落地侧比对) | 待建 |
 
 产品版本映射:

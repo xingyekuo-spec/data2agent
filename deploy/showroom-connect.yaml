@@ -1,5 +1,5 @@
-# 展厅 compose 用的抽取配置:走只读账号 d2a_reader 连模拟 SQL Server。
-# 展厅不设错峰窗口(演示要即时看到数据);生产示例见 connect.example.yaml。
+# 参考链 compose 用的抽取配置:走只读账号 d2a_reader 连 E10-like SQL Server。
+# 参考链不设错峰窗口(便于立即看到数据);生产示例见 connect.example.yaml。
 templates: templates
 landing: /data/factory.sqlite
 

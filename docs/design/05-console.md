@@ -48,12 +48,11 @@ Vue 顶栏始终显示当前模式:
 
 | 模式 | 数据来源 | 允许用途 |
 | --- | --- | --- |
-| `MOCK` | 提交在前端的 typed fixtures | UI 开发、失败场景演示;不得形成验收结论 |
-| `DEMO` | 展厅 SQL Server/SQLite 真实链 | 产品演示和集成验收;不等于生产安全验收 |
+| `MOCK` | 提交在前端的 typed fixtures | UI 开发、失败场景验证;不得形成验收结论 |
 | `REAL` | 真实部署 API | 现场验证;是否可正式试点由 v0.4 验收报告决定 |
 
 生产构建不得默认进入 Mock。模式必须来自部署配置/构建配置和后端 metadata,不能仅由 URL
-参数伪造。
+参数伪造。E10-like 参考链也以 `REAL` 模式接入,不再提供独立参考链 Console 模式。
 
 ### 3.2 统一状态
 
@@ -250,7 +249,7 @@ response model → OpenAPI → fixture → 页面全部状态 → 真实 API →
 - 默认绑定 `127.0.0.1`;
 - 凭据真实值不返回浏览器;
 - Vue Token 只保存在 `sessionStorage`,关闭标签页清除;
-- 展厅可以匿名,但必须显示 `DEMO` 且不能接真实数据。
+- 参考链可用匿名配置做本地验收,但真实数据环境必须启用 Token。
 
 ### 7.2 v0.4 正式试点门槛
 
@@ -307,9 +306,9 @@ GET  /api/reconcile/runs/{run_id}
 
 - [x] 总览、管道、运行、审计、数据、隔离、模板、MCP Lab 和 Validation 可用;
 - [x] 所有页面覆盖 loading/empty/running/warning/failed/unknown;
-- [x] Mock、Demo、Real 标识不可混淆;
+- [x] Mock、Real 标识不可混淆;
 - [x] OpenAPI 漂移检查、TypeScript 类型检查和前端构建通过;
-- [x] SQLite 本机链与 Docker MSSQL 展厅链均通过真实 API;
+- [x] SQLite 本机链与 Docker MSSQL 参考链均通过真实 API;
 - [x] raw/object 浏览分页、白名单、脱敏/授权和审计通过;
 - [x] 字段血缘、映射 Preview、数据集版本、MCP evidence 与一键验收接入 Console;
 - [x] Jinja `/`、v0 `/v0`、Vue `/v1` 同时可用;
@@ -324,7 +323,7 @@ GET  /api/reconcile/runs/{run_id}
 python -m data2agent.console --home C:\d2a --host 127.0.0.1 --port 8849
 python -m data2agent.middle_admin --home C:\d2a --host 127.0.0.1 --port 8851
 
-# 开发 / 展厅
+# 开发 / 参考链
 python -m data2agent.console --config connect.example.yaml
 docker compose up --build
 # Jinja:http://localhost:8849;Vue Console:http://localhost:8849/v1

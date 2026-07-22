@@ -389,7 +389,7 @@ def test_raw_table_not_found_404(env):
         json=_body(source="digiwin_yifei"),
         headers=_auth(),
     )
-    # yifei binding 存在但展厅未落地 COPMA
+    # yifei binding 存在但参考库未落地 COPMA
     _assert_preview_error(r, status=404, reason_code="raw_table_not_found")
 
 

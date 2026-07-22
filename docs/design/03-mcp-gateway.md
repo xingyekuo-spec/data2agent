@@ -77,7 +77,7 @@ v0.3 已将进程级简单序号升级为持久、隔离、可审计的证据对
 
 ## 4. 指标实现(E4 后)
 
-指标 SQL 注册表位于独立模块 `metrics_impl.py`,按 MetricDef.metric 路由,**只面向已发布对象层物理表取数**(由 `PublishedDatasetSnapshot` 在同一读事务内解析并注入表名;不再直读无版本的遗留 `obj_*`),与源系统表形彻底解耦(E4 清偿直读展厅表形的债务;原毛利率订单有效性过滤的最后一处 raw 穿透,已随派生状态 SalesOrder.state 决策表落地而清除,等价性由回归锚点锁定)。无 published 数据集时指标/对象查询 fail-closed,不回退 legacy 表。
+指标 SQL 注册表位于独立模块 `metrics_impl.py`,按 MetricDef.metric 路由,**只面向已发布对象层物理表取数**(由 `PublishedDatasetSnapshot` 在同一读事务内解析并注入表名;不再直读无版本的遗留 `obj_*`),与源系统表形彻底解耦(E4 清偿直读参考表形的债务;原毛利率订单有效性过滤的最后一处 raw 穿透,已随派生状态 SalesOrder.state 决策表落地而清除,等价性由回归锚点锁定)。无 published 数据集时指标/对象查询 fail-closed,不回退 legacy 表。
 
 ## 5. HTTP 基础安全件(已实现,不等于生产就绪)
 
@@ -85,7 +85,7 @@ stdio(本机进程)不需要;暴露 HTTP(streamable-http)即三件齐上(`mcp_se
 
 | 件 | 行为 |
 | --- | --- |
-| Bearer 认证 | **默认强制**:无 Token 拒绝启动,`--allow-anonymous` 仅限展厅;只认 Authorization 头,不接受 URL 参数(避免 Token 进访问日志) |
+| Bearer 认证 | **默认强制**:无 Token 拒绝启动,`--allow-anonymous` 仅限本地参考链;只认 Authorization 头,不接受 URL 参数(避免 Token 进访问日志) |
 | 每工具限流 | 滑动窗口,默认 120 次/分钟,`--rate-per-minute` 可调(0 关闭) |
 | 查询审计 | SQLite evidence audit 是查询/建议卡事实来源；可选 JSONL 继续接收兼容事件 |
 
@@ -95,14 +95,14 @@ stdio(本机进程)不需要;暴露 HTTP(streamable-http)即三件齐上(`mcp_se
 - 限流按进程/工具共享,不是按主体;
 - 可选 JSONL 不是 evidence 事实来源，不能用于跨会话引用或恢复建议卡;
 - MCP 服务自身不终止 TLS,跨机正式试点必须经 TLS 反向代理或等价安全入口;
-- `--allow-anonymous` 只允许展厅,任何真实数据环境禁止使用。
+- `--allow-anonymous` 只允许本地参考链,任何真实数据环境禁止使用。
 
 v0.4 正式试点要求:ingest/console/MCP 凭据分离,Token 可轮换/吊销,凭据映射到主体,
 按主体限流和审计,跨机访问强制 HTTPS。该范围不等于多租户 RBAC。
 
 ## 6. 分阶段演进
 
-- **查询能力**:分页游标、范围筛选(日期区间)、对象级聚合 —— 由演示链和真实 Agent 的使用反馈拉动;
+- **查询能力**:分页游标、范围筛选(日期区间)、对象级聚合 —— 由参考链和真实 Agent 的使用反馈拉动;
 - **多源**:`--source` 已支持切换;同对象多源并读(易飞+E10 并存客户)暂不做;
 - **v0.3 证据隔离**:引入主体、会话、不可预测 query_id 与结果摘要,建议卡只能引用同主体/同会话证据;
 - **v0.4 试点认证**:ingest / console / MCP 凭据分离,支持 Token 轮换、按主体限流与审计;

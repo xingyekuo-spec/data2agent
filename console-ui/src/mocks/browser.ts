@@ -1,6 +1,6 @@
 /**
  * Mock 模式的 MSW browser worker。只在 MODE === 'mock' 时由 main.ts 动态
- * 导入,DEMO / REAL 不会加载 MSW。
+ * 导入,REAL 不会加载 MSW。
  */
 import { setupWorker } from 'msw/browser'
 import { buildHandlers, strictUnhandledRequest } from './handlers'

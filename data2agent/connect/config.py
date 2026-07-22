@@ -1,7 +1,7 @@
 """connect.yaml 配置:解析与校验(pydantic),窗口与时长工具。
 
 凭据纪律:配置文件里只允许放环境变量名(dsn_env),绝不放连接串本体;
-sqlite 源(开发 / 展厅)例外地允许直接写路径(无凭据可泄露)。
+sqlite 源(开发 / 参考链)例外地允许直接写路径(无凭据可泄露)。
 """
 
 from __future__ import annotations

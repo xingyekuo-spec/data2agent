@@ -1,8 +1,8 @@
-"""鼎捷 E10 参考表形(展厅模拟)。
+"""鼎捷 E10-like 参考表形。
 
 表名 / 字段名按 E10 惯例构造:UPPER_SNAKE 英文表名、Id 代理主键、
 *_ID 外键关联基础档、DOC_NO 业务单号、CREATE_DATE / LAST_MODIFIED_DATE
-审计字段(增量水位)。本模块是展厅模拟库与 docs/dict 表字典的单一来源,
+审计字段(增量水位)。本模块是 E10-like 参考库与 docs/dict 表字典的单一来源,
 真实客户环境仍以现场数据字典核对为准。
 
 与真实 E10 的已知简化(表字典中逐条标注):
@@ -22,7 +22,7 @@ _AUDIT: list[Column] = [
     ("CREATE_BY", "TEXT", "建立人员"),
     ("LAST_MODIFIED_DATE", "TEXT", "最后修改日期(增量抽取水位字段)"),
     ("LAST_MODIFIED_BY", "TEXT", "最后修改人员"),
-    ("Owner_Org_ROid", "TEXT", "所属组织(E10 多组织字段,展厅固定单组织)"),
+    ("Owner_Org_ROid", "TEXT", "所属组织(E10 多组织字段,参考库固定单组织)"),
 ]
 
 
@@ -47,7 +47,7 @@ TABLES: dict[str, tuple[str, list[Column]]] = {
             ("CUSTOMER_SHORT_NAME", "TEXT", "客户简称"),
             ("COUNTRY_REGION", "TEXT", "国家 / 区域"),
             ("CURRENCY_ID", "INTEGER", "结算币别(外键 → CURRENCY.Id)"),
-            ("PAYMENT_TERM_DAYS", "INTEGER", "账期天数(真实 E10 为付款条件档外键,展厅简化为天数列)"),
+            ("PAYMENT_TERM_DAYS", "INTEGER", "账期天数(真实 E10 为付款条件档外键,参考库简化为天数列)"),
             ("CONTACT_NAME", "TEXT", "联系人(敏感,出网前置脱敏)"),
             ("CONTACT_PHONE", "TEXT", "联系电话(敏感)"),
             ("CONTACT_EMAIL", "TEXT", "联系邮箱(敏感)"),
@@ -59,13 +59,13 @@ TABLES: dict[str, tuple[str, list[Column]]] = {
             ("ITEM_CODE", "TEXT", "品号(业务键,编码规则表达变体)"),
             ("ITEM_NAME", "TEXT", "品名"),
             ("ITEM_SPECIFICATION", "TEXT", "规格描述(竿:长度/节数/调性;轮:齿比/轴承;饵:类型/颜色)"),
-            ("CATEGORY_CODE", "TEXT", "大类编码(ROD 竿 / REEL 轮 / LURE 饵 / ACC 配件 / RAW 原料;真实 E10 为品号类别档外键,展厅简化)"),
-            ("UNIT_CODE", "TEXT", "计量单位(PCS / SET / KG;真实 E10 为单位档外键,展厅简化)"),
+            ("CATEGORY_CODE", "TEXT", "大类编码(ROD 竿 / REEL 轮 / LURE 饵 / ACC 配件 / RAW 原料;真实 E10 为品号类别档外键,参考库简化)"),
+            ("UNIT_CODE", "TEXT", "计量单位(PCS / SET / KG;真实 E10 为单位档外键,参考库简化)"),
             ("STANDARD_COST", "NUMERIC", "标准成本(CNY,敏感)"),
         ]),
     ),
     "QUOTATION": (
-        "报价单(展厅简化为单头 + 主要品号,真实 E10 含单身)",
+        "报价单(参考库简化为单头 + 主要品号,真实 E10 含单身)",
         _table([
             ("DOC_NO", "TEXT", "报价单号(业务键)"),
             ("DOC_DATE", "TEXT", "单据日期(报价日期)"),
@@ -91,7 +91,7 @@ TABLES: dict[str, tuple[str, list[Column]]] = {
             ("QUOTATION_ID", "INTEGER", "来源报价单(外键 → QUOTATION.Id,可空;接单评审链溯源)"),
             ("CURRENCY_ID", "INTEGER", "交易币别(外键 → CURRENCY.Id)"),
             ("EXCHANGE_RATE", "NUMERIC", "订单汇率(交易币别 → CNY)"),
-            ("TRADE_TERM", "TEXT", "贸易条款(FOB / CIF / EXW;真实 E10 为贸易条件档外键,展厅简化)"),
+            ("TRADE_TERM", "TEXT", "贸易条款(FOB / CIF / EXW;真实 E10 为贸易条件档外键,参考库简化)"),
             ("TOTAL_AMOUNT", "NUMERIC", "订单总额(交易币别,= 单身金额合计)"),
             ("PROMISED_SHIP_DATE", "TEXT", "承诺船期 / 交期"),
             ("APPROVE_DATE", "TEXT", "审核日期(可空 = 未审核)"),
@@ -127,10 +127,10 @@ def ddl() -> list[str]:
 def dict_markdown() -> str:
     """生成 docs/dict 表字典 markdown。"""
     lines = [
-        "# 鼎捷 E10 参考表字典(展厅模拟)",
+        "# 鼎捷 E10-like 参考表字典",
         "",
-        "> ⚠️ 本字典描述的是**展厅模拟库**的表形,按 E10 命名惯例构造,",
-        "> 用于映射引擎与 MCP 演示开发。真实客户环境的表名 / 字段名 / 状态码",
+        "> ⚠️ 本字典描述的是**E10-like 参考库**的表形,按 E10 命名惯例构造,",
+        "> 用于映射引擎、MCP 与回归测试开发。真实客户环境的表名 / 字段名 / 状态码",
         "> **以现场数据字典核对为准**,核对后将对应 binding 置为 `verified`。",
         ">",
         "> 生成方式:`python -m data2agent.showroom.seed --dict-md docs/dict/digiwin_e10.md`",

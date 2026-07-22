@@ -94,9 +94,9 @@ derived:
 | --- | --- | --- |
 | 单文件 | pydantic 模型 | 类型、必填、keys⊆properties、ref/enum 约束 |
 | 跨对象 | `TemplatePack.cross_validate` | relation/ref 目标存在、指标 id 唯一 |
-| binding↔表形 | pytest(展厅) | e10 binding 引用的每个 表.字段 必须存在于模拟表形 |
+| binding↔表形 | pytest(参考库) | e10 binding 引用的每个 表.字段 必须存在于参考表形 |
 
-第三层是防漂移的关键:模板与模拟表形任何一侧单独改动,CI 立即失败。
+第三层是防漂移的关键:模板与参考表形任何一侧单独改动,CI 立即失败。
 客户真实字典校验不属于数据对账工具:它由模板只读展示、字段血缘、映射 preview
 和一键验收提供机器辅助证据,在 v0.4 现场由实施人员按 docs 02 附录核对后将 binding
 置为 `verified`。COUNT/水位/主键 diff 等数据对账只负责记录一致性,不证明字段业务语义正确。

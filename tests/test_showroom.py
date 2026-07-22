@@ -1,4 +1,4 @@
-"""展厅模拟库(E10 参考表形)测试:数据自洽 + binding 与表形一致。"""
+"""E10-like 参考库测试:数据自洽 + binding 与表形一致。"""
 
 import re
 import sqlite3

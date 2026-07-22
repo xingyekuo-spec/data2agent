@@ -28,5 +28,5 @@ bindings:
       payment_days: CUSTOMER.PAYMENT_TERM_DAYS
       contact: CUSTOMER.CONTACT_EMAIL
     watermark: CUSTOMER.LAST_MODIFIED_DATE
-    notes: 展厅模拟表形(docs/dict/digiwin_e10.md);E10 币别为 ID 关联需 join 取码;真实环境以现场字典核对为准
+    notes: E10-like 参考表形(docs/dict/digiwin_e10.md);E10 币别为 ID 关联需 join 取码;真实环境以现场字典核对为准
 knowledge_refs: [客户信用与账期政策]

@@ -1,25 +1,28 @@
-# 04 · 数字厂长展厅
+# 04 · 参考数据链与回归场景
 
-> 状态:SQLite/SQL Server 展厅数据链、Vue Console 展厅验收、v0.3 证据链场景已实现(r2,2026-07-22)· 实现:`data2agent/showroom/` + 根目录 `docker-compose.yml`
+> 状态:SQLite/SQL Server 参考数据链、Vue Console 真实 API 验收、v0.3 证据链场景已实现(r3,2026-07-22)· 实现:`data2agent/showroom/` + 根目录 `docker-compose.yml`
 > 上层基线:[路线图](../roadmap.md)
 
 ## 1. 定位
 
-`docker compose up` 一键起一座模拟渔具工厂,跑通与真实部署**逻辑同构**的链路,让两类人各取所需:老板看接单评审演示,IT 看抽取框架面对 SQL Server 源时的窗口、限流和审计行为。展厅不等同生产部署:生产试点还要求跨机对账、批次回执和加密传输。
+本模块提供一条 E10-like 参考数据链,用于自动测试、字典生成、本地冒烟和真实 API 验收。
+它不再作为独立产品运行模式对外承诺。`docker compose up` 可起 SQL Server 参考源,
+跑通与真实部署**逻辑同构**的链路,用于观察抽取框架面对 SQL Server 源时的窗口、限流和审计行为。
+生产试点仍要求跨机对账、批次回执和加密传输。
 
 ## 2. 当前拓扑
 
 ```
-mssql-sim     SQL Server 容器,init 脚本灌入 E10 表形 + seed 数据(源系统替身)
+mssql-sim     SQL Server 容器,init 脚本灌入 E10-like 表形 + seed 数据(源系统替身)
    ▼ 抽取(connect,走 mssql_readonly 适配器,窗口/限流/审计全开)
 landing-sqlite SQLite 落地库(raw_* + 物化对象表)
-   ├─ mcp     MCP 网关(streamable HTTP :8848) → demo(脚本或 Agent 编排)
+   ├─ mcp     MCP 网关(streamable HTTP :8848) → 参考脚本或 Agent 编排
    └─ console Jinja 管理页(:8849)+ Vue Console(`/v1`)
 ```
 
 本机快速版是 `seed → connect sync → connect apply → MCP`;源库和落地库均为 SQLite。
 compose 版把源库换成 SQL Server 并常驻调度,落地库仍为共享卷内 SQLite。
-PostgreSQL 不是当前展厅目标;只有达到产品路线定义的容量/并发阈值后才单独评估迁移。
+PostgreSQL 不属于当前参考链目标;只有达到产品路线定义的容量/并发阈值后才单独评估迁移。
 
 ## 3. 已实现
 
@@ -27,7 +30,7 @@ PostgreSQL 不是当前展厅目标;只有达到产品路线定义的容量/并�
 - 表字典生成(`docs/dict/digiwin_e10.md`);
 - binding↔表形一致性测试(防漂移)。
 
-## 4. 接单评审演示链(粗颗粒,详设前置条件:网关"说"档)
+## 4. 接单评审参考链(粗颗粒,详设前置条件:网关"说"档)
 
 ```
 询单(自然语言)→ 解析规格/数量/目标价
@@ -40,20 +43,20 @@ PostgreSQL 不是当前展厅目标;只有达到产品路线定义的容量/并�
 两个可用版本("说"档已落地):
 - **脚本版(离线可跑)**:`python -m data2agent.showroom.review_demo` —— 走与真 Agent
   相同的工具调用链(query_objects ×2 → query_metrics → propose_action),终端输出建议卡;
-- **真 Agent 版**:任意 MCP 客户端按 `docs/demo/quote-review.md` 的提示词驱动,主角客户 C002。
+- **真 Agent 版**:任意 MCP 客户端按 `docs/reference/quote-review.md` 的提示词驱动,主角客户 C002。
 
-## 5. Vue 展厅验收
+## 5. Vue 真实 API 验收
 
-展厅是 Vue Console 接入真实 API 的发布门槛,不能只演示静态 Mock。
+参考链是 Vue Console 接入真实 API 的发布门槛,不能只依赖静态 Mock。
 
-### 5.1 两种明确模式
+### 5.1 两类验收数据
 
-| 模式 | 数据来源 | 用途 | 页面标识 |
+| 类型 | 数据来源 | 用途 | 页面标识 |
 | --- | --- | --- | --- |
 | Mock | 提交在前端的 typed fixtures | 首次安装、运行中、推送失败、熔断、stale、服务不可达等难稳定复现状态 | `MOCK` 水印 |
-| Demo | Docker MSSQL → connector → SQLite → MCP/Console 真实链 | 验证真实 API、数据浏览、隔离、口径警示和建议卡 | `DEMO` 标识 |
+| Real/reference | Docker MSSQL → connector → SQLite → MCP/Console 真实链 | 验证真实 API、数据浏览、隔离、口径警示和建议卡 | `REAL` 标识 |
 
-Mock 不得生成正式验收结论;Demo 也不等于生产安全验证。
+Mock 不得生成正式验收结论;参考链也不等于生产安全验证。
 
 ### 5.2 必验页面
 
@@ -70,11 +73,11 @@ Mock 不得生成正式验收结论;Demo 也不等于生产安全验证。
 
 - v0.3:字段血缘、映射 preview、dataset version、原子发布和会话证据场景已落地;
 - v0.4:增加网络失败/重试、commit receipt、schema mismatch、E6b 和 TLS 入口验证;
-- PostgreSQL 只有达到 SQLite 换库阈值后才进入展厅矩阵。
+- PostgreSQL 只有达到 SQLite 换库阈值后才进入参考链矩阵。
 
 ## 6. 决议记录
 
 - compose 已落地(仓库根 `docker-compose.yml`):mssql(SQL Server 2022,`MSSQL_IMAGE`/`MSSQL_PLATFORM` 可切 Azure SQL Edge)→ seed(灌数 + 建只读账号 d2a_reader)→ connector(serve 常驻,走只读账号)→ 共享卷 → mcp(streamable-http :8848);
-- 演示链编排载体 = 脚本版(入库,离线可跑)+ 真 Agent 版(MCP 提示词)并存,见 §4;
+- 参考链编排载体 = 脚本版(入库,离线可跑)+ 真 Agent 版(MCP 提示词)并存,见 §4;
 - Vue Console 是当前主产品界面;Jinja 管理页继续作为安装与故障恢复入口;
-- 待议:seed 数据"每日自动演进"(模拟工厂持续下单,让增量抽取有活干)—— 留给使用反馈拉动。
+- 待议:v0.4 稳定后将 `data2agent/showroom` 迁移或重命名为更明确的测试 fixture 包。

@@ -1,8 +1,8 @@
-# 数字厂长展厅:docker compose up --build
-# 拓扑(docs/design/04):mssql(模拟工厂)→ seed(灌数+建只读账号)
+# E10-like 参考链:docker compose up --build
+# 拓扑(docs/design/04):mssql(参考源)→ seed(灌数+建只读账号)
 #   → connector(serve 常驻:sync+apply+每日对账)→ /data 卷
 #   → mcp(HTTP :8848)+ console(运维控制台 :8849)
-# 演示:docker compose exec connector \
+# 冒烟:docker compose exec connector \
 #         python -m data2agent.showroom.review_demo --db /data/factory.sqlite
 # Apple silicon 依赖 Rosetta 仿真;arm64 原生备选:
 #   MSSQL_IMAGE=mcr.microsoft.com/azure-sql-edge MSSQL_PLATFORM=linux/arm64
@@ -39,7 +39,7 @@ services:
     command:
       - bash
       - -lc
-      # --allow-anonymous 仅限展厅演示;内网部署删掉它并设置 D2A_MCP_TOKEN
+      # --allow-anonymous 仅限本地参考链;内网部署删掉它并设置 D2A_MCP_TOKEN
       - >-
         until [ -f /data/factory.sqlite ]; do echo '等待首轮抽取…'; sleep 3; done;
         exec python -m data2agent.mcp_server --db /data/factory.sqlite
@@ -50,7 +50,7 @@ services:
     depends_on: [connector]
     environment:
       D2A_E10_DSN: "DRIVER={ODBC Driver 18 for SQL Server};SERVER=mssql,1433;UID=d2a_reader;PWD=D2a!Reader1;DATABASE=d2a_e10;TrustServerCertificate=yes"
-      # 展厅不启用认证;真实部署请设置 D2A_CONSOLE_TOKEN
+      # 本地参考链不启用认证;真实部署请设置 D2A_CONSOLE_TOKEN
     volumes: [d2a-data:/data]
     ports: ["8849:8849"]
     command:

@@ -1,9 +1,9 @@
-"""接单评审演示链(脚本版):python -m data2agent.showroom.review_demo
+"""接单评审参考链(脚本版):python -m data2agent.showroom.review_demo
 
 离线可跑的"老板测试":给定一条询单(客户 / 型谱关键词 / 数量 / 目标价),
 按 Agent 的工作方式走完整链路 —— query_objects 查客户档案与同型谱历史成交、
 query_metrics 查毛利率基线,最后经 propose_action(「说」档)生成接单评审建议卡,
-卡内每个数字都溯源到具体查询。真 Agent 版走 MCP 提示词,见 docs/demo/quote-review.md。
+卡内每个数字都溯源到具体查询。真 Agent 版走 MCP 提示词,见 docs/reference/quote-review.md。
 
 前置:python -m data2agent.showroom.seed && python -m data2agent.connect sync
       --sqlite showroom/e10.sqlite && python -m data2agent.connect apply
@@ -20,7 +20,7 @@ from ..mcp_server.evidence import EvidenceContext
 
 def build_review(svc: QueryService, customer: str, keyword: str,
                  qty: float, target_price: float) -> dict:
-    """演示链主体:三次取数 + 决策规则 + 建议卡。返回 propose_action 的卡片。"""
+    """参考链主体:三次取数 + 决策规则 + 建议卡。返回 propose_action 的卡片。"""
     # 1. 客户档案(账期 / 区域 / 币别;联系方式自动脱敏)
     cust_res = svc.query_objects("Customer", filters={"customer_code": customer})
     if not cust_res["rows"]:
@@ -44,7 +44,7 @@ def build_review(svc: QueryService, customer: str, keyword: str,
     baseline = next((r["value"] for r in margin_res["rows"]
                      if str(r["group"]).startswith(customer)), None)
 
-    # 4. 决策规则(演示版:真实规则属行业知识包)
+    # 4. 决策规则(参考版:真实规则属行业知识包)
     evidence = [{
         "claim": f"客户 {customer} {cust['name']}({cust['region']}),"
                  f"账期 {cust['payment_days']} 天,结算币别 {cust['currency']}",
@@ -119,7 +119,7 @@ def render_card(card: dict, inquiry: str) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="接单评审演示链(脚本版)")
+    ap = argparse.ArgumentParser(description="接单评审参考链(脚本版)")
     ap.add_argument("--db", default="landing/factory.sqlite", help="落地库(对象层)")
     ap.add_argument("--templates", default="templates")
     ap.add_argument("--customer", default="C002", help="客户编号")

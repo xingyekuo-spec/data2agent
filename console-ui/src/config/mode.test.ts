@@ -9,7 +9,7 @@ describe('resolveMode', () => {
 
   it('开发显式设置生效(大小写/空白容忍)', () => {
     expect(resolveMode({ VITE_CONSOLE_MODE: 'real' })).toBe('real')
-    expect(resolveMode({ VITE_CONSOLE_MODE: ' Demo ' })).toBe('demo')
+    expect(resolveMode({ VITE_CONSOLE_MODE: ' Mock ' })).toBe('mock')
   })
 
   it('生产未设置强制 real', () => {
@@ -21,8 +21,8 @@ describe('resolveMode', () => {
     expect(resolveMode({ PROD: true, VITE_CONSOLE_MODE: 'MOCK' })).toBe('real')
   })
 
-  it('生产允许显式 demo(真实展厅 API,不用 fixture)', () => {
-    expect(resolveMode({ PROD: true, VITE_CONSOLE_MODE: 'demo' })).toBe('demo')
+  it('生产始终 real', () => {
+    expect(resolveMode({ PROD: true, VITE_CONSOLE_MODE: 'demo' })).toBe('real')
     expect(resolveMode({ PROD: true, VITE_CONSOLE_MODE: 'real' })).toBe('real')
   })
 

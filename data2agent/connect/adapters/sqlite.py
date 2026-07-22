@@ -1,4 +1,4 @@
-"""SQLite 只读适配器:开发 / 展厅 / 测试用,与 mssql 适配器行为等价。"""
+"""SQLite 只读适配器:开发 / 参考库 / 测试用,与 mssql 适配器行为等价。"""
 
 from __future__ import annotations
 

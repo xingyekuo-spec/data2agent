@@ -27,4 +27,4 @@ bindings:
       quantity: SALES_ORDER_D.QUANTITY
       unit_price: SALES_ORDER_D.UNIT_PRICE
     watermark: SALES_ORDER_D.LAST_MODIFIED_DATE
-    notes: 展厅模拟表形;E10 单身通过 SALES_ORDER_ID 关联单头取单号
+    notes: E10-like 参考表形;E10 单身通过 SALES_ORDER_ID 关联单头取单号

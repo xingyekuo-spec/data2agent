@@ -34,7 +34,7 @@ def test_parse_rejects_bad_grammar(bad):
 
 def _template_and_binding(**binding_overrides):
     tpl = ObjectTemplate(
-        object="Demo", display_name="演示", domain="销售", keys=["code"],
+        object="Sample", display_name="样例", domain="销售", keys=["code"],
         properties=[{"name": "code", "type": "string"}, {"name": "cur", "type": "string"}],
     )
     kwargs = {
@@ -181,7 +181,7 @@ def test_select_plan_provenance_single_and_composite_pk():
 def test_select_plan_multi_join_same_target_table_and_alias_collision():
     """同目标表多个 FK、同名列用不同 join 别名区分。"""
     tpl = ObjectTemplate(
-        object="Demo2", display_name="演示", domain="销售", keys=["code"],
+        object="Sample2", display_name="样例", domain="销售", keys=["code"],
         properties=[
             {"name": "code", "type": "string"},
             {"name": "cur", "type": "string"},

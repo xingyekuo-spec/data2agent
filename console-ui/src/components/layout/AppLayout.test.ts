@@ -25,7 +25,7 @@ describe('AppLayout', () => {
     // 顶栏持续展示环境模式(jsdom 测试环境 MODE=mock)
     const badge = wrapper.find('[data-testid="env-badge"]')
     expect(badge.exists()).toBe(true)
-    expect(['MOCK', 'DEMO', 'REAL']).toContain(badge.text())
+    expect(['MOCK', 'REAL']).toContain(badge.text())
 
     // 顶栏为白底 + 下边线(参考 UI)
     const header = wrapper.find('.app-shell__header')

@@ -159,7 +159,7 @@ python -m data2agent.middle_admin --home <家目录> --host 127.0.0.1 --port 885
 | 5 | 增量幂等 | 再等一轮 sync 后,平台 raw 行数不因重推而膨胀(upsert 幂等) |
 | 6 | 只读守卫 | 确认抽取账号无写权限(尝试写操作应被 ERP 拒绝) |
 
-平台侧数据到达 Agent 后,可用展厅同款离线链冒烟(在平台机、指向 `data\factory.sqlite`):
+平台侧数据到达 Agent 后,可用接单评审参考链冒烟(在平台机、指向 `data\factory.sqlite`):
 ```bash
 # 便携包 runtime 内 python,或开发机:
 python -m data2agent.showroom.review_demo --db data/factory.sqlite

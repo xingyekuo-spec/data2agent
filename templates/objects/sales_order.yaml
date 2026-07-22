@@ -51,6 +51,6 @@ bindings:
           - { when: { CLOSE_STATE: "N" }, value: 已接单 }
     watermark: SALES_ORDER.LAST_MODIFIED_DATE
     notes: >-
-      展厅模拟表形;已接单与生产中的区分需关联工单(首批对象未覆盖),
+      E10-like 参考表形;已接单与生产中的区分需关联工单(首批对象未覆盖),
       暂合并为已接单,工单对象就位后在决策表细分
 knowledge_refs: [出口贸易条款口径, 船期与钓季档期常识]

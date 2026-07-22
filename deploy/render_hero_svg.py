@@ -1,8 +1,8 @@
-"""README 首屏 SVG 生成器:跑真实演示链,把建议卡渲染成终端风格 SVG。
+"""README 首屏 SVG 生成器:跑真实参考链,把建议卡渲染成终端风格 SVG。
 
 用法:python deploy/render_hero_svg.py [--db landing/factory.sqlite]
                                        [--out docs/assets/review-card.svg]
-产物是可再生的"截图":seed 数据或演示逻辑变更后重跑本脚本即可刷新,
+产物是可再生的"截图":seed 数据或参考逻辑变更后重跑本脚本即可刷新,
 不依赖任何截图工具;GitHub README 原生渲染 SVG。
 """
 
@@ -81,7 +81,7 @@ def build_svg(card_text: str, command: str) -> str:
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}" role="img" '
-        'aria-label="data2agent 接单评审建议卡演示">',
+        'aria-label="data2agent 接单评审建议卡参考输出">',
         f'<rect width="{width}" height="{height}" rx="10" fill="{BG}" '
         f'stroke="{FRAME}"/>',
         # 窗口标题栏
@@ -89,7 +89,7 @@ def build_svg(card_text: str, command: str) -> str:
         f'<circle cx="44" cy="22" r="6" fill="#febc2e"/>'
         f'<circle cx="64" cy="22" r="6" fill="#28c840"/>',
         f'<text x="{width / 2}" y="27" text-anchor="middle" fill="{TITLE}" '
-        f'font-family="{FONT}" font-size="12">data2agent · 接单评审演示链'
+        f'font-family="{FONT}" font-size="12">data2agent · 接单评审参考链'
         '(数字可溯源)</text>',
         f'<line x1="0" y1="40" x2="{width}" y2="40" stroke="{FRAME}"/>',
     ]

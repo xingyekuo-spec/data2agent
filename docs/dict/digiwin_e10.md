@@ -1,7 +1,7 @@
-# 鼎捷 E10 参考表字典(展厅模拟)
+# 鼎捷 E10-like 参考表字典
 
-> ⚠️ 本字典描述的是**展厅模拟库**的表形,按 E10 命名惯例构造,
-> 用于映射引擎与 MCP 演示开发。真实客户环境的表名 / 字段名 / 状态码
+> ⚠️ 本字典描述的是**E10-like 参考库**的表形,按 E10 命名惯例构造,
+> 用于映射引擎、MCP 与回归测试开发。真实客户环境的表名 / 字段名 / 状态码
 > **以现场数据字典核对为准**,核对后将对应 binding 置为 `verified`。
 >
 > 生成方式:`python -m data2agent.showroom.seed --dict-md docs/dict/digiwin_e10.md`
@@ -21,7 +21,7 @@
 | CREATE_BY | TEXT | 建立人员 |
 | LAST_MODIFIED_DATE | TEXT | 最后修改日期(增量抽取水位字段) |
 | LAST_MODIFIED_BY | TEXT | 最后修改人员 |
-| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,展厅固定单组织) |
+| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,参考库固定单组织) |
 
 ## CUSTOMER —— 客户主档
 
@@ -33,7 +33,7 @@
 | CUSTOMER_SHORT_NAME | TEXT | 客户简称 |
 | COUNTRY_REGION | TEXT | 国家 / 区域 |
 | CURRENCY_ID | INTEGER | 结算币别(外键 → CURRENCY.Id) |
-| PAYMENT_TERM_DAYS | INTEGER | 账期天数(真实 E10 为付款条件档外键,展厅简化为天数列) |
+| PAYMENT_TERM_DAYS | INTEGER | 账期天数(真实 E10 为付款条件档外键,参考库简化为天数列) |
 | CONTACT_NAME | TEXT | 联系人(敏感,出网前置脱敏) |
 | CONTACT_PHONE | TEXT | 联系电话(敏感) |
 | CONTACT_EMAIL | TEXT | 联系邮箱(敏感) |
@@ -41,7 +41,7 @@
 | CREATE_BY | TEXT | 建立人员 |
 | LAST_MODIFIED_DATE | TEXT | 最后修改日期(增量抽取水位字段) |
 | LAST_MODIFIED_BY | TEXT | 最后修改人员 |
-| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,展厅固定单组织) |
+| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,参考库固定单组织) |
 
 ## ITEM —— 品号主档
 
@@ -51,16 +51,16 @@
 | ITEM_CODE | TEXT | 品号(业务键,编码规则表达变体) |
 | ITEM_NAME | TEXT | 品名 |
 | ITEM_SPECIFICATION | TEXT | 规格描述(竿:长度/节数/调性;轮:齿比/轴承;饵:类型/颜色) |
-| CATEGORY_CODE | TEXT | 大类编码(ROD 竿 / REEL 轮 / LURE 饵 / ACC 配件 / RAW 原料;真实 E10 为品号类别档外键,展厅简化) |
-| UNIT_CODE | TEXT | 计量单位(PCS / SET / KG;真实 E10 为单位档外键,展厅简化) |
+| CATEGORY_CODE | TEXT | 大类编码(ROD 竿 / REEL 轮 / LURE 饵 / ACC 配件 / RAW 原料;真实 E10 为品号类别档外键,参考库简化) |
+| UNIT_CODE | TEXT | 计量单位(PCS / SET / KG;真实 E10 为单位档外键,参考库简化) |
 | STANDARD_COST | NUMERIC | 标准成本(CNY,敏感) |
 | CREATE_DATE | TEXT | 建立日期 |
 | CREATE_BY | TEXT | 建立人员 |
 | LAST_MODIFIED_DATE | TEXT | 最后修改日期(增量抽取水位字段) |
 | LAST_MODIFIED_BY | TEXT | 最后修改人员 |
-| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,展厅固定单组织) |
+| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,参考库固定单组织) |
 
-## QUOTATION —— 报价单(展厅简化为单头 + 主要品号,真实 E10 含单身)
+## QUOTATION —— 报价单(参考库简化为单头 + 主要品号,真实 E10 含单身)
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -82,7 +82,7 @@
 | CREATE_BY | TEXT | 建立人员 |
 | LAST_MODIFIED_DATE | TEXT | 最后修改日期(增量抽取水位字段) |
 | LAST_MODIFIED_BY | TEXT | 最后修改人员 |
-| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,展厅固定单组织) |
+| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,参考库固定单组织) |
 
 ## SALES_ORDER —— 销售订单单头
 
@@ -95,7 +95,7 @@
 | QUOTATION_ID | INTEGER | 来源报价单(外键 → QUOTATION.Id,可空;接单评审链溯源) |
 | CURRENCY_ID | INTEGER | 交易币别(外键 → CURRENCY.Id) |
 | EXCHANGE_RATE | NUMERIC | 订单汇率(交易币别 → CNY) |
-| TRADE_TERM | TEXT | 贸易条款(FOB / CIF / EXW;真实 E10 为贸易条件档外键,展厅简化) |
+| TRADE_TERM | TEXT | 贸易条款(FOB / CIF / EXW;真实 E10 为贸易条件档外键,参考库简化) |
 | TOTAL_AMOUNT | NUMERIC | 订单总额(交易币别,= 单身金额合计) |
 | PROMISED_SHIP_DATE | TEXT | 承诺船期 / 交期 |
 | APPROVE_DATE | TEXT | 审核日期(可空 = 未审核) |
@@ -105,7 +105,7 @@
 | CREATE_BY | TEXT | 建立人员 |
 | LAST_MODIFIED_DATE | TEXT | 最后修改日期(增量抽取水位字段) |
 | LAST_MODIFIED_BY | TEXT | 最后修改人员 |
-| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,展厅固定单组织) |
+| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,参考库固定单组织) |
 
 ## SALES_ORDER_D —— 销售订单单身
 
@@ -124,4 +124,4 @@
 | CREATE_BY | TEXT | 建立人员 |
 | LAST_MODIFIED_DATE | TEXT | 最后修改日期(增量抽取水位字段) |
 | LAST_MODIFIED_BY | TEXT | 最后修改人员 |
-| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,展厅固定单组织) |
+| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,参考库固定单组织) |

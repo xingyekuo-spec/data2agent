@@ -2,7 +2,7 @@
 
 stdio(默认):本机 Agent 场景,继承进程权限,无需认证;
 http:内网部署,默认强制 Token(--token / D2A_MCP_TOKEN;--allow-anonymous
-      仅限展厅演示)、每工具限流、JSONL 查询审计(与抽取侧审计对称)。
+      仅限本地参考链)、每工具限流、JSONL 查询审计(与抽取侧审计对称)。
 """
 
 from __future__ import annotations
@@ -22,13 +22,13 @@ def main() -> int:
     ap.add_argument("--templates", default="templates", help="模板包目录")
     ap.add_argument("--source", default="digiwin_e10", help="binding 数据源名")
     ap.add_argument("--transport", choices=["stdio", "http"], default="stdio",
-                    help="stdio(本机 Agent)/ http(streamable-http,内网 / 展厅 compose)")
+                    help="stdio(本机 Agent)/ http(streamable-http,内网 / 参考链 compose)")
     ap.add_argument("--host", default="127.0.0.1", help="http 模式监听地址")
     ap.add_argument("--port", type=int, default=8848, help="http 模式端口")
     ap.add_argument("--token", default=None,
                     help="http 模式 Bearer Token(默认取环境变量 D2A_MCP_TOKEN)")
     ap.add_argument("--allow-anonymous", action="store_true",
-                    help="http 模式免认证(仅限展厅演示;内网部署必须配 Token)")
+                    help="http 模式免认证(仅限本地参考链;内网部署必须配 Token)")
     ap.add_argument("--rate-per-minute", type=int, default=120,
                     help="每工具限流(次/分钟,0 关闭;仅 http 模式生效)")
     ap.add_argument("--audit-log", default=None,
@@ -38,7 +38,7 @@ def main() -> int:
         args.token = os.environ.get("D2A_MCP_TOKEN", "")
 
     if not Path(args.db).exists():
-        ap.error(f"落地库不存在:{args.db}。展厅链路:python -m data2agent.showroom.seed && "
+        ap.error(f"落地库不存在:{args.db}。参考链:python -m data2agent.showroom.seed && "
                  "python -m data2agent.connect sync --sqlite showroom/e10.sqlite && "
                  "python -m data2agent.connect apply")
 
@@ -59,10 +59,10 @@ def main() -> int:
         ).run()
         return 0
 
-    # http:默认安全 —— 无 Token 拒绝启动,除非显式声明匿名(展厅)
+    # http:默认安全 —— 无 Token 拒绝启动,除非显式声明匿名(本地参考链)
     if not args.token and not args.allow_anonymous:
         ap.error("http 模式必须配 Token(--token / D2A_MCP_TOKEN),"
-                 "或显式 --allow-anonymous(仅限展厅演示)")
+                 "或显式 --allow-anonymous(仅限本地参考链)")
     audit_path = args.audit_log
     if audit_path is None:
         audit_path = str(Path(args.db).parent / "gateway_audit.jsonl")
@@ -81,7 +81,7 @@ def main() -> int:
         from .http import BearerAuthMiddleware
         app = BearerAuthMiddleware(app, args.token)
     print(f"MCP(http):{args.host}:{args.port}"
-          f"({'Token 认证' if args.token else '⚠ 匿名(仅限展厅)'};"
+          f"({'Token 认证' if args.token else '⚠ 匿名(仅限本地参考链)'};"
           f"限流 {args.rate_per_minute}/分钟;审计 {audit_path})")
 
     import uvicorn

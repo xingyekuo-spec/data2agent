@@ -13,13 +13,12 @@ Vue 3 + Vite + TypeScript + Element Plus + Pinia + Vue Router。
 
 ```bash
 npm ci
-npm run dev        # 开发服务,默认 MOCK 模式:后端不启动也能完整演示
+npm run dev        # 开发服务,默认 MOCK 模式:后端不启动也能完整验证界面状态
 npm run dev:real   # 连接本机真实控制台 http://127.0.0.1:8849(/api 代理)
-npm run dev:demo   # 连接展厅演示环境(真实 API,不用 fixture)
 ```
 
 开发服务地址:<http://localhost:5173/v1/>。MOCK 模式下右下角有场景切换面板,
-顶栏持续显示大写 `MOCK` 标识;DEMO / REAL 不加载 MSW。
+顶栏持续显示大写 `MOCK` 标识;REAL 不加载 MSW。
 
 ## 环境模式
 
@@ -28,7 +27,6 @@ npm run dev:demo   # 连接展厅演示环境(真实 API,不用 fixture)
 | 模式 | 数据来源 | 说明 |
 | --- | --- | --- |
 | `mock` | 本地 typed fixture(MSW 拦截) | 开发默认;生产构建永远进不了 mock |
-| `demo` | 展厅真实 API | 不用 fixture |
 | `real` | 真实后端 | 生产构建默认(未设置时强制 real) |
 
 Token 只保存在当前标签页 `sessionStorage`(键 `d2a_token`),不进 localStorage、
@@ -79,7 +77,7 @@ node scripts/check-dist.mjs   # 产物检查:base=/v1/、无 CDN、全量产物�
 
 ```text
 src/
-├── config/mode.ts        # mock|demo|real 解析(生产默认 REAL)
+├── config/mode.ts        # mock|real 解析(生产默认 REAL)
 ├── api/                  # client(唯一 openapi-fetch)/ errors / services
 ├── types/                # api.ts(生成物)、state.ts(请求/领域状态模型)
 ├── stores/               # session / overview(垂直切片)/ settings

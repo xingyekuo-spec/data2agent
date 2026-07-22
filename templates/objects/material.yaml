@@ -28,5 +28,5 @@ bindings:
       unit: ITEM.UNIT_CODE
       standard_cost: ITEM.STANDARD_COST
     watermark: ITEM.LAST_MODIFIED_DATE
-    notes: 展厅模拟表形;真实 E10 大类 / 单位为基础档外键,展厅简化为编码列
+    notes: E10-like 参考表形;真实 E10 大类 / 单位为基础档外键,参考库简化为编码列
 knowledge_refs: [物料优选与归一化规则]

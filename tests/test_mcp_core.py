@@ -172,7 +172,7 @@ def test_propose_action_card(svc):
     cust = svc.query_objects("Customer", filters={"customer_code": "C002"})
     margin = svc.query_metrics("gross_margin_rate", group_by="客户")
     card = svc.propose_action(
-        "Quotation", "quote_review", "谨慎接 —— 演示结论",
+        "Quotation", "quote_review", "谨慎接 —— 参考结论",
         [
             {
                 "claim": "C002 账期 90 天",

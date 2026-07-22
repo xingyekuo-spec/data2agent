@@ -1061,7 +1061,7 @@ class QueryService:
             caveats = mdef.caveats
             dim_out = dim
 
-        warning = "口径为 draft(未经校准),数值仅供演示环境参考" if status != "certified" else ""
+        warning = "口径为 draft(未经校准),数值仅供参考环境核对" if status != "certified" else ""
         warnings = [w for w in (warning, caveats) if w]
         context = self._resolve_context(context)
         persisted = self._persist_query_evidence(

@@ -432,7 +432,7 @@ const baseTemplates: TemplateObject[] = [
           contact: 'CUSTOMER.CONTACT_EMAIL',
         },
         watermark: 'CUSTOMER.LAST_MODIFIED_DATE',
-        notes: '展厅模拟表形;真实环境以现场字典核对为准',
+        notes: 'E10-like 参考表形;真实环境以现场字典核对为准',
       },
     ],
     materialized: {

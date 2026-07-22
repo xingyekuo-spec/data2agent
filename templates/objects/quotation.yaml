@@ -57,5 +57,5 @@ bindings:
       fx_assumption: QUOTATION.EXCHANGE_RATE
       result: QUOTATION.RESULT_STATE (map W→成交 / L→未成交 / P→待定 / D→待定)
     watermark: QUOTATION.LAST_MODIFIED_DATE
-    notes: 展厅模拟表形,简化为单头 + 主要品号(真实 E10 报价单含单身);INQUIRY_DATE / SUBMIT_DATE 支撑报价响应时长指标
+    notes: E10-like 参考表形,简化为单头 + 主要品号(真实 E10 报价单含单身);INQUIRY_DATE / SUBMIT_DATE 支撑报价响应时长指标
 knowledge_refs: [报价与毛利政策, 出口合规要点(加州65/REACH)]

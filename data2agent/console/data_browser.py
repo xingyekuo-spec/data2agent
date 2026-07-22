@@ -87,7 +87,7 @@ def json_safe(value: Any) -> tuple[Any, bool]:
 
 
 def sources_from_pack(pack: TemplatePack) -> list[str]:
-    """模板 enabled binding 中声明过的源;用于无 config 的只读测试/展厅上下文。"""
+    """模板 enabled binding 中声明过的源;用于无 config 的只读测试/参考链上下文。"""
     return sorted({
         binding.source
         for tpl in pack.objects

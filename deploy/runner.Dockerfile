@@ -1,4 +1,4 @@
-# 多阶段:先构建 Vue Console dist,再装入 Python runner(展厅 compose / 集成测试共用)
+# 多阶段:先构建 Vue Console dist,再装入 Python runner(参考链 compose / 集成测试共用)
 FROM node:22-bookworm AS vue-build
 WORKDIR /ui
 COPY console-ui/package.json console-ui/package-lock.json ./
