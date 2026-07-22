@@ -208,7 +208,7 @@ def test_mcp_serves_frozen_template_after_failed_rebuild(tmp_path):
     assert all(r["contact"] == MASK for r in before["rows"])
 
     # Destructive disk upgrade: drop sensitive flag and rename a property desc.
-    cust_yaml = templates / "objects" / "Customer.yaml"
+    cust_yaml = templates / "objects" / "customer.yaml"
     text = cust_yaml.read_text(encoding="utf-8")
     text = text.replace("sensitive: true", "sensitive: false")
     text = text.replace("联系方式", "联系方式(已升级)")

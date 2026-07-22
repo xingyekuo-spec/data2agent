@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -18,6 +19,7 @@ from .adapters.base import TableInfo
 from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 _TYPE_SQL = {"int": "INTEGER", "real": "REAL", "text": "TEXT", "blob": "BLOB"}
+_SCHEMA_INIT_LOCK = threading.RLock()
 
 _META_COLS = [
     ("_d2a_batch_id", "TEXT"),
@@ -654,15 +656,19 @@ class LandingStore:
         self.db_path = str(db_path)
         self.con = sqlite3.connect(db_path)
         self.con.row_factory = sqlite3.Row
-        # 版本元数据要求 object_version 必须隶属于真实 dataset_version；
-        # SQLite 默认不执行外键约束，因此每个连接显式开启。
-        self.con.execute("PRAGMA foreign_keys=ON")
-        # WAL:写批次不阻塞 MCP / 控制台的只读连接(单写者 + 多读者场景);
-        # busy_timeout:偶发写锁竞争时等待而非立即抛 "database is locked"。
-        self.con.execute("PRAGMA journal_mode=WAL")
-        self.con.execute("PRAGMA busy_timeout=5000")
-        self.con.executescript(_SYSTEM_DDL)
-        self._migrate()
+        # 多个 MCP 查询线程可能同时为同一 SQLite 文件创建 LandingStore。
+        # SQLite 会缓存 schema;若多个连接并发执行 DDL/migrate,容易在 CI 上触发
+        # "database schema has changed"。初始化阶段串行化,后续读写仍走 WAL 并发。
+        with _SCHEMA_INIT_LOCK:
+            # 版本元数据要求 object_version 必须隶属于真实 dataset_version；
+            # SQLite 默认不执行外键约束，因此每个连接显式开启。
+            self.con.execute("PRAGMA foreign_keys=ON")
+            # WAL:写批次不阻塞 MCP / 控制台的只读连接(单写者 + 多读者场景);
+            # busy_timeout:偶发写锁竞争时等待而非立即抛 "database is locked"。
+            self.con.execute("PRAGMA journal_mode=WAL")
+            self.con.execute("PRAGMA busy_timeout=5000")
+            self.con.executescript(_SYSTEM_DDL)
+            self._migrate()
 
     @classmethod
     def open_readonly(cls, db_path: str | Path) -> "LandingStore":
