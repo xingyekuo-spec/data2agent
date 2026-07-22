@@ -128,6 +128,54 @@ CREATE TABLE IF NOT EXISTS d2a_object_version (
 );
 CREATE INDEX IF NOT EXISTS idx_d2a_object_version_object
     ON d2a_object_version (object, built_at DESC);
+CREATE TABLE IF NOT EXISTS d2a_field_lineage (
+    dataset_version TEXT NOT NULL,
+    object_version TEXT NOT NULL,
+    object TEXT NOT NULL,
+    object_key_json TEXT NOT NULL,
+    object_key_hash TEXT NOT NULL,
+    property TEXT NOT NULL,
+    result_value_json TEXT NOT NULL,
+    trace_status TEXT NOT NULL CHECK (trace_status IN ('available', 'unavailable')),
+    unavailable_reason TEXT,
+    transform_kind TEXT NOT NULL CHECK (
+        transform_kind IN ('direct', 'derived', 'unmapped')
+    ),
+    transform_steps_json TEXT NOT NULL,
+    source TEXT NOT NULL,
+    map_batch_id TEXT NOT NULL,
+    binding_hash TEXT NOT NULL,
+    binding_status TEXT NOT NULL,
+    template_version TEXT NOT NULL,
+    PRIMARY KEY (dataset_version, object, object_key_json, property),
+    UNIQUE (dataset_version, object, object_key_hash, property),
+    FOREIGN KEY (dataset_version, object)
+        REFERENCES d2a_object_version (dataset_version, object)
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_field_lineage_key_hash
+    ON d2a_field_lineage (dataset_version, object, object_key_hash);
+CREATE TABLE IF NOT EXISTS d2a_field_lineage_input (
+    dataset_version TEXT NOT NULL,
+    object TEXT NOT NULL,
+    object_key_json TEXT NOT NULL,
+    property TEXT NOT NULL,
+    input_ordinal INTEGER NOT NULL CHECK (input_ordinal >= 0),
+    role TEXT NOT NULL CHECK (role IN ('value', 'join_fk', 'derived_condition')),
+    source TEXT,
+    source_table TEXT,
+    source_pk_json TEXT,
+    source_column TEXT,
+    source_value_json TEXT,
+    extract_batch_id TEXT,
+    join_json TEXT,
+    PRIMARY KEY (dataset_version, object, object_key_json, property, input_ordinal),
+    FOREIGN KEY (dataset_version, object, object_key_json, property)
+        REFERENCES d2a_field_lineage (
+            dataset_version, object, object_key_json, property
+        )
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_field_lineage_input_obj
+    ON d2a_field_lineage_input (dataset_version, object);
 """
 
 # 旧库 CREATE TABLE IF NOT EXISTS 不会补 CHECK;用触发器幂等强制状态联动。
@@ -218,8 +266,28 @@ WHEN NEW.dataset_version IS NOT OLD.dataset_version
       AND NEW.status = 'retired'
     )
   )
+  OR (
+    IFNULL(NEW.lineage_schema_version, -1)
+      IS NOT IFNULL(OLD.lineage_schema_version, -1)
+    AND OLD.status != 'building'
+  )
+  OR (
+    IFNULL(NEW.lineage_field_count, -1)
+      IS NOT IFNULL(OLD.lineage_field_count, -1)
+    AND OLD.status != 'building'
+  )
 BEGIN
   SELECT RAISE(ABORT, 'frozen object fields are immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_field_lineage_no_update
+BEFORE UPDATE ON d2a_field_lineage
+BEGIN
+  SELECT RAISE(ABORT, 'field lineage is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_field_lineage_input_no_update
+BEFORE UPDATE ON d2a_field_lineage_input
+BEGIN
+  SELECT RAISE(ABORT, 'field lineage input is immutable');
 END;
 """
 
@@ -279,6 +347,13 @@ def _row_to_object_version(row: sqlite3.Row) -> ObjectVersionRecord:
         built_at=row["built_at"],
         published_at=row["published_at"],
         purged_at=row["purged_at"] if "purged_at" in keys else None,
+        lineage_schema_version=(
+            row["lineage_schema_version"]
+            if "lineage_schema_version" in keys else None
+        ),
+        lineage_field_count=(
+            row["lineage_field_count"] if "lineage_field_count" in keys else None
+        ),
     )
 
 
@@ -354,6 +429,72 @@ class LandingStore:
         if "purged_at" not in obj_cols:
             self.con.execute(
                 "ALTER TABLE d2a_object_version ADD COLUMN purged_at TEXT")
+        if "lineage_schema_version" not in obj_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_object_version "
+                "ADD COLUMN lineage_schema_version INTEGER")
+        if "lineage_field_count" not in obj_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_object_version "
+                "ADD COLUMN lineage_field_count INTEGER")
+        # 血缘表在 _SYSTEM_DDL 中 CREATE IF NOT EXISTS;旧库同样幂等建表。
+        self.con.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS d2a_field_lineage (
+                dataset_version TEXT NOT NULL,
+                object_version TEXT NOT NULL,
+                object TEXT NOT NULL,
+                object_key_json TEXT NOT NULL,
+                object_key_hash TEXT NOT NULL,
+                property TEXT NOT NULL,
+                result_value_json TEXT NOT NULL,
+                trace_status TEXT NOT NULL
+                    CHECK (trace_status IN ('available', 'unavailable')),
+                unavailable_reason TEXT,
+                transform_kind TEXT NOT NULL CHECK (
+                    transform_kind IN ('direct', 'derived', 'unmapped')
+                ),
+                transform_steps_json TEXT NOT NULL,
+                source TEXT NOT NULL,
+                map_batch_id TEXT NOT NULL,
+                binding_hash TEXT NOT NULL,
+                binding_status TEXT NOT NULL,
+                template_version TEXT NOT NULL,
+                PRIMARY KEY (dataset_version, object, object_key_json, property),
+                UNIQUE (dataset_version, object, object_key_hash, property),
+                FOREIGN KEY (dataset_version, object)
+                    REFERENCES d2a_object_version (dataset_version, object)
+            );
+            CREATE INDEX IF NOT EXISTS idx_d2a_field_lineage_key_hash
+                ON d2a_field_lineage (dataset_version, object, object_key_hash);
+            CREATE TABLE IF NOT EXISTS d2a_field_lineage_input (
+                dataset_version TEXT NOT NULL,
+                object TEXT NOT NULL,
+                object_key_json TEXT NOT NULL,
+                property TEXT NOT NULL,
+                input_ordinal INTEGER NOT NULL CHECK (input_ordinal >= 0),
+                role TEXT NOT NULL CHECK (
+                    role IN ('value', 'join_fk', 'derived_condition')
+                ),
+                source TEXT,
+                source_table TEXT,
+                source_pk_json TEXT,
+                source_column TEXT,
+                source_value_json TEXT,
+                extract_batch_id TEXT,
+                join_json TEXT,
+                PRIMARY KEY (
+                    dataset_version, object, object_key_json, property, input_ordinal
+                ),
+                FOREIGN KEY (dataset_version, object, object_key_json, property)
+                    REFERENCES d2a_field_lineage (
+                        dataset_version, object, object_key_json, property
+                    )
+            );
+            CREATE INDEX IF NOT EXISTS idx_d2a_field_lineage_input_obj
+                ON d2a_field_lineage_input (dataset_version, object);
+            """
+        )
         try:
             self.con.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_dataset_one_building "
@@ -711,8 +852,9 @@ class LandingStore:
         self.con.execute(
             "INSERT INTO d2a_object_version ("
             "dataset_version, object, object_version, binding_hash, row_count, "
-            "batch_id, build_table, status, built_at, published_at, purged_at"
-            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "batch_id, build_table, status, built_at, published_at, purged_at, "
+            "lineage_schema_version, lineage_field_count"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.dataset_version,
                 record.object,
@@ -725,6 +867,8 @@ class LandingStore:
                 record.built_at,
                 record.published_at,
                 record.purged_at,
+                record.lineage_schema_version,
+                record.lineage_field_count,
             ),
         )
         self.con.commit()
@@ -889,3 +1033,203 @@ class LandingStore:
             (dataset_version,),
         ).fetchall()
         return [_row_to_object_version(r) for r in rows]
+
+    # ---- field lineage (M4) -------------------------------------------------
+
+    def update_object_lineage_meta(
+        self,
+        dataset_version: str,
+        object_name: str,
+        *,
+        lineage_schema_version: int,
+        lineage_field_count: int,
+        commit: bool = True,
+    ) -> None:
+        """building 阶段写入血缘完整性元数据;离开 building 后由 freeze 触发器冻结。"""
+        if lineage_field_count < 0:
+            raise ValueError("lineage_field_count 不得为负")
+        cur = self.con.execute(
+            "UPDATE d2a_object_version "
+            "SET lineage_schema_version = ?, lineage_field_count = ? "
+            "WHERE dataset_version = ? AND object = ? AND status = 'building'",
+            (
+                lineage_schema_version,
+                lineage_field_count,
+                dataset_version,
+                object_name,
+            ),
+        )
+        if cur.rowcount != 1:
+            raise ValueError(
+                f"无法写入血缘元数据 {dataset_version}/{object_name}"
+            )
+        if commit:
+            self.con.commit()
+
+    def insert_field_lineage(
+        self,
+        nodes: Sequence,
+        inputs: Sequence,
+        *,
+        commit: bool = True,
+    ) -> None:
+        """批量写入字段节点与输入边;失败时由调用方事务回滚。
+
+        hash 冲突(UNIQUE dataset/object/hash/property)必须让构建失败。
+        """
+        from .field_lineage import FieldLineageInputRow, FieldLineageNode
+
+        node_rows = []
+        for node in nodes:
+            if not isinstance(node, FieldLineageNode):
+                raise TypeError("nodes 须为 FieldLineageNode")
+            node_rows.append((
+                node.dataset_version,
+                node.object_version,
+                node.object,
+                node.object_key_json,
+                node.object_key_hash,
+                node.property,
+                node.result_value_json,
+                node.trace_status,
+                node.unavailable_reason,
+                node.transform_kind,
+                node.transform_steps_json,
+                node.source,
+                node.map_batch_id,
+                node.binding_hash,
+                node.binding_status,
+                node.template_version,
+            ))
+        input_rows = []
+        for item in inputs:
+            if not isinstance(item, FieldLineageInputRow):
+                raise TypeError("inputs 须为 FieldLineageInputRow")
+            input_rows.append((
+                item.dataset_version,
+                item.object,
+                item.object_key_json,
+                item.property,
+                item.input_ordinal,
+                item.role,
+                item.source,
+                item.source_table,
+                item.source_pk_json,
+                item.source_column,
+                item.source_value_json,
+                item.extract_batch_id,
+                item.join_json,
+            ))
+        if node_rows:
+            self.con.executemany(
+                "INSERT INTO d2a_field_lineage ("
+                "dataset_version, object_version, object, object_key_json, "
+                "object_key_hash, property, result_value_json, trace_status, "
+                "unavailable_reason, transform_kind, transform_steps_json, "
+                "source, map_batch_id, binding_hash, binding_status, "
+                "template_version"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                node_rows,
+            )
+        if input_rows:
+            self.con.executemany(
+                "INSERT INTO d2a_field_lineage_input ("
+                "dataset_version, object, object_key_json, property, "
+                "input_ordinal, role, source, source_table, source_pk_json, "
+                "source_column, source_value_json, extract_batch_id, join_json"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                input_rows,
+            )
+        if commit:
+            self.con.commit()
+
+    def delete_field_lineage(
+        self,
+        dataset_version: str,
+        object_name: str | None = None,
+        *,
+        commit: bool = True,
+    ) -> int:
+        """受控清理血缘(失败恢复/GC);先删 input 再删 node。返回删除的节点数。"""
+        if object_name is None:
+            self.con.execute(
+                "DELETE FROM d2a_field_lineage_input WHERE dataset_version = ?",
+                (dataset_version,),
+            )
+            cur = self.con.execute(
+                "DELETE FROM d2a_field_lineage WHERE dataset_version = ?",
+                (dataset_version,),
+            )
+        else:
+            self.con.execute(
+                "DELETE FROM d2a_field_lineage_input "
+                "WHERE dataset_version = ? AND object = ?",
+                (dataset_version, object_name),
+            )
+            cur = self.con.execute(
+                "DELETE FROM d2a_field_lineage "
+                "WHERE dataset_version = ? AND object = ?",
+                (dataset_version, object_name),
+            )
+        if commit:
+            self.con.commit()
+        return cur.rowcount
+
+    def count_field_lineage(
+        self, dataset_version: str, object_name: str,
+    ) -> int:
+        (n,) = self.con.execute(
+            "SELECT COUNT(*) FROM d2a_field_lineage "
+            "WHERE dataset_version = ? AND object = ?",
+            (dataset_version, object_name),
+        ).fetchone()
+        return n
+
+    def get_field_lineage_by_key_hash(
+        self,
+        dataset_version: str,
+        object_name: str,
+        object_key_hash: str,
+        *,
+        property_name: str | None = None,
+    ) -> list[sqlite3.Row]:
+        """按 key token 查询字段节点;可选单属性过滤。"""
+        if property_name is None:
+            return self.con.execute(
+                "SELECT * FROM d2a_field_lineage "
+                "WHERE dataset_version = ? AND object = ? AND object_key_hash = ? "
+                "ORDER BY property",
+                (dataset_version, object_name, object_key_hash),
+            ).fetchall()
+        return self.con.execute(
+            "SELECT * FROM d2a_field_lineage "
+            "WHERE dataset_version = ? AND object = ? AND object_key_hash = ? "
+            "AND property = ?",
+            (dataset_version, object_name, object_key_hash, property_name),
+        ).fetchall()
+
+    def get_field_lineage_inputs_by_key_hash(
+        self,
+        dataset_version: str,
+        object_name: str,
+        object_key_hash: str,
+        *,
+        property_name: str | None = None,
+    ) -> list[sqlite3.Row]:
+        """按 key token 查询输入边;按 property, input_ordinal 稳定排序。"""
+        base = (
+            "SELECT i.* FROM d2a_field_lineage_input i "
+            "JOIN d2a_field_lineage n "
+            "ON i.dataset_version = n.dataset_version "
+            "AND i.object = n.object "
+            "AND i.object_key_json = n.object_key_json "
+            "AND i.property = n.property "
+            "WHERE n.dataset_version = ? AND n.object = ? "
+            "AND n.object_key_hash = ?"
+        )
+        params: list = [dataset_version, object_name, object_key_hash]
+        if property_name is not None:
+            base += " AND n.property = ?"
+            params.append(property_name)
+        base += " ORDER BY i.property, i.input_ordinal"
+        return self.con.execute(base, params).fetchall()

@@ -68,6 +68,14 @@ class ObjectVersionRecord(BaseModel):
         default=None,
         description="物理表已清理时的 tombstone 时间;legacy local ISO text",
     )
+    lineage_schema_version: int | None = Field(
+        default=None,
+        description="字段血缘 schema;旧版本 null,M4 新构建为 1",
+    )
+    lineage_field_count: int | None = Field(
+        default=None,
+        description="成功字段节点数;building 写入后冻结",
+    )
 
 
 def parse_object_manifest(raw: str | None) -> list[str] | None:

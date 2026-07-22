@@ -9,7 +9,10 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from typing import Any
+from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Literal
 
 _LINEAGE_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _ALLOWED_KEY_SCALARS = (type(None), str, int, float, bool)
@@ -118,3 +121,156 @@ def require_lineage_key_token(token: str) -> str:
             "key token 必须是规范 64 位小写十六进制 SHA-256",
         )
     return token
+
+
+# ---- ValueEvidence / 持久化 DTO (M4-T04) ------------------------------------
+
+LINEAGE_SCHEMA_VERSION = 1
+VALUE_BUDGET_BYTES = 64 * 1024
+VALUE_PREVIEW_CHARS = 512
+
+TransformKind = Literal["direct", "derived", "unmapped"]
+
+
+@dataclass(frozen=True)
+class FieldLineageNode:
+    dataset_version: str
+    object_version: str
+    object: str
+    object_key_json: str
+    object_key_hash: str
+    property: str
+    result_value_json: str
+    trace_status: Literal["available", "unavailable"]
+    unavailable_reason: str | None
+    transform_kind: TransformKind
+    transform_steps_json: str
+    source: str
+    map_batch_id: str
+    binding_hash: str
+    binding_status: str
+    template_version: str
+
+
+@dataclass(frozen=True)
+class FieldLineageInputRow:
+    dataset_version: str
+    object: str
+    object_key_json: str
+    property: str
+    input_ordinal: int
+    role: Literal["value", "join_fk", "derived_condition"]
+    source: str | None
+    source_table: str | None
+    source_pk_json: str | None
+    source_column: str | None
+    source_value_json: str | None
+    extract_batch_id: str | None
+    join_json: str | None
+
+
+def encode_value_evidence(value: Any) -> dict[str, Any]:
+    """稳定值证据 JSON(非 repr)。BLOB/超长文本只留摘要。"""
+    if value is None:
+        return {"kind": "null", "value": None, "preview": None, "sha256": None, "length": None}
+    if isinstance(value, bool) or isinstance(value, (int, float)):
+        if isinstance(value, float) and (
+            value != value or value in (float("inf"), float("-inf"))  # noqa: PLR0124
+        ):
+            text = str(value)
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            return {
+                "kind": "truncated",
+                "value": None,
+                "preview": text[:VALUE_PREVIEW_CHARS],
+                "sha256": digest,
+                "length": len(text),
+            }
+        return {
+            "kind": "scalar",
+            "value": value,
+            "preview": None,
+            "sha256": None,
+            "length": None,
+        }
+    if isinstance(value, datetime):
+        text = value.isoformat()
+        return {
+            "kind": "scalar",
+            "value": text,
+            "preview": None,
+            "sha256": None,
+            "length": None,
+        }
+    if isinstance(value, date):
+        return {
+            "kind": "scalar",
+            "value": value.isoformat(),
+            "preview": None,
+            "sha256": None,
+            "length": None,
+        }
+    if isinstance(value, Decimal):
+        return {
+            "kind": "scalar",
+            "value": float(value),
+            "preview": None,
+            "sha256": None,
+            "length": None,
+        }
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        return {
+            "kind": "bytes",
+            "value": None,
+            "preview": None,
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "length": len(raw),
+        }
+    if isinstance(value, str):
+        encoded = value.encode("utf-8")
+        if len(encoded) <= VALUE_BUDGET_BYTES:
+            return {
+                "kind": "scalar",
+                "value": value,
+                "preview": None,
+                "sha256": None,
+                "length": None,
+            }
+        return {
+            "kind": "truncated",
+            "value": None,
+            "preview": value[:VALUE_PREVIEW_CHARS],
+            "sha256": hashlib.sha256(encoded).hexdigest(),
+            "length": len(encoded),
+        }
+    # 其它类型:安全字符串化并按预算截断
+    text = str(value)
+    encoded = text.encode("utf-8")
+    if len(encoded) <= VALUE_BUDGET_BYTES:
+        return {
+            "kind": "scalar",
+            "value": text,
+            "preview": None,
+            "sha256": None,
+            "length": None,
+        }
+    return {
+        "kind": "truncated",
+        "value": None,
+        "preview": text[:VALUE_PREVIEW_CHARS],
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "length": len(encoded),
+    }
+
+
+def dumps_value_evidence(value: Any) -> str:
+    return json.dumps(
+        encode_value_evidence(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def dumps_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
