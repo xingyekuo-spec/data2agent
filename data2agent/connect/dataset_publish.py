@@ -19,6 +19,7 @@ from typing import Callable, Iterator, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from data2agent.connect.landing import LandingStore, _now
+from data2agent.connect.field_lineage import ApplyVersionContext
 from data2agent.connect.mapping_apply import (
     DEFAULT_BREAKER_THRESHOLD,
     MappingCircuitBreaker,
@@ -940,6 +941,14 @@ def build_dataset(
             result = apply_object(
                 store, tpl, source, build_table=table, threshold=threshold,
                 supersede_quarantine=False,
+                version_context=ApplyVersionContext(
+                    dataset_version=dataset_version,
+                    object_version=object_version,
+                    map_batch_id=f"mb_{uuid.uuid4().hex[:12]}",
+                    template_version=pack.version,
+                    binding_hash=binding_hash(binding),
+                    binding_status=binding.status or "verified",
+                ),
             )
             store.update_step(
                 step_id, status="ok",
@@ -1001,6 +1010,11 @@ def build_dataset(
     if any_failed:
         for object_name, result, table in pending_ok:
             _drop_table_best_effort(store, table)
+            # 候选表与 lineage 成对清理
+            try:
+                store.delete_field_lineage(dataset_version, object_name)
+            except Exception:
+                pass
             try:
                 store.update_object_build_result(
                     dataset_version,
