@@ -3,11 +3,11 @@ import { describe, expect, it } from 'vitest'
 import { NAV_GROUPS, NAV_ITEMS, createAppRouter, routes } from './index'
 
 describe('router', () => {
-  it('8 个主页面 + 只读「配置」= 9 路由', () => {
-    expect(NAV_ITEMS).toHaveLength(9)
-    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(8)
+  it('9 个主页面(M6 含验收报告) + 只读「配置」= 10 路由', () => {
+    expect(NAV_ITEMS).toHaveLength(10)
+    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(9)
     expect(NAV_ITEMS.filter((i) => i.readonly)).toHaveLength(1)
-    expect(routes.filter((r) => r.name)).toHaveLength(9)
+    expect(routes.filter((r) => r.name)).toHaveLength(10)
   })
 
   it('菜单分组遵循规格:运维监控 / 数据管理 / Agent / 系统', () => {
@@ -17,7 +17,7 @@ describe('router', () => {
       'Agent',
       '系统',
     ])
-    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([4, 3, 1, 1])
+    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([5, 3, 1, 1])
   })
 
   it('路径与规格一致:MCP Lab 固定 /mcp', () => {
@@ -27,6 +27,7 @@ describe('router', () => {
       '/',
       '/pipeline',
       '/runs',
+      '/validation',
       '/audit',
       '/data',
       '/quarantine',
@@ -36,7 +37,7 @@ describe('router', () => {
     ])
   })
 
-  it('9 个路由均可导航,标题与菜单一致', async () => {
+  it('10 个路由均可导航,标题与菜单一致', async () => {
     const router = createAppRouter(createMemoryHistory())
     for (const item of NAV_ITEMS) {
       await router.push(item.path)

@@ -6212,6 +6212,78 @@
         "title": "TemplateProperty",
         "type": "object"
       },
+      "ValidationCheckResponse": {
+        "properties": {
+          "blocking": {
+            "title": "Blocking",
+            "type": "boolean"
+          },
+          "check_id": {
+            "pattern": "^[a-z][a-z0-9_]{1,63}$",
+            "title": "Check Id",
+            "type": "string"
+          },
+          "detail": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "title": "Detail",
+            "type": "object"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationEvidenceRef"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "finished_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Finished At",
+            "type": "string"
+          },
+          "started_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "warning",
+              "fail",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "check_id",
+          "title",
+          "status",
+          "blocking",
+          "summary",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "ValidationCheckResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -6252,6 +6324,136 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "ValidationEvidenceRef": {
+        "description": "报告内可追溯的相对 Console API 链接；不暴露物理路径或敏感内容。",
+        "properties": {
+          "href": {
+            "maxLength": 500,
+            "minLength": 1,
+            "pattern": "^/api/",
+            "title": "Href",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "run",
+              "dataset",
+              "object",
+              "lineage",
+              "evidence",
+              "config"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "label",
+          "href"
+        ],
+        "title": "ValidationEvidenceRef",
+        "type": "object"
+      },
+      "ValidationReportResponse": {
+        "description": "持久、不可变的 M6 验收报告；detail 与 JSON 下载使用同一形状。",
+        "properties": {
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationCheckResponse"
+            },
+            "title": "Checks",
+            "type": "array"
+          },
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Version"
+          },
+          "deployment": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "title": "Deployment",
+            "type": "object"
+          },
+          "finished_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Finished At",
+            "type": "string"
+          },
+          "overall_status": {
+            "enum": [
+              "pass",
+              "warning",
+              "fail"
+            ],
+            "title": "Overall Status",
+            "type": "string"
+          },
+          "report_schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Report Schema Version",
+            "type": "integer"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "started_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "title": "Summary",
+            "type": "object"
+          },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Version"
+          }
+        },
+        "required": [
+          "run_id",
+          "source",
+          "overall_status",
+          "started_at",
+          "finished_at",
+          "checks"
+        ],
+        "title": "ValidationReportResponse",
+        "type": "object"
+      },
       "ValidationResult": {
         "properties": {
           "errors": {
@@ -6281,6 +6483,48 @@
           "ok"
         ],
         "title": "ValidationResult",
+        "type": "object"
+      },
+      "ValidationRunRequest": {
+        "additionalProperties": false,
+        "description": "启动一次只读验收。\n\n不接收 source/path/SQL/忽略失败等调用方控制项；数据源和版本快照只从\n当前 Console 配置及已发布数据集解析。include_mcp_probe 保留为显式、\n安全的开关，当前 probe 仍只读取既有 M5 evidence，不执行写操作。",
+        "properties": {
+          "include_mcp_probe": {
+            "default": true,
+            "title": "Include Mcp Probe",
+            "type": "boolean"
+          }
+        },
+        "title": "ValidationRunRequest",
+        "type": "object"
+      },
+      "ValidationRunStartedResponse": {
+        "properties": {
+          "overall_status": {
+            "enum": [
+              "pass",
+              "warning",
+              "fail"
+            ],
+            "title": "Overall Status",
+            "type": "string"
+          },
+          "report_path": {
+            "pattern": "^/api/validation/runs/[0-9]+$",
+            "title": "Report Path",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "run_id",
+          "overall_status",
+          "report_path"
+        ],
+        "title": "ValidationRunStartedResponse",
         "type": "object"
       },
       "ValueEvidence": {
@@ -9711,6 +9955,222 @@
           {}
         ],
         "summary": "Templates Metrics"
+      }
+    },
+    "/api/validation/run": {
+      "post": {
+        "description": "运行一次只读验收并原子持久化不可变报告。\n\n不接受 source、SQL、路径、会话或跳过失败参数；当前配置和已发布快照是\n唯一事实来源。运行本身即使总体 fail 也记为已完成的 validation run，\n不将“发现验收问题”伪装成执行失败。",
+        "operationId": "validation_run_api_validation_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidationRunRequest",
+                "default": {
+                  "include_mcp_probe": true
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationRunStartedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Validation Run",
+        "tags": [
+          "v0.3"
+        ]
+      }
+    },
+    "/api/validation/runs/{run_id}": {
+      "get": {
+        "operationId": "validation_report_api_validation_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Validation Report",
+        "tags": [
+          "v0.3"
+        ]
+      }
+    },
+    "/api/validation/runs/{run_id}/report.json": {
+      "get": {
+        "operationId": "validation_report_download_api_validation_runs__run_id__report_json_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationReportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Validation Report Download",
+        "tags": [
+          "v0.3"
+        ]
       }
     },
     "/config": {

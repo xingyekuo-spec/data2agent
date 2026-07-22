@@ -261,6 +261,40 @@ CREATE INDEX IF NOT EXISTS idx_d2a_gateway_audit_session
     ON d2a_gateway_audit (principal, session_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_d2a_gateway_audit_dataset
     ON d2a_gateway_audit (dataset_version, created_at DESC);
+CREATE TABLE IF NOT EXISTS d2a_validation_report (
+    run_id INTEGER PRIMARY KEY,
+    report_schema_version INTEGER NOT NULL CHECK (report_schema_version = 1),
+    source TEXT NOT NULL,
+    overall_status TEXT NOT NULL CHECK (overall_status IN ('pass', 'warning', 'fail')),
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    deployment_json TEXT NOT NULL,
+    dataset_version TEXT,
+    template_version TEXT,
+    summary_json TEXT NOT NULL,
+    report_json TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES d2a_sync_run (id)
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_validation_report_source_finished
+    ON d2a_validation_report (source, finished_at DESC, run_id DESC);
+CREATE TABLE IF NOT EXISTS d2a_validation_check (
+    run_id INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 1),
+    check_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pass', 'warning', 'fail', 'skipped')),
+    blocking INTEGER NOT NULL CHECK (blocking IN (0, 1)),
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    detail_json TEXT NOT NULL,
+    evidence_json TEXT NOT NULL,
+    PRIMARY KEY (run_id, ordinal),
+    UNIQUE (run_id, check_id),
+    FOREIGN KEY (run_id) REFERENCES d2a_validation_report (run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_validation_check_status
+    ON d2a_validation_check (run_id, status, ordinal);
 """
 
 # 旧库 CREATE TABLE IF NOT EXISTS 不会补 CHECK;用触发器幂等强制状态联动。
@@ -424,6 +458,33 @@ CREATE TRIGGER IF NOT EXISTS trg_d2a_gateway_audit_no_delete
 BEFORE DELETE ON d2a_gateway_audit
 BEGIN
   SELECT RAISE(ABORT, 'gateway audit is immutable');
+END;
+"""
+
+_VALIDATION_FREEZE_TRIGGERS = """
+DROP TRIGGER IF EXISTS trg_d2a_validation_report_no_update;
+DROP TRIGGER IF EXISTS trg_d2a_validation_report_no_delete;
+DROP TRIGGER IF EXISTS trg_d2a_validation_check_no_update;
+DROP TRIGGER IF EXISTS trg_d2a_validation_check_no_delete;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_validation_report_no_update
+BEFORE UPDATE ON d2a_validation_report
+BEGIN
+  SELECT RAISE(ABORT, 'validation report is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_validation_report_no_delete
+BEFORE DELETE ON d2a_validation_report
+BEGIN
+  SELECT RAISE(ABORT, 'validation report is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_validation_check_no_update
+BEFORE UPDATE ON d2a_validation_check
+BEGIN
+  SELECT RAISE(ABORT, 'validation check is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_validation_check_no_delete
+BEFORE DELETE ON d2a_validation_check
+BEGIN
+  SELECT RAISE(ABORT, 'validation check is immutable');
 END;
 """
 
@@ -643,6 +704,7 @@ class LandingStore:
         self.con.executescript(_VERSION_PUBLISHED_AT_TRIGGERS)
         self.con.executescript(_VERSION_FREEZE_TRIGGERS)
         self.con.executescript(_GATEWAY_EVIDENCE_FREEZE_TRIGGERS)
+        self.con.executescript(_VALIDATION_FREEZE_TRIGGERS)
         # v0.3:数据集冻结对象清单与模板快照;旧库缺列则补上。
         ds_cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_dataset_version)")}
         if "object_manifest" not in ds_cols:
@@ -928,6 +990,67 @@ class LandingStore:
             (_now(), tables, rows, status, detail, run_id))
         if commit:
             self.con.commit()
+
+    # ---- immutable validation reports (M6) ----
+
+    def insert_validation_report(
+        self, report: dict, checks: list[dict], *, commit: bool = True,
+    ) -> None:
+        """原子写入已经完成的 validation report 及固定顺序 check。
+
+        调用方须先用 ``start_run(..., commit=False)`` 创建 validation run，并在
+        同一连接事务中 finish_run(..., commit=False)。本方法不做业务状态推断，
+        避免报告与页面/下载的事实来源出现第二套实现。
+        """
+        self.con.execute(
+            "INSERT INTO d2a_validation_report ("
+            "run_id, report_schema_version, source, overall_status, started_at, "
+            "finished_at, deployment_json, dataset_version, template_version, "
+            "summary_json, report_json"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                report["run_id"], report["report_schema_version"], report["source"],
+                report["overall_status"], report["started_at"], report["finished_at"],
+                json.dumps(report["deployment"], ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":")),
+                report.get("dataset_version"), report.get("template_version"),
+                json.dumps(report["summary"], ensure_ascii=False, sort_keys=True,
+                           separators=(",", ":")),
+                json.dumps(report, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            ),
+        )
+        self.con.executemany(
+            "INSERT INTO d2a_validation_check ("
+            "run_id, ordinal, check_id, title, status, blocking, started_at, "
+            "finished_at, summary, detail_json, evidence_json"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    report["run_id"], ordinal, check["check_id"], check["title"],
+                    check["status"], 1 if check["blocking"] else 0,
+                    check["started_at"], check["finished_at"], check["summary"],
+                    json.dumps(check["detail"], ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":")),
+                    json.dumps(check["evidence"], ensure_ascii=False, sort_keys=True,
+                               separators=(",", ":")),
+                )
+                for ordinal, check in enumerate(checks, start=1)
+            ],
+        )
+        if commit:
+            self.con.commit()
+
+    def get_validation_report(self, run_id: int) -> dict | None:
+        row = self.con.execute(
+            "SELECT report_json FROM d2a_validation_report WHERE run_id = ?", (run_id,),
+        ).fetchone()
+        return json.loads(row["report_json"]) if row else None
+
+    def has_running_validation(self) -> bool:
+        return self.con.execute(
+            "SELECT 1 FROM d2a_sync_run WHERE run_type = 'validation' "
+            "AND status = 'running' LIMIT 1"
+        ).fetchone() is not None
 
     # ---- run steps(M4)----
 

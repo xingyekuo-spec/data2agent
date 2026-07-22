@@ -130,8 +130,13 @@ from .contracts import (
     SetupSuccessResponse,
     TemplateMetric,
     TemplateObject,
+    ValidationError,
+    ValidationReportResponse,
     ValidationResult,
+    ValidationRunRequest,
+    ValidationRunStartedResponse,
 )
+from .validation import build_validation_report
 from .ui import UI_HTML
 
 _RESP_HTTP_ERROR = {
@@ -616,6 +621,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         "query_service": None,
         "query_service_sig": None,
         "_query_service_lock": threading.Lock(),
+        "_validation_lock": threading.Lock(),
     }
     if state["landing"] and not (
         home_layout is not None and (_config_path is None or not Path(_config_path).is_file())
@@ -1561,6 +1567,118 @@ def create_app(landing: str | None = None, templates: str = "templates",
             "steps_state": steps_state,
             "steps": [_map_step(s) for s in steps],
         }
+
+    def _validation_error(status: int, detail: str, reason_code: str) -> JSONResponse:
+        return JSONResponse(
+            status_code=status,
+            content=ValidationError(
+                detail=detail, reason_code=reason_code,
+                retryable=reason_code == "validation_in_progress",
+            ).model_dump(),
+        )
+
+    @api.post(
+        "/validation/run",
+        response_model=ValidationRunStartedResponse,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            409: {"model": ValidationError},
+            422: _RESP_HTTP_ERROR[422],
+            500: {"model": ValidationError},
+        },
+        tags=["v0.3"],
+    )
+    def validation_run(
+        body: ValidationRunRequest = ValidationRunRequest(),
+    ) -> ValidationRunStartedResponse | JSONResponse:
+        """运行一次只读验收并原子持久化不可变报告。
+
+        不接受 source、SQL、路径、会话或跳过失败参数；当前配置和已发布快照是
+        唯一事实来源。运行本身即使总体 fail 也记为已完成的 validation run，
+        不将“发现验收问题”伪装成执行失败。
+        """
+        lock: threading.Lock = state["_validation_lock"]
+        if not lock.acquire(blocking=False):
+            return _validation_error(409, "已有验收运行正在执行。", "validation_in_progress")
+        db: LandingStore | None = None
+        try:
+            db = store()
+            if db.has_running_validation():
+                return _validation_error(409, "已有验收运行正在执行。", "validation_in_progress")
+            pack = require_pack()
+            source = default_source()
+            run_id = db.start_run(source, "validation", commit=False)
+            report = build_validation_report(
+                db, run_id=run_id, pack=pack, source=source,
+                config=state["config"], include_mcp_probe=body.include_mcp_probe,
+                mcp_probe=lambda object_name: get_query_service().probe_objects(
+                    object_name, limit=1,
+                ),
+            )
+            # 先以公开契约校验，再落同一 JSON；详情与下载绝不各自重算。
+            validated = ValidationReportResponse.model_validate(report)
+            report_json = validated.model_dump(mode="json")
+            db.finish_run(
+                run_id, tables=0, rows=len(report_json["checks"]), status="ok",
+                detail=f"validation:{report_json['overall_status']}", commit=False,
+            )
+            db.insert_validation_report(report_json, report_json["checks"], commit=False)
+            db.con.commit()
+            return ValidationRunStartedResponse(
+                run_id=run_id,
+                overall_status=report_json["overall_status"],
+                report_path=f"/api/validation/runs/{run_id}",
+            )
+        except Exception:
+            if db is not None:
+                db.con.rollback()
+            return _validation_error(500, "验收报告暂不可用。", "validation_unavailable")
+        finally:
+            if db is not None:
+                db.con.close()
+            lock.release()
+
+    @api.get(
+        "/validation/runs/{run_id}",
+        response_model=ValidationReportResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 404: {"model": ValidationError}},
+        tags=["v0.3"],
+    )
+    def validation_report(run_id: int) -> ValidationReportResponse | JSONResponse:
+        db = store()
+        try:
+            run = db.con.execute(
+                "SELECT run_type FROM d2a_sync_run WHERE id = ?", (run_id,),
+            ).fetchone()
+            report = db.get_validation_report(run_id) if run and run["run_type"] == "validation" else None
+            if report is None:
+                return _validation_error(404, "验收报告不存在。", "validation_not_found")
+            return ValidationReportResponse.model_validate(report)
+        finally:
+            db.con.close()
+
+    @api.get(
+        "/validation/runs/{run_id}/report.json",
+        response_model=ValidationReportResponse,
+        responses={401: _RESP_HTTP_ERROR[401], 404: {"model": ValidationError}},
+        tags=["v0.3"],
+    )
+    def validation_report_download(run_id: int) -> JSONResponse:
+        db = store()
+        try:
+            run = db.con.execute(
+                "SELECT run_type FROM d2a_sync_run WHERE id = ?", (run_id,),
+            ).fetchone()
+            report = db.get_validation_report(run_id) if run and run["run_type"] == "validation" else None
+            if report is None:
+                return _validation_error(404, "验收报告不存在。", "validation_not_found")
+            safe_report = ValidationReportResponse.model_validate(report).model_dump(mode="json")
+            return JSONResponse(
+                content=safe_report,
+                headers={"Content-Disposition": f'attachment; filename="data2agent-validation-{run_id}.json"'},
+            )
+        finally:
+            db.con.close()
 
     @api.get(
         "/quarantine",

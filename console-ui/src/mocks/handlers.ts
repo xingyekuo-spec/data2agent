@@ -64,6 +64,37 @@ function lineageFixture() {
   return lineageAvailable()
 }
 
+function validationReport(runId = 9001) {
+  const now = '2026-07-22T10:00:00+08:00'
+  const items = [
+    ['service_reachable', '服务与落地库可读', 'pass'],
+    ['source_connectivity', '数据源连接配置', 'pass'],
+    ['readonly_whitelist', '只读适配器与白名单', 'pass'],
+    ['sync_execution', '同步执行记录', 'pass'],
+    ['landing_and_push', '落地与推送摘要', 'skipped'],
+    ['raw_presence', 'Raw 表存在性', 'pass'],
+    ['published_dataset', '已发布数据集', 'pass'],
+    ['quarantine_breaker', '隔离与熔断阈值', 'pass'],
+    ['mapping_preview', '映射治理状态', 'warning'],
+    ['mcp_query', 'MCP 查询证据', 'pass'],
+    ['masking', '敏感字段脱敏', 'pass'],
+    ['evidence_integrity', '证据完整性', 'pass'],
+    ['cross_surface_consistency', '跨界面版本一致性', 'pass'],
+  ] as const
+  return {
+    report_schema_version: 1, run_id: runId, source: 'digiwin_e10', overall_status: 'warning',
+    started_at: now, finished_at: now,
+    deployment: { config_loaded: true, source_configured: true, template_version: 'v0.3' },
+    dataset_version: 'ds_mock_001', template_version: 'v0.3',
+    summary: { check_count: 13, pass_count: 10, warning_count: 1, fail_count: 0, skipped_count: 1 },
+    checks: items.map(([check_id, title, status]) => ({
+      check_id, title, status, blocking: status !== 'skipped',
+      summary: status === 'warning' ? '存在草稿映射，结果不应被视作已核验。' : 'Mock 验收检查完成。',
+      started_at: now, finished_at: now, detail: {}, evidence: [],
+    })),
+  }
+}
+
 function respond<T>(
   body: (fixture: ScenarioFixture) => T,
   extraHeaders?: (fixture: ScenarioFixture) => Record<string, string>,
@@ -196,6 +227,23 @@ export function buildHandlers(): HttpHandler[] {
   return [
     http.get('*/api/setup/status', () => respond((f) => f.setupStatus)),
     http.get('*/api/overview', () => respond((f) => f.overview)),
+    http.post('*/api/validation/run', () => {
+      const fail = transportFailure()
+      if (fail) return fail
+      return json({ run_id: 9001, overall_status: 'warning', report_path: '/api/validation/runs/9001' })
+    }),
+    http.get('*/api/validation/runs/:runId/report.json', ({ params }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      return json(validationReport(Number(params.runId)), 200, {
+        'Content-Disposition': `attachment; filename="data2agent-validation-${params.runId}.json"`,
+      })
+    }),
+    http.get('*/api/validation/runs/:runId', ({ params }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      return json(validationReport(Number(params.runId)))
+    }),
     http.get('*/api/runs', ({ request }) => {
       const result = runsFor(scenarioFixtures[getScenario()], request)
       return respond(() => result.items, () => ({ 'X-Total-Count': String(result.total) }))

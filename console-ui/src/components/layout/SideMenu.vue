@@ -13,6 +13,7 @@ import {
   Setting,
   Share,
   Warning,
+  CircleCheck,
 } from '@element-plus/icons-vue'
 import type { ViewName } from '@/router'
 import { NAV_GROUPS } from '@/router'
@@ -27,6 +28,7 @@ const icons: Record<ViewName, typeof Odometer> = {
   dashboard: Odometer,
   pipeline: Share,
   runs: Document,
+  validation: CircleCheck,
   audit: Notebook,
   data: Coin,
   quarantine: Warning,

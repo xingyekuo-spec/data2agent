@@ -587,6 +587,75 @@ class RunDetailResponse(RunSummary):
     steps: list[RunStep]
 
 
+# ---- M6:只读验收 Validation Run ----
+
+ValidationCheckStatus = Literal["pass", "warning", "fail", "skipped"]
+ValidationOverallStatus = Literal["pass", "warning", "fail"]
+
+
+class ValidationRunRequest(BaseModel):
+    """启动一次只读验收。
+
+    不接收 source/path/SQL/忽略失败等调用方控制项；数据源和版本快照只从
+    当前 Console 配置及已发布数据集解析。include_mcp_probe 保留为显式、
+    安全的开关，当前 probe 仍只读取既有 M5 evidence，不执行写操作。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    include_mcp_probe: bool = True
+
+
+class ValidationEvidenceRef(BaseModel):
+    """报告内可追溯的相对 Console API 链接；不暴露物理路径或敏感内容。"""
+
+    kind: Literal["run", "dataset", "object", "lineage", "evidence", "config"]
+    label: str = Field(min_length=1, max_length=160)
+    href: str = Field(min_length=1, max_length=500, pattern=r"^/api/")
+
+
+class ValidationCheckResponse(BaseModel):
+    check_id: str = Field(pattern=r"^[a-z][a-z0-9_]{1,63}$")
+    title: str = Field(min_length=1, max_length=160)
+    status: ValidationCheckStatus
+    blocking: bool
+    summary: str = Field(min_length=1, max_length=500)
+    started_at: datetime = Field(description=TZ_TIME_DESC)
+    finished_at: datetime = Field(description=TZ_TIME_DESC)
+    detail: JsonObject = Field(default_factory=dict)
+    evidence: list[ValidationEvidenceRef] = Field(default_factory=list)
+
+
+class ValidationReportResponse(BaseModel):
+    """持久、不可变的 M6 验收报告；detail 与 JSON 下载使用同一形状。"""
+
+    report_schema_version: Literal[1] = 1
+    run_id: int
+    source: str
+    overall_status: ValidationOverallStatus
+    started_at: datetime = Field(description=TZ_TIME_DESC)
+    finished_at: datetime = Field(description=TZ_TIME_DESC)
+    deployment: JsonObject = Field(default_factory=dict)
+    dataset_version: str | None = None
+    template_version: str | None = None
+    summary: JsonObject = Field(default_factory=dict)
+    checks: list[ValidationCheckResponse]
+
+
+class ValidationRunStartedResponse(BaseModel):
+    run_id: int
+    overall_status: ValidationOverallStatus
+    report_path: str = Field(pattern=r"^/api/validation/runs/[0-9]+$")
+
+
+class ValidationError(BaseModel):
+    detail: str
+    reason_code: Literal[
+        "validation_in_progress", "validation_not_found", "validation_unavailable",
+    ]
+    retryable: bool = False
+
+
 # ---- M4:数据浏览与安全口径 ----
 
 ColumnRole = Literal["business_key", "data", "metadata"]

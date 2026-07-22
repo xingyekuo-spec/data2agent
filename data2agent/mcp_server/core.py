@@ -531,6 +531,61 @@ class QueryService:
             raise ValueError("limit 须为整数")
         return limit
 
+    def probe_objects(self, object: str, *, limit: int = 1) -> dict:
+        """执行一次不可引用、无持久副作用的已发布对象查询。
+
+        供运行时健康/验收探测使用：查询路径、published snapshot、字段脱敏与
+        ``query_objects`` 完全一致，但不签发 query_id、不写 M5 evidence/audit，
+        因而不会把健康检查变成用户可引用的业务查询记录。
+        """
+        started = time.perf_counter()
+        if not isinstance(object, str) or not object:
+            raise ValueError("object 须为非空字符串")
+        limit = self._require_int_limit(limit)
+        limit = max(1, min(limit, 20))
+        with self._published_tx() as (store, snap):
+            tpl = next((o for o in snap.template_pack.objects if o.object == object), None)
+            entry = snap.objects.get(object)
+            if tpl is None or entry is None:
+                raise ValueError("not_published: 对象未包含在已发布数据集中")
+            binding = next(
+                (b for b in tpl.bindings if b.source == self.source and b.enabled),
+                None,
+            )
+            physical = validate_build_table(entry.physical_table)
+            sql, params = self._object_sql(tpl, None, None, False, limit, physical)
+            rows = [dict(row) for row in _safe_execute(store.con, sql, params)]
+            sensitive = {p.name for p in tpl.properties if p.sensitive}
+            dataset_version = snap.dataset_version
+            template_version = snap.template_version
+            binding_hashes = {object: entry.binding_hash}
+            binding_status = binding.status if binding is not None else "published"
+            display_name = tpl.display_name
+            quarantined = self._quarantine_count(store.con, object)
+        for row in rows:
+            for prop in sensitive:
+                if row.get(prop) is not None:
+                    row[prop] = MASK
+        note = (
+            "binding 为 draft:字段映射按参考表形构造,口径未经现场校准"
+            if binding is not None and binding.status == "draft" else ""
+        )
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        return {
+            "object": object,
+            "display_name": display_name,
+            "rows": rows,
+            "meta": self._public_meta(
+                tool="query_objects", target=object, query_id=None,
+                row_count=len(rows), duration_ms=duration_ms,
+                masked_fields=sorted(sensitive), warnings=[note] if note else [],
+                source=self.source, binding_status=binding_status,
+                quarantined=quarantined, dataset_version=dataset_version,
+                template_version=template_version, binding_hashes=binding_hashes,
+                probe=True,
+            ),
+        }
+
     def query_objects(
         self,
         object: str | None = None,

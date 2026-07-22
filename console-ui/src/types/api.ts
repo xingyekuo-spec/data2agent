@@ -745,6 +745,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/validation/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validation Run
+         * @description 运行一次只读验收并原子持久化不可变报告。
+         *
+         *     不接受 source、SQL、路径、会话或跳过失败参数；当前配置和已发布快照是
+         *     唯一事实来源。运行本身即使总体 fail 也记为已完成的 validation run，
+         *     不将“发现验收问题”伪装成执行失败。
+         */
+        post: operations["validation_run_api_validation_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/validation/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Validation Report */
+        get: operations["validation_report_api_validation_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/validation/runs/{run_id}/report.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Validation Report Download */
+        get: operations["validation_report_download_api_validation_runs__run_id__report_json_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/config": {
         parameters: {
             query?: never;
@@ -3228,6 +3286,40 @@ export interface components {
             /** Type */
             type: string;
         };
+        /** ValidationCheckResponse */
+        ValidationCheckResponse: {
+            /** Blocking */
+            blocking: boolean;
+            /** Check Id */
+            check_id: string;
+            /** Detail */
+            detail?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Evidence */
+            evidence?: components["schemas"]["ValidationEvidenceRef"][];
+            /**
+             * Finished At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            finished_at: string;
+            /**
+             * Started At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            started_at: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pass" | "warning" | "fail" | "skipped";
+            /** Summary */
+            summary: string;
+            /** Title */
+            title: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -3241,6 +3333,68 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /**
+         * ValidationEvidenceRef
+         * @description 报告内可追溯的相对 Console API 链接；不暴露物理路径或敏感内容。
+         */
+        ValidationEvidenceRef: {
+            /** Href */
+            href: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "run" | "dataset" | "object" | "lineage" | "evidence" | "config";
+            /** Label */
+            label: string;
+        };
+        /**
+         * ValidationReportResponse
+         * @description 持久、不可变的 M6 验收报告；detail 与 JSON 下载使用同一形状。
+         */
+        ValidationReportResponse: {
+            /** Checks */
+            checks: components["schemas"]["ValidationCheckResponse"][];
+            /** Dataset Version */
+            dataset_version?: string | null;
+            /** Deployment */
+            deployment?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Finished At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            finished_at: string;
+            /**
+             * Overall Status
+             * @enum {string}
+             */
+            overall_status: "pass" | "warning" | "fail";
+            /**
+             * Report Schema Version
+             * @default 1
+             * @constant
+             */
+            report_schema_version: 1;
+            /** Run Id */
+            run_id: number;
+            /** Source */
+            source: string;
+            /**
+             * Started At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            started_at: string;
+            /** Summary */
+            summary?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Template Version */
+            template_version?: string | null;
+        };
         /** ValidationResult */
         ValidationResult: {
             /** Errors */
@@ -3249,6 +3403,33 @@ export interface components {
             ok: boolean;
             /** Restart Required */
             restart_required?: boolean | null;
+        };
+        /**
+         * ValidationRunRequest
+         * @description 启动一次只读验收。
+         *
+         *     不接收 source/path/SQL/忽略失败等调用方控制项；数据源和版本快照只从
+         *     当前 Console 配置及已发布数据集解析。include_mcp_probe 保留为显式、
+         *     安全的开关，当前 probe 仍只读取既有 M5 evidence，不执行写操作。
+         */
+        ValidationRunRequest: {
+            /**
+             * Include Mcp Probe
+             * @default true
+             */
+            include_mcp_probe: boolean;
+        };
+        /** ValidationRunStartedResponse */
+        ValidationRunStartedResponse: {
+            /**
+             * Overall Status
+             * @enum {string}
+             */
+            overall_status: "pass" | "warning" | "fail";
+            /** Report Path */
+            report_path: string;
+            /** Run Id */
+            run_id: number;
         };
         /**
          * ValueEvidence
@@ -5475,6 +5656,164 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    validation_run_api_validation_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ValidationRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationRunStartedResponse"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationError"];
+                };
+            };
+            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestError"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationError"];
+                };
+            };
+        };
+    };
+    validation_report_api_validation_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationReportResponse"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validation_report_download_api_validation_runs__run_id__report_json_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationReportResponse"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

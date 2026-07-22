@@ -103,6 +103,20 @@ export function getRunDetail(runId: number) {
   return call(client.GET('/api/runs/{run_id}', { params: { path: { run_id: runId } } }))
 }
 
+// ---- M6:只读验收报告 ----
+
+export function postValidationRun(includeMcpProbe = true) {
+  return call(client.POST('/api/validation/run', {
+    body: { include_mcp_probe: includeMcpProbe },
+  }))
+}
+
+export function getValidationReport(runId: number) {
+  return call(client.GET('/api/validation/runs/{run_id}', {
+    params: { path: { run_id: runId } },
+  }))
+}
+
 export interface AuditQuery {
   limit: number
   offset: number
