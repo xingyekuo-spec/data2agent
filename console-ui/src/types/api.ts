@@ -432,6 +432,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/objects/{object}/{key}/lineage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Object Field Lineage
+         * @description 对象字段血缘:published snapshot 只读查询。
+         *
+         *     T01 冻结契约与 key token 校验;完整查询在 T07 接入。未实现前对合法
+         *     key 返回 501 fail-closed,不得伪装成功体或空字段。
+         */
+        get: operations["object_field_lineage_api_objects__object___key__lineage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/overview": {
         parameters: {
             query?: never;
@@ -1697,6 +1720,189 @@ export interface components {
             /** Total */
             total: number;
         };
+        /**
+         * ObjectLineageError
+         * @description 字段血缘安全错误:前端按 status/reason_code 分支,不解析中文 detail。
+         */
+        ObjectLineageError: {
+            /** Detail */
+            detail: string;
+            /**
+             * Error Id
+             * @description 内部失败时的稳定短标识;非 500 为 null(必填可空)
+             */
+            error_id: string | null;
+            /**
+             * Reason Code
+             * @enum {string}
+             */
+            reason_code: "unauthorized" | "token_not_configured" | "object_not_found" | "field_not_found" | "record_not_found" | "dataset_not_published" | "snapshot_corrupt" | "lineage_incomplete" | "lineage_key_invalid" | "lineage_query_failed";
+            /**
+             * Status
+             * @description HTTP 状态码
+             */
+            status: number;
+        };
+        /** ObjectLineageField */
+        ObjectLineageField: {
+            /** Display Name */
+            display_name: string;
+            /** @description 字段最终值证据;unavailable 时可为 null(必填可空) */
+            final_value: components["schemas"]["ValueEvidence"] | null;
+            /** Inputs */
+            inputs?: components["schemas"]["ObjectLineageInput"][];
+            /** Property */
+            property: string;
+            /**
+             * Reason Code
+             * @description unavailable 时的字段原因;available 时为 null(必填可空)
+             */
+            reason_code: ("property_unmapped" | "join_target_missing" | "source_evidence_unavailable") | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "available" | "unavailable";
+            /** Steps */
+            steps?: components["schemas"]["ObjectLineageStep"][];
+        };
+        /**
+         * ObjectLineageInput
+         * @description 字段输入边:raw 值、join 外键或 derived 条件。
+         */
+        ObjectLineageInput: {
+            /** Extract Batch Id */
+            extract_batch_id?: string | null;
+            /**
+             * Join
+             * @description join 两端关系(锚 FK/目标 PK 等);非 join 为 null
+             */
+            join?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            } | null;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "value" | "join_fk" | "derived_condition";
+            /** Source Column */
+            source_column?: string | null;
+            /**
+             * Source Pk
+             * @description 源记录主键 pair 数组;未知时为 null
+             */
+            source_pk?: components["schemas"]["JsonValue-Output"][][] | null;
+            /** Source Table */
+            source_table?: string | null;
+            source_value?: components["schemas"]["ValueEvidence"] | null;
+        };
+        /**
+         * ObjectLineageRef
+         * @description 对象行与 lineage key token 的对齐引用(与 rows 同序)。
+         *
+         *     key_token 是不透明定位符;object_key 仍走 frozen template 敏感显示规则。
+         */
+        ObjectLineageRef: {
+            /**
+             * Key Token
+             * @description 规范 64 位小写 hex SHA-256
+             */
+            key_token: string;
+            /**
+             * Object Key
+             * @description 规范化 pair 数组,如 [["order_no","SO-001"],["line_no",10]]
+             */
+            object_key: components["schemas"]["JsonValue-Output"][][];
+            /** Row Index */
+            row_index: number;
+        };
+        /**
+         * ObjectLineageResponse
+         * @description GET /api/objects/{object}/{key}/lineage 成功形状。
+         *
+         *     旧 published(lineage_schema_version=NULL)返回 state=unavailable +
+         *     reason_code=lineage_not_recorded,不伪造空字段。
+         */
+        ObjectLineageResponse: {
+            /** Binding Hash */
+            binding_hash?: string | null;
+            /** Binding Status */
+            binding_status?: ("draft" | "verified" | "disabled") | null;
+            /** Dataset Version */
+            dataset_version?: string | null;
+            /** Display Name */
+            display_name: string;
+            /** Fields */
+            fields: components["schemas"]["ObjectLineageField"][];
+            /**
+             * Generated At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            generated_at: string;
+            /** Key Token */
+            key_token: string;
+            /** Map Batch Id */
+            map_batch_id?: string | null;
+            /** Object */
+            object: string;
+            /** Object Key */
+            object_key: components["schemas"]["JsonValue-Output"][][];
+            /** Object Version */
+            object_version?: string | null;
+            /**
+             * Reason Code
+             * @description 记录级 unavailable 原因;available 时为 null(必填可空)
+             */
+            reason_code: "lineage_not_recorded" | null;
+            /**
+             * Source
+             * @description 主数据源;unavailable 旧版可为 null(必填可空)
+             */
+            source: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "available" | "unavailable";
+            /** Template Version */
+            template_version?: string | null;
+            /** Warnings */
+            warnings: string[];
+        };
+        /**
+         * ObjectLineageStep
+         * @description 实际执行过的有序转换步骤:read → join? → map? → coerce? → derived?。
+         */
+        ObjectLineageStep: {
+            after?: components["schemas"]["ValueEvidence"] | null;
+            before?: components["schemas"]["ValueEvidence"] | null;
+            /**
+             * Coerce Type
+             * @description coerce 目标类型;非 coerce 为 null
+             */
+            coerce_type?: string | null;
+            /**
+             * Derived Rule Index
+             * @description derived_rule 命中的声明顺序下标;其它为 null
+             */
+            derived_rule_index?: number | null;
+            /**
+             * Detail
+             * @description 安全摘要;不含 SQL/Token/未脱敏原值
+             */
+            detail?: string | null;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "read" | "join" | "map" | "coerce" | "derived_rule" | "derived_default";
+            /**
+             * Map Hit
+             * @description map 步骤是否命中声明项;非 map 为 null
+             */
+            map_hit?: boolean | null;
+        };
         /** ObjectRowsPageResponse */
         ObjectRowsPageResponse: {
             /** Columns */
@@ -1709,6 +1915,11 @@ export interface components {
             generated_at: string;
             /** Limit */
             limit: number;
+            /**
+             * Lineage Refs
+             * @description 与 rows 对齐的 lineage 引用;旧数据集可为空列表
+             */
+            lineage_refs?: components["schemas"]["ObjectLineageRef"][];
             /** Object */
             object: string;
             /** Offset */
@@ -2868,6 +3079,34 @@ export interface components {
             ok: boolean;
             /** Restart Required */
             restart_required?: boolean | null;
+        };
+        /**
+         * ValueEvidence
+         * @description 稳定值证据:不使用 repr();BLOB/超长文本只留摘要。
+         */
+        ValueEvidence: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "scalar" | "null" | "bytes" | "truncated";
+            /**
+             * Length
+             * @description 原值字节/字符长度;scalar/null 可为 null
+             */
+            length?: number | null;
+            /**
+             * Preview
+             * @description bytes/truncated 的有界预览;scalar/null 时为 null
+             */
+            preview?: string | null;
+            /**
+             * Sha256
+             * @description bytes/truncated 的完整 SHA-256 hex;其它为 null
+             */
+            sha256?: string | null;
+            /** @description scalar/null 的 JSON 标量;bytes/truncated 时为 null */
+            value?: components["schemas"]["JsonValue-Output"] | null;
         };
     };
     responses: never;
@@ -4269,6 +4508,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestError"];
+                };
+            };
+        };
+    };
+    object_field_lineage_api_objects__object___key__lineage_get: {
+        parameters: {
+            query?: {
+                /** @description 可选:只返回单个模板属性;不传则返回全部字段 */
+                property?: string | null;
+            };
+            header?: never;
+            path: {
+                object: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectLineageResponse"];
+                };
+            };
+            /** @description Bearer 错误或缺失(unauthorized) */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectLineageError"];
+                };
+            };
+            /** @description 未配置 Token(token_not_configured) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectLineageError"];
+                };
+            };
+            /** @description object_not_found / field_not_found / record_not_found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectLineageError"];
+                };
+            };
+            /** @description dataset_not_published / snapshot_corrupt / lineage_incomplete */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectLineageError"];
+                };
+            };
+            /** @description Pydantic 校验(RequestError),或 lineage_key_invalid(ObjectLineageError.reason_code) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestError"] | components["schemas"]["ObjectLineageError"];
+                };
+            };
+            /** @description lineage_query_failed + error_id */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ObjectLineageError"];
                 };
             };
         };

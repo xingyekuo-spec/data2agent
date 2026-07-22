@@ -55,6 +55,7 @@ from ..connect.dataset_publish import (
     rollback_dataset,
 )
 from ..connect.mapping_preview import PreviewError, preview_mapping
+from ..connect.field_lineage import LineageKeyError, require_lineage_key_token
 from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..mapping import parse_field_expr
 from ..metamodel.dataset_publish_contract import validate_build_table
@@ -84,6 +85,8 @@ from .contracts import (
     MappingPreviewErrorReasonCode,
     MappingPreviewRequest,
     MappingPreviewResponse,
+    ObjectLineageError,
+    ObjectLineageResponse,
     McpCallBody,
     McpLabError,
     McpMetricsQueryResult,
@@ -146,6 +149,20 @@ _PREVIEW_HTTP_STATUS: dict[str, int] = {
     "sample_invalid": 422,
     "anchor_changed": 422,
     "preview_failed": 500,
+}
+
+# ObjectLineageError.reason_code → HTTP(§3.8);鉴权码由 endpoint 直接产出。
+_LINEAGE_HTTP_STATUS: dict[str, int] = {
+    "unauthorized": 401,
+    "token_not_configured": 403,
+    "object_not_found": 404,
+    "field_not_found": 404,
+    "record_not_found": 404,
+    "dataset_not_published": 409,
+    "snapshot_corrupt": 409,
+    "lineage_incomplete": 409,
+    "lineage_key_invalid": 422,
+    "lineage_query_failed": 500,
 }
 
 _SETUP_API_PATHS = frozenset({"/api/setup", "/api/setup/status"})
@@ -625,6 +642,16 @@ def create_app(landing: str | None = None, templates: str = "templates",
             return False
         return path.endswith("/preview")
 
+    def _is_object_lineage(path: str) -> bool:
+        # /api/objects/{object}/{key}/lineage — Bearer 由端点自行强制
+        parts = path.strip("/").split("/")
+        return (
+            len(parts) == 5
+            and parts[0] == "api"
+            and parts[1] == "objects"
+            and parts[4] == "lineage"
+        )
+
     def auth(request: Request) -> None:
         path = request.url.path
         if path == "/api/data/raw" or path.startswith("/api/data/raw/"):
@@ -633,6 +660,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
             return  # 隔离详情自行做强制 Bearer + 审计
         if _is_mapping_preview(path):
             return  # mapping preview 自行做强制 Bearer + 审计(MappingPreviewError)
+        if _is_object_lineage(path):
+            return  # field lineage 自行做强制 Bearer + 审计(ObjectLineageError)
         if needs_setup():
             if path in ("/api/setup", "/api/setup/status") or path.startswith("/api/setup"):
                 if _client_host(request) not in _LOOPBACK:
@@ -702,11 +731,12 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return path == "/api/data/raw" or path.startswith("/api/data/raw/")
 
     def _requires_bearer_only(path: str) -> bool:
-        """需要强制 Bearer 的 API 路径:raw 浏览 + 隔离详情 + mapping preview。"""
+        """需要强制 Bearer 的 API 路径:raw 浏览 + 隔离详情 + mapping preview + lineage。"""
         return (
             _is_raw_api_path(path)
             or path == "/api/quarantine/{id}"
             or path == "/api/mappings/{object}/preview"
+            or path == "/api/objects/{object}/{key}/lineage"
         )
 
     def _raw_audit_target(request: Request) -> tuple[str | None, str]:
@@ -2653,6 +2683,137 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "warnings": warnings,
                 "generated_at": datetime.now().astimezone(),
             }
+
+    # ---- v0.3 M4-T01: field lineage contract stub (query in T07) ----
+
+    def _lineage_error_response(
+        status: int,
+        reason_code: str,
+        detail: str,
+        *,
+        error_id: str | None = None,
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=status,
+            content=ObjectLineageError(
+                status=status,
+                reason_code=reason_code,  # type: ignore[arg-type]
+                detail=detail,
+                error_id=error_id,
+            ).model_dump(),
+        )
+
+    def _lineage_safe_detail(reason_code: str) -> str:
+        return {
+            "unauthorized": "需要有效的管理界面登录密码",
+            "token_not_configured": "字段血缘需配置控制台 Token 并显式认证",
+            "object_not_found": "对象不存在",
+            "field_not_found": "字段不存在",
+            "record_not_found": "记录不存在",
+            "dataset_not_published": "数据集尚未发布",
+            "snapshot_corrupt": "数据集快照不可用",
+            "lineage_incomplete": "字段血缘不完整",
+            "lineage_key_invalid": "key token 必须是规范 64 位小写十六进制 SHA-256",
+            "lineage_query_failed": "字段血缘查询失败",
+        }.get(reason_code, "字段血缘查询失败")
+
+    def _lineage_audit_resource(object_name: str, key_token: str) -> str:
+        prefix = key_token[:12] if key_token else "__invalid__"
+        return f"field_lineage:{object_name}:{prefix}"
+
+    @api.get(
+        "/objects/{object}/{key}/lineage",
+        response_model=ObjectLineageResponse,
+        responses={
+            401: {
+                "model": ObjectLineageError,
+                "description": "Bearer 错误或缺失(unauthorized)",
+            },
+            403: {
+                "model": ObjectLineageError,
+                "description": "未配置 Token(token_not_configured)",
+            },
+            404: {
+                "model": ObjectLineageError,
+                "description": (
+                    "object_not_found / field_not_found / record_not_found"
+                ),
+            },
+            409: {
+                "model": ObjectLineageError,
+                "description": (
+                    "dataset_not_published / snapshot_corrupt / lineage_incomplete"
+                ),
+            },
+            422: {
+                "model": RequestError | ObjectLineageError,
+                "description": (
+                    "Pydantic 校验(RequestError),或 lineage_key_invalid"
+                    "(ObjectLineageError.reason_code)"
+                ),
+            },
+            500: {
+                "model": ObjectLineageError,
+                "description": "lineage_query_failed + error_id",
+            },
+        },
+        tags=["v0.3"],
+    )
+    def object_field_lineage(
+        object: str,
+        key: str,
+        request: Request,
+        property_name: str | None = Query(
+            default=None,
+            alias="property",
+            description="可选:只返回单个模板属性;不传则返回全部字段",
+        ),
+    ) -> ObjectLineageResponse | JSONResponse:
+        """对象字段血缘:published snapshot 只读查询。
+
+        T01 冻结契约与 key token 校验;完整查询在 T07 接入。未实现前对合法
+        key 返回 501 fail-closed,不得伪装成功体或空字段。
+        """
+        request_id = uuid.uuid4().hex
+        db = store()
+        resource = _lineage_audit_resource(object, key)
+
+        tok = state["token"]
+        if not tok:
+            db.log_access(
+                subject="anonymous", resource_type="object", source=None,
+                resource=resource, allowed=False,
+                reason_code="token_not_configured", request_id=request_id)
+            return _lineage_error_response(
+                403, "token_not_configured",
+                _lineage_safe_detail("token_not_configured"))
+        if _auth_supplied(request) != tok:
+            db.log_access(
+                subject="anonymous", resource_type="object", source=None,
+                resource=resource, allowed=False, reason_code="unauthorized",
+                request_id=request_id)
+            return _lineage_error_response(
+                401, "unauthorized", _lineage_safe_detail("unauthorized"))
+
+        try:
+            require_lineage_key_token(key)
+        except LineageKeyError as e:
+            db.log_access(
+                subject="console-admin", resource_type="object", source=None,
+                resource=resource, allowed=False,
+                reason_code=e.reason_code, request_id=request_id)
+            return _lineage_error_response(
+                _LINEAGE_HTTP_STATUS.get(e.reason_code, 422),
+                e.reason_code,
+                _lineage_safe_detail(e.reason_code))
+
+        # T07 前 fail-closed:合法 key 仍不返回伪造成功/部分字段。
+        _ = property_name  # reserved for T07 property filter
+        db.log_access(
+            subject="console-admin", resource_type="object", source=None,
+            resource=resource, allowed=False,
+            reason_code="not_implemented", request_id=request_id)
+        raise HTTPException(501, "字段血缘查询尚未实现")
 
     @api.get(
         "/templates",

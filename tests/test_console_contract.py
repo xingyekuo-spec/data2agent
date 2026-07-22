@@ -66,6 +66,7 @@ REQUIRED_API_ROUTES = {
     ("POST", "/api/datasets/{version}/publish"),
     ("POST", "/api/datasets/{version}/rollback"),
     ("POST", "/api/mappings/{object}/preview"),
+    ("GET", "/api/objects/{object}/{key}/lineage"),
 }
 
 NAMED_SUCCESS_SCHEMAS = {
@@ -92,6 +93,7 @@ NAMED_SUCCESS_SCHEMAS = {
     ("post", "/api/datasets/{version}/publish"): "DatasetActionResult",
     ("post", "/api/datasets/{version}/rollback"): "DatasetActionResult",
     ("post", "/api/mappings/{object}/preview"): "MappingPreviewResponse",
+    ("get", "/api/objects/{object}/{key}/lineage"): "ObjectLineageResponse",
 }
 
 # v0.3 M2-T06: publish/rollback OpenAPI 冻结 200/404/409/500;运行时映射真实引擎结果。
@@ -181,7 +183,7 @@ def test_required_api_routes_present(tmp_path):
                 found.add((method.upper(), path))
     missing = REQUIRED_API_ROUTES - found
     assert not missing, f"missing API routes: {sorted(missing)}"
-    assert len(REQUIRED_API_ROUTES) == 22
+    assert len(REQUIRED_API_ROUTES) == 23
 
 
 def test_success_responses_use_named_schemas(tmp_path):

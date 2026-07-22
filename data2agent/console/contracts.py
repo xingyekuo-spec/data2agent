@@ -581,6 +581,24 @@ class ObjectSummary(BaseModel):
     warning: str | None = None
 
 
+class ObjectLineageRef(BaseModel):
+    """对象行与 lineage key token 的对齐引用(与 rows 同序)。
+
+    key_token 是不透明定位符;object_key 仍走 frozen template 敏感显示规则。
+    """
+
+    row_index: int = Field(ge=0)
+    key_token: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        description="规范 64 位小写 hex SHA-256",
+    )
+    object_key: list[list[JsonValue]] = Field(
+        description='规范化 pair 数组,如 [["order_no","SO-001"],["line_no",10]]',
+    )
+
+
 class ObjectRowsPageResponse(BaseModel):
     object: str
     columns: list[ColumnMeta]
@@ -594,6 +612,10 @@ class ObjectRowsPageResponse(BaseModel):
     searchable: bool
     warnings: list[str]
     generated_at: datetime = Field(description=TZ_TIME_DESC)
+    lineage_refs: list[ObjectLineageRef] = Field(
+        default_factory=list,
+        description="与 rows 对齐的 lineage 引用;旧数据集可为空列表",
+    )
 
 
 class RawTableCatalogItem(BaseModel):
@@ -1188,3 +1210,166 @@ class MappingPreviewResponse(BaseModel):
     candidate: MappingPreviewEvaluation
     diff: MappingPreviewDiff
     warnings: list[str]
+
+
+# ---- v0.3 M4:字段级血缘契约(T01 冻结;查询实现见 T07)----
+
+LineageTraceState = Literal["available", "unavailable"]
+
+LineageUnavailableReason = Literal["lineage_not_recorded"]
+
+LineageFieldUnavailableReason = Literal[
+    "property_unmapped",
+    "join_target_missing",
+    "source_evidence_unavailable",
+]
+
+LineageInputRole = Literal["value", "join_fk", "derived_condition"]
+
+LineageStepKind = Literal[
+    "read",
+    "join",
+    "map",
+    "coerce",
+    "derived_rule",
+    "derived_default",
+]
+
+LineageErrorReasonCode = Literal[
+    "unauthorized",
+    "token_not_configured",
+    "object_not_found",
+    "field_not_found",
+    "record_not_found",
+    "dataset_not_published",
+    "snapshot_corrupt",
+    "lineage_incomplete",
+    "lineage_key_invalid",
+    "lineage_query_failed",
+]
+
+ValueEvidenceKind = Literal["scalar", "null", "bytes", "truncated"]
+
+
+class ValueEvidence(BaseModel):
+    """稳定值证据:不使用 repr();BLOB/超长文本只留摘要。"""
+
+    kind: ValueEvidenceKind
+    value: JsonValue | None = Field(
+        default=None,
+        description="scalar/null 的 JSON 标量;bytes/truncated 时为 null",
+    )
+    preview: str | None = Field(
+        default=None,
+        description="bytes/truncated 的有界预览;scalar/null 时为 null",
+    )
+    sha256: str | None = Field(
+        default=None,
+        description="bytes/truncated 的完整 SHA-256 hex;其它为 null",
+    )
+    length: int | None = Field(
+        default=None,
+        ge=0,
+        description="原值字节/字符长度;scalar/null 可为 null",
+    )
+
+
+class ObjectLineageStep(BaseModel):
+    """实际执行过的有序转换步骤:read → join? → map? → coerce? → derived?。"""
+
+    kind: LineageStepKind
+    before: ValueEvidence | None = None
+    after: ValueEvidence | None = None
+    map_hit: bool | None = Field(
+        default=None,
+        description="map 步骤是否命中声明项;非 map 为 null",
+    )
+    coerce_type: str | None = Field(
+        default=None,
+        description="coerce 目标类型;非 coerce 为 null",
+    )
+    derived_rule_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="derived_rule 命中的声明顺序下标;其它为 null",
+    )
+    detail: str | None = Field(
+        default=None,
+        description="安全摘要;不含 SQL/Token/未脱敏原值",
+    )
+
+
+class ObjectLineageInput(BaseModel):
+    """字段输入边:raw 值、join 外键或 derived 条件。"""
+
+    role: LineageInputRole
+    source_table: str | None = None
+    source_column: str | None = None
+    source_pk: list[list[JsonValue]] | None = Field(
+        default=None,
+        description="源记录主键 pair 数组;未知时为 null",
+    )
+    source_value: ValueEvidence | None = None
+    extract_batch_id: str | None = None
+    join: dict[str, JsonValue] | None = Field(
+        default=None,
+        description="join 两端关系(锚 FK/目标 PK 等);非 join 为 null",
+    )
+
+
+class ObjectLineageField(BaseModel):
+    property: str
+    display_name: str
+    final_value: ValueEvidence | None = Field(
+        description="字段最终值证据;unavailable 时可为 null(必填可空)",
+    )
+    state: LineageTraceState
+    reason_code: LineageFieldUnavailableReason | None = Field(
+        description="unavailable 时的字段原因;available 时为 null(必填可空)",
+    )
+    steps: list[ObjectLineageStep] = Field(default_factory=list)
+    inputs: list[ObjectLineageInput] = Field(default_factory=list)
+
+
+class ObjectLineageResponse(BaseModel):
+    """GET /api/objects/{object}/{key}/lineage 成功形状。
+
+    旧 published(lineage_schema_version=NULL)返回 state=unavailable +
+    reason_code=lineage_not_recorded,不伪造空字段。
+    """
+
+    state: LineageTraceState
+    reason_code: LineageUnavailableReason | None = Field(
+        description="记录级 unavailable 原因;available 时为 null(必填可空)",
+    )
+    source: str | None = Field(
+        description="主数据源;unavailable 旧版可为 null(必填可空)",
+    )
+    object: str
+    display_name: str
+    object_key: list[list[JsonValue]]
+    key_token: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    dataset_version: str | None = None
+    object_version: str | None = None
+    template_version: str | None = None
+    binding_hash: str | None = None
+    binding_status: BindingStatus | None = None
+    map_batch_id: str | None = None
+    fields: list[ObjectLineageField]
+    warnings: list[str]
+    generated_at: datetime = Field(description=TZ_TIME_DESC)
+
+
+class ObjectLineageError(BaseModel):
+    """字段血缘安全错误:前端按 status/reason_code 分支,不解析中文 detail。"""
+
+    status: int = Field(description="HTTP 状态码")
+    reason_code: LineageErrorReasonCode
+    detail: str
+    error_id: str | None = Field(
+        description="内部失败时的稳定短标识;非 500 为 null(必填可空)",
+    )

@@ -2201,6 +2201,517 @@
         "title": "ObjectApplyResultModel",
         "type": "object"
       },
+      "ObjectLineageError": {
+        "description": "字段血缘安全错误:前端按 status/reason_code 分支,不解析中文 detail。",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "error_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "内部失败时的稳定短标识;非 500 为 null(必填可空)",
+            "title": "Error Id"
+          },
+          "reason_code": {
+            "enum": [
+              "unauthorized",
+              "token_not_configured",
+              "object_not_found",
+              "field_not_found",
+              "record_not_found",
+              "dataset_not_published",
+              "snapshot_corrupt",
+              "lineage_incomplete",
+              "lineage_key_invalid",
+              "lineage_query_failed"
+            ],
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "status": {
+            "description": "HTTP 状态码",
+            "title": "Status",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "reason_code",
+          "detail",
+          "error_id"
+        ],
+        "title": "ObjectLineageError",
+        "type": "object"
+      },
+      "ObjectLineageField": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "final_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "字段最终值证据;unavailable 时可为 null(必填可空)"
+          },
+          "inputs": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectLineageInput"
+            },
+            "title": "Inputs",
+            "type": "array"
+          },
+          "property": {
+            "title": "Property",
+            "type": "string"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "enum": [
+                  "property_unmapped",
+                  "join_target_missing",
+                  "source_evidence_unavailable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "unavailable 时的字段原因;available 时为 null(必填可空)",
+            "title": "Reason Code"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectLineageStep"
+            },
+            "title": "Steps",
+            "type": "array"
+          }
+        },
+        "required": [
+          "property",
+          "display_name",
+          "final_value",
+          "state",
+          "reason_code"
+        ],
+        "title": "ObjectLineageField",
+        "type": "object"
+      },
+      "ObjectLineageInput": {
+        "description": "字段输入边:raw 值、join 外键或 derived 条件。",
+        "properties": {
+          "extract_batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extract Batch Id"
+          },
+          "join": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "join 两端关系(锚 FK/目标 PK 等);非 join 为 null",
+            "title": "Join"
+          },
+          "role": {
+            "enum": [
+              "value",
+              "join_fk",
+              "derived_condition"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "source_column": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Column"
+          },
+          "source_pk": {
+            "anyOf": [
+              {
+                "items": {
+                  "items": {
+                    "$ref": "#/components/schemas/JsonValue-Output"
+                  },
+                  "type": "array"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "源记录主键 pair 数组;未知时为 null",
+            "title": "Source Pk"
+          },
+          "source_table": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Table"
+          },
+          "source_value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "ObjectLineageInput",
+        "type": "object"
+      },
+      "ObjectLineageRef": {
+        "description": "对象行与 lineage key token 的对齐引用(与 rows 同序)。\n\nkey_token 是不透明定位符;object_key 仍走 frozen template 敏感显示规则。",
+        "properties": {
+          "key_token": {
+            "description": "规范 64 位小写 hex SHA-256",
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Key Token",
+            "type": "string"
+          },
+          "object_key": {
+            "description": "规范化 pair 数组,如 [[\"order_no\",\"SO-001\"],[\"line_no\",10]]",
+            "items": {
+              "items": {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              "type": "array"
+            },
+            "title": "Object Key",
+            "type": "array"
+          },
+          "row_index": {
+            "minimum": 0.0,
+            "title": "Row Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "row_index",
+          "key_token",
+          "object_key"
+        ],
+        "title": "ObjectLineageRef",
+        "type": "object"
+      },
+      "ObjectLineageResponse": {
+        "description": "GET /api/objects/{object}/{key}/lineage 成功形状。\n\n旧 published(lineage_schema_version=NULL)返回 state=unavailable +\nreason_code=lineage_not_recorded,不伪造空字段。",
+        "properties": {
+          "binding_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Hash"
+          },
+          "binding_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "draft",
+                  "verified",
+                  "disabled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Binding Status"
+          },
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Version"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/ObjectLineageField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "generated_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "key_token": {
+            "maxLength": 64,
+            "minLength": 64,
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Key Token",
+            "type": "string"
+          },
+          "map_batch_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Map Batch Id"
+          },
+          "object": {
+            "title": "Object",
+            "type": "string"
+          },
+          "object_key": {
+            "items": {
+              "items": {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              "type": "array"
+            },
+            "title": "Object Key",
+            "type": "array"
+          },
+          "object_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Object Version"
+          },
+          "reason_code": {
+            "anyOf": [
+              {
+                "const": "lineage_not_recorded",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "记录级 unavailable 原因;available 时为 null(必填可空)",
+            "title": "Reason Code"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "主数据源;unavailable 旧版可为 null(必填可空)",
+            "title": "Source"
+          },
+          "state": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Version"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "state",
+          "reason_code",
+          "source",
+          "object",
+          "display_name",
+          "object_key",
+          "key_token",
+          "fields",
+          "warnings",
+          "generated_at"
+        ],
+        "title": "ObjectLineageResponse",
+        "type": "object"
+      },
+      "ObjectLineageStep": {
+        "description": "实际执行过的有序转换步骤:read → join? → map? → coerce? → derived?。",
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ValueEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "coerce_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "coerce 目标类型;非 coerce 为 null",
+            "title": "Coerce Type"
+          },
+          "derived_rule_index": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "derived_rule 命中的声明顺序下标;其它为 null",
+            "title": "Derived Rule Index"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "安全摘要;不含 SQL/Token/未脱敏原值",
+            "title": "Detail"
+          },
+          "kind": {
+            "enum": [
+              "read",
+              "join",
+              "map",
+              "coerce",
+              "derived_rule",
+              "derived_default"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "map_hit": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "map 步骤是否命中声明项;非 map 为 null",
+            "title": "Map Hit"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "ObjectLineageStep",
+        "type": "object"
+      },
       "ObjectRowsPageResponse": {
         "properties": {
           "columns": {
@@ -2219,6 +2730,14 @@
           "limit": {
             "title": "Limit",
             "type": "integer"
+          },
+          "lineage_refs": {
+            "description": "与 rows 对齐的 lineage 引用;旧数据集可为空列表",
+            "items": {
+              "$ref": "#/components/schemas/ObjectLineageRef"
+            },
+            "title": "Lineage Refs",
+            "type": "array"
           },
           "object": {
             "title": "Object",
@@ -5437,6 +5956,74 @@
         ],
         "title": "ValidationResult",
         "type": "object"
+      },
+      "ValueEvidence": {
+        "description": "稳定值证据:不使用 repr();BLOB/超长文本只留摘要。",
+        "properties": {
+          "kind": {
+            "enum": [
+              "scalar",
+              "null",
+              "bytes",
+              "truncated"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "length": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "原值字节/字符长度;scalar/null 可为 null",
+            "title": "Length"
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "bytes/truncated 的有界预览;scalar/null 时为 null",
+            "title": "Preview"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "bytes/truncated 的完整 SHA-256 hex;其它为 null",
+            "title": "Sha256"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JsonValue-Output"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "scalar/null 的 JSON 标量;bytes/truncated 时为 null"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "ValueEvidence",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -7542,6 +8129,139 @@
           {}
         ],
         "summary": "Object Rows"
+      }
+    },
+    "/api/objects/{object}/{key}/lineage": {
+      "get": {
+        "description": "对象字段血缘:published snapshot 只读查询。\n\nT01 冻结契约与 key token 校验;完整查询在 T07 接入。未实现前对合法\nkey 返回 501 fail-closed,不得伪装成功体或空字段。",
+        "operationId": "object_field_lineage_api_objects__object___key__lineage_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "object",
+            "required": true,
+            "schema": {
+              "title": "Object",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "title": "Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "可选:只返回单个模板属性;不传则返回全部字段",
+            "in": "query",
+            "name": "property",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "可选:只返回单个模板属性;不传则返回全部字段",
+              "title": "Property"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectLineageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectLineageError"
+                }
+              }
+            },
+            "description": "Bearer 错误或缺失(unauthorized)"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectLineageError"
+                }
+              }
+            },
+            "description": "未配置 Token(token_not_configured)"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectLineageError"
+                }
+              }
+            },
+            "description": "object_not_found / field_not_found / record_not_found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectLineageError"
+                }
+              }
+            },
+            "description": "dataset_not_published / snapshot_corrupt / lineage_incomplete"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/RequestError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ObjectLineageError"
+                    }
+                  ],
+                  "title": "Response 422 Object Field Lineage Api Objects  Object   Key  Lineage Get"
+                }
+              }
+            },
+            "description": "Pydantic 校验(RequestError),或 lineage_key_invalid(ObjectLineageError.reason_code)"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObjectLineageError"
+                }
+              }
+            },
+            "description": "lineage_query_failed + error_id"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Object Field Lineage",
+        "tags": [
+          "v0.3"
+        ]
       }
     },
     "/api/overview": {
