@@ -589,6 +589,7 @@ def build_lineage_nodes_and_inputs(
     source: str,
     anchor_table: str,
     plan_provenance: _Seq,
+    exprs: dict | None = None,
 ) -> tuple[list[FieldLineageNode], list[FieldLineageInputRow]]:
     """为所有 mapped 行构建 lineage 节点和输入边。
 
@@ -669,6 +670,22 @@ def build_lineage_nodes_and_inputs(
                 for s in trace.steps
             ])
 
+            # P1-3: join 目标不存在 → 目标主键全空 → join_target_missing
+            is_join = any(s.kind == "join" for s in trace.steps)
+            if is_join and t_status == "available":
+                for jk in join_fks:
+                    if prop_name not in _props_for_join(
+                        plan_provenance, jk,
+                    ):
+                        continue
+                    jpk = join_pks.get(jk, {})
+                    if not jpk or all(
+                        v is None for v in jpk.values()
+                    ):
+                        t_status = "unavailable"
+                        t_reason = "join_target_missing"
+                    break
+
             all_nodes.append(FieldLineageNode(
                 dataset_version=context.dataset_version,
                 object_version=context.object_version,
@@ -690,7 +707,6 @@ def build_lineage_nodes_and_inputs(
 
             # 构建输入边
             ordinal = 0
-            is_join = any(s.kind == "join" for s in trace.steps)
 
             if "value" in trace.input_roles and anchor_pk_json:
                 if is_join:
@@ -745,6 +761,7 @@ def build_lineage_nodes_and_inputs(
                             break
                         break
                 else:
+                    _expr = (exprs or {}).get(prop_name)
                     all_inputs.append(FieldLineageInputRow(
                         dataset_version=context.dataset_version,
                         object=object_name,
@@ -753,9 +770,13 @@ def build_lineage_nodes_and_inputs(
                         input_ordinal=ordinal,
                         role="value",
                         source=source,
-                        source_table=anchor_table,
+                        source_table=(
+                            _expr.table if _expr else anchor_table
+                        ),
                         source_pk_json=anchor_pk_json,
-                        source_column=None,
+                        source_column=(
+                            _expr.column if _expr else None
+                        ),
                         source_value_json=dumps_value_evidence(
                             trace.raw_value,
                         ),

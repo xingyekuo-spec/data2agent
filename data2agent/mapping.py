@@ -114,13 +114,16 @@ def split_row_provenance(
 ) -> tuple[dict, dict[str, object]]:
     """将 SQL 行拆成 (转换用字段行, provenance 别名→值)。
 
-    仅剥离 `__d2a_p_*` 内部投影;derived 条件列(`__col`)仍留给 mapping_transform。
+    `__d2a_p_*` 内部投影从转换行剥离;derived 条件列(`__col`)保留在转换行
+    (mapping_transform 需要)。prov 包含全部 plan.provenance 别名(含 derived
+    条件),供 lineage builder 合并源记录身份。
     """
-    strip = {
+    internal = {
         p.alias for p in plan.provenance if p.alias.startswith(_PROV_PREFIX)
     }
-    transform_row = {k: v for k, v in row.items() if k not in strip}
-    prov = {k: row[k] for k in strip if k in row}
+    all_prov_aliases = {p.alias for p in plan.provenance}
+    transform_row = {k: v for k, v in row.items() if k not in internal}
+    prov = {k: row[k] for k in all_prov_aliases if k in row}
     return transform_row, prov
 
 

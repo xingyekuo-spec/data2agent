@@ -2846,37 +2846,9 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 _lineage_safe_detail(e.reason_code))
 
         # ---- T07: published snapshot 只读查询 ----
+        # P1-4: 对象/属性/脱敏全部使用 published 快照冻结模板,不用 live template
         # 审计在事务外写入(log_access 会 commit,不能在 read_tx 内调用)
         src = default_source()
-        try:
-            pack = require_pack()
-        except HTTPException:
-            return _lineage_error_response(
-                409, "dataset_not_published",
-                _lineage_safe_detail("dataset_not_published"))
-
-        tpl = next(
-            (t for t in pack.objects if t.object == object), None,
-        )
-        if tpl is None:
-            db.log_access(
-                subject="console-admin", resource_type="object",
-                source=src, resource=resource, allowed=False,
-                reason_code="object_not_found", request_id=request_id)
-            return _lineage_error_response(
-                404, "object_not_found",
-                _lineage_safe_detail("object_not_found"))
-
-        if property_name is not None:
-            prop_names = {p.name for p in tpl.properties}
-            if property_name not in prop_names:
-                db.log_access(
-                    subject="console-admin", resource_type="object",
-                    source=src, resource=resource, allowed=False,
-                    reason_code="field_not_found", request_id=request_id)
-                return _lineage_error_response(
-                    404, "field_not_found",
-                    _lineage_safe_detail("field_not_found"))
 
         # 在只读事务内完成所有查询;事务外做审计和响应构建
         _audit_allowed = True
@@ -2885,10 +2857,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         _unavailable_resp: ObjectLineageResponse | None = None
         nodes: list = []
         inputs_rows: list = []
-        snap_ds_version: str | None = None
-        snap_tpl_version: str | None = None
-        entry_binding_hash: str | None = None
-        entry_object_version: str | None = None
+        tpl = None  # 从 published 快照取得
 
         try:
             with published_read_tx(db):
@@ -2907,6 +2876,30 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         rc, _lineage_safe_detail(rc))
                     raise _TxnExit()
 
+                # P1-4: 从 published 快照取模板
+                tpl = next(
+                    (t for t in snap.template_pack.objects
+                     if t.object == object),
+                    None,
+                )
+                if tpl is None:
+                    _audit_allowed = False
+                    _audit_rc = "object_not_found"
+                    _error_resp = _lineage_error_response(
+                        404, "object_not_found",
+                        _lineage_safe_detail("object_not_found"))
+                    raise _TxnExit()
+
+                if property_name is not None:
+                    prop_names = {p.name for p in tpl.properties}
+                    if property_name not in prop_names:
+                        _audit_allowed = False
+                        _audit_rc = "field_not_found"
+                        _error_resp = _lineage_error_response(
+                            404, "field_not_found",
+                            _lineage_safe_detail("field_not_found"))
+                        raise _TxnExit()
+
                 entry = snap.objects.get(object)
                 if entry is None:
                     _audit_allowed = False
@@ -2915,11 +2908,6 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         404, "object_not_found",
                         _lineage_safe_detail("object_not_found"))
                     raise _TxnExit()
-
-                snap_ds_version = snap.dataset_version
-                snap_tpl_version = snap.template_version
-                entry_binding_hash = entry.binding_hash
-                entry_object_version = entry.object_version
 
                 obj_versions = db.list_object_versions(snap.dataset_version)
                 obj_ver = next(
@@ -2963,6 +2951,16 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     _error_resp = _lineage_error_response(
                         404, "record_not_found",
                         _lineage_safe_detail("record_not_found"))
+                    raise _TxnExit()
+
+                # P1-5: 校验该记录字段完整性
+                expected_props = len(tpl.properties)
+                if property_name is None and len(nodes) != expected_props:
+                    _audit_allowed = False
+                    _audit_rc = "lineage_incomplete"
+                    _error_resp = _lineage_error_response(
+                        409, "lineage_incomplete",
+                        _lineage_safe_detail("lineage_incomplete"))
                     raise _TxnExit()
 
                 inputs_rows = db.get_field_lineage_inputs_by_key_hash(

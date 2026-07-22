@@ -242,6 +242,7 @@ def apply_object(
             source=source,
             anchor_table=binding.tables[0],
             plan_provenance=plan.provenance,
+            exprs=exprs,
         )
         # 同一事务:候选表 + lineage 节点 + 输入边 + 完整性计数
         isolation = landing.con.isolation_level

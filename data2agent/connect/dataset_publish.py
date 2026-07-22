@@ -1006,6 +1006,11 @@ def build_dataset(
                 batch_id=e.batch_id,
             )
             _drop_table_best_effort(store, table)
+            # 熔断时 apply_object 未写 lineage,但幂等清理确保安全
+            try:
+                store.delete_field_lineage(dataset_version, tpl.object)
+            except Exception:
+                pass
             results.append(ObjectApplyResult(
                 tpl.object, e.total, e.mapped, e.quarantined,
                 status="aborted", batch_id=e.batch_id,
@@ -1029,6 +1034,11 @@ def build_dataset(
             except Exception:
                 pass
             _drop_table_best_effort(store, table)
+            # P1-7: apply_object 可能已写入 lineage;无条件清理
+            try:
+                store.delete_field_lineage(dataset_version, tpl.object)
+            except Exception:
+                pass
             results.append(ObjectApplyResult(
                 tpl.object, 0, 0, 0, status="failed",
             ))

@@ -14,9 +14,52 @@ const emit = defineEmits<{ close: [] }>()
 
 const store = useLineageStore()
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const data = computed(() =>
-  store.lineage.status === 'success' ? (store.lineage.data as any) : null,
+interface LineageData {
+  state: string
+  reason_code?: string | null
+  source?: string | null
+  object: string
+  display_name: string
+  object_key: [string, unknown][]
+  key_token: string
+  dataset_version?: string | null
+  object_version?: string | null
+  template_version?: string | null
+  binding_hash?: string | null
+  binding_status?: string | null
+  map_batch_id?: string | null
+  fields: {
+    property: string
+    display_name: string
+    final_value?: { kind: string; value?: unknown; preview?: string | null; sha256?: string | null; length?: number | null } | null
+    state: string
+    reason_code?: string | null
+    steps?: {
+      kind: string
+      before?: { kind: string; value?: unknown } | null
+      after?: { kind: string; value?: unknown } | null
+      map_hit?: boolean | null
+      coerce_type?: string | null
+      derived_rule_index?: number | null
+      derived_when?: Record<string, unknown> | null
+    }[]
+    inputs?: {
+      role: string
+      source_table?: string | null
+      source_column?: string | null
+      source_pk?: [string, unknown][] | null
+      source_value?: { kind: string; value?: unknown; preview?: string | null; length?: number | null } | null
+      extract_batch_id?: string | null
+      join?: Record<string, unknown> | null
+    }[]
+  }[]
+  warnings: string[]
+}
+
+const data = computed<LineageData | null>(() =>
+  store.lineage.status === 'success'
+    ? (store.lineage.data as unknown as LineageData)
+    : null,
 )
 const error = computed(() =>
   store.lineage.status === 'error' ? store.lineage.error : null,
@@ -169,6 +212,12 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
                     <span v-if="step.derived_rule_index !== null && step.derived_rule_index !== undefined">
                       #{{ step.derived_rule_index }}
                     </span>
+                    <div v-if="step.derived_when" class="step-when" :data-testid="`when-${field.property}-${si}`">
+                      条件:
+                      <span v-for="(val, col) in step.derived_when" :key="col" class="when-cond">
+                        {{ col }}={{ val }}
+                      </span>
+                    </div>
                     <div v-if="step.before" class="step-values">
                       <span class="before">{{ formatEvidence(step.before) }}</span>
                       <span class="arrow"> → </span>
@@ -195,6 +244,9 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
                 </span>
                 <span v-if="input.source_value" class="input-value">
                   = {{ formatEvidence(input.source_value) }}
+                </span>
+                <span v-if="input.source_pk" class="input-pk" :data-testid="`pk-${field.property}-${ii}`">
+                  源记录: {{ input.source_pk.map((p: [string, unknown]) => `${p[0]}=${p[1]}`).join(', ') }}
                 </span>
                 <span v-if="input.extract_batch_id" class="input-batch">
                   批次: {{ input.extract_batch_id }}
@@ -296,9 +348,22 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
 .input-value {
   color: var(--el-text-color-regular);
 }
+.input-pk {
+  font-family: monospace;
+  font-size: 11px;
+  color: var(--el-text-color-secondary);
+}
 .input-batch,
 .input-join {
   color: var(--el-text-color-secondary);
+}
+.step-when {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+.when-cond {
+  font-family: monospace;
+  margin-right: 6px;
 }
 .field-unavailable {
   padding: 8px 0;
