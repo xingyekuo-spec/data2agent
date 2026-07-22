@@ -464,16 +464,17 @@ def test_console_http_objects_catalog_consistent_under_publish(tmp_path, pack):
     errors: list[BaseException] = []
     lock = threading.Lock()
 
+    success_count = [0]  # 可变容器供线程累加
+
     def hammer() -> None:
         # TestClient 非线程安全:每线程独立客户端 + 上下文管理器。
-        # 并发 publish 期间数据库可能短暂锁忙,容忍瞬态 5xx/404;
-        # 核心断言是成功响应不混版。
         with TestClient(app, raise_server_exceptions=False) as client:
             while not stop.is_set():
                 try:
                     resp = client.get("/api/objects", headers=headers)
-                    if resp.status_code != 200:
-                        continue  # 瞬态锁忙/切换,跳过
+                    assert resp.status_code == 200, (
+                        f"期望 200,实际 {resp.status_code}: {resp.text[:200]}"
+                    )
                     rows = resp.json()
                     assert isinstance(rows, list), type(rows)
                     obj_versions = {
@@ -484,6 +485,8 @@ def test_console_http_objects_catalog_consistent_under_publish(tmp_path, pack):
                     }
                     if obj_versions:
                         assert obj_versions <= v1_owned or obj_versions <= v2_owned
+                    with lock:
+                        success_count[0] += 1
                 except Exception as e:
                     with lock:
                         errors.append(e)
@@ -503,6 +506,7 @@ def test_console_http_objects_catalog_consistent_under_publish(tmp_path, pack):
         t.join(timeout=10)
 
     assert not errors, errors
+    assert success_count[0] > 0, "并发窗口内未获得任何成功响应"
 
 
 def test_console_http_overview_atomic_under_publish(tmp_path, pack):
