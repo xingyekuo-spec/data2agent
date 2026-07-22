@@ -1,7 +1,7 @@
 # 02 · 抽取框架(详设)
 
-> 状态:设计修订 r0.6(2026-07-21)· 实现目录:`data2agent/connect/` + `data2agent/ingest/` · 当前:E1–E5 + E6a 推送 sink + v0.3 M2 原子发布 + M3 映射 Preview 已实现;v0.3 字段血缘与 v0.4 批次回执/E6b/TLS 门槛待建
-> 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
+> 状态:设计修订 r0.7(2026-07-22)· 实现目录:`data2agent/connect/` + `data2agent/ingest/` · 当前:E1–E5 + E6a 推送 sink + v0.3 原子发布、映射 Preview、字段血缘与验收报告已实现;v0.4 批次回执/E6b/TLS 门槛待建
+> 上层基线:[路线图](../roadmap.md)
 
 ## 1. 目标与非目标
 
@@ -113,7 +113,7 @@ since = high_water - lookback          # 回看窗口,默认 3 天,吸收迟到�
 - **熔断**:单批次隔离率超过阈值(默认 5%)→ 中止本批并告警,防止系统性口径错误(比如源表结构变了)被静默吞掉;
 - 处理:`quarantine list / retry` CLI,或运维控制台(docs 05)的复核与一键重试。
 
-### 7.1 v0.3 映射 Preview(已实现 · M3)与字段血缘(待建 · M4)
+### 7.1 v0.3 映射 Preview 与字段血缘(已实现)
 
 Preview 与正式 apply 共用 `mapping_transform` 纯转换核心(field → map → enum → 类型 → derived → 业务键),但必须满足:
 
@@ -124,7 +124,7 @@ Preview 与正式 apply 共用 `mapping_transform` 纯转换核心(field → map
 - 返回 `template_version`、current/candidate `binding_hash`、raw batch 与 sample fingerprint,保证预览可复现;
 - 强制 Bearer;敏感属性与 current∪draft 敏感 raw 列并集服务端遮罩;未分类 raw 列与 `derived_unmatched` 源值不回传明文。
 
-字段血缘由正式 apply 产生(M4),至少记录:
+字段血缘由正式 apply 产生,至少记录:
 
 ```text
 dataset_version / object / object_key / property
@@ -133,7 +133,7 @@ transform(map/join/derived) / result_value / extract_batch_id / map_batch_id
 ```
 
 敏感源值遵循出口脱敏规则,不能因血缘接口绕过 `sensitive`。字典/字段语义是否正确仍需
-现场核对;血缘只证明系统实际读取和转换了什么。M4 必须复用同一转换评估模型,不得复刻第二套转换器。
+现场核对;血缘只证明系统实际读取和转换了什么。实现必须复用同一转换评估模型,不得复刻第二套转换器。
 
 ### 7.2 v0.3 对象层原子发布(已实现 · M2)
 

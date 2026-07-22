@@ -1,7 +1,7 @@
 # 01 · 元模型与模板包
 
-> 状态:对象/绑定契约已实现;v0.3 M1/M2 版本身份与原子发布、M3 映射 Preview 已落地(r3,2026-07-21)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py`、`data2agent/connect/mapping_transform.py` · 当前消费者:映射引擎、Preview、MCP 网关、白名单推导、本地对账、数据集发布/published 快照;后续消费者:v0.3 字段血缘与 v0.4 跨机协议
-> 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
+> 状态:对象/绑定契约已实现;v0.3 版本身份、原子发布、映射 Preview 与字段血缘已落地(r4,2026-07-22)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py`、`data2agent/connect/mapping_transform.py` · 当前消费者:映射引擎、Preview、MCP 网关、白名单推导、本地对账、数据集发布/published 快照、字段血缘;后续消费者:v0.4 跨机协议
+> 上层基线:[路线图](../roadmap.md)
 
 ## 1. 设计目标
 
@@ -97,7 +97,7 @@ derived:
 | binding↔表形 | pytest(展厅) | e10 binding 引用的每个 表.字段 必须存在于模拟表形 |
 
 第三层是防漂移的关键:模板与模拟表形任何一侧单独改动,CI 立即失败。
-客户真实字典校验不属于数据对账工具:它在 v0.3 由模板只读展示、字段血缘、映射 preview
+客户真实字典校验不属于数据对账工具:它由模板只读展示、字段血缘、映射 preview
 和一键验收提供机器辅助证据,在 v0.4 现场由实施人员按 docs 02 附录核对后将 binding
 置为 `verified`。COUNT/水位/主键 diff 等数据对账只负责记录一致性,不证明字段业务语义正确。
 

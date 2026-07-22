@@ -1,7 +1,7 @@
 # 04 · 数字厂长展厅
 
-> 状态:SQLite/SQL Server 展厅数据链已实现;v0.2 Vue 展厅验收待建(r1,2026-07-17)· 实现:`data2agent/showroom/` + 根目录 `docker-compose.yml`
-> 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
+> 状态:SQLite/SQL Server 展厅数据链、Vue Console 展厅验收、v0.3 证据链场景已实现(r2,2026-07-22)· 实现:`data2agent/showroom/` + 根目录 `docker-compose.yml`
+> 上层基线:[路线图](../roadmap.md)
 
 ## 1. 定位
 
@@ -14,7 +14,7 @@ mssql-sim     SQL Server 容器,init 脚本灌入 E10 表形 + seed 数据(源�
    ▼ 抽取(connect,走 mssql_readonly 适配器,窗口/限流/审计全开)
 landing-sqlite SQLite 落地库(raw_* + 物化对象表)
    ├─ mcp     MCP 网关(streamable HTTP :8848) → demo(脚本或 Agent 编排)
-   └─ console Jinja 管理页(:8849);v0.2 增加 Vue Console(`/v1`)
+   └─ console Jinja 管理页(:8849)+ Vue Console(`/v1`)
 ```
 
 本机快速版是 `seed → connect sync → connect apply → MCP`;源库和落地库均为 SQLite。
@@ -42,7 +42,7 @@ PostgreSQL 不是当前展厅目标;只有达到产品路线定义的容量/并�
   相同的工具调用链(query_objects ×2 → query_metrics → propose_action),终端输出建议卡;
 - **真 Agent 版**:任意 MCP 客户端按 `docs/demo/quote-review.md` 的提示词驱动,主角客户 C002。
 
-## 5. v0.2 Vue 展厅验收(待建)
+## 5. Vue 展厅验收
 
 展厅是 Vue Console 接入真实 API 的发布门槛,不能只演示静态 Mock。
 
@@ -55,7 +55,7 @@ PostgreSQL 不是当前展厅目标;只有达到产品路线定义的容量/并�
 
 Mock 不得生成正式验收结论;Demo 也不等于生产安全验证。
 
-### 5.2 v0.2 必验页面
+### 5.2 必验页面
 
 1. `/v1` 总览显示 ERP→抽取→推送/落地→映射→对象→MCP 节点;
 2. 运行详情能展开表、水位、批次、输入输出与错误;
@@ -68,7 +68,7 @@ Mock 不得生成正式验收结论;Demo 也不等于生产安全验证。
 
 ### 5.3 后续版本验收
 
-- v0.3:增加字段血缘、映射 preview、dataset version、原子发布和会话证据场景;
+- v0.3:字段血缘、映射 preview、dataset version、原子发布和会话证据场景已落地;
 - v0.4:增加网络失败/重试、commit receipt、schema mismatch、E6b 和 TLS 入口验证;
 - PostgreSQL 只有达到 SQLite 换库阈值后才进入展厅矩阵。
 
@@ -76,5 +76,5 @@ Mock 不得生成正式验收结论;Demo 也不等于生产安全验证。
 
 - compose 已落地(仓库根 `docker-compose.yml`):mssql(SQL Server 2022,`MSSQL_IMAGE`/`MSSQL_PLATFORM` 可切 Azure SQL Edge)→ seed(灌数 + 建只读账号 d2a_reader)→ connector(serve 常驻,走只读账号)→ 共享卷 → mcp(streamable-http :8848);
 - 演示链编排载体 = 脚本版(入库,离线可跑)+ 真 Agent 版(MCP 提示词)并存,见 §4;
-- Vue Console 进入 v0.2 当前主路线;Jinja 管理页继续作为安装与故障恢复入口;
+- Vue Console 是当前主产品界面;Jinja 管理页继续作为安装与故障恢复入口;
 - 待议:seed 数据"每日自动演进"(模拟工厂持续下单,让增量抽取有活干)—— 留给使用反馈拉动。

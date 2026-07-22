@@ -7,10 +7,6 @@
 一句询单,Agent 查历史成交 / 毛利基线 / 账期后给出**每个数字可溯源**的接单评审建议 ——
 上图由真实演示链生成(`python deploy/render_hero_svg.py` 可再生),不是手绘示意。
 
-<!-- 演示 GIF(公开前补):brew install vhs && vhs deploy/demo.tape
-     产出 docs/assets/demo.gif 后,在此嵌入:
-     ![全链路演示:seed → 抽取 → 物化 → 评审卡](docs/assets/demo.gif) -->
-
 > ⚠️ 当前处于 pre-release 私有开发阶段,首个工厂验证完成后公开。
 
 ## 这是什么
@@ -20,11 +16,11 @@
 
 - **抽取框架**:只读直连、ELT(原样落地 → 声明式映射)、水位 + 回看 + 分段对账、隔离区(API 轮询适配器按真实来源需求建设,当前未实现);
 - **国产 ERP 连接器**:鼎捷 E10 / 易飞参考映射 + 表结构字典(持续积累于 [docs/dict](docs/dict/));
-- **制造业本体模板 + 元模型**:业务对象的声明式模板(YAML,首批 5 个 / 规划 18 个),`validate` 一键校验;
-- **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:依据必须引用已记录查询 ID,默认脱敏、口径警示内建;主体/会话/结果摘要级证据在 v0.3 加固),任何支持 MCP 的 Agent 五分钟接入;HTTP 部署默认强制 Token + 每工具限流 + 查询审计;
+- **制造业本体模板 + 元模型**:业务对象的声明式模板(YAML,首批 5 个 / 规划 18 个),`validate` 一键校验;v0.3 已加入模板/绑定摘要、数据集版本和原子发布;
+- **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:依据必须引用已记录查询 ID 和结果摘要,默认脱敏、口径警示内建;主体/会话/结果摘要级证据已持久化),任何支持 MCP 的 Agent 五分钟接入;HTTP 部署默认强制 Token + 每工具限流 + 查询审计;
 - **运维 / 管理界面**:平台 `console`(`:8849`)与中间 `middle_admin`(`:8851`)为 Jinja2+HTMX
   管理页(配置白名单编辑、状态、日志、调试;浏览器首次配置);v0 内嵌运维单页保留在 `/v0`;
-  独立 Vue Console(`console-ui/`)是当前产品主路线,用于日常监控与数据验证。现场推荐[便携包](docs/runbook/portable.md)
+  独立 Vue Console(`console-ui/`)是当前产品主路线,用于日常监控、数据验证、字段血缘、MCP 证据和一键验收。现场推荐[便携包](docs/runbook/portable.md)
   双击 `data2agent.exe`,链路验收见 [push-validation](docs/runbook/push-validation.md);
   管理 API 契约快照见 `console-ui/openapi.json`(用 `python scripts/export_console_openapi.py` 重新生成);
 - **数字厂长展厅**:`docker compose up` 一键起 SQL Server 模拟工厂(渔具外销厂,E10 参考表形)+ 抽取常驻 + MCP(HTTP :8848)+ 运维控制台(:8849);接单评审演示链脚本版 / Agent 版双就绪。
@@ -35,7 +31,7 @@
 
 ```bash
 pip install -e ".[dev,mcp]"
-pytest tests -q                                   # 110 passed, 5 skipped(mssql 集成测试需 Docker)
+pytest tests -q                                   # Python 回归测试(mssql 集成测试需 Docker)
 python -m data2agent.metamodel.validate templates # 模板校验
 python -m data2agent.showroom.seed                # 生成展厅模拟库 showroom/e10.sqlite(E10 参考表形)
 python -m data2agent.connect sync --sqlite showroom/e10.sqlite   # 抽取:水位增量 → 落地库(只读/白名单/审计)
@@ -60,7 +56,7 @@ docker compose up --build   # 展厅一键版:SQL Server 模拟工厂 + 抽取�
 
 ## 边界(诚实声明)
 
-data2agent 当前是**完整可运行的 MVP / 展厅链**,已覆盖“数据到达 Agent + 接单评审”的演示和单机验证。真实工厂试点前仍需完成可观察控制台、字段级验证、跨机对账(E6b)、批次回执和生产加密传输;详见[产品开发路线图](docs/superpowers/plans/2026-07-17-product-development-roadmap.md)。口径校准、主数据对齐、“做”档审批治理和行业知识包仍属后续能力。
+data2agent 当前已完成 `v0.3.0`:在完整 MVP / 展厅链基础上,补齐了可观察控制台、数据集原子发布、映射 Preview、字段血缘、MCP 会话证据和一键验收报告。它适合在工厂做**受控只读影子试运行**,但还未宣告正式生产试点就绪。正式试点前仍需完成 v0.4 的跨机批次回执、E6b 对账、生产加密传输、凭据治理、SQLite 负载/备份基线和连续运行验收;详见[路线图](docs/roadmap.md)。口径校准、主数据对齐、“做”档审批治理和行业知识包仍属后续能力。
 
 ## 贡献与安全
 

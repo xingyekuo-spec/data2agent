@@ -1,6 +1,6 @@
 # data2agent Vue Console(console-ui)
 
-data2agent 的日常监控与数据验证主界面(v0.2 路线:可观察控制台)。
+data2agent 的日常监控与数据验证主界面,已覆盖 v0.2 可观察与 v0.3 可验证能力。
 Vue 3 + Vite + TypeScript + Element Plus + Pinia + Vue Router。
 
 > 安装/配置/故障恢复仍由 Jinja2 管理页(`/` 与 `/v0`)承担;本工程挂载在 `/v1`。
@@ -90,4 +90,4 @@ src/
 └── views/                # 页面骨架;Dashboard / Settings / Pipeline 已接垂直切片
 ```
 
-详细计划见 `docs/superpowers/plans/2026-07-18-v0.2-m2-vue-skeleton-and-mock.md`。
+产品边界见 [docs/roadmap.md](../docs/roadmap.md),控制台设计见 [docs/design/05-console.md](../docs/design/05-console.md)。

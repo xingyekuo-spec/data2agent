@@ -1,9 +1,8 @@
 # 05 · 控制台与管理界面
 
-> 状态:Jinja 管理页已实现;Vue Console v0.2 为当前主产品路线;v0.3 M3 映射 Preview 已接入模板页(r3,2026-07-21)
+> 状态:Jinja 管理页已实现;Vue Console v0.2/v0.3 已完成,覆盖可观察、可验证与一键验收(r4,2026-07-22)
 > 实现:`data2agent/console/` + `data2agent/middle_admin/` + `console-ui/`
-> 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
-> Vue 实施规格:[console-ui design](../superpowers/specs/2026-07-15-console-ui-design.md)
+> 上层基线:[路线图](../roadmap.md)
 
 ## 1. 产品定位与界面分工
 
@@ -13,9 +12,9 @@
 | --- | --- | --- | --- |
 | Jinja2 + HTMX 管理页 | 部署人员首次配置、连接测试、日志、故障恢复 | 已实现 | 平台 `/`;中间机 `:8851` |
 | v0 内嵌运维页 | 本机简版和兼容入口 | 保留 | 平台 `/v0` |
-| Vue Console | 工厂 IT 日常监控、数据验证、隔离复核、MCP Lab | v0.2 当前主路线 | 平台 `/v1` |
+| Vue Console | 工厂 IT 日常监控、数据验证、隔离复核、MCP Lab、字段血缘、一键验收 | v0.3 已完成 | 平台 `/v1` |
 
-Jinja 管理页可以编辑经过白名单限制的部署参数并提示重启;Vue v0.2 以观察、验证和调试为主,
+Jinja 管理页可以编辑经过白名单限制的部署参数并提示重启;Vue Console 以观察、验证和调试为主,
 不开放在线生产 mapping 发布、自动 `verified`、数据删除或 ERP 写回。
 
 现场部署形态见[便携包](../runbook/portable.md);当前受控内网技术验证见
@@ -72,7 +71,7 @@ Vue 顶栏始终显示当前模式:
 
 API 失败不能被前端转换为空列表并继续显示 `healthy`。所有卡片显示数据来源和更新时间。
 
-## 4. v0.2 信息架构
+## 4. Console 信息架构
 
 ```text
 运维监控
@@ -121,7 +120,7 @@ Run
     status / error_id / error
 ```
 
-`validation` 从 v0.3 起复用同一 Run 模型。历史记录没有 step 证据时返回
+`validation` 复用同一 Run 模型。历史记录没有 step 证据时返回
 `legacy_unavailable`,不得用空数组伪装为“实际处理 0 项”。时间均返回带时区 ISO 8601;
 页面按浏览器时区展示,详情保留原始值。
 
@@ -133,7 +132,7 @@ Run
 - 显示批次、抽取/映射时间、数据集版本;
 - 对象敏感字段按元模型脱敏;
 - raw 浏览可能含未分类的敏感原值,仅配置有效管理 Token 的授权主体可访问,访问允许/拒绝均逐次审计;
-- v0.2 对能够识别的 raw 敏感列同样服务端脱敏,未知分类持续警告,不提供 unmask;
+- 对能够识别的 raw 敏感列同样服务端脱敏,未知分类持续警告,不提供 unmask;
 - 表格和原始 JSON 使用同一个已脱敏、已截断响应;v0.4 前仍需明确源端列裁剪和 raw 保护策略。
 
 ### 4.4 隔离与模板
@@ -142,8 +141,8 @@ Run
 - 熔断时显示当前仍服务的稳定数据集版本;
 - retry 触发完整数据集重建并走同一编排器(非单对象旁路发布),UI 必须明确提示影响范围;
 - 模板页展示对象、属性、敏感标记、binding 状态、field map、enum map、derived 和 watermark;
-- v0.2 模板只读,不提供在线编辑或自动 `verified`;
-- v0.3 M3 模板页提供映射 Preview:选择 source、有界 raw 样本,可用当前 binding 或一次性草稿试算;
+- 模板只读,不提供在线编辑或自动 `verified`;
+- 模板页提供映射 Preview:选择 source、有界 raw 样本,可用当前 binding 或一次性草稿试算;
   展示摘要、行结果、枚举 gap、业务键问题、derived 覆盖率与 current↔draft diff;
   不提供草稿保存、模板发布或 apply 快捷按钮;Preview 后 datasets/quarantine/runs 业务数据不变。
 
@@ -152,7 +151,7 @@ Run
 - 调用 `query_objects` 和 `query_metrics`,展示完整 JSON、脱敏字段、口径警示与 dataset version;
 - 通过独立建议卡端点调用 `propose_action`,展开 evidence;
 - Jinja `/api/debug/mcp-call` 继续只允许查询类工具,不因 Vue 扩大安装调试入口权限;
-- v0.2 展示当前 query ID 边界;v0.3 接入主体/会话/result digest 证据契约。
+- MCP Lab 接入主体/会话/result digest 证据契约,建议卡 evidence 可展开核验。
 
 ## 5. API 契约
 
@@ -171,7 +170,7 @@ Run
 
 动作必须复用 connect 引擎,不能绕过窗口、白名单、只读和熔断策略。
 
-### 5.2 v0.2 新增/标准化 API
+### 5.2 已标准化 API
 
 ```text
 GET  /api/overview
@@ -268,16 +267,16 @@ response model → OpenAPI → fixture → 页面全部状态 → 真实 API →
 ### v0.3 可验证
 
 ```text
-GET  /api/objects/{object}/{key}/lineage          # M4 待建
+GET  /api/objects/{object}/{key}/lineage          # 已实现
 POST /api/mappings/{object}/preview              # M3 已实现
 GET  /api/datasets                               # M1/M2 已实现
 GET  /api/datasets/{version}                     # M1/M2 已实现
 POST /api/datasets/{version}/publish             # M2 已实现
 POST /api/datasets/{version}/rollback            # M2 已实现(仅 previous)
-GET  /api/gateway/queries/{query_id}             # M5
-GET  /api/gateway/proposals/{proposal_id}        # M5
-POST /api/validation/run                         # M6
-GET  /api/validation/runs/{run_id}               # M6
+GET  /api/gateway/queries/{query_id}             # 已实现
+GET  /api/gateway/proposals/{proposal_id}        # 已实现
+POST /api/validation/run                         # 已实现
+GET  /api/validation/runs/{run_id}               # 已实现
 ```
 
 `POST /api/mappings/{object}/preview` 强制 Bearer,写入 access audit(`resource_type=raw`,
@@ -304,18 +303,19 @@ GET  /api/reconcile/runs/{run_id}
 - Vue 产物缺失时 `/v1` 返回明确安装提示,不能静默回落成另一套页面;
 - Jinja 与 v0 页面在 Vue 构建失败时仍可使用。
 
-## 10. v0.2 发布门槛
+## 10. v0.3 已完成门槛
 
-- [ ] 总览、管道、运行、审计、数据、隔离、模板、MCP Lab 可用;
-- [ ] 所有页面覆盖 loading/empty/running/warning/failed/unknown;
-- [ ] Mock、Demo、Real 标识不可混淆;
-- [ ] OpenAPI 漂移检查、TypeScript 类型检查和前端构建通过;
-- [ ] SQLite 本机链与 Docker MSSQL 展厅链均通过真实 API;
-- [ ] raw/object 浏览分页、白名单、脱敏/授权和审计通过;
-- [ ] Jinja `/`、v0 `/v0`、Vue `/v1` 同时可用;
-- [ ] 前端资产不依赖 CDN;
-- [ ] 用户无需查看 SQLite 即可在 3 分钟内定位失败节点;
-- [ ] 便携包包含 Vue dist,且 Vue 故障不影响应急管理页。
+- [x] 总览、管道、运行、审计、数据、隔离、模板、MCP Lab 和 Validation 可用;
+- [x] 所有页面覆盖 loading/empty/running/warning/failed/unknown;
+- [x] Mock、Demo、Real 标识不可混淆;
+- [x] OpenAPI 漂移检查、TypeScript 类型检查和前端构建通过;
+- [x] SQLite 本机链与 Docker MSSQL 展厅链均通过真实 API;
+- [x] raw/object 浏览分页、白名单、脱敏/授权和审计通过;
+- [x] 字段血缘、映射 Preview、数据集版本、MCP evidence 与一键验收接入 Console;
+- [x] Jinja `/`、v0 `/v0`、Vue `/v1` 同时可用;
+- [x] 前端资产不依赖 CDN;
+- [x] 用户无需查看 SQLite 即可定位失败节点和追溯关键字段/建议卡依据;
+- [x] 便携包包含 Vue dist,且 Vue 故障不影响应急管理页。
 
 ## 11. 运行方式
 
@@ -327,5 +327,5 @@ python -m data2agent.middle_admin --home C:\d2a --host 127.0.0.1 --port 8851
 # 开发 / 展厅
 python -m data2agent.console --config connect.example.yaml
 docker compose up --build
-# 当前 Jinja:http://localhost:8849;v0.2 完成后 Vue:http://localhost:8849/v1
+# Jinja:http://localhost:8849;Vue Console:http://localhost:8849/v1
 ```

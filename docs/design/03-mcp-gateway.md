@@ -1,7 +1,7 @@
 # 03 · MCP 网关
 
 > 状态:lite 与 v0.3 M5 会话证据已实现;查询读取 published 快照，建议卡持久校验主体、会话和结果摘要· 实现:`data2agent/mcp_server/`
-> 上层基线:[产品开发路线图](../superpowers/plans/2026-07-17-product-development-roadmap.md)
+> 上层基线:[路线图](../roadmap.md)
 
 ## 1. 定位
 
