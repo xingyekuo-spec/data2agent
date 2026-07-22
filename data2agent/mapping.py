@@ -87,7 +87,16 @@ def build_select(
     if not binding.tables:
         raise ValueError(f"{template.object}: binding 未声明 tables,无法确定锚表")
     anchor = binding.tables[0]
-    exprs = {p: parse_field_expr(v) for p, v in binding.field_map.items()}
+    prop_names = {p.name for p in template.properties}
+    exprs: dict[str, FieldExpr] = {}
+    for prop, raw in binding.field_map.items():
+        # 属性名进入 AS 别名:必须属于模板且为合法标识符,禁止客户端键注入表达式。
+        if prop not in prop_names:
+            raise ValueError(
+                f"{template.object}: field_map 未知属性 '{prop}',"
+                f"可用:{sorted(prop_names)}")
+        prop = _validate_ident(prop, label="属性")
+        exprs[prop] = parse_field_expr(raw)
     if not exprs:
         raise ValueError(f"{template.object}: binding({binding.source})未声明 field_map")
 

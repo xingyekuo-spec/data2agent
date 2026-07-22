@@ -598,12 +598,35 @@ def build_draft_binding(
                     "draft_invalid",
                     f"{label}.{prop} 引用表 '{parsed.table}' 不在草稿 tables 内",
                 )
-            if parsed.join_fk is not None and parsed.join_fk[0] not in table_set:
-                raise PreviewError(
-                    "draft_invalid",
-                    f"{label}.{prop} join 表 '{parsed.join_fk[0]}' 不在草稿 tables 内",
-                )
+            if parsed.join_fk is not None:
+                fk_table = parsed.join_fk[0]
+                if fk_table not in table_set:
+                    raise PreviewError(
+                        "draft_invalid",
+                        f"{label}.{prop} join 表 '{fk_table}' 不在草稿 tables 内",
+                    )
+                # build_select 要求 join 外键必须在锚表 tables[0] 上。
+                if fk_table != tables[0]:
+                    raise PreviewError(
+                        "draft_invalid",
+                        f"{label}.{prop} join 外键须在锚表 '{tables[0]}' 上,"
+                        f"got '{fk_table}'",
+                    )
             parsed_maps.append((label, str(prop), parsed))
+
+    prop_names = {p.name for p in template.properties}
+    key_names = set(template.keys)
+    for label, prop, _parsed in parsed_maps:
+        if label == "field_map" and prop not in prop_names:
+            raise PreviewError(
+                "draft_invalid",
+                f"field_map.{prop} 不是对象属性",
+            )
+        if label == "key_map" and prop not in key_names:
+            raise PreviewError(
+                "draft_invalid",
+                f"key_map.{prop} 不是对象业务键",
+            )
 
     # 列/FK 必须真实存在于落地 DDL,否则 422 draft_invalid(不得落到 SQLite 500)。
     for label, prop, parsed in parsed_maps:
@@ -612,7 +635,6 @@ def build_draft_binding(
         )
 
     derived = _build_draft_derived(payload.get("derived") or {})
-    prop_names = {p.name for p in template.properties}
     anchor = tables[0]
     anchor_cols = discover_table_columns(store, raw_table_name(source, anchor))
 
@@ -678,6 +700,11 @@ def build_draft_binding(
             raise PreviewError("draft_invalid", str(exc)) from exc
         if parsed_wm.table not in table_set:
             raise PreviewError("draft_invalid", "watermark 引用表不在草稿 tables 内")
+        if parsed_wm.join_fk is not None and parsed_wm.join_fk[0] != tables[0]:
+            raise PreviewError(
+                "draft_invalid",
+                f"watermark join 外键须在锚表 '{tables[0]}' 上",
+            )
         _validate_field_expr_schema(
             store, source, parsed_wm, label="watermark",
         )

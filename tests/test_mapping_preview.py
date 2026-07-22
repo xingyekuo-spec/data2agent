@@ -926,3 +926,73 @@ def test_draft_derived_sql_injection_ident_rejected(tmp_path):
             landing, pack, object_name="Item", source=SOURCE, draft_binding=draft,
         )
     assert ei.value.reason_code == "draft_invalid"
+
+
+def test_draft_join_fk_must_be_on_anchor(tmp_path):
+    """非锚表 join 外键须在预检阶段 422,不得落到 build_select ValueError/500。"""
+    pack = _pack()
+    pack.objects.append(
+        ObjectTemplate(
+            object="Other",
+            display_name="其它",
+            domain="辅助",
+            keys=["code"],
+            properties=[Property(name="code", type="string")],
+            bindings=[
+                SourceBinding(
+                    source=SOURCE,
+                    tables=["OTHER"],
+                    status="verified",
+                    field_map={"code": "OTHER.CODE"},
+                ),
+            ],
+        ),
+    )
+    pack.objects[0].bindings[0].tables = [ANCHOR, "OTHER"]
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    item = TableInfo(
+        name=ANCHOR,
+        columns=[
+            ("Id", "int"), ("CODE", "text"), ("NAME", "text"),
+            ("STATUS", "text"), ("SECRET", "text"), ("ST", "text"),
+            ("OTHER_ID", "int"),
+        ],
+        pk=["Id"],
+    )
+    other = TableInfo(
+        name="OTHER",
+        columns=[("Id", "int"), ("CODE", "text"), ("NAME", "text")],
+        pk=["Id"],
+    )
+    landing.ensure_raw_table(SOURCE, item)
+    landing.ensure_raw_table(SOURCE, other)
+    landing.upsert_rows(
+        SOURCE, item,
+        [{"Id": 1, "CODE": "A", "NAME": "n", "STATUS": "1",
+          "SECRET": "s1", "ST": "X", "OTHER_ID": 10}],
+        "b1",
+    )
+    landing.upsert_rows(
+        SOURCE, other,
+        [{"Id": 10, "CODE": "O1", "NAME": "joined"}],
+        "b1",
+    )
+    draft = {
+        "tables": [ANCHOR, "OTHER"],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {
+            "code": f"{ANCHOR}.CODE",
+            # join 外键错误地写在 OTHER 上,而非锚表 ITEM
+            "name": "OTHER.NAME (join OTHER.Id)",
+            "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+            "secret": f"{ANCHOR}.SECRET",
+        },
+        "derived": {},
+        "notes": "",
+    }
+    with pytest.raises(PreviewError) as ei:
+        preview_mapping(
+            landing, pack, object_name="Item", source=SOURCE, draft_binding=draft,
+        )
+    assert ei.value.reason_code == "draft_invalid"
+    assert "锚表" in ei.value.detail

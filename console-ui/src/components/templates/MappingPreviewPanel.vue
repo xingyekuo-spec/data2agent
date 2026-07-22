@@ -38,7 +38,8 @@ const sourceOptions = computed(() => {
   for (const b of props.bindings) {
     if (seen.has(b.source)) continue
     seen.add(b.source)
-    const tag = b.enabled === false ? '已停用' : b.status
+    // enabled=false 与后端一致:不算 current,仅提示已停用
+    const tag = b.enabled === false ? '已停用·无当前绑定' : b.status
     opts.push({ value: b.source, label: `${b.source} (${tag})` })
   }
   for (const src of props.allowedSources ?? []) {
@@ -49,8 +50,11 @@ const sourceOptions = computed(() => {
   return opts
 })
 
+/** 与后端 _current_binding 对齐:排除 enabled=false。 */
 const selectedBinding = computed(() =>
-  props.bindings.find((b) => b.source === source.value) ?? null,
+  props.bindings.find(
+    (b) => b.source === source.value && b.enabled !== false,
+  ) ?? null,
 )
 
 const canSubmit = computed(() => {
@@ -59,7 +63,6 @@ const canSubmit = computed(() => {
   if (!selectedBinding.value && !useDraft.value) return false
   return true
 })
-
 const localJsonHint = computed(() => {
   if (!useDraft.value) return null
   const text = draftText.value.trim()
@@ -107,7 +110,27 @@ function enableTempDraft(): void {
   store.setDraftText(JSON.stringify(bindingToDraft(selectedBinding.value), null, 2))
 }
 
+/** source/object 变化时按新选中重建草稿,避免提交旧 source 的草稿正文。 */
+function syncDraftForSelection(): void {
+  if (!source.value) return
+  if (!selectedBinding.value) {
+    store.setUseDraft(true)
+    store.setDraft(null)
+    store.setDraftText(JSON.stringify(bindingToDraft(null), null, 2))
+    return
+  }
+  if (useDraft.value) {
+    store.setDraft(null)
+    store.setDraftText(JSON.stringify(bindingToDraft(selectedBinding.value), null, 2))
+  }
+}
+
 function useCurrentBinding(): void {
+  if (!selectedBinding.value) {
+    // 无 current 时不能退出草稿模式
+    enableTempDraft()
+    return
+  }
   store.setUseDraft(false)
   store.setDraft(null)
 }
@@ -141,11 +164,9 @@ watch(
 )
 
 watch(
-  () => source.value,
+  () => [props.objectName, source.value] as const,
   () => {
-    if (source.value && !selectedBinding.value && !useDraft.value) {
-      enableTempDraft()
-    }
+    syncDraftForSelection()
   },
 )
 
@@ -163,10 +184,7 @@ watch(
         ?? opts[0]!.value
       store.setSource(preferred)
     }
-    // 选中源无当前 binding 时自动打开临时草稿,否则无法提交
-    if (source.value && !selectedBinding.value && !useDraft.value) {
-      enableTempDraft()
-    }
+    syncDraftForSelection()
   },
   { immediate: true, deep: true },
 )

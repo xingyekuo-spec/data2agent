@@ -81,3 +81,25 @@ def test_extra_anchor_cols_must_be_safe_identifiers():
     sql, _, _ = build_select(tpl, binding, extra_anchor_cols=["STATUS"])
     assert 'a."STATUS" AS "__STATUS"' in sql
     assert "sqlite_master" not in sql
+
+
+def test_field_map_alias_must_be_template_property_ident():
+    """field_map 键进入 AS 别名:须为模板属性且合法标识符。"""
+    tpl, _binding = _template_and_binding()
+    with pytest.raises(ValueError, match="未知属性"):
+        build_select(
+            tpl,
+            SourceBinding(
+                source="digiwin_e10",
+                tables=["MAIN"],
+                field_map={"hex(65)": "MAIN.CODE"},
+            ),
+        )
+    with pytest.raises(ValueError, match="未知属性"):
+        build_select(
+            tpl,
+            SourceBinding(
+                source="x", tables=["MAIN"],
+                field_map={"not_a_prop": "MAIN.CODE"},
+            ),
+        )

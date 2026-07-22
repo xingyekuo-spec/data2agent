@@ -620,6 +620,25 @@ def test_draft_unknown_column_is_draft_invalid_by_api(env):
     assert "NO_SUCH_COLUMN" not in r.text  # 安全摘要,不回传内部列细节到 detail 出口
 
 
+def test_draft_join_fk_not_on_anchor_is_draft_invalid_by_api(env):
+    """join 外键不在锚表 → 422,不得 500。"""
+    draft = _customer_draft(field_map={
+        "customer_code": "CUSTOMER.CUSTOMER_CODE",
+        "name": "CUSTOMER.CUSTOMER_NAME",
+        "region": "CUSTOMER.COUNTRY_REGION",
+        # CURRENCY 是 join 目标,外键却错误写在 CURRENCY 上
+        "currency": "CURRENCY.CURRENCY_CODE (join CURRENCY.Id)",
+        "payment_days": "CUSTOMER.PAYMENT_TERM_DAYS",
+        "contact": "CUSTOMER.CONTACT_EMAIL",
+    })
+    r = _client(env).post(
+        PREVIEW_URL, json=_body(draft_binding=draft), headers=_auth())
+    _assert_preview_error(r, status=422, reason_code="draft_invalid")
+    assert r.status_code != 500
+    assert "ValueError" not in r.text
+    assert "Traceback" not in r.text
+
+
 # ---- 零业务副作用 ----
 
 

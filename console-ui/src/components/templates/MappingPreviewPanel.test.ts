@@ -102,6 +102,56 @@ describe('MappingPreviewPanel(M3-T07)', () => {
     expect(parsed.field_map).toEqual({})
   })
 
+  it('treats disabled binding as no current and auto-opens empty draft', async () => {
+    const disabled: TemplateBinding = {
+      ...customerBinding,
+      enabled: false,
+      status: 'disabled',
+      notes: 'disabled-notes',
+    }
+    const wrapper = await mountPanel([disabled])
+    await flushPromises()
+    expect(wrapper.find('[data-testid="preview-draft-text"]').exists()).toBe(true)
+    const parsed = JSON.parse(
+      (wrapper.find('[data-testid="preview-draft-text"]').element as HTMLTextAreaElement).value,
+    )
+    // 无 current → 空草稿,不得把 disabled binding 当 current 提交
+    expect(parsed.tables).toEqual([])
+    expect(wrapper.text()).toContain('已停用·无当前绑定')
+    const submit = wrapper.find('[data-testid="preview-submit"]')
+    expect((submit.element as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('resets draft text when switching source while already drafting', async () => {
+    const other: TemplateBinding = {
+      ...customerBinding,
+      source: 'digiwin_yifei',
+      tables: ['COPMA'],
+      notes: 'yifei-notes',
+      field_map: { customer_code: 'COPMA.CUSTOMER_CODE' },
+      key_map: { customer_code: 'COPMA.CUSTOMER_CODE' },
+    }
+    const wrapper = await mountPanel([customerBinding, other])
+    await wrapper.find('[data-testid="preview-use-draft"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-testid="preview-draft-text"]').setValue(
+      JSON.stringify({ tables: ['STALE'], key_map: {}, field_map: {}, derived: {}, notes: 'stale' }, null, 2),
+    )
+    await flushPromises()
+
+    const select = wrapper.find('[data-testid="preview-source"]')
+    await select.setValue('digiwin_yifei')
+    await select.trigger('change')
+    await flushPromises()
+
+    const parsed = JSON.parse(
+      (wrapper.find('[data-testid="preview-draft-text"]').element as HTMLTextAreaElement).value,
+    )
+    expect(parsed.tables).toEqual(['COPMA'])
+    expect(parsed.notes).toBe('yifei-notes')
+    expect(parsed.notes).not.toBe('stale')
+  })
+
   it('allows submitting a new draft when source comes from allowedSources', async () => {
     server.use(
       http.post('*/api/mappings/:object/preview', async ({ request }) => {
