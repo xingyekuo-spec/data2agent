@@ -413,3 +413,57 @@ export async function postMappingPreview(
     return { ok: false, error: toApiError(err) }
   }
 }
+
+// ---- M4: Field Lineage ----
+
+export type ObjectLineageResponse = components['schemas']['ObjectLineageResponse']
+export type ObjectLineageErrorBody = components['schemas']['ObjectLineageError']
+export type ObjectLineageField = components['schemas']['ObjectLineageField']
+
+export interface LineageApiError extends ApiError {
+  reason_code?: ObjectLineageErrorBody['reason_code']
+  error_id?: string | null
+}
+
+function lineageErrorFrom(status: number, error: unknown): LineageApiError {
+  const err = error as Record<string, unknown> | undefined
+  const detail = typeof err?.detail === 'string' ? err.detail : detailOf(error)
+  return {
+    kind: 'http',
+    status,
+    message: detail || `HTTP ${status}`,
+    retriable: status >= 500,
+    reason_code: typeof err?.reason_code === 'string'
+      ? (err.reason_code as ObjectLineageErrorBody['reason_code'])
+      : undefined,
+    error_id: typeof err?.error_id === 'string' ? err.error_id : null,
+  }
+}
+
+export async function getObjectLineage(
+  object: string,
+  keyToken: string,
+  init?: { signal?: AbortSignal; property?: string },
+): Promise<ApiResult<ObjectLineageResponse>> {
+  try {
+    const params: Record<string, unknown> = {
+      path: { object, key: keyToken },
+    }
+    if (init?.property) {
+      params.query = { property: init.property }
+    }
+    const { data, error, response } = await client.GET(
+      '/api/objects/{object}/{key}/lineage',
+      { params: params as never, signal: init?.signal },
+    )
+    if (!response.ok) {
+      return { ok: false, error: lineageErrorFrom(response.status, error) }
+    }
+    if (data === undefined) {
+      return { ok: false, error: { kind: 'parse', message: '成功响应缺少数据', retriable: false } }
+    }
+    return { ok: true, data, response }
+  } catch (err) {
+    return { ok: false, error: toApiError(err) }
+  }
+}

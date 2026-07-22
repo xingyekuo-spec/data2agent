@@ -8,6 +8,7 @@
  */
 import { http, HttpResponse, type HttpHandler } from 'msw'
 import type { HttpError, ScenarioFixture } from './fixtures/base'
+import { lineageAvailable } from './fixtures/lineage'
 import { getScenario, scenarioFixtures } from './scenario'
 import type { components } from '@/types/api'
 
@@ -57,6 +58,10 @@ function transportFailure(): HttpResponse<string> | null {
     return json(body, 500)
   }
   return null
+}
+
+function lineageFixture() {
+  return lineageAvailable()
 }
 
 function respond<T>(
@@ -259,6 +264,13 @@ export function buildHandlers(): HttpHandler[] {
         return json(body, 404)
       }
       return json(dataPage(fixture.objectRows, request))
+    }),
+
+    // ---- M4: field lineage ----
+    http.get('*/api/objects/:object/:key/lineage', () => {
+      const fail = transportFailure()
+      if (fail) return fail
+      return json(lineageFixture())
     }),
 
     // ---- M5: templates (real data, no longer 501) ----
