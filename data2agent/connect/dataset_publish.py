@@ -19,7 +19,10 @@ from typing import Callable, Iterator, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from data2agent.connect.landing import LandingStore, _now
-from data2agent.connect.field_lineage import ApplyVersionContext
+from data2agent.connect.field_lineage import (
+    LINEAGE_SCHEMA_VERSION,
+    ApplyVersionContext,
+)
 from data2agent.connect.mapping_apply import (
     DEFAULT_BREAKER_THRESHOLD,
     MappingCircuitBreaker,
@@ -314,6 +317,14 @@ def _recover_stale_building(store: LandingStore, source: str) -> str | None:
         if marked_failed:
             for table in tables_to_drop:
                 _drop_table_best_effort(store, table)
+            # 候选表与 lineage 成对清理(幂等;失败不阻断后续恢复)
+            try:
+                store.delete_field_lineage(version)
+            except Exception:
+                logger.warning(
+                    "stale recovery lineage cleanup failed for %s",
+                    version, exc_info=True,
+                )
     return None
 
 
@@ -388,7 +399,7 @@ def _validate_version_tables(
     *,
     expected_status: str,
 ) -> str | None:
-    """物理表完整性校验(临界事务外)。失败返回 reason_code,成功返回 None。"""
+    """物理表与 lineage 完整性校验(临界事务外)。失败返回 reason_code,成功返回 None。"""
     manifest = parse_object_manifest(ds.object_manifest)
     if not manifest:
         return "not_ready"
@@ -396,13 +407,16 @@ def _validate_version_tables(
     if set(by_name) != set(manifest):
         return "not_ready"
     try:
-        _parse_template_snapshot(
+        pack = _parse_template_snapshot(
             ds.template_snapshot,
             expected_version=ds.template_version,
             manifest=manifest,
         )
     except PublishedSnapshotError:
         return "not_ready"
+    props_by_obj = {
+        t.object: len(t.properties) for t in pack.objects
+    }
     for name in manifest:
         row = by_name[name]
         if row.status != expected_status:
@@ -417,6 +431,16 @@ def _validate_version_tables(
             return "not_ready"
         if _count_rows(store, table) != row.row_count:
             return "not_ready"
+        # M4: lineage_schema_version=1 的新构建必须通过完整性门禁
+        if row.lineage_schema_version == LINEAGE_SCHEMA_VERSION:
+            if row.lineage_field_count is None:
+                return "lineage_incomplete"
+            expected_fields = row.row_count * props_by_obj.get(name, 0)
+            if row.lineage_field_count != expected_fields:
+                return "lineage_incomplete"
+            actual = store.count_field_lineage(ds.dataset_version, name)
+            if actual != row.lineage_field_count:
+                return "lineage_incomplete"
     return None
 
 
@@ -465,6 +489,8 @@ def _gc_retired_physical_tables(store: LandingStore, source: str) -> None:
                         ds.dataset_version, obj.object, table,
                     )
                     continue
+                # 物理表成功清理后,幂等删除对应 lineage 并写 purge tombstone
+                store.delete_field_lineage(ds.dataset_version, obj.object)
                 store.purge_object_build_table(
                     ds.dataset_version, obj.object, purged_at=now,
                 )
