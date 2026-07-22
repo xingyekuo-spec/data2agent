@@ -1888,6 +1888,13 @@ export interface components {
              */
             derived_rule_index?: number | null;
             /**
+             * Derived When
+             * @description derived_rule 实际命中的条件映射;其它为 null
+             */
+            derived_when?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            } | null;
+            /**
              * Detail
              * @description 安全摘要;不含 SQL/Token/未脱敏原值
              */

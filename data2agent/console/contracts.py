@@ -1293,6 +1293,10 @@ class ObjectLineageStep(BaseModel):
         ge=0,
         description="derived_rule 命中的声明顺序下标;其它为 null",
     )
+    derived_when: dict[str, JsonValue] | None = Field(
+        default=None,
+        description="derived_rule 实际命中的条件映射;其它为 null",
+    )
     detail: str | None = Field(
         default=None,
         description="安全摘要;不含 SQL/Token/未脱敏原值",

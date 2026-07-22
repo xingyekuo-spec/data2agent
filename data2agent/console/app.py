@@ -2941,11 +2941,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     )
                     raise _TxnExit()
 
-                nodes = db.get_field_lineage_by_key_hash(
+                # 先查全部节点校验完整性,再按 property 过滤
+                all_nodes = db.get_field_lineage_by_key_hash(
                     snap.dataset_version, object, key,
-                    property_name=property_name,
                 )
-                if not nodes:
+                if not all_nodes:
                     _audit_allowed = False
                     _audit_rc = "record_not_found"
                     _error_resp = _lineage_error_response(
@@ -2953,15 +2953,22 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         _lineage_safe_detail("record_not_found"))
                     raise _TxnExit()
 
-                # P1-5: 校验该记录字段完整性
                 expected_props = len(tpl.properties)
-                if property_name is None and len(nodes) != expected_props:
+                if len(all_nodes) != expected_props:
                     _audit_allowed = False
                     _audit_rc = "lineage_incomplete"
                     _error_resp = _lineage_error_response(
                         409, "lineage_incomplete",
                         _lineage_safe_detail("lineage_incomplete"))
                     raise _TxnExit()
+
+                if property_name is not None:
+                    nodes = [
+                        n for n in all_nodes
+                        if n["property"] == property_name
+                    ]
+                else:
+                    nodes = all_nodes
 
                 inputs_rows = db.get_field_lineage_inputs_by_key_hash(
                     snap.dataset_version, object, key,
@@ -3071,6 +3078,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     step["coerce_type"] = s["coerce_type"]
                 if s.get("derived_rule_index") is not None:
                     step["derived_rule_index"] = s["derived_rule_index"]
+                if s.get("derived_when") is not None:
+                    step["derived_when"] = s["derived_when"]
                 steps_out.append(step)
 
             # 解析 inputs

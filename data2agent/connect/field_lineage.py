@@ -786,7 +786,19 @@ def build_lineage_nodes_and_inputs(
                     ordinal += 1
 
             if "derived_condition" in trace.input_roles and derived_conds:
-                for col, val in sorted(derived_conds.items()):
+                # 只记录实际命中规则的 derived_when 条件,不记录全部条件列
+                hit_when: dict[str, object] | None = None
+                for s in trace.steps:
+                    if s.kind in ("derived_rule", "derived_default"):
+                        hit_when = s.derived_when
+                        break
+                if hit_when:
+                    cond_items = sorted(hit_when.items())
+                else:
+                    # derived_default 无 when;不回退全部条件
+                    cond_items = []
+                for col, _expected in cond_items:
+                    val = derived_conds.get(col)
                     all_inputs.append(FieldLineageInputRow(
                         dataset_version=context.dataset_version,
                         object=object_name,

@@ -2669,6 +2669,21 @@
             "description": "derived_rule 命中的声明顺序下标;其它为 null",
             "title": "Derived Rule Index"
           },
+          "derived_when": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue-Output"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "derived_rule 实际命中的条件映射;其它为 null",
+            "title": "Derived When"
+          },
           "detail": {
             "anyOf": [
               {

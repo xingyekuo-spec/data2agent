@@ -8,13 +8,53 @@ import { computed } from 'vue'
 import { useLineageStore } from '@/stores/lineage'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
+import type { ApiError } from '@/api/errors'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ close: [] }>()
 
 const store = useLineageStore()
 
-interface LineageData {
+/**
+ * 与 ObjectLineageResponse 生成契约同构的本地视图类型。
+ * 生成类型嵌套过深会触发 TS2589;此接口保持字段名一致,
+ * 由 store 保证运行时形状与生成契约匹配。
+ */
+interface Evidence {
+  kind: string
+  value?: unknown
+  preview?: string | null
+  sha256?: string | null
+  length?: number | null
+}
+interface StepView {
+  kind: string
+  before?: Evidence | null
+  after?: Evidence | null
+  map_hit?: boolean | null
+  coerce_type?: string | null
+  derived_rule_index?: number | null
+  derived_when?: Record<string, unknown> | null
+}
+interface InputView {
+  role: string
+  source_table?: string | null
+  source_column?: string | null
+  source_pk?: unknown[][] | null
+  source_value?: Evidence | null
+  extract_batch_id?: string | null
+  join?: Record<string, unknown> | null
+}
+interface FieldView {
+  property: string
+  display_name: string
+  final_value?: Evidence | null
+  state: string
+  reason_code?: string | null
+  steps?: StepView[]
+  inputs?: InputView[]
+}
+interface LineageView {
   state: string
   reason_code?: string | null
   source?: string | null
@@ -28,42 +68,18 @@ interface LineageData {
   binding_hash?: string | null
   binding_status?: string | null
   map_batch_id?: string | null
-  fields: {
-    property: string
-    display_name: string
-    final_value?: { kind: string; value?: unknown; preview?: string | null; sha256?: string | null; length?: number | null } | null
-    state: string
-    reason_code?: string | null
-    steps?: {
-      kind: string
-      before?: { kind: string; value?: unknown } | null
-      after?: { kind: string; value?: unknown } | null
-      map_hit?: boolean | null
-      coerce_type?: string | null
-      derived_rule_index?: number | null
-      derived_when?: Record<string, unknown> | null
-    }[]
-    inputs?: {
-      role: string
-      source_table?: string | null
-      source_column?: string | null
-      source_pk?: [string, unknown][] | null
-      source_value?: { kind: string; value?: unknown; preview?: string | null; length?: number | null } | null
-      extract_batch_id?: string | null
-      join?: Record<string, unknown> | null
-    }[]
-  }[]
+  fields: FieldView[]
   warnings: string[]
 }
 
-const data = computed<LineageData | null>(() =>
-  store.lineage.status === 'success'
-    ? (store.lineage.data as unknown as LineageData)
-    : null,
-)
-const error = computed(() =>
-  store.lineage.status === 'error' ? store.lineage.error : null,
-)
+const data = computed<LineageView | null>(() => {
+  const st = store.lineage as { status: string; data?: unknown; error?: unknown }
+  return st.status === 'success' ? (st.data as LineageView) : null
+})
+const error = computed<ApiError | null>(() => {
+  const st = store.lineage as { status: string; error?: ApiError }
+  return st.status === 'error' ? (st.error ?? null) : null
+})
 const isAvailable = computed(() => data.value?.state === 'available')
 const isUnavailable = computed(() => data.value?.state === 'unavailable')
 
@@ -86,6 +102,11 @@ function stepLabel(kind: string): string {
     derived_default: '派生默认',
   }
   return labels[kind] ?? kind
+}
+
+function formatPk(pk: unknown[][] | null | undefined): string {
+  if (!pk) return '—'
+  return pk.map((p) => `${p[0]}=${p[1]}`).join(', ')
 }
 
 function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
@@ -246,7 +267,7 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
                   = {{ formatEvidence(input.source_value) }}
                 </span>
                 <span v-if="input.source_pk" class="input-pk" :data-testid="`pk-${field.property}-${ii}`">
-                  源记录: {{ input.source_pk.map((p: [string, unknown]) => `${p[0]}=${p[1]}`).join(', ') }}
+                  源记录: {{ formatPk(input.source_pk) }}
                 </span>
                 <span v-if="input.extract_batch_id" class="input-batch">
                   批次: {{ input.extract_batch_id }}
