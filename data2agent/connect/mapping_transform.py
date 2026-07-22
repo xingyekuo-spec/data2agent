@@ -2,6 +2,9 @@
 
 正式 apply 与 Preview 共用本模块。无数据库依赖;返回结构化行评估。
 隔离中文文案由 format_quarantine_reason 生成,须与历史 apply 文本逐字一致。
+
+M4-T02:在真实求值点记录 FieldTrace(read/map/coerce/derived);不另建转换器。
+join 源记录身份由 T03 SelectPlan 合并;本模块仅在表达式声明 join 时记下步骤。
 """
 
 from __future__ import annotations
@@ -23,6 +26,27 @@ ReasonCode = Literal[
     "business_key_missing",
     "business_key_duplicate",
 ]
+
+FieldTraceStatus = Literal["available", "unavailable"]
+
+FieldUnavailableReason = Literal[
+    "property_unmapped",
+    "join_target_missing",
+    "source_evidence_unavailable",
+]
+
+TransformStepKind = Literal[
+    "read",
+    "join",
+    "map",
+    "coerce",
+    "derived_rule",
+    "derived_default",
+]
+
+InputRole = Literal["value", "join_fk", "derived_condition"]
+
+_COERCE_TYPES = frozenset({"int", "decimal", "money", "bool"})
 
 
 @dataclass(frozen=True)
@@ -48,6 +72,34 @@ class DerivedHit:
     rule_index: int | None = None
 
 
+@dataclass(frozen=True)
+class TransformStep:
+    """实际执行过的有序转换步骤。"""
+
+    kind: TransformStepKind
+    before: Any = None
+    after: Any = None
+    map_hit: bool | None = None
+    coerce_type: str | None = None
+    derived_rule_index: int | None = None
+    derived_when: dict[str, Any] | None = None
+    detail: str | None = None
+
+
+@dataclass
+class FieldTrace:
+    """单字段转换追溯:与最终 output 值一致,不另算第二套逻辑。"""
+
+    property: str
+    raw_value: Any = None
+    result_value: Any = None
+    status: FieldTraceStatus = "available"
+    unavailable_reason: FieldUnavailableReason | None = None
+    steps: list[TransformStep] = field(default_factory=list)
+    derived_hit: DerivedHit | None = None
+    input_roles: list[InputRole] = field(default_factory=list)
+
+
 @dataclass
 class RowEvaluation:
     status: Literal["mapped", "quarantined"]
@@ -55,6 +107,7 @@ class RowEvaluation:
     output: dict | None = None
     issues: list[TransformIssue] = field(default_factory=list)
     derived_hits: list[DerivedHit] = field(default_factory=list)
+    field_traces: list[FieldTrace] = field(default_factory=list)
 
 
 @dataclass
@@ -118,38 +171,179 @@ def _coerce(prop: Property, value: Any) -> tuple[Any, TransformIssue | None]:
         )
 
 
+def _trace_direct_field(
+    name: str,
+    prop: Property,
+    expr: FieldExpr,
+    row: dict,
+) -> tuple[Any, TransformIssue | None, FieldTrace]:
+    """对单个 field_map/key_map 属性执行 read→join?→map?→coerce?,并记录 trace。"""
+    raw_value = row.get(name)
+    v = raw_value
+    steps: list[TransformStep] = [
+        TransformStep(kind="read", before=None, after=raw_value),
+    ]
+    roles: list[InputRole] = ["value"]
+
+    if expr.join_fk is not None:
+        roles.append("join_fk")
+        fk_table, fk_col = expr.join_fk
+        steps.append(
+            TransformStep(
+                kind="join",
+                before=raw_value,
+                after=v,
+                detail=f"join {fk_table}.{fk_col} → {expr.table}.{expr.column}",
+            )
+        )
+
+    if expr.value_map is not None and v is not None:
+        if v not in expr.value_map:
+            steps.append(
+                TransformStep(kind="map", before=v, after=None, map_hit=False)
+            )
+            issue = TransformIssue(
+                reason_code="enum_unmapped",
+                field=name,
+                detail=f"{name}: 源码值 {v!r} 未在 map 中声明",
+                source_value=v,
+            )
+            return None, issue, FieldTrace(
+                property=name,
+                raw_value=raw_value,
+                result_value=None,
+                status="unavailable",
+                steps=steps,
+                input_roles=roles,
+            )
+        mapped = expr.value_map[v]
+        steps.append(
+            TransformStep(kind="map", before=v, after=mapped, map_hit=True)
+        )
+        v = mapped
+
+    if prop.type == "enum" and v is not None and v not in prop.enum_values:
+        issue = TransformIssue(
+            reason_code="enum_invalid",
+            field=name,
+            detail=f"{name}: 取值 {v!r} 不在枚举 {prop.enum_values} 内",
+            source_value=v,
+        )
+        return None, issue, FieldTrace(
+            property=name,
+            raw_value=raw_value,
+            result_value=None,
+            status="unavailable",
+            steps=steps,
+            input_roles=roles,
+        )
+
+    if prop.type in _COERCE_TYPES:
+        before = v
+        v, err = _coerce(prop, v)
+        steps.append(
+            TransformStep(
+                kind="coerce",
+                before=before,
+                after=v if err is None else None,
+                coerce_type=prop.type,
+            )
+        )
+        if err:
+            return None, err, FieldTrace(
+                property=name,
+                raw_value=raw_value,
+                result_value=None,
+                status="unavailable",
+                steps=steps,
+                input_roles=roles,
+            )
+    else:
+        v, err = _coerce(prop, v)
+        if err:
+            # 非数值类型极少走到这里;仍保持与历史行为一致
+            return None, err, FieldTrace(
+                property=name,
+                raw_value=raw_value,
+                result_value=None,
+                status="unavailable",
+                steps=steps,
+                input_roles=roles,
+            )
+
+    return v, None, FieldTrace(
+        property=name,
+        raw_value=raw_value,
+        result_value=v,
+        status="available",
+        steps=steps,
+        input_roles=roles,
+    )
+
+
 def _apply_derived(
     binding: SourceBinding,
     props: dict[str, Property],
     row: dict,
-) -> tuple[TransformIssue | None, list[DerivedHit]]:
+) -> tuple[TransformIssue | None, list[DerivedHit], list[FieldTrace]]:
     """执行派生决策表(规则有序,首个匹配生效)。
 
-    返回 (issue 或 None, 已求值字段的 DerivedHit 列表)。
+    返回 (issue 或 None, DerivedHit 列表, 每字段 FieldTrace)。
     命中元数据不影响隔离文案;format_quarantine_reason 仍只用 issue.detail。
     """
     hits: list[DerivedHit] = []
+    traces: list[FieldTrace] = []
     for prop_name, spec in binding.derived.items():
         value = None
         matched = False
         rule_index: int | None = None
+        matched_when: dict[str, Any] | None = None
         for idx, rule in enumerate(spec.rules):
             if all(row.get(f"__{col}") == expect for col, expect in rule.when.items()):
                 value, matched, rule_index = rule.value, True, idx
+                matched_when = dict(rule.when)
                 break
+
         if matched:
-            hits.append(DerivedHit(field=prop_name, outcome="rule", rule_index=rule_index))
+            hit = DerivedHit(field=prop_name, outcome="rule", rule_index=rule_index)
+            hits.append(hit)
+            steps = [
+                TransformStep(
+                    kind="derived_rule",
+                    before=None,
+                    after=value,
+                    derived_rule_index=rule_index,
+                    derived_when=matched_when,
+                )
+            ]
         elif spec.default is not None:
-            value, matched = spec.default, True
-            hits.append(DerivedHit(field=prop_name, outcome="default"))
-        if not matched:
-            hits.append(DerivedHit(field=prop_name, outcome="unmatched"))
+            value = spec.default
+            matched = True
+            hit = DerivedHit(field=prop_name, outcome="default")
+            hits.append(hit)
+            steps = [
+                TransformStep(kind="derived_default", before=None, after=value)
+            ]
+        else:
+            hit = DerivedHit(field=prop_name, outcome="unmatched")
+            hits.append(hit)
             seen = {
                 col: row.get(f"__{col}")
                 for s in binding.derived.values()
                 for r in s.rules
                 for col in r.when
             }
+            traces.append(
+                FieldTrace(
+                    property=prop_name,
+                    raw_value=None,
+                    result_value=None,
+                    status="unavailable",
+                    steps=[],
+                    derived_hit=hit,
+                    input_roles=["derived_condition"],
+                )
+            )
             return (
                 TransformIssue(
                     reason_code="derived_unmatched",
@@ -158,9 +352,22 @@ def _apply_derived(
                     source_value=seen,
                 ),
                 hits,
+                traces,
             )
+
         prop = props.get(prop_name)
         if prop is not None and prop.type == "enum" and value not in prop.enum_values:
+            traces.append(
+                FieldTrace(
+                    property=prop_name,
+                    raw_value=None,
+                    result_value=None,
+                    status="unavailable",
+                    steps=steps,
+                    derived_hit=hit,
+                    input_roles=["derived_condition"],
+                )
+            )
             return (
                 TransformIssue(
                     reason_code="derived_invalid_enum",
@@ -169,9 +376,65 @@ def _apply_derived(
                     source_value=value,
                 ),
                 hits,
+                traces,
             )
         row[prop_name] = value
-    return None, hits
+        traces.append(
+            FieldTrace(
+                property=prop_name,
+                raw_value=None,
+                result_value=value,
+                status="available",
+                steps=steps,
+                derived_hit=hit,
+                input_roles=["derived_condition"],
+            )
+        )
+    return None, hits, traces
+
+
+def _unmapped_property_traces(
+    tpl: ObjectTemplate,
+    binding: SourceBinding,
+    exprs: dict[str, FieldExpr],
+    traced: set[str],
+) -> list[FieldTrace]:
+    """模板属性既无 field_map/key_map 也无 derived 时标记 property_unmapped。"""
+    covered = set(exprs) | set(binding.derived)
+    out: list[FieldTrace] = []
+    for prop in tpl.properties:
+        if prop.name in traced or prop.name in covered:
+            continue
+        out.append(
+            FieldTrace(
+                property=prop.name,
+                raw_value=None,
+                result_value=None,
+                status="unavailable",
+                unavailable_reason="property_unmapped",
+                steps=[],
+                input_roles=[],
+            )
+        )
+    return out
+
+
+def _ordered_field_traces(
+    tpl: ObjectTemplate,
+    by_name: dict[str, FieldTrace],
+) -> list[FieldTrace]:
+    """按模板属性顺序排列;额外字段追加在后。"""
+    ordered: list[FieldTrace] = []
+    seen: set[str] = set()
+    for prop in tpl.properties:
+        trace = by_name.get(prop.name)
+        if trace is not None:
+            ordered.append(trace)
+            seen.add(prop.name)
+    for name, trace in by_name.items():
+        if name not in seen:
+            ordered.append(trace)
+    return ordered
 
 
 def evaluate_object_rows(
@@ -189,36 +452,24 @@ def evaluate_object_rows(
         row: dict = dict(raw)
         issue: TransformIssue | None = None
         derived_hits: list[DerivedHit] = []
+        traces_by_name: dict[str, FieldTrace] = {}
+
         for name, expr in exprs.items():
             prop = props.get(name)
             if prop is None:
                 continue
-            v = row.get(name)
-            if expr.value_map is not None and v is not None:
-                if v not in expr.value_map:
-                    issue = TransformIssue(
-                        reason_code="enum_unmapped",
-                        field=name,
-                        detail=f"{name}: 源码值 {v!r} 未在 map 中声明",
-                        source_value=v,
-                    )
-                    break
-                v = expr.value_map[v]
-            if prop.type == "enum" and v is not None and v not in prop.enum_values:
-                issue = TransformIssue(
-                    reason_code="enum_invalid",
-                    field=name,
-                    detail=f"{name}: 取值 {v!r} 不在枚举 {prop.enum_values} 内",
-                    source_value=v,
-                )
-                break
-            v, err = _coerce(prop, v)
+            v, err, trace = _trace_direct_field(name, prop, expr, row)
+            traces_by_name[name] = trace
             if err:
                 issue = err
                 break
             row[name] = v
+
         if issue is None:
-            issue, derived_hits = _apply_derived(binding, props, row)
+            issue, derived_hits, derived_traces = _apply_derived(binding, props, row)
+            for trace in derived_traces:
+                traces_by_name[trace.property] = trace
+
         if issue is None:
             key = tuple(row.get(k) for k in tpl.keys)
             if any(v is None for v in key):
@@ -237,6 +488,15 @@ def evaluate_object_rows(
                 )
             else:
                 seen_keys.add(key)
+
+        if issue is None:
+            for trace in _unmapped_property_traces(
+                tpl, binding, exprs, set(traces_by_name)
+            ):
+                traces_by_name[trace.property] = trace
+
+        field_traces = _ordered_field_traces(tpl, traces_by_name)
+
         if issue is not None:
             evaluations.append(
                 RowEvaluation(
@@ -245,6 +505,7 @@ def evaluate_object_rows(
                     output=None,
                     issues=[issue],
                     derived_hits=derived_hits,
+                    field_traces=field_traces,
                 )
             )
         else:
@@ -255,6 +516,7 @@ def evaluate_object_rows(
                     output=row,
                     issues=[],
                     derived_hits=derived_hits,
+                    field_traces=field_traces,
                 )
             )
     return TransformEvaluation(rows=evaluations)

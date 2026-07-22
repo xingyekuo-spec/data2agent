@@ -288,3 +288,139 @@ def test_would_trip_breaker_strict_gt():
     assert would_trip_breaker(1, 20, 0.05) is False  # == 0.05
     assert would_trip_breaker(2, 20, 0.05) is True   # > 0.05
     assert would_trip_breaker(1, 10, 0.05) is True
+
+
+# --- M4-T02 field traces ----------------------------------------------------
+
+
+def _trace_by_name(row) -> dict[str, object]:
+    return {t.property: t for t in row.field_traces}
+
+
+def test_field_trace_map_coerce_matches_output():
+    tpl = _tpl()
+    binding = _binding()
+    exprs = {
+        "id": _expr("id"),
+        "status": _expr(value_map={"1": "open"}),
+        "qty": _expr("qty"),
+    }
+    result = evaluate_object_rows(
+        tpl, binding, [{"id": "r1", "status": "1", "qty": "3"}], exprs,
+    )
+    row = result.rows[0]
+    assert row.status == "mapped"
+    by_name = _trace_by_name(row)
+
+    status = by_name["status"]
+    assert status.status == "available"
+    assert status.raw_value == "1"
+    assert status.result_value == "open"
+    assert status.result_value == row.output["status"]
+    kinds = [s.kind for s in status.steps]
+    assert kinds == ["read", "map"]
+    assert status.steps[1].map_hit is True
+    assert status.steps[1].before == "1"
+    assert status.steps[1].after == "open"
+
+    qty = by_name["qty"]
+    assert qty.result_value == 3 == row.output["qty"]
+    assert [s.kind for s in qty.steps] == ["read", "coerce"]
+    assert qty.steps[1].coerce_type == "int"
+    assert qty.steps[1].before == "3"
+    assert qty.steps[1].after == 3
+
+
+def test_field_trace_map_miss_and_join_step():
+    tpl = _tpl()
+    binding = _binding()
+    exprs = {
+        "status": FieldExpr(
+            table="T", column="status",
+            join_fk=("T", "fk"), value_map={"1": "open"},
+        ),
+    }
+    result = evaluate_object_rows(
+        tpl, binding, [{"id": "r1", "status": "9"}], exprs,
+    )
+    row = result.rows[0]
+    assert row.status == "quarantined"
+    status = _trace_by_name(row)["status"]
+    assert status.status == "unavailable"
+    assert [s.kind for s in status.steps] == ["read", "join", "map"]
+    assert status.steps[1].detail.startswith("join T.fk")
+    assert status.steps[2].map_hit is False
+    assert "join_fk" in status.input_roles
+
+
+def test_field_trace_derived_rule_default_and_unmapped_property():
+    tpl = _tpl()
+    derived = {
+        "phase": DerivedField(
+            rules=[
+                DeriveRule(when={"st": "X"}, value="A"),
+                DeriveRule(when={"st": "Y"}, value="B"),
+            ],
+            default="C",
+        ),
+    }
+    binding = _binding(derived=derived)
+    exprs = {"id": _expr("id")}
+
+    rule_row = evaluate_object_rows(
+        tpl, binding, [{"id": "1", "__st": "Y"}], exprs,
+    ).rows[0]
+    phase = _trace_by_name(rule_row)["phase"]
+    assert phase.status == "available"
+    assert phase.result_value == "B" == rule_row.output["phase"]
+    assert phase.steps[0].kind == "derived_rule"
+    assert phase.steps[0].derived_rule_index == 1
+    assert phase.steps[0].derived_when == {"st": "Y"}
+    assert phase.derived_hit.outcome == "rule"
+    assert phase.input_roles == ["derived_condition"]
+
+    default_row = evaluate_object_rows(
+        tpl, binding, [{"id": "2", "__st": "Z"}], exprs,
+    ).rows[0]
+    phase_d = _trace_by_name(default_row)["phase"]
+    assert phase_d.steps[0].kind == "derived_default"
+    assert phase_d.result_value == "C"
+
+    # 未出现在 exprs/derived 的模板属性 → property_unmapped
+    unmapped = _trace_by_name(rule_row)["status"]
+    assert unmapped.status == "unavailable"
+    assert unmapped.unavailable_reason == "property_unmapped"
+    assert unmapped.steps == []
+
+
+def test_field_trace_available_values_match_output_exactly():
+    """gate:trace 与最终值逐字段一致;没有第二转换器。"""
+    tpl = _tpl()
+    binding = _binding(
+        derived={
+            "phase": DerivedField(
+                rules=[DeriveRule(when={"st": "X"}, value="A")],
+                default="C",
+            ),
+        },
+    )
+    exprs = {
+        "id": _expr("id"),
+        "status": _expr(value_map={"1": "open"}),
+        "qty": _expr("qty"),
+        "amount": _expr("amount"),
+        "flag": _expr("flag"),
+    }
+    raw = {
+        "id": "ok", "status": "1", "qty": "3", "amount": "1.5",
+        "flag": 1, "__st": "X",
+    }
+    row = evaluate_object_rows(tpl, binding, [raw], exprs).rows[0]
+    assert row.status == "mapped"
+    for trace in row.field_traces:
+        if trace.status == "available":
+            assert trace.result_value == row.output[trace.property], trace.property
+        else:
+            assert trace.unavailable_reason == "property_unmapped"
+            assert trace.property not in exprs
+            assert trace.property not in binding.derived
