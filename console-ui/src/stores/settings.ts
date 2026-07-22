@@ -1,7 +1,4 @@
-/**
- * Settings 只读切片:/api/config 的非敏感配置展示(第二个轻量验证)。
- * 只读:不提供任何写操作入口。
- */
+/** Settings 配置切片:/api/config 的非敏感配置读取。 */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { getConfig } from '@/api/services'

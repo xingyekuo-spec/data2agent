@@ -3,7 +3,7 @@
 离线可跑的"老板测试":给定一条询单(客户 / 型谱关键词 / 数量 / 目标价),
 按 Agent 的工作方式走完整链路 —— query_objects 查客户档案与同型谱历史成交、
 query_metrics 查毛利率基线,最后经 propose_action(「说」档)生成接单评审建议卡,
-卡内每个数字都溯源到具体查询。真 Agent 版走 MCP 提示词,见 docs/reference/quote-review.md。
+卡内每个数字都溯源到具体查询。真 Agent 版可按 docs/design/04-reference-chain.md §4 的场景驱动。
 
 前置:python -m data2agent.showroom.seed && python -m data2agent.connect sync
       --sqlite showroom/e10.sqlite && python -m data2agent.connect apply

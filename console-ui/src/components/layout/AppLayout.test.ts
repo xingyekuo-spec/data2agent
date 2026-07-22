@@ -31,12 +31,12 @@ describe('AppLayout', () => {
     const header = wrapper.find('.app-shell__header')
     expect(header.exists()).toBe(true)
 
-    // 两级菜单:4 个分组标题 + 9 个页面项
+    // 两级菜单:4 个分组标题 + 当前导航页面项
     const groupTitles = wrapper.findAll('.sidemenu__group-title')
     expect(groupTitles.map((g) => g.text())).toEqual(NAV_GROUPS.map((g) => g.title))
     const items = wrapper.findAll('.el-menu-item')
     expect(items).toHaveLength(NAV_ITEMS.length)
-    expect(items[items.length - 1]?.text()).toContain('只读')
+    expect(items[items.length - 1]?.text()).toContain('日志')
 
     // 顶栏白底 + 当前页面标题(参考 UI);路由出口渲染仪表盘
     expect(wrapper.find('[data-testid="topbar-title"]').text()).toBe('仪表盘')

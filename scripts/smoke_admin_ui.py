@@ -141,23 +141,18 @@ def smoke_console(cfg: Path, log_dir: Path) -> None:
     )
     h = {"Authorization": f"Bearer {token}"}
 
-    r = client.get("/")
-    if r.status_code != 200 or ("仪表盘" not in r.text and "nav" not in r.text.lower()):
-        # dashboard nav may be Chinese; accept htmx/layout markers
-        if r.status_code != 200 or "htmx" not in r.text.lower():
-            _fail(f"console: GET / unexpected: {r.status_code}")
-    _ok("console: GET / (Jinja shell) → 200")
-
-    r = client.get("/v0")
-    if r.status_code != 200 or "运维控制台" not in r.text:
-        _fail("console: /v0 missing embedded UI")
-    _ok("console: GET /v0 embedded UI")
-
-    for path in ("/config", "/logs", "/debug"):
-        r = client.get(path, headers=h)
-        if r.status_code != 200:
-            _fail(f"console: GET {path} → {r.status_code}")
-    _ok("console: HTML /config /logs /debug → 200")
+    redirects = {
+        "/": "/v1/",
+        "/config": "/v1/settings",
+        "/logs": "/v1/logs",
+        "/debug": "/v1/mcp",
+        "/v0": "/v1/",
+    }
+    for path, location in redirects.items():
+        r = client.get(path, headers=h, follow_redirects=False)
+        if r.status_code != 302 or r.headers.get("location") != location:
+            _fail(f"console: GET {path} redirect unexpected: {r.status_code} {r.headers.get('location')}")
+    _ok("console: legacy HTML routes redirect to Vue")
 
     r = client.get("/api/config", headers=h)
     if r.status_code != 200:

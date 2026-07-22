@@ -17,7 +17,7 @@ mssql-sim     SQL Server 容器,init 脚本灌入 E10-like 表形 + seed 数据(
    ▼ 抽取(connect,走 mssql_readonly 适配器,窗口/限流/审计全开)
 landing-sqlite SQLite 落地库(raw_* + 物化对象表)
    ├─ mcp     MCP 网关(streamable HTTP :8848) → 参考脚本或 Agent 编排
-   └─ console Jinja 管理页(:8849)+ Vue Console(`/v1`)
+   └─ console Vue Console(:8849 `/v1/`)
 ```
 
 本机快速版是 `seed → connect sync → connect apply → MCP`;源库和落地库均为 SQLite。
@@ -43,7 +43,7 @@ PostgreSQL 不属于当前参考链目标;只有达到产品路线定义的容�
 两个可用版本("说"档已落地):
 - **脚本版(离线可跑)**:`python -m data2agent.showroom.review_demo` —— 走与真 Agent
   相同的工具调用链(query_objects ×2 → query_metrics → propose_action),终端输出建议卡;
-- **真 Agent 版**:任意 MCP 客户端按 `docs/reference/quote-review.md` 的提示词驱动,主角客户 C002。
+- **真 Agent 版**:任意 MCP 客户端按本节询单场景和工具链路驱动,主角客户 C002。
 
 ## 5. Vue 真实 API 验收
 
@@ -66,7 +66,7 @@ Mock 不得生成正式验收结论;参考链也不等于生产安全验证。
 4. 模板页展示 5 个对象、binding draft 和字段映射;
 5. 隔离页能用注入坏数据的 fixture/测试链展示隔离与熔断,不能把空隔离区写死为正常;
 6. MCP Lab 完成 `query_objects → query_metrics → propose_action` 并展开 evidence;
-7. `/` Jinja、`/v0` 简版页和 `/v1` Vue 同时可访问;
+7. `/`、`/config`、`/logs`、`/debug`、`/v0` 等旧平台入口重定向到 Vue Console;
 8. 前端资产不依赖外部 CDN。
 
 ### 5.3 后续版本验收
@@ -79,5 +79,5 @@ Mock 不得生成正式验收结论;参考链也不等于生产安全验证。
 
 - compose 已落地(仓库根 `docker-compose.yml`):mssql(SQL Server 2022,`MSSQL_IMAGE`/`MSSQL_PLATFORM` 可切 Azure SQL Edge)→ seed(灌数 + 建只读账号 d2a_reader)→ connector(serve 常驻,走只读账号)→ 共享卷 → mcp(streamable-http :8848);
 - 参考链编排载体 = 脚本版(入库,离线可跑)+ 真 Agent 版(MCP 提示词)并存,见 §4;
-- Vue Console 是当前主产品界面;Jinja 管理页继续作为安装与故障恢复入口;
+- Vue Console 是平台唯一主产品界面;旧平台 Jinja/v0 页面不再作为入口保留;
 - 待议:v0.4 稳定后将 `data2agent/showroom` 迁移或重命名为更明确的测试 fixture 包。

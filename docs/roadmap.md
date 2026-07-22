@@ -1,68 +1,68 @@
-# data2agent Roadmap
+# data2agent 路线图
 
-> Status: current planning baseline after `v0.3.0` (`2aff25b`), updated 2026-07-22.
+> 状态: `v0.3.0` (`2aff25b`) 之后的当前规划基线,更新于 2026-07-22。
 
-data2agent has finished the v0.2 observable console and v0.3 verifiable data chain. The project is now at the boundary between controlled factory shadow trial and production pilot hardening.
+data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链。项目现在处在“可做受控工厂影子试运行”和“正式生产试点加固”之间的边界。
 
-## Current Release: v0.3.0
+## 当前版本: v0.3.0
 
-v0.3.0 is suitable for a controlled, read-only factory shadow trial where the system runs beside existing operations and does not replace ERP workflows.
+v0.3.0 适合在工厂做受控、只读的影子试运行:系统与现有业务流程并行运行,不替代 ERP 流程,也不直接作为业务决策的唯一依据。
 
-Completed:
+已完成:
 
-- Vue Console `/v1` with Dashboard, Pipeline, Runs, Audit, Data, Quarantine, Templates, MCP Lab, Settings and Validation views.
-- Typed management API, OpenAPI snapshot and generated TypeScript client.
-- Raw/object browsing with server-side paging, masking, access audit and honest unknown/stale/error states.
-- Dataset and object version metadata, immutable object version tables, atomic dataset publish and rollback to the previous stable version.
-- Mapping Preview that reuses the formal transform core and does not mutate published data, quarantine, watermarks or runs.
-- Field lineage from object fields back to raw records, source columns, transforms, batches and dataset/object versions.
-- MCP evidence with principal/session/query/proposal records, unpredictable query IDs, result digests and proposal evidence checks.
-- Validation Run and JSON report covering the v0.3 release gate.
-- Windows portable path and local E10-like reference chain remain available for regression and acceptance checks.
+- Vue Console `/v1`: Dashboard、Pipeline、Runs、Audit、Data、Quarantine、Templates、MCP Lab、Settings 和 Validation 页面。
+- 类型化管理 API、OpenAPI 快照和生成式 TypeScript 客户端。
+- raw/object 浏览:服务端分页、脱敏、访问审计,并能诚实表达 unknown、stale 和错误状态。
+- 数据集与对象版本元数据、不可变对象版本表、数据集原子发布和回滚到上一稳定版本。
+- Mapping Preview:复用正式转换核心,且不修改 published 数据、隔离区、水位或运行记录。
+- 字段血缘:对象字段可追溯到 raw 记录、源列、转换规则、批次和 dataset/object version。
+- MCP evidence:principal/session/query/proposal 记录、不可预测 query ID、result digest 和 proposal evidence 校验。
+- Validation Run 与 JSON 报告,覆盖 v0.3 发布门槛。
+- Windows 便携包路径和本地 E10-like 参考链仍可用于回归与验收检查。
 
-Still intentionally not claimed:
+仍未宣称:
 
-- Formal production pilot readiness.
-- Cross-machine commit receipts and schema fingerprints.
-- E6b cross-machine reconciliation.
-- Production HTTPS/mTLS and credential rotation.
-- SQLite capacity/concurrency/backup baseline under real factory load.
-- ERP writeback, approval workflow, SaaS multi-tenancy or full RBAC.
+- 正式生产试点就绪。
+- 跨机器 commit receipt 与 schema fingerprint。
+- E6b 跨机器对账。
+- 生产 HTTPS/mTLS 与凭据轮换。
+- 真实工厂负载下的 SQLite 容量、并发和备份恢复基线。
+- ERP 写回、审批流、SaaS 多租户或完整 RBAC。
 
-## Next Release: v0.4
+## 下一版本: v0.4
 
-v0.4 is the production pilot reliability release. Its goal is to prove that the cross-machine deployment can run in a real factory with correct data movement, recoverable failures and a written acceptance trail.
+v0.4 是生产试点可靠性版本。目标是证明跨机器部署可以在真实工厂中正确搬运数据、可恢复故障,并形成可书面验收的证据链。
 
-Recommended milestone order:
+建议里程碑顺序:
 
-| Milestone | Main Outcome | Release Gate |
+| 里程碑 | 主要交付 | 发布门槛 |
 | --- | --- | --- |
-| M1 Batch commit protocol | Batch ID, row count, content digest, schema fingerprint, durable commit receipt and idempotent retry | Watermark advances only after a valid stored receipt |
-| M2 Batch Console | Batch status, failure reason, receipt detail and authorized replay | Factory IT can diagnose missing, duplicate, retrying and mismatched batches without opening SQLite |
-| M3 E6b reconciliation | Middle-driven source stats, platform comparison, segment re-extract and soft delete | Deletes and silent changes can be detected and repaired in push topology |
-| M4 Transport and credentials | HTTPS/mTLS deployment path, separated ingest/console/MCP credentials, rotation/revocation plan and principal audit | No real cross-machine production path uses plaintext HTTP |
-| M5 SQLite pilot baseline | Capacity, concurrency, WAL checkpoint, backup and restore measurements with clear PostgreSQL switch thresholds | Trial load meets documented latency/recovery targets |
-| M6 Factory pilot acceptance | Verified dictionary/bindings, one-week continuous run, restart/network/schema drift drills and final report | No unexplained data loss or watermark drift during the pilot window |
+| M1 批次提交协议 | batch ID、行数、内容摘要、schema fingerprint、持久 commit receipt 和幂等重试 | 只有保存有效 receipt 后才推进水位 |
+| M2 批次 Console | 批次状态、失败原因、receipt 详情和授权重放 | 工厂 IT 不打开 SQLite 也能诊断缺失、重复、重试中和摘要不一致的批次 |
+| M3 E6b 对账 | 中间机驱动源侧统计、平台比对、分段重抽和软删 | 推送拓扑下可发现并修复删除和静默修改 |
+| M4 传输与凭据 | HTTPS/mTLS 部署路径、ingest/console/MCP 凭据分离、轮换/吊销方案和主体审计 | 真实跨机器生产路径不使用明文 HTTP |
+| M5 SQLite 试点基线 | 容量、并发、WAL checkpoint、备份和恢复测量,并定义 PostgreSQL 切换阈值 | 试点负载满足已记录的延迟和恢复目标 |
+| M6 工厂试点验收 | 字典/binding 核对、连续运行一周、重启/网络/schema drift 演练和最终报告 | 试点窗口内无未解释的数据丢失或水位漂移 |
 
-## Factory Trial Guidance
+## 工厂试运行建议
 
-Before v0.4 is complete, use v0.3 only as a controlled shadow trial:
+v0.4 完成前,v0.3 只建议用于受控影子试运行:
 
-- single factory or reference-chain-like environment;
-- read-only source account and whitelisted tables;
-- no ERP writeback and no replacement of existing business decisions;
-- human review of Agent conclusions;
-- daily backup of the landing database;
-- explicit `MOCK` / `REAL` mode awareness in Console.
+- 单工厂或类似参考链的环境;
+- 源系统使用只读账号和白名单表;
+- 不做 ERP 写回,不替代现有业务决策;
+- Agent 结论必须有人复核;
+- 每日备份落地库;
+- Console 中明确区分 `MOCK` / `REAL` 模式。
 
-After v0.4 passes, the project can enter a formal factory production pilot with documented receipt, reconciliation, transport, capacity and recovery evidence.
+v0.4 通过后,项目才能进入正式工厂生产试点,并附带批次 receipt、对账、传输、容量和恢复证据。
 
-## Current Non-Goals
+## 当前非目标
 
-- ERP writeback or "do" tier automation.
-- Online production mapping publish without preview, review and rollback protection.
-- Complete SaaS multi-tenancy.
-- Full RBAC beyond the pilot credential/principal controls.
-- PostgreSQL migration before SQLite thresholds are exceeded.
-- Expanding all 18 manufacturing objects without a real scenario pulling them.
-- Renaming `data2agent/showroom` to a test fixture package is deferred until v0.4 has stable factory acceptance data; before then it remains a regression asset, not a product mode.
+- ERP 写回或“做”档自动化。
+- 没有 preview、审核和回滚保护的在线生产 mapping 发布。
+- 完整 SaaS 多租户。
+- 超出试点凭据/主体控制范围的完整 RBAC。
+- 在 SQLite 阈值被实际触发前迁移 PostgreSQL。
+- 没有真实场景拉动时补齐全部 18 个制造业对象。
+- 在 v0.4 具备稳定真实工厂验收数据前,暂不把 `data2agent/showroom` 重命名为测试 fixture 包;在此之前它仍作为回归资产保留,不是产品运行模式。

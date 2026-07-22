@@ -55,18 +55,21 @@ def check_fastapi_mount(dist: Path | None) -> list[str]:
                 r = client.get(path)
                 if r.status_code != 200:
                     errors.append(f"{path} expected 200, got {r.status_code}")
-            if client.get("/").status_code not in (200, 302):
-                errors.append("/ should remain available")
-            if client.get("/v0").status_code != 200:
-                errors.append("/v0 should remain 200")
+            root = client.get("/", follow_redirects=False)
+            if root.status_code != 302 or root.headers.get("location") != "/v1/":
+                errors.append("/ should redirect to /v1/")
+            v0 = client.get("/v0", follow_redirects=False)
+            if v0.status_code != 302 or v0.headers.get("location") != "/v1/":
+                errors.append("/v0 should redirect to /v1/")
         else:
             r = client.get("/v1/")
             if r.status_code != 503:
                 errors.append(f"missing dist: /v1/ expected 503, got {r.status_code}")
             if "未安装" not in r.text and "未构建" not in r.text:
                 errors.append("missing dist page should diagnose 未安装/未构建")
-            if client.get("/v0").status_code != 200:
-                errors.append("/v0 should remain 200 when /v1 missing")
+            v0 = client.get("/v0", follow_redirects=False)
+            if v0.status_code != 302 or v0.headers.get("location") != "/v1/":
+                errors.append("/v0 should redirect to /v1/ when /v1 missing")
     return errors
 
 

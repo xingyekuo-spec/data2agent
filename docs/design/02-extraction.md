@@ -278,9 +278,8 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
   水位/审计/运行状态、不落 raw**(水位是元数据非业务数据),且不在中间 apply(映射在平台侧);
 - 验证:中间/平台双进程集成测试 —— 推送落地与直连 sync 逐表逐行一致、中间零 raw 表
   (`tests/test_sink_ingest.py`);现场验证见 [runbook/push-validation](../runbook/push-validation.md)
-  (主路径为便携包 + 管理界面);安装见 [portable](../runbook/portable.md),备选/NSSM 见
-  [install-middle](../runbook/install-middle.md) · [install-platform](../runbook/install-platform.md) ·
-  [windows-deploy](../runbook/windows-deploy.md);
+  (主路径为便携包 + 平台 Vue Console);安装见 [portable](../runbook/portable.md),
+  链路验收见 [push-validation](../runbook/push-validation.md);
 - **约束**:推送模式下 `reconcile_at` 必须留空(config 校验强制)—— 中间只有水位无 raw,
   本地对账会误判整库不一致;跨机对账须待 E6b(中间驱动)。
 

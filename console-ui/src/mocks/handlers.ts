@@ -283,6 +283,23 @@ export function buildHandlers(): HttpHandler[] {
     }),
     http.get('*/api/audit/access', ({ request }) => respond((f) => accessFor(f, request))),
     http.get('*/api/config', () => respond((f) => f.config)),
+    http.post('*/api/config', () => json({ ok: true, errors: [], restart_required: true })),
+    http.post('*/api/config/validate', () => json({ ok: true, errors: [] })),
+    http.post('*/api/setup', async ({ request }) => {
+      const body = await request.json() as Record<string, unknown>
+      if (!String(body.ingest_token ?? '').trim() || !String(body.console_token ?? '').trim()) {
+        return json({
+          ok: false,
+          errors: [{ field: 'token', message: 'Token 不能为空' }],
+        })
+      }
+      return json({
+        ok: true,
+        restart_required: true,
+        message: '配置已写入(Mock)',
+        mcp_token_generated: !String(body.mcp_token ?? '').trim(),
+      })
+    }),
     http.get('*/api/services', () => respond((f) => f.services)),
     http.get('*/api/logs', () => respond((f) => f.logs)),
     http.get('*/api/debug/raw-table', () => respond((f) => f.rawTable)),

@@ -165,7 +165,7 @@ def test_proposal_schema_frozen(env):
 
 
 def test_mcp_call_whitelist_rejects_propose_action(env):
-    """Jinja/Vue 共用 debug 入口白名单不扩大到 propose_action。"""
+    """Vue debug 入口白名单不扩大到 propose_action。"""
     landing, cfg_file = env
     cfg = load_config(cfg_file)
     client = TestClient(create_app(cfg.landing, cfg.templates, cfg))

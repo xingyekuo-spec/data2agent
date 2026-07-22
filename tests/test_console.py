@@ -50,10 +50,9 @@ def env(tmp_path):
 def test_readonly_mode_views_and_blocked_actions(env):
     landing, _ = env
     client = TestClient(create_app(landing.db_path, ROOT / "templates"))
-    r = client.get("/")
-    assert r.status_code == 200
-    body = r.content.lower()
-    assert b"htmx" in body or b"hx-" in body or b"nav" in body
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code == 302
+    assert r.headers["location"] == "/v1/"
 
     o = client.get("/api/overview").json()
     assert o["readonly"] is True
@@ -117,7 +116,7 @@ def test_window_blocks_console_actions(env, tmp_path):
 def test_token_auth(env):
     landing, _ = env
     client = TestClient(create_app(landing.db_path, ROOT / "templates", token="s3cret"))
-    assert client.get("/").status_code == 200, "页面本身可开(数据经 API 才需授权)"
+    assert client.get("/", follow_redirects=False).headers["location"] == "/v1/"
     assert client.get("/api/overview").status_code == 401
     ok = client.get("/api/overview", headers={"Authorization": "Bearer s3cret"})
     assert ok.status_code == 200
@@ -155,18 +154,17 @@ def test_config_validate_without_save(env):
     assert cfg_file.read_text(encoding="utf-8") == before
 
 
-def test_v0_still_embedded(env):
+def test_legacy_html_routes_redirect_to_vue(env):
     landing, _ = env
     client = TestClient(create_app(landing.db_path, ROOT / "templates"))
-    assert client.get("/v0").status_code == 200
-    assert "运维控制台" in client.get("/v0").text
-
-
-def test_html_pages(env):
-    landing, _ = env
-    client = TestClient(create_app(landing.db_path, ROOT / "templates"))
-    for path in ("/", "/config", "/logs", "/debug"):
-        r = client.get(path)
-        assert r.status_code == 200
-        body = r.content.lower()
-        assert b"htmx" in body or b"hx-" in body or b"nav" in body
+    expected = {
+        "/": "/v1/",
+        "/config": "/v1/settings",
+        "/logs": "/v1/logs",
+        "/debug": "/v1/mcp",
+        "/v0": "/v1/",
+    }
+    for path, location in expected.items():
+        r = client.get(path, follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["location"] == location

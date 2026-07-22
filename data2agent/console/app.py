@@ -1,4 +1,4 @@
-"""控制台应用:FastAPI 单页 + JSON API + 运维动作。
+"""平台控制台:Vue Console 静态入口 + JSON API + 运维动作。
 
 安全:
 - 只读视图直接查落地库;动作(sync / reconcile / apply / retry)复用 connect
@@ -36,8 +36,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
 
 from .. import __version__
 from ..admin_common.config_edit import PLATFORM_EDITABLE, merge_whitelist_and_save
@@ -137,7 +135,6 @@ from .contracts import (
     ValidationRunStartedResponse,
 )
 from .validation import build_validation_report
-from .ui import UI_HTML
 
 _RESP_HTTP_ERROR = {
     401: {"model": HttpError, "description": "缺少或无效的 Bearer Token"},
@@ -189,9 +186,6 @@ _SETUP_API_PATHS = frozenset({"/api/setup", "/api/setup/status"})
 _AUDIT_SQL_BUDGET = 4096
 
 _PKG = Path(__file__).resolve().parent
-_ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
-_CONSOLE_TEMPLATES = _PKG / "templates"
-_ADMIN_STATIC = _ADMIN_TEMPLATES / "static"
 _REPO_ROOT = _PKG.parent.parent
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
 
@@ -202,7 +196,7 @@ _VUE_MISSING_HTML = """<!doctype html>
 <p><code>/v1</code> 需要 Vue Console 的构建产物（<code>console-ui/dist</code>）。</p>
 <p>开发可用 Vite；源码/便携包/Docker 需先执行 <code>cd console-ui &amp;&amp; npm run build</code>，
 或设置环境变量 <code>D2A_VUE_DIST</code> 指向含 <code>index.html</code> 的目录。</p>
-<p>应急入口：<a href="/">/</a> · <a href="/v0">/v0</a></p>
+<p>平台管理入口已统一为 Vue Console：<a href="/v1/">/v1/</a></p>
 </body></html>
 """
 
@@ -227,19 +221,6 @@ def resolve_vue_dist() -> Path | None:
         except OSError:
             continue
     return None
-
-
-def _make_templates() -> Jinja2Templates:
-    """双搜索路径: console/templates + admin_templates; admin/ 前缀继承基 layout。"""
-    env = Environment(
-        loader=ChoiceLoader([
-            FileSystemLoader(str(_CONSOLE_TEMPLATES)),
-            FileSystemLoader(str(_ADMIN_TEMPLATES)),
-            PrefixLoader({"admin": FileSystemLoader(str(_ADMIN_TEMPLATES))}),
-        ]),
-        autoescape=select_autoescape(["html", "xml"]),
-    )
-    return Jinja2Templates(env=env)
 
 
 def _budget_text(value: str, budget: int = _AUDIT_SQL_BUDGET) -> str:
@@ -688,9 +669,9 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 if _client_host(request) not in _LOOPBACK:
                     raise HTTPException(403, "首次配置仅允许本机访问")
                 return
-            if path in ("/config", "/", "/logs", "/debug", "/v0") or path.startswith("/static"):
+            if path == "/api/config" and request.method == "GET":
                 return
-            raise HTTPException(409, "尚未完成首次配置,请打开 /config")
+            raise HTTPException(409, "尚未完成首次配置,请打开 /v1/setup")
 
         tok = state["token"]
         if not tok:
@@ -871,7 +852,6 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     app = FastAPI(title="data2agent 运维控制台", version=__version__)
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
-    jinja = _make_templates()
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
@@ -1290,34 +1270,25 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     app.openapi = custom_openapi  # type: ignore[method-assign]
 
-    def page_ctx(request: Request) -> dict[str, Any]:
-        return {
-            "static_url": "/static",
-            "needs_token": bool(state["token"]) and not needs_setup(),
-            "needs_setup": needs_setup(),
-        }
-
     @app.get("/")
-    def index(request: Request):
-        if needs_setup():
-            return RedirectResponse("/config", status_code=302)
-        return jinja.TemplateResponse(request, "dashboard.html", page_ctx(request))
+    def index():
+        return RedirectResponse("/v1/setup" if needs_setup() else "/v1/", status_code=302)
 
-    @app.get("/config", response_class=HTMLResponse)
-    def config_page(request: Request) -> HTMLResponse:
-        return jinja.TemplateResponse(request, "config.html", page_ctx(request))
+    @app.get("/config", include_in_schema=False)
+    def legacy_config_page():
+        return RedirectResponse("/v1/setup" if needs_setup() else "/v1/settings", status_code=302)
 
-    @app.get("/logs", response_class=HTMLResponse)
-    def logs_page(request: Request) -> HTMLResponse:
-        return jinja.TemplateResponse(request, "logs.html", page_ctx(request))
+    @app.get("/logs", include_in_schema=False)
+    def legacy_logs_page():
+        return RedirectResponse("/v1/logs", status_code=302)
 
-    @app.get("/debug", response_class=HTMLResponse)
-    def debug_page(request: Request) -> HTMLResponse:
-        return jinja.TemplateResponse(request, "debug.html", page_ctx(request))
+    @app.get("/debug", include_in_schema=False)
+    def legacy_debug_page():
+        return RedirectResponse("/v1/mcp", status_code=302)
 
-    @app.get("/v0", response_class=HTMLResponse)
-    def v0() -> str:
-        return UI_HTML
+    @app.get("/v0", include_in_schema=False)
+    def legacy_v0():
+        return RedirectResponse("/v1/", status_code=302)
 
     # ---- 首次配置 ----
 
@@ -3888,14 +3859,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
     async def _html_gate(request: Request, call_next):
         if request.url.path.startswith("/api"):
             return await call_next(request)
-        if needs_setup() and request.url.path not in (
-            "/config", "/", "/logs", "/debug", "/v0"
-        ) and not request.url.path.startswith("/static"):
-            return RedirectResponse("/config")
         return await call_next(request)
-
-    if _ADMIN_STATIC.is_dir():
-        app.mount("/static", StaticFiles(directory=_ADMIN_STATIC), name="static")
 
     # ---- M6: Vue Console /v1 静态挂载与 SPA fallback ----
     vue_dist = resolve_vue_dist()

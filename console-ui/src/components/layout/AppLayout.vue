@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import ScenarioSwitcher from '@/components/shared/ScenarioSwitcher.vue'
 import { IS_MOCK } from '@/config/mode'
 import { scenarioEpoch } from '@/config/scenario-epoch'
@@ -14,11 +15,15 @@ import TopBar from './TopBar.vue'
 const overviewStore = useOverviewStore()
 const pipelineStore = usePipelineStore()
 const session = useSessionStore()
+const route = useRoute()
 
 // 唯一轮询所有者:Dashboard / 管道页 / TopBar 只消费 store,不另建 timer
 const poller = createPoller({
   intervalMs: 5000,
   task: async () => {
+    if (route.name === 'setup') {
+      return
+    }
     await Promise.all([overviewStore.refresh(), pipelineStore.refresh()])
   },
   isFailing: () =>

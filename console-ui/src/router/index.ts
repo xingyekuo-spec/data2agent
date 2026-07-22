@@ -17,7 +17,9 @@ const viewComponents = {
   quarantine: () => import('@/views/QuarantineView.vue'),
   templates: () => import('@/views/TemplatesView.vue'),
   'mcp-lab': () => import('@/views/McpLabView.vue'),
+  logs: () => import('@/views/LogsView.vue'),
   settings: () => import('@/views/SettingsView.vue'),
+  setup: () => import('@/views/SetupView.vue'),
 }
 
 export type ViewName = keyof typeof viewComponents
@@ -27,7 +29,7 @@ export interface NavItem {
   path: string
   /** 菜单与页面标题 */
   title: string
-  /** 只读辅助页(Settings),不计入 8 个主页面 */
+  /** 辅助页标记 */
   readonly?: boolean
 }
 
@@ -65,7 +67,10 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   },
   {
     title: '系统',
-    items: [{ name: 'settings', path: '/settings', title: '配置', readonly: true }],
+    items: [
+      { name: 'settings', path: '/settings', title: '配置' },
+      { name: 'logs', path: '/logs', title: '日志' },
+    ],
   },
 ]
 
@@ -78,6 +83,12 @@ export const routes: RouteRecordRaw[] = [
     component: viewComponents[item.name],
     meta: { title: item.title, readonly: item.readonly === true },
   })),
+  {
+    path: '/setup',
+    name: 'setup',
+    component: viewComponents.setup,
+    meta: { title: '首次配置' },
+  },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 

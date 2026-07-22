@@ -2,10 +2,7 @@
 
 > **Data to Agent, for factories —— 把工厂数据接给 AI Agent。**
 
-![接单评审建议卡:Agent 基于历史成交、毛利基线与账期给出可溯源的评审结论](docs/assets/review-card.svg)
-
-一句询单,Agent 查历史成交 / 毛利基线 / 账期后给出**每个数字可溯源**的接单评审建议 ——
-上图由真实参考链生成(`python deploy/render_hero_svg.py` 可再生),不是手绘示意。
+一句询单,Agent 查历史成交 / 毛利基线 / 账期后给出**每个数字可溯源**的接单评审建议。
 
 > ⚠️ 当前处于 pre-release 私有开发阶段,首个工厂验证完成后公开。
 
@@ -18,16 +15,20 @@
 - **国产 ERP 连接器**:鼎捷 E10 / 易飞参考映射 + 表结构字典(持续积累于 [docs/dict](docs/dict/));
 - **制造业本体模板 + 元模型**:业务对象的声明式模板(YAML,首批 5 个 / 规划 18 个),`validate` 一键校验;v0.3 已加入模板/绑定摘要、数据集版本和原子发布;
 - **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:依据必须引用已记录查询 ID 和结果摘要,默认脱敏、口径警示内建;主体/会话/结果摘要级证据已持久化),任何支持 MCP 的 Agent 五分钟接入;HTTP 部署默认强制 Token + 每工具限流 + 查询审计;
-- **运维 / 管理界面**:平台 `console`(`:8849`)与中间 `middle_admin`(`:8851`)为 Jinja2+HTMX
-  管理页(配置白名单编辑、状态、日志、调试;浏览器首次配置);v0 内嵌运维单页保留在 `/v0`;
-  独立 Vue Console(`console-ui/`)是当前产品主路线,用于日常监控、数据验证、字段血缘、MCP 证据和一键验收。现场推荐[便携包](docs/runbook/portable.md)
+- **运维 / 管理界面**:平台 `console`(`:8849`)已统一为 Vue Console(`/v1/`),覆盖首次配置、配置编辑、日志、日常监控、数据验证、字段血缘、MCP 证据和一键验收;
+  中间机 `middle_admin`(`:8851`)保留轻量本机配置与日志入口。现场推荐[便携包](docs/runbook/portable.md)
   双击 `data2agent.exe`,链路验收见 [push-validation](docs/runbook/push-validation.md);
   管理 API 契约快照见 `console-ui/openapi.json`(用 `python scripts/export_console_openapi.py` 重新生成);
 - **参考数据与回归资产**:仓库保留 E10-like seed、SQL Server/SQLite 参考链和接单评审脚本,用于自动测试、字典生成和本地验收,不作为产品运行模式对外承诺。
 
 **安全承诺**:装进你内网、碰你数据库的每一行代码都在这个仓库里 —— 只读账号、白名单表、限时限流、错峰窗口,全部可审计,可逐行核对。
 
-## 快速开始
+## 现场部署
+
+现场部署使用[便携包](docs/runbook/portable.md):两台机器分别解压对应 zip,双击 `data2agent.exe`,
+平台机在 `/v1/setup` 完成首次配置。推送链路验收见 [push-validation](docs/runbook/push-validation.md)。
+
+## 开发者本地快速开始
 
 ```bash
 pip install -e ".[dev,mcp]"

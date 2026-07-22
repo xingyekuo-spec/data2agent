@@ -3,11 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { NAV_GROUPS, NAV_ITEMS, createAppRouter, routes } from './index'
 
 describe('router', () => {
-  it('9 个主页面(M6 含验收报告) + 只读「配置」= 10 路由', () => {
-    expect(NAV_ITEMS).toHaveLength(10)
-    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(9)
-    expect(NAV_ITEMS.filter((i) => i.readonly)).toHaveLength(1)
-    expect(routes.filter((r) => r.name)).toHaveLength(10)
+  it('9 个主页面 + 配置/日志 + 首次配置隐藏路由', () => {
+    expect(NAV_ITEMS).toHaveLength(11)
+    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(11)
+    expect(routes.filter((r) => r.name)).toHaveLength(12)
   })
 
   it('菜单分组遵循规格:运维监控 / 数据管理 / Agent / 系统', () => {
@@ -17,7 +16,7 @@ describe('router', () => {
       'Agent',
       '系统',
     ])
-    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([5, 3, 1, 1])
+    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([5, 3, 1, 2])
   })
 
   it('路径与规格一致:MCP Lab 固定 /mcp', () => {
@@ -34,10 +33,11 @@ describe('router', () => {
       '/templates',
       '/mcp',
       '/settings',
+      '/logs',
     ])
   })
 
-  it('10 个路由均可导航,标题与菜单一致', async () => {
+  it('菜单路由均可导航,标题与菜单一致', async () => {
     const router = createAppRouter(createMemoryHistory())
     for (const item of NAV_ITEMS) {
       await router.push(item.path)
@@ -60,11 +60,13 @@ describe('router', () => {
     expect(router.currentRoute.value.name).toBe('pipeline')
   })
 
-  it('「配置」标记只读,不计入主页面', () => {
+  it('首次配置为隐藏路由,不进入菜单', () => {
     const settings = NAV_ITEMS.find((i) => i.name === 'settings')
-    expect(settings?.readonly).toBe(true)
+    expect(settings?.readonly).toBeUndefined()
     const settingsRoute = routes.find((r) => r.name === 'settings')
-    expect(settingsRoute?.meta?.readonly).toBe(true)
+    expect(settingsRoute?.meta?.readonly).toBe(false)
+    expect(NAV_ITEMS.find((i) => i.name === 'setup')).toBeUndefined()
+    expect(routes.find((r) => r.name === 'setup')?.path).toBe('/setup')
   })
 
   it('未知路径回落仪表盘', async () => {

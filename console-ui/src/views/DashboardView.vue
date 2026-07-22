@@ -145,7 +145,7 @@ const sortedAlerts = computed(() =>
       <EmptyState
         v-if="ov.needs_setup"
         title="尚未完成首次配置"
-        hint="请先在管理页完成 /config 首次配置"
+          hint="请打开 /v1/setup 完成首次配置"
       />
       <EmptyState
         v-else-if="ov.sources.length === 0 && ov.objects.length === 0"

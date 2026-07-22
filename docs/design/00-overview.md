@@ -74,7 +74,7 @@ MCP 网关“看/说”档、管理界面、E10-like 参考数据链、Vue Conso
 | ① 纵向切片 | 元模型 → E10-like 参考库 → 映射引擎首块 → MCP lite | ✅ |
 | ② 抽取框架 | 适配器 / 落地 / 增量 / 对账 / 隔离区 / 调度限流(docs 02,E1–E5) | ✅ |
 | ③ 参考链完整化 | docker compose 全链路 + 网关「说」档 + 接单评审参考链(docs 04) | ✅ |
-| ③′ 现场部署形态 | 便携包(`data2agent.exe`)+ 中间/平台 Jinja 管理界面 + 推送 runbook | ✅ |
+| ③′ 现场部署形态 | 便携包(`data2agent.exe`)+ 平台 Vue Console + 中间机轻量管理界面 + 推送 runbook | ✅ |
 | ④ v0.2 可观察 | Vue Console + 契约/Mock + 管道/运行/数据/MCP 可视化 | ✅ |
 | ⑤ v0.3 可验证 | 字段血缘 + 映射 preview + 数据集版本 + 会话证据 + 一键验收 | ✅ (`v0.3.0`) |
 | ⑥ v0.4 可试点 | 批次回执 + E6b + 加密传输 + SQLite 基线 | 待建 |
@@ -87,8 +87,8 @@ MCP 网关“看/说”档、管理界面、E10-like 参考数据链、Vue Conso
 - [02 抽取框架](02-extraction.md) —— 抽取与拆机部署详设
 - [03 MCP 网关](03-mcp-gateway.md) —— lite 现状 + 治理档位演进
 - [04 参考数据链](04-reference-chain.md) —— 测试资产、拓扑与参考链
-- [05 运维控制台](05-console.md) —— Jinja 管理页已落地;Vue `console-ui` 为当前主产品路线
+- [05 运维控制台](05-console.md) —— 平台 Vue Console 与中间机管理入口
 - [路线图](../roadmap.md) —— 当前 v0.3.0 状态与 v0.4 可试点计划
 - 现场 runbook:[便携包](../runbook/portable.md) · [推送验收](../runbook/push-validation.md)
 - [E10 参考表字典](../dict/digiwin_e10.md) —— 生成文件,勿手改
-- [接单评审参考脚本](../reference/quote-review.md)
+- 接单评审参考链:`python -m data2agent.showroom.review_demo`

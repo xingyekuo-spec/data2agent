@@ -34,7 +34,9 @@ const icons: Record<ViewName, typeof Odometer> = {
   quarantine: Warning,
   templates: Files,
   'mcp-lab': MagicStick,
+  logs: Document,
   settings: Setting,
+  setup: Setting,
 }
 </script>
 

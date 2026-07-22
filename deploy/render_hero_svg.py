@@ -1,9 +1,9 @@
-"""README 首屏 SVG 生成器:跑真实参考链,把建议卡渲染成终端风格 SVG。
+"""接单评审建议卡 SVG 生成器:跑真实参考链,把建议卡渲染成终端风格 SVG。
 
 用法:python deploy/render_hero_svg.py [--db landing/factory.sqlite]
-                                       [--out docs/assets/review-card.svg]
+                                       [--out review-card.svg]
 产物是可再生的"截图":seed 数据或参考逻辑变更后重跑本脚本即可刷新,
-不依赖任何截图工具;GitHub README 原生渲染 SVG。
+不依赖任何截图工具。
 """
 
 from __future__ import annotations
@@ -106,10 +106,10 @@ def build_svg(card_text: str, command: str) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="生成 README 首屏建议卡 SVG")
+    ap = argparse.ArgumentParser(description="生成接单评审建议卡 SVG")
     ap.add_argument("--db", default="landing/factory.sqlite")
     ap.add_argument("--templates", default="templates")
-    ap.add_argument("--out", default="docs/assets/review-card.svg")
+    ap.add_argument("--out", default="review-card.svg")
     args = ap.parse_args()
 
     svc = QueryService(args.db, args.templates)

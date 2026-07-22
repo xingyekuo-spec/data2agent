@@ -57,6 +57,26 @@ export function getConfig() {
   return call(client.GET('/api/config'))
 }
 
+export function getSetupStatus() {
+  return call(client.GET('/api/setup/status'))
+}
+
+export function postSetup(body: components['schemas']['SetupBody']) {
+  return call(client.POST('/api/setup', { body }))
+}
+
+export function postConfig(body: components['schemas']['ConfigPatch']) {
+  return call(client.POST('/api/config', { body }))
+}
+
+export function validateConfig(body: components['schemas']['ConfigPatch']) {
+  return call(client.POST('/api/config/validate', { body }))
+}
+
+export function getLogs(query: { service: string; lines?: number; level?: string | null }) {
+  return call(client.GET('/api/logs', { params: { query } }))
+}
+
 /** 契约桩:后端实现前真实调用返回 501,页面据此显示「尚未接入」 */
 export function getPipeline() {
   return call(client.GET('/api/pipeline'))
