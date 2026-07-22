@@ -267,8 +267,8 @@ def test_invalid_key_token_returns_422(tmp_path):
         assert "fields" not in r.json()
 
 
-def test_valid_key_fail_closed_until_implemented(tmp_path):
-    """T01:合法 key 在查询实现前 501 fail-closed,不返回空成功体。"""
+def test_valid_key_no_published_returns_409(tmp_path):
+    """T07:合法 key 但无 published 数据集 → 409 dataset_not_published。"""
     client = _client(tmp_path, token=TOKEN)
     key = object_key_token(
         ["order_no", "line_no"], {"order_no": "SO-001", "line_no": 10}
@@ -277,9 +277,9 @@ def test_valid_key_fail_closed_until_implemented(tmp_path):
         f"/api/objects/SalesOrderLine/{key}/lineage",
         headers={"Authorization": f"Bearer {TOKEN}"},
     )
-    assert r.status_code == 501
-    assert r.json()["detail"] == "字段血缘查询尚未实现"
-    assert "fields" not in r.json() or r.json().get("state") != "available"
+    assert r.status_code == 409
+    body = r.json()
+    assert body["reason_code"] == "dataset_not_published"
 
 
 def test_wrong_bearer_returns_unauthorized(tmp_path):

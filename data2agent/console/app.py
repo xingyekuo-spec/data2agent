@@ -2684,7 +2684,10 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "generated_at": datetime.now().astimezone(),
             }
 
-    # ---- v0.3 M4-T01: field lineage contract stub (query in T07) ----
+    # ---- v0.3 M4: field lineage API ----
+
+    class _TxnExit(Exception):
+        """正常退出 published_read_tx;不是错误。"""
 
     def _lineage_error_response(
         status: int,
@@ -2807,13 +2810,297 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 e.reason_code,
                 _lineage_safe_detail(e.reason_code))
 
-        # T07 前 fail-closed:合法 key 仍不返回伪造成功/部分字段。
-        _ = property_name  # reserved for T07 property filter
+        # ---- T07: published snapshot 只读查询 ----
+        # 审计在事务外写入(log_access 会 commit,不能在 read_tx 内调用)
+        src = default_source()
+        try:
+            pack = require_pack()
+        except HTTPException:
+            return _lineage_error_response(
+                409, "dataset_not_published",
+                _lineage_safe_detail("dataset_not_published"))
+
+        tpl = next(
+            (t for t in pack.objects if t.object == object), None,
+        )
+        if tpl is None:
+            db.log_access(
+                subject="console-admin", resource_type="object",
+                source=src, resource=resource, allowed=False,
+                reason_code="object_not_found", request_id=request_id)
+            return _lineage_error_response(
+                404, "object_not_found",
+                _lineage_safe_detail("object_not_found"))
+
+        if property_name is not None:
+            prop_names = {p.name for p in tpl.properties}
+            if property_name not in prop_names:
+                db.log_access(
+                    subject="console-admin", resource_type="object",
+                    source=src, resource=resource, allowed=False,
+                    reason_code="field_not_found", request_id=request_id)
+                return _lineage_error_response(
+                    404, "field_not_found",
+                    _lineage_safe_detail("field_not_found"))
+
+        # 在只读事务内完成所有查询;事务外做审计和响应构建
+        _audit_allowed = True
+        _audit_rc = "preview_allowed"
+        _error_resp: JSONResponse | None = None
+        _unavailable_resp: ObjectLineageResponse | None = None
+        nodes: list = []
+        inputs_rows: list = []
+        snap_ds_version: str | None = None
+        snap_tpl_version: str | None = None
+        entry_binding_hash: str | None = None
+        entry_object_version: str | None = None
+
+        try:
+            with published_read_tx(db):
+                try:
+                    snap = resolve_published_snapshot(db, src)
+                except PublishedSnapshotError as e:
+                    rc = (
+                        "dataset_not_published"
+                        if e.reason_code == "not_published"
+                        else "snapshot_corrupt"
+                    )
+                    _audit_allowed = False
+                    _audit_rc = rc
+                    _error_resp = _lineage_error_response(
+                        _LINEAGE_HTTP_STATUS.get(rc, 409),
+                        rc, _lineage_safe_detail(rc))
+                    raise _TxnExit()
+
+                entry = snap.objects.get(object)
+                if entry is None:
+                    _audit_allowed = False
+                    _audit_rc = "object_not_found"
+                    _error_resp = _lineage_error_response(
+                        404, "object_not_found",
+                        _lineage_safe_detail("object_not_found"))
+                    raise _TxnExit()
+
+                snap_ds_version = snap.dataset_version
+                snap_tpl_version = snap.template_version
+                entry_binding_hash = entry.binding_hash
+                entry_object_version = entry.object_version
+
+                obj_versions = db.list_object_versions(snap.dataset_version)
+                obj_ver = next(
+                    (o for o in obj_versions if o.object == object), None,
+                )
+
+                if (
+                    obj_ver is None
+                    or obj_ver.lineage_schema_version is None
+                ):
+                    _unavailable_resp = ObjectLineageResponse(
+                        state="unavailable",
+                        reason_code="lineage_not_recorded",
+                        source=src,
+                        object=object,
+                        display_name=tpl.display_name,
+                        object_key=[],
+                        key_token=key,
+                        dataset_version=snap.dataset_version,
+                        object_version=entry.object_version,
+                        template_version=snap.template_version,
+                        binding_hash=entry.binding_hash,
+                        binding_status=None,
+                        map_batch_id=None,
+                        fields=[],
+                        warnings=[
+                            "该数据集版本未记录字段血缘"
+                            "（发布于字段血缘功能上线前）",
+                        ],
+                        generated_at=datetime.now().astimezone(),
+                    )
+                    raise _TxnExit()
+
+                nodes = db.get_field_lineage_by_key_hash(
+                    snap.dataset_version, object, key,
+                    property_name=property_name,
+                )
+                if not nodes:
+                    _audit_allowed = False
+                    _audit_rc = "record_not_found"
+                    _error_resp = _lineage_error_response(
+                        404, "record_not_found",
+                        _lineage_safe_detail("record_not_found"))
+                    raise _TxnExit()
+
+                inputs_rows = db.get_field_lineage_inputs_by_key_hash(
+                    snap.dataset_version, object, key,
+                    property_name=property_name,
+                )
+        except _TxnExit:
+            pass  # 正常退出:审计和响应在事务外处理
+        except (sqlite3.Error, OSError) as exc:
+            error_id = hashlib.sha256(
+                str(exc).encode("utf-8"),
+            ).hexdigest()[:12]
+            db.log_access(
+                subject="console-admin", resource_type="object",
+                source=src, resource=resource, allowed=False,
+                reason_code="lineage_query_failed",
+                request_id=request_id)
+            return _lineage_error_response(
+                500, "lineage_query_failed",
+                _lineage_safe_detail("lineage_query_failed"),
+                error_id=error_id)
+
+        # 事务外审计
         db.log_access(
-            subject="console-admin", resource_type="object", source=None,
-            resource=resource, allowed=False,
-            reason_code="not_implemented", request_id=request_id)
-        raise HTTPException(501, "字段血缘查询尚未实现")
+            subject="console-admin", resource_type="object",
+            source=src, resource=resource, allowed=_audit_allowed,
+            reason_code=_audit_rc, request_id=request_id)
+
+        if _error_resp is not None:
+            return _error_resp
+        if _unavailable_resp is not None:
+            return _unavailable_resp
+
+        # ---- 构建响应(脱敏在出口统一处理) ----
+        sensitive_props = {
+            p.name for p in tpl.properties if p.sensitive
+        }
+        props_by_name = {p.name: p for p in tpl.properties}
+        _MASK = "•••"
+
+        def _mask_evidence(
+            ev_json: str | None, prop_name: str,
+        ) -> dict | None:
+            if ev_json is None:
+                return None
+            try:
+                ev = json.loads(ev_json)
+            except (json.JSONDecodeError, TypeError):
+                return None
+            if prop_name in sensitive_props:
+                return {
+                    "kind": ev.get("kind", "scalar"),
+                    "value": _MASK if ev.get("value") is not None else None,
+                    "preview": (
+                        _MASK if ev.get("preview") is not None else None
+                    ),
+                    "sha256": ev.get("sha256"),
+                    "length": ev.get("length"),
+                }
+            return ev
+
+        # 按 property 分组输入边
+        inputs_by_prop: dict[str, list] = {}
+        for ir in inputs_rows:
+            inputs_by_prop.setdefault(ir["property"], []).append(ir)
+
+        # 取第一个节点的公共版本信息
+        first = nodes[0]
+        key_json = first["object_key_json"]
+        try:
+            object_key_pairs = json.loads(key_json)
+        except (json.JSONDecodeError, TypeError):
+            object_key_pairs = []
+
+        fields_out: list[dict] = []
+        for node in nodes:
+            prop_name = node["property"]
+            prop = props_by_name.get(prop_name)
+            display = prop.desc if prop else prop_name
+
+            # 解析 steps
+            steps_out: list[dict] = []
+            try:
+                raw_steps = json.loads(node["transform_steps_json"])
+            except (json.JSONDecodeError, TypeError):
+                raw_steps = []
+            for s in raw_steps:
+                step: dict = {"kind": s.get("kind", "read")}
+                if s.get("before") is not None:
+                    step["before"] = _mask_evidence(
+                        json.dumps(
+                            {"kind": "scalar", "value": s["before"]},
+                            ensure_ascii=False,
+                        ),
+                        prop_name,
+                    )
+                if s.get("after") is not None:
+                    step["after"] = _mask_evidence(
+                        json.dumps(
+                            {"kind": "scalar", "value": s["after"]},
+                            ensure_ascii=False,
+                        ),
+                        prop_name,
+                    )
+                if s.get("map_hit") is not None:
+                    step["map_hit"] = s["map_hit"]
+                if s.get("coerce_type"):
+                    step["coerce_type"] = s["coerce_type"]
+                if s.get("derived_rule_index") is not None:
+                    step["derived_rule_index"] = s["derived_rule_index"]
+                steps_out.append(step)
+
+            # 解析 inputs
+            prop_inputs = inputs_by_prop.get(prop_name, [])
+            inputs_out: list[dict] = []
+            for ir in prop_inputs:
+                inp: dict = {"role": ir["role"]}
+                if ir["source_table"]:
+                    inp["source_table"] = ir["source_table"]
+                if ir["source_column"]:
+                    inp["source_column"] = ir["source_column"]
+                if ir["source_pk_json"]:
+                    try:
+                        pk = json.loads(ir["source_pk_json"])
+                        inp["source_pk"] = (
+                            [[k, v] for k, v in pk.items()]
+                            if isinstance(pk, dict) else pk
+                        )
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                if ir["source_value_json"]:
+                    inp["source_value"] = _mask_evidence(
+                        ir["source_value_json"], prop_name,
+                    )
+                if ir["extract_batch_id"]:
+                    inp["extract_batch_id"] = ir["extract_batch_id"]
+                if ir["join_json"]:
+                    try:
+                        inp["join"] = json.loads(ir["join_json"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                inputs_out.append(inp)
+
+            fields_out.append({
+                "property": prop_name,
+                "display_name": display,
+                "final_value": _mask_evidence(
+                    node["result_value_json"], prop_name,
+                ),
+                "state": node["trace_status"],
+                "reason_code": node["unavailable_reason"],
+                "steps": steps_out,
+                "inputs": inputs_out,
+            })
+
+        return ObjectLineageResponse(
+            state="available",
+            reason_code=None,
+            source=src,
+            object=object,
+            display_name=tpl.display_name,
+            object_key=object_key_pairs,
+            key_token=key,
+            dataset_version=first["dataset_version"],
+            object_version=first["object_version"],
+            template_version=first["template_version"],
+            binding_hash=first["binding_hash"],
+            binding_status=first["binding_status"],
+            map_batch_id=first["map_batch_id"],
+            fields=fields_out,
+            warnings=[],
+            generated_at=datetime.now().astimezone(),
+        )
 
     @api.get(
         "/templates",
