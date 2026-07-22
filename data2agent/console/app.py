@@ -2953,8 +2953,10 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         _lineage_safe_detail("record_not_found"))
                     raise _TxnExit()
 
-                expected_props = len(tpl.properties)
-                if len(all_nodes) != expected_props:
+                # 校验字段集合与冻结模板完全一致(不仅比较数量)
+                expected_set = {p.name for p in tpl.properties}
+                actual_set = {n["property"] for n in all_nodes}
+                if actual_set != expected_set:
                     _audit_allowed = False
                     _audit_rc = "lineage_incomplete"
                     _error_resp = _lineage_error_response(

@@ -306,3 +306,113 @@ def test_lineage_version_consistency(published_env, pack):
     assert body["object_version"] == obj.object_version
     assert body["template_version"] == pack.version
     assert body["binding_hash"] == obj.binding_hash
+
+
+# ---- 等数量字段替换仍 fail-closed ---------------------------------------------------
+
+
+def test_lineage_field_set_mismatch_returns_409(tmp_path, pack):
+    """删除一个合法字段并插入等数量未知字段 → 409 lineage_incomplete。"""
+    # 独立环境,避免模块级 fixture 共享连接干扰
+    src = tmp_path / "source.sqlite"
+    write_db(src, build(seed=42, asof=date(2026, 7, 10)))
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE))
+    incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
+    result = build_dataset(landing, pack, SOURCE, auto_publish=True)
+    assert result.outcome == "ok"
+    ds = result.dataset_version
+
+    objs = landing.list_object_versions(ds)
+    obj = objs[0]
+    tpl = next(t for t in pack.objects if t.object == obj.object)
+
+    sample = landing.con.execute(
+        "SELECT DISTINCT object_key_hash, object_key_json "
+        "FROM d2a_field_lineage "
+        "WHERE dataset_version = ? AND object = ? LIMIT 1",
+        (ds, obj.object),
+    ).fetchone()
+    token = sample["object_key_hash"]
+    key_json = sample["object_key_json"]
+
+    # 删除一个合法字段并插入等数量未知字段
+    # 用新 LandingStore 连接(与 build_dataset 的连接隔离)
+    victim = tpl.properties[0].name
+    db_path = str(tmp_path / "landing.sqlite")
+    landing.con.close()
+    tamper_store = LandingStore(db_path)
+    tc = tamper_store.con
+    tc.isolation_level = None
+    tc.execute("PRAGMA foreign_keys = OFF")
+    tc.execute("DROP TRIGGER IF EXISTS trg_d2a_field_lineage_no_update")
+    tc.execute(
+        "DROP TRIGGER IF EXISTS trg_d2a_field_lineage_input_no_update"
+    )
+    tc.execute(
+        "DELETE FROM d2a_field_lineage_input "
+        "WHERE dataset_version = ? AND object = ? "
+        "AND object_key_json = ? AND property = ?",
+        (ds, obj.object, key_json, victim),
+    )
+    tc.execute(
+        "DELETE FROM d2a_field_lineage "
+        "WHERE dataset_version = ? AND object = ? "
+        "AND object_key_json = ? AND property = ?",
+        (ds, obj.object, key_json, victim),
+    )
+    tc.execute(
+        "INSERT INTO d2a_field_lineage ("
+        "dataset_version, object_version, object, object_key_json, "
+        "object_key_hash, property, result_value_json, trace_status, "
+        "transform_kind, transform_steps_json, source, map_batch_id, "
+        "binding_hash, binding_status, template_version"
+        ") SELECT dataset_version, object_version, object, object_key_json, "
+        "object_key_hash, '__bogus__', result_value_json, trace_status, "
+        "transform_kind, transform_steps_json, source, map_batch_id, "
+        "binding_hash, binding_status, template_version "
+        "FROM d2a_field_lineage "
+        "WHERE dataset_version = ? AND object = ? "
+        "AND object_key_json = ? LIMIT 1",
+        (ds, obj.object, key_json),
+    )
+    tc.execute("PRAGMA foreign_keys = ON")
+
+    # 验证篡改生效
+    actual_props = {
+        r2["property"]
+        for r2 in tc.execute(
+            "SELECT DISTINCT property FROM d2a_field_lineage "
+            "WHERE dataset_version = ? AND object = ? AND object_key_hash = ?",
+            (ds, obj.object, token),
+        ).fetchall()
+    }
+    tamper_store.con.close()
+    expected_props = {p.name for p in tpl.properties}
+    assert actual_props != expected_props, (
+        f"篡改未生效: actual={sorted(actual_props)}"
+    )
+
+    # 用独立 app 查询(模拟 API 新建连接)
+    app = create_app(
+        landing=db_path,
+        templates=str(ROOT / "templates"),
+        token=TOKEN,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+
+    r = client.get(
+        f"/api/objects/{obj.object}/{token}/lineage", headers=_auth(),
+    )
+    assert r.status_code == 409, (
+        f"期望 409,实际 {r.status_code}: {r.json()}"
+    )
+    assert r.json()["reason_code"] == "lineage_incomplete"
+
+    r2 = client.get(
+        f"/api/objects/{obj.object}/{token}/lineage",
+        params={"property": tpl.properties[1].name},
+        headers=_auth(),
+    )
+    assert r2.status_code == 409
+    assert r2.json()["reason_code"] == "lineage_incomplete"
