@@ -176,6 +176,91 @@ CREATE TABLE IF NOT EXISTS d2a_field_lineage_input (
 );
 CREATE INDEX IF NOT EXISTS idx_d2a_field_lineage_input_obj
     ON d2a_field_lineage_input (dataset_version, object);
+CREATE TABLE IF NOT EXISTS d2a_gateway_query_evidence (
+    query_id TEXT PRIMARY KEY,
+    evidence_schema_version INTEGER NOT NULL,
+    principal TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    channel TEXT NOT NULL CHECK (channel IN ('console', 'mcp_stdio', 'mcp_http', 'demo')),
+    source TEXT NOT NULL,
+    tool TEXT NOT NULL CHECK (tool IN ('query_objects', 'query_metrics')),
+    target TEXT NOT NULL,
+    normalized_query_json TEXT NOT NULL,
+    dataset_version TEXT,
+    template_version TEXT,
+    binding_hashes_json TEXT NOT NULL,
+    result_digest TEXT NOT NULL,
+    result_summary_json TEXT NOT NULL,
+    warnings_json TEXT NOT NULL,
+    row_count INTEGER,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_gateway_query_session
+    ON d2a_gateway_query_evidence (principal, session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_d2a_gateway_query_dataset
+    ON d2a_gateway_query_evidence (dataset_version, created_at DESC);
+CREATE TABLE IF NOT EXISTS d2a_gateway_proposal (
+    proposal_id TEXT PRIMARY KEY,
+    evidence_schema_version INTEGER NOT NULL,
+    principal TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    channel TEXT NOT NULL CHECK (channel IN ('console', 'mcp_stdio', 'mcp_http', 'demo')),
+    source TEXT NOT NULL,
+    object TEXT NOT NULL,
+    action TEXT NOT NULL,
+    action_desc TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    conclusion TEXT NOT NULL,
+    governance TEXT NOT NULL,
+    dataset_version TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_gateway_proposal_session
+    ON d2a_gateway_proposal (principal, session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_d2a_gateway_proposal_dataset
+    ON d2a_gateway_proposal (dataset_version, created_at DESC);
+CREATE TABLE IF NOT EXISTS d2a_gateway_proposal_evidence (
+    proposal_id TEXT NOT NULL,
+    evidence_ordinal INTEGER NOT NULL CHECK (evidence_ordinal >= 0),
+    claim TEXT NOT NULL,
+    query_id TEXT NOT NULL,
+    query_tool TEXT NOT NULL CHECK (query_tool IN ('query_objects', 'query_metrics')),
+    query_target TEXT NOT NULL,
+    normalized_query_json TEXT NOT NULL,
+    dataset_version TEXT,
+    template_version TEXT,
+    binding_hashes_json TEXT NOT NULL,
+    result_digest TEXT NOT NULL,
+    result_summary_json TEXT NOT NULL,
+    warnings_json TEXT NOT NULL,
+    query_created_at TEXT NOT NULL,
+    PRIMARY KEY (proposal_id, evidence_ordinal),
+    FOREIGN KEY (proposal_id) REFERENCES d2a_gateway_proposal (proposal_id)
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_gateway_proposal_evidence_dataset
+    ON d2a_gateway_proposal_evidence (dataset_version, proposal_id, evidence_ordinal);
+CREATE TABLE IF NOT EXISTS d2a_gateway_audit (
+    event_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    principal TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    channel TEXT NOT NULL CHECK (channel IN ('console', 'mcp_stdio', 'mcp_http', 'demo')),
+    source TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    target TEXT NOT NULL,
+    outcome TEXT NOT NULL,
+    reason_code TEXT NOT NULL,
+    query_id TEXT,
+    proposal_id TEXT,
+    dataset_version TEXT,
+    result_digest TEXT,
+    detail_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_gateway_audit_session
+    ON d2a_gateway_audit (principal, session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_d2a_gateway_audit_dataset
+    ON d2a_gateway_audit (dataset_version, created_at DESC);
 """
 
 # 旧库 CREATE TABLE IF NOT EXISTS 不会补 CHECK;用触发器幂等强制状态联动。
@@ -291,6 +376,57 @@ BEGIN
 END;
 """
 
+_GATEWAY_EVIDENCE_FREEZE_TRIGGERS = """
+DROP TRIGGER IF EXISTS trg_d2a_gateway_query_no_update;
+DROP TRIGGER IF EXISTS trg_d2a_gateway_query_no_delete;
+DROP TRIGGER IF EXISTS trg_d2a_gateway_proposal_no_update;
+DROP TRIGGER IF EXISTS trg_d2a_gateway_proposal_no_delete;
+DROP TRIGGER IF EXISTS trg_d2a_gateway_proposal_evidence_no_update;
+DROP TRIGGER IF EXISTS trg_d2a_gateway_proposal_evidence_no_delete;
+DROP TRIGGER IF EXISTS trg_d2a_gateway_audit_no_update;
+DROP TRIGGER IF EXISTS trg_d2a_gateway_audit_no_delete;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_gateway_query_no_update
+BEFORE UPDATE ON d2a_gateway_query_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'gateway query evidence is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_gateway_query_no_delete
+BEFORE DELETE ON d2a_gateway_query_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'gateway query evidence is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_gateway_proposal_no_update
+BEFORE UPDATE ON d2a_gateway_proposal
+BEGIN
+  SELECT RAISE(ABORT, 'gateway proposal is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_gateway_proposal_no_delete
+BEFORE DELETE ON d2a_gateway_proposal
+BEGIN
+  SELECT RAISE(ABORT, 'gateway proposal is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_gateway_proposal_evidence_no_update
+BEFORE UPDATE ON d2a_gateway_proposal_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'gateway proposal evidence is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_gateway_proposal_evidence_no_delete
+BEFORE DELETE ON d2a_gateway_proposal_evidence
+BEGIN
+  SELECT RAISE(ABORT, 'gateway proposal evidence is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_gateway_audit_no_update
+BEFORE UPDATE ON d2a_gateway_audit
+BEGIN
+  SELECT RAISE(ABORT, 'gateway audit is immutable');
+END;
+CREATE TRIGGER IF NOT EXISTS trg_d2a_gateway_audit_no_delete
+BEFORE DELETE ON d2a_gateway_audit
+BEGIN
+  SELECT RAISE(ABORT, 'gateway audit is immutable');
+END;
+"""
+
 
 def raw_table_name(source: str, table: str) -> str:
     return f"raw_{source}__{table}"
@@ -357,6 +493,95 @@ def _row_to_object_version(row: sqlite3.Row) -> ObjectVersionRecord:
     )
 
 
+def _row_to_gateway_query_evidence(row: sqlite3.Row):
+    from data2agent.mcp_server.evidence import QueryEvidenceRecord
+
+    return QueryEvidenceRecord(
+        query_id=row["query_id"],
+        evidence_schema_version=row["evidence_schema_version"],
+        principal=row["principal"],
+        session_id=row["session_id"],
+        channel=row["channel"],
+        source=row["source"],
+        tool=row["tool"],
+        target=row["target"],
+        normalized_query_json=row["normalized_query_json"],
+        dataset_version=row["dataset_version"],
+        template_version=row["template_version"],
+        binding_hashes_json=row["binding_hashes_json"],
+        result_digest=row["result_digest"],
+        result_summary_json=row["result_summary_json"],
+        warnings_json=row["warnings_json"],
+        row_count=row["row_count"],
+        created_at=row["created_at"],
+        expires_at=row["expires_at"],
+    )
+
+
+def _row_to_gateway_proposal(row: sqlite3.Row):
+    from data2agent.mcp_server.evidence import ProposalRecord
+
+    return ProposalRecord(
+        proposal_id=row["proposal_id"],
+        evidence_schema_version=row["evidence_schema_version"],
+        principal=row["principal"],
+        session_id=row["session_id"],
+        channel=row["channel"],
+        source=row["source"],
+        object=row["object"],
+        action=row["action"],
+        action_desc=row["action_desc"],
+        tier=row["tier"],
+        conclusion=row["conclusion"],
+        governance=row["governance"],
+        dataset_version=row["dataset_version"],
+        created_at=row["created_at"],
+    )
+
+
+def _row_to_gateway_proposal_evidence(row: sqlite3.Row):
+    from data2agent.mcp_server.evidence import ProposalEvidenceRecord
+
+    return ProposalEvidenceRecord(
+        proposal_id=row["proposal_id"],
+        evidence_ordinal=row["evidence_ordinal"],
+        claim=row["claim"],
+        query_id=row["query_id"],
+        query_tool=row["query_tool"],
+        query_target=row["query_target"],
+        normalized_query_json=row["normalized_query_json"],
+        dataset_version=row["dataset_version"],
+        template_version=row["template_version"],
+        binding_hashes_json=row["binding_hashes_json"],
+        result_digest=row["result_digest"],
+        result_summary_json=row["result_summary_json"],
+        warnings_json=row["warnings_json"],
+        query_created_at=row["query_created_at"],
+    )
+
+
+def _row_to_gateway_audit(row: sqlite3.Row):
+    from data2agent.mcp_server.evidence import GatewayAuditRecord
+
+    return GatewayAuditRecord(
+        event_id=row["event_id"],
+        created_at=row["created_at"],
+        principal=row["principal"],
+        session_id=row["session_id"],
+        channel=row["channel"],
+        source=row["source"],
+        operation=row["operation"],
+        target=row["target"],
+        outcome=row["outcome"],
+        reason_code=row["reason_code"],
+        query_id=row["query_id"],
+        proposal_id=row["proposal_id"],
+        dataset_version=row["dataset_version"],
+        result_digest=row["result_digest"],
+        detail_json=row["detail_json"],
+    )
+
+
 class LandingStore:
     RUN_TYPES = frozenset({
         "sync", "apply", "reconcile", "ingest", "validation", "publish", "rollback",
@@ -417,6 +642,7 @@ class LandingStore:
         # v0.3:published/retired 必须带 published_at(旧库靠触发器补强制)。
         self.con.executescript(_VERSION_PUBLISHED_AT_TRIGGERS)
         self.con.executescript(_VERSION_FREEZE_TRIGGERS)
+        self.con.executescript(_GATEWAY_EVIDENCE_FREEZE_TRIGGERS)
         # v0.3:数据集冻结对象清单与模板快照;旧库缺列则补上。
         ds_cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_dataset_version)")}
         if "object_manifest" not in ds_cols:
@@ -1233,3 +1459,165 @@ class LandingStore:
             params.append(property_name)
         base += " ORDER BY i.property, i.input_ordinal"
         return self.con.execute(base, params).fetchall()
+
+    # ---- gateway evidence (M5) -----------------------------------------------
+
+    def insert_gateway_query_evidence(self, record, *, commit: bool = True) -> None:
+        self.con.execute(
+            "INSERT INTO d2a_gateway_query_evidence ("
+            "query_id, evidence_schema_version, principal, session_id, channel, "
+            "source, tool, target, normalized_query_json, dataset_version, "
+            "template_version, binding_hashes_json, result_digest, "
+            "result_summary_json, warnings_json, row_count, created_at, expires_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.query_id,
+                record.evidence_schema_version,
+                record.principal,
+                record.session_id,
+                record.channel,
+                record.source,
+                record.tool,
+                record.target,
+                record.normalized_query_json,
+                record.dataset_version,
+                record.template_version,
+                record.binding_hashes_json,
+                record.result_digest,
+                record.result_summary_json,
+                record.warnings_json,
+                record.row_count,
+                record.created_at,
+                record.expires_at,
+            ),
+        )
+        if commit:
+            self.con.commit()
+
+    def get_gateway_query_evidence(self, query_id: str):
+        row = self.con.execute(
+            "SELECT * FROM d2a_gateway_query_evidence WHERE query_id = ?",
+            (query_id,),
+        ).fetchone()
+        return _row_to_gateway_query_evidence(row) if row else None
+
+    def insert_gateway_proposal(self, record, *, commit: bool = True) -> None:
+        self.con.execute(
+            "INSERT INTO d2a_gateway_proposal ("
+            "proposal_id, evidence_schema_version, principal, session_id, channel, "
+            "source, object, action, action_desc, tier, conclusion, governance, "
+            "dataset_version, created_at"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.proposal_id,
+                record.evidence_schema_version,
+                record.principal,
+                record.session_id,
+                record.channel,
+                record.source,
+                record.object,
+                record.action,
+                record.action_desc,
+                record.tier,
+                record.conclusion,
+                record.governance,
+                record.dataset_version,
+                record.created_at,
+            ),
+        )
+        if commit:
+            self.con.commit()
+
+    def get_gateway_proposal(self, proposal_id: str):
+        row = self.con.execute(
+            "SELECT * FROM d2a_gateway_proposal WHERE proposal_id = ?",
+            (proposal_id,),
+        ).fetchone()
+        return _row_to_gateway_proposal(row) if row else None
+
+    def insert_gateway_proposal_evidence(self, records, *, commit: bool = True) -> None:
+        rows = [
+            (
+                record.proposal_id,
+                record.evidence_ordinal,
+                record.claim,
+                record.query_id,
+                record.query_tool,
+                record.query_target,
+                record.normalized_query_json,
+                record.dataset_version,
+                record.template_version,
+                record.binding_hashes_json,
+                record.result_digest,
+                record.result_summary_json,
+                record.warnings_json,
+                record.query_created_at,
+            )
+            for record in records
+        ]
+        if rows:
+            self.con.executemany(
+                "INSERT INTO d2a_gateway_proposal_evidence ("
+                "proposal_id, evidence_ordinal, claim, query_id, query_tool, "
+                "query_target, normalized_query_json, dataset_version, "
+                "template_version, binding_hashes_json, result_digest, "
+                "result_summary_json, warnings_json, query_created_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+        if commit:
+            self.con.commit()
+
+    def list_gateway_proposal_evidence(self, proposal_id: str):
+        rows = self.con.execute(
+            "SELECT * FROM d2a_gateway_proposal_evidence "
+            "WHERE proposal_id = ? ORDER BY evidence_ordinal",
+            (proposal_id,),
+        ).fetchall()
+        return [_row_to_gateway_proposal_evidence(r) for r in rows]
+
+    def insert_gateway_audit(self, record, *, commit: bool = True) -> None:
+        self.con.execute(
+            "INSERT INTO d2a_gateway_audit ("
+            "event_id, created_at, principal, session_id, channel, source, "
+            "operation, target, outcome, reason_code, query_id, proposal_id, "
+            "dataset_version, result_digest, detail_json"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.event_id,
+                record.created_at,
+                record.principal,
+                record.session_id,
+                record.channel,
+                record.source,
+                record.operation,
+                record.target,
+                record.outcome,
+                record.reason_code,
+                record.query_id,
+                record.proposal_id,
+                record.dataset_version,
+                record.result_digest,
+                record.detail_json,
+            ),
+        )
+        if commit:
+            self.con.commit()
+
+    def list_gateway_audit(
+        self, *, principal: str | None = None, session_id: str | None = None,
+    ):
+        where: list[str] = []
+        params: list[object] = []
+        if principal is not None:
+            where.append("principal = ?")
+            params.append(principal)
+        if session_id is not None:
+            where.append("session_id = ?")
+            params.append(session_id)
+        wsql = (" WHERE " + " AND ".join(where)) if where else ""
+        rows = self.con.execute(
+            f"SELECT * FROM d2a_gateway_audit{wsql} ORDER BY created_at, event_id",
+            params,
+        ).fetchall()
+        return [_row_to_gateway_audit(r) for r in rows]

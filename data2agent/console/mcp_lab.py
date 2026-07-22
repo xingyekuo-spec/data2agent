@@ -35,6 +35,26 @@ def classify_mcp_error(exc: BaseException) -> tuple[int, McpLabReasonCode, str, 
         return 404, "unknown_target", _safe_detail(msg, fallback="未知查询目标"), False
     if "无法溯源" in msg or "不是本会话的查询" in msg:
         return 409, "query_expired", "query ID 已失效或不在当前 Console 进程内", False
+    if "query_expired" in msg:
+        return 409, "query_expired", "query ID 已过期或不存在", False
+    if "evidence_not_found" in msg:
+        return 404, "evidence_not_found", "持久 evidence 不存在", False
+    if "evidence_principal_mismatch" in msg:
+        return 403, "evidence_principal_mismatch", "query evidence 属于其他主体", False
+    if "evidence_session_mismatch" in msg:
+        return 409, "evidence_session_mismatch", "query evidence 不属于当前会话", False
+    if "evidence_source_mismatch" in msg:
+        return 409, "evidence_source_mismatch", "proposal evidence 混用了其他来源", False
+    if "dataset_version_mismatch" in msg:
+        return 409, "dataset_version_mismatch", "proposal evidence 混用了多个数据集版本", False
+    if "result_digest_mismatch" in msg:
+        return 409, "result_digest_mismatch", "result_digest 与持久 query evidence 不一致", False
+    if "evidence_integrity_failed" in msg:
+        return 409, "evidence_integrity_failed", "query evidence 已损坏或无法安全解析", False
+    if "evidence_store_unavailable" in msg:
+        return 500, "evidence_store_unavailable", "MCP 会话证据存储不可用", False
+    if msg.startswith("invalid_params:") or "格式非法" in msg:
+        return 422, "invalid_params", _safe_detail(msg, fallback="查询或建议卡参数无效"), False
     if "档位上限" in msg or "超出本网关档位" in msg:
         return 403, "tier_forbidden", "动作档位超出当前部署上限", False
     if any(k in msg for k in (

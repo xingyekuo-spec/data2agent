@@ -1,7 +1,8 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setToken } from '@/api/client'
+import { ensureEvidenceSessionId, setToken } from '@/api/client'
 import { setScenario } from '@/mocks/scenario'
+import { useMcpLabStore } from './mcpLab'
 import { useOverviewStore } from './overview'
 import { useSessionStore } from './session'
 import { useSettingsStore } from './settings'
@@ -40,15 +41,31 @@ describe('session store', () => {
     sessionStorage.clear()
   })
 
-  it('login/logout 只写 sessionStorage', () => {
+  it('login/logout 清理当前标签页的认证与 evidence 状态', () => {
     const session = useSessionStore()
+    const mcpLab = useMcpLabStore()
     session.login('tok')
+    const evidenceSession = ensureEvidenceSessionId()
+    mcpLab.history.push({
+      query_id: 'qry_111111111111111111111111',
+      tool: 'query_objects',
+      target: 'Customer',
+      created_at: null,
+      expires_at: null,
+      session_id: evidenceSession,
+      dataset_version: null,
+      result_digest: 'sha256:' + '1'.repeat(64),
+      result_summary: null,
+      warnings: [],
+    })
     expect(session.authenticated).toBe(true)
     expect(sessionStorage.getItem('d2a_token')).toBe('tok')
     expect(localStorage.getItem('d2a_token')).toBeNull()
     session.logout()
     expect(session.authenticated).toBe(false)
     expect(sessionStorage.getItem('d2a_token')).toBeNull()
+    expect(sessionStorage.getItem('d2a_evidence_session_id')).toBeNull()
+    expect(mcpLab.history).toEqual([])
   })
 
   it('API 返回 401:清除认证态并进入认证提示', async () => {
@@ -61,5 +78,6 @@ describe('session store', () => {
     expect(session.authenticated).toBe(false)
     expect(session.authRequired).toBe(true)
     expect(sessionStorage.getItem('d2a_token')).toBeNull()
+    expect(sessionStorage.getItem('d2a_evidence_session_id')).toBeNull()
   })
 })

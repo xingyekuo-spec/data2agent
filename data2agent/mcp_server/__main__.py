@@ -49,7 +49,14 @@ def main() -> int:
         if args.audit_log and args.audit_log != "off":
             from .http import jsonl_audit_sink
             sink = jsonl_audit_sink(args.audit_log)
-        create_server(args.db, args.templates, args.source, audit_sink=sink).run()
+        create_server(
+            args.db,
+            args.templates,
+            args.source,
+            audit_sink=sink,
+            transport="stdio",
+            principal="mcp:local",
+        ).run()
         return 0
 
     # http:默认安全 —— 无 Token 拒绝启动,除非显式声明匿名(展厅)
@@ -66,7 +73,9 @@ def main() -> int:
 
     server = create_server(args.db, args.templates, args.source,
                            host=args.host, port=args.port,
-                           rate_per_minute=args.rate_per_minute, audit_sink=sink)
+                           rate_per_minute=args.rate_per_minute, audit_sink=sink,
+                           transport="http",
+                           principal=("mcp:http" if args.token else "demo:anonymous"))
     app = server.streamable_http_app()
     if args.token:
         from .http import BearerAuthMiddleware

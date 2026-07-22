@@ -273,13 +273,13 @@ async function runMock(browser) {
     expect((await page.textContent('[data-testid="apply-result"]')).includes('published=false'),
       'M2:stage-only/apply 结果含 published=false')
 
-    // M6:MCP Lab Mock —— 查询表单、结果、建议卡入口,无写回控件
+    // M5:MCP Lab Mock —— 查询表单、会话证据、建议卡入口,无写回控件
     await page.goto(`http://localhost:${MOCK_PORT}/v1/mcp`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="mcp-lab-page"]').waitFor({ state: 'visible' })
     expect((await page.locator('[data-testid="feature-placeholder"]').count()) === 0,
       'M6:MCP Lab 不再是占位页')
-    expect((await page.textContent('[data-testid="mcp-scope-banner"]')).includes('进程内有效'),
-      'M6:进程级 query ID 边界提示可见')
+    expect((await page.textContent('[data-testid="mcp-scope-banner"]')).includes('标签页 session'),
+      'M5:标签页 evidence session 边界提示可见')
     await page.locator('[data-testid="object-run"]').click()
     await page.waitForTimeout(500)
     expect((await page.locator('[data-testid="object-result"]').count()) === 1, 'M6:Mock 对象查询有结果')
@@ -928,19 +928,23 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
     expect(true, 'M5:回归-M3 仪表盘可用')
 
     // ============================================================
-    // M6: MCP Lab Real —— 查询 → 建议卡 evidence → 八页面可达
+    // M5: MCP Lab Real —— 会话查询 → digest evidence 建议卡 → 八页面可达
     // ============================================================
     const mcpQ = await page.request.post(
       `http://localhost:${CONSOLE_PORT}/api/debug/mcp-call`,
       {
         data: { tool: 'query_objects', params: { object: 'Quotation', limit: 1 } },
-        headers: { Authorization: 'Bearer e2e-token' },
+        headers: {
+          Authorization: 'Bearer e2e-token',
+          'X-D2A-Session-ID': 'd2a_session_e2e_0123456789',
+        },
       },
     )
-    expect(mcpQ.status() === 200, 'M6:Real mcp-call 200')
+    expect(mcpQ.status() === 200, 'M5:Real mcp-call 200')
     const mcpBody = await mcpQ.json()
-    expect(mcpBody.meta?.query_id, 'M6:Real 查询含 query_id')
-    expect(mcpBody.meta?.evidence_scope === 'process', 'M6:Real evidence_scope=process')
+    expect(mcpBody.meta?.query_id, 'M5:Real 查询含 query_id')
+    expect(mcpBody.meta?.result_digest, 'M5:Real 查询含 result_digest')
+    expect(mcpBody.meta?.evidence_scope === 'principal_session', 'M5:Real evidence_scope=principal_session')
     const proposalResp = await page.request.post(
       `http://localhost:${CONSOLE_PORT}/api/gateway/proposals`,
       {
@@ -948,20 +952,27 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
           object: 'Quotation',
           action: 'quote_review',
           conclusion: 'E2E 说档建议',
-          evidence: [{ claim: '报价可见', query_id: mcpBody.meta.query_id }],
+          evidence: [{
+            claim: '报价可见',
+            query_id: mcpBody.meta.query_id,
+            result_digest: mcpBody.meta.result_digest,
+          }],
         },
-        headers: { Authorization: 'Bearer e2e-token' },
+        headers: {
+          Authorization: 'Bearer e2e-token',
+          'X-D2A-Session-ID': 'd2a_session_e2e_0123456789',
+        },
       },
     )
-    expect(proposalResp.status() === 200, `M6:Real proposal 200(实际 ${proposalResp.status()})`)
+    expect(proposalResp.status() === 200, `M5:Real proposal 200(实际 ${proposalResp.status()})`)
     const proposalBody = await proposalResp.json()
     expect(typeof proposalBody.governance === 'string' && proposalBody.governance.includes('未执行'),
-      'M6:Real proposal 含说档治理文案')
+      'M5:Real proposal 含说档治理文案')
 
     await page.goto(`http://localhost:${REAL_UI_PORT}/v1/mcp`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="mcp-lab-page"]').waitFor({ state: 'visible' })
     expect((await page.locator('[data-testid="mcp-scope-banner"]').count()) === 1,
-      'M6:Real MCP Lab 页可访问')
+      'M5:Real MCP Lab 页可访问')
 
     // 八页面冒烟
     for (const [path, testid] of [

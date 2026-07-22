@@ -25,12 +25,21 @@ from data2agent.console.contracts import (  # noqa: E402
     PipelineResponse,
 )
 from data2agent.mcp_server.core import QueryService  # noqa: E402
+from data2agent.mcp_server.evidence import EvidenceContext  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
 from data2agent.showroom.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
 TOKEN = "console-pub-secret"
+
+
+def _ctx() -> EvidenceContext:
+    return EvidenceContext(
+        principal="test:console-published",
+        session_id="test_session_console_published_0001",
+        channel="demo",
+    )
 
 
 def _sync(dirpath: Path) -> tuple[LandingStore, object]:
@@ -203,7 +212,9 @@ def test_console_and_mcp_share_dataset_version_after_publish(tmp_path):
         _client(landing).get("/api/overview").json())
     assert overview.versions.dataset == version
 
-    svc = QueryService(landing.db_path, ROOT / "templates", source=SOURCE)
+    svc = QueryService(
+        landing.db_path, ROOT / "templates", source=SOURCE, default_context=_ctx(),
+    )
     mcp = svc.query_objects("Customer", limit=1)
     assert mcp["meta"]["dataset_version"] == version
     assert mcp["meta"]["dataset_version"] == overview.versions.dataset

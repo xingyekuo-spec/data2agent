@@ -10,8 +10,17 @@ from data2agent.mcp_server.http import (
     RateLimiter,
     jsonl_audit_sink,
 )
+from data2agent.mcp_server.evidence import EvidenceContext
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _ctx() -> EvidenceContext:
+    return EvidenceContext(
+        principal="test:mcp-http",
+        session_id="test_session_mcp_http_0001",
+        channel="demo",
+    )
 
 
 def test_rate_limiter_sliding_window():
@@ -76,12 +85,20 @@ def test_audit_sink_records_tool_calls(tmp_path):
     assert result.published
 
     audit_file = tmp_path / "gateway_audit.jsonl"
-    svc = QueryService(landing.db_path, ROOT / "templates",
-                       audit_sink=jsonl_audit_sink(audit_file))
+    svc = QueryService(
+        landing.db_path,
+        ROOT / "templates",
+        audit_sink=jsonl_audit_sink(audit_file),
+        default_context=_ctx(),
+    )
     res = svc.query_objects("Customer", limit=1)
     svc.query_metrics("gross_margin_rate")
     svc.propose_action("Quotation", "quote_review", "结论",
-                       [{"claim": "x", "query_id": res["meta"]["query_id"]}])
+                       [{
+                           "claim": "x",
+                           "query_id": res["meta"]["query_id"],
+                           "result_digest": res["meta"]["result_digest"],
+                       }])
 
     records = [json.loads(line) for line in audit_file.read_text().splitlines()]
     assert [r["tool"] for r in records] == ["query_objects", "query_metrics", "propose_action"]

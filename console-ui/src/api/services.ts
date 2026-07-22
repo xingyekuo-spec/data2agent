@@ -293,6 +293,7 @@ export async function postRetry(body: RetryBody): Promise<ApiResult<components['
 export type McpToolResult = components['schemas']['McpToolResult']
 export type ProposalResponse = components['schemas']['ProposalResponse']
 export type ProposalRequest = components['schemas']['ProposalRequest']
+export type QueryEvidenceDetailResponse = components['schemas']['QueryEvidenceDetailResponse']
 export type McpLabErrorBody = components['schemas']['McpLabError']
 
 export interface McpLabApiError extends ApiError {
@@ -346,6 +347,48 @@ export async function postProposal(
   try {
     const { data, error, response } = await client.POST('/api/gateway/proposals', {
       body,
+      signal: init?.signal,
+    })
+    if (!response.ok) {
+      return { ok: false, error: mcpLabErrorFrom(response.status, error) }
+    }
+    if (data === undefined) {
+      return { ok: false, error: { kind: 'parse', message: '成功响应缺少数据', retriable: false } }
+    }
+    return { ok: true, data, response }
+  } catch (err) {
+    return { ok: false, error: toApiError(err) }
+  }
+}
+
+export async function getQueryEvidenceDetail(
+  queryId: string,
+  init?: { signal?: AbortSignal },
+): Promise<ApiResult<QueryEvidenceDetailResponse>> {
+  try {
+    const { data, error, response } = await client.GET('/api/gateway/queries/{query_id}', {
+      params: { path: { query_id: queryId } },
+      signal: init?.signal,
+    })
+    if (!response.ok) {
+      return { ok: false, error: mcpLabErrorFrom(response.status, error) }
+    }
+    if (data === undefined) {
+      return { ok: false, error: { kind: 'parse', message: '成功响应缺少数据', retriable: false } }
+    }
+    return { ok: true, data, response }
+  } catch (err) {
+    return { ok: false, error: toApiError(err) }
+  }
+}
+
+export async function getProposalDetail(
+  proposalId: string,
+  init?: { signal?: AbortSignal },
+): Promise<ApiResult<ProposalResponse>> {
+  try {
+    const { data, error, response } = await client.GET('/api/gateway/proposals/{proposal_id}', {
+      params: { path: { proposal_id: proposalId } },
       signal: init?.signal,
     })
     if (!response.ok) {

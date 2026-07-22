@@ -30,6 +30,7 @@ from data2agent.connect.sync import whitelist_from_pack
 from data2agent.console import observability as obs
 from data2agent.console.app import create_app
 from data2agent.mcp_server.core import QueryService
+from data2agent.mcp_server.evidence import EvidenceContext
 from data2agent.metamodel.dataset_publish_contract import make_build_table
 from data2agent.metamodel.loader import load_pack
 from data2agent.metamodel.schema import ObjectTemplate, Property, TemplatePack
@@ -39,6 +40,14 @@ from data2agent.showroom.seed import build, write_db
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
 TOKEN = "conc-secret"
+
+
+def _ctx(session_id: str = "test_session_publish_concurrency_0001") -> EvidenceContext:
+    return EvidenceContext(
+        principal="test:publish-concurrency",
+        session_id=session_id,
+        channel="demo",
+    )
 
 
 @pytest.fixture(scope="module")
@@ -181,7 +190,7 @@ def test_concurrent_readers_see_only_all_old_or_all_new(tmp_path, pack):
                 store.con.close()
 
     def reader_mcp() -> None:
-        svc = QueryService(db_path, ROOT / "templates", source=SOURCE)
+        svc = QueryService(db_path, ROOT / "templates", source=SOURCE, default_context=_ctx())
         while not stop.is_set():
             try:
                 cust = svc.query_objects("Customer", limit=5)
@@ -593,8 +602,14 @@ def test_dual_source_isolation_console_and_mcp(tmp_path):
     db_path = store.db_path
     store.con.close()
 
-    svc_a = QueryService(db_path, ROOT / "templates", source="src_a")
-    svc_b = QueryService(db_path, ROOT / "templates", source="src_b")
+    svc_a = QueryService(
+        db_path, ROOT / "templates", source="src_a",
+        default_context=_ctx("test_session_publish_src_a_0001"),
+    )
+    svc_b = QueryService(
+        db_path, ROOT / "templates", source="src_b",
+        default_context=_ctx("test_session_publish_src_b_0001"),
+    )
     ra = svc_a.query_objects("Customer", limit=10)
     rb = svc_b.query_objects("Customer", limit=10)
     assert {r["customer_code"] for r in ra["rows"]} == {"A1"}

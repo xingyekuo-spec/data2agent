@@ -13,6 +13,7 @@ import hashlib
 import importlib.metadata
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
@@ -27,9 +28,9 @@ import urllib.request
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Header, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
@@ -61,9 +62,17 @@ from ..mapping import parse_field_expr
 from ..metamodel.dataset_publish_contract import validate_build_table
 from ..metamodel.loader import load_pack
 from ..metamodel.versioning import object_layer_fully_published, parse_object_manifest
+from ..mcp_server.evidence import (
+    EVIDENCE_SCHEMA_VERSION,
+    EvidenceContext,
+    EvidenceStore,
+    GatewayAuditRecord,
+    canonical_json_dumps,
+    is_valid_digest,
+)
 from . import data_browser as br
 from . import observability as obs
-from .mcp_lab import mcp_lab_error_response, proposal_response_from_service
+from .mcp_lab import mcp_lab_error_response
 from .contracts import (
     DEFAULT_BREAKER_THRESHOLD,
     AccessAuditPage,
@@ -99,6 +108,7 @@ from .contracts import (
     PipelineResponse,
     ProposalRequest,
     ProposalResponse,
+    QueryEvidenceDetailResponse,
     QuarantineDetail,
     QuarantineGroup,
     QuarantineRecord,
@@ -134,6 +144,11 @@ _RESP_HTTP_ERROR = {
     },
     500: {"model": HttpError, "description": "未处理异常"},
 }
+
+_EVIDENCE_SESSION_RE = re.compile(r"^[A-Za-z0-9._~-]{16,128}$")
+_EVIDENCE_SESSION_HEADER = "X-D2A-Session-ID"
+_QUERY_ID_RE = re.compile(r"^qry_[0-9a-f]{24}$")
+_PROPOSAL_ID_RE = re.compile(r"^prp_[0-9a-f]{24}$")
 
 # PreviewError.reason_code → HTTP(§3.9);鉴权码由 endpoint 直接产出。
 _PREVIEW_HTTP_STATUS: dict[str, int] = {
@@ -805,19 +820,24 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 state["query_service_sig"] = sig
             return svc
 
-    def _mcp_in_process(tool: str, params: dict[str, Any]) -> dict:
+    def _mcp_in_process(
+        tool: str,
+        params: dict[str, Any],
+        *,
+        context: EvidenceContext | None = None,
+    ) -> dict:
         svc = get_query_service()
         if tool == "query_objects":
             allowed = {"object", "filters", "order_by", "desc", "limit"}
             unknown = sorted(set(params) - allowed)
             if unknown:
                 raise ValueError(f"未知参数 {unknown}")
-            return svc.query_objects(**params)
+            return svc.query_objects(**params, context=context)
         allowed = {"metric", "group_by", "limit"}
         unknown = sorted(set(params) - allowed)
         if unknown:
             raise ValueError(f"未知参数 {unknown}")
-        return svc.query_metrics(**params)
+        return svc.query_metrics(**params, context=context)
 
     def _mcp_http(tool: str, params: dict[str, Any]) -> dict:
         mcp_token = os.environ.get("D2A_MCP_TOKEN", "")
@@ -934,6 +954,266 @@ def create_app(landing: str | None = None, templates: str = "templates",
             headers=getattr(exc, "headers", None),
         )
 
+    def _invalid_session_response() -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content=McpLabError(
+                detail="缺少或非法的 MCP evidence session",
+                reason_code="invalid_session",
+                tool=None,
+                retryable=False,
+                error_id=None,
+            ).model_dump(),
+        )
+
+    def _require_evidence_session(session_id: str | None) -> str | JSONResponse:
+        if not session_id or not _EVIDENCE_SESSION_RE.fullmatch(session_id):
+            return _invalid_session_response()
+        return session_id
+
+    def _evidence_store_unavailable(*, tool: str | None) -> JSONResponse:
+        return JSONResponse(
+            status_code=500,
+            content=McpLabError(
+                detail="MCP 会话证据存储尚未接通",
+                reason_code="evidence_store_unavailable",
+                tool=tool,
+                retryable=False,
+                error_id=uuid.uuid4().hex[:12],
+            ).model_dump(),
+        )
+
+    def _console_evidence_context(session_id: str) -> EvidenceContext:
+        return EvidenceContext(
+            principal="console:configured",
+            session_id=session_id,
+            channel="console",
+        )
+
+    def _parse_evidence_json(raw: str, *, field: str) -> object:
+        try:
+            return json.loads(raw)
+        except Exception as exc:
+            raise ValueError(
+                f"evidence_integrity_failed: {field} JSON 无法解析"
+            ) from exc
+
+    def _require_query_id(query_id: str) -> None:
+        if not _QUERY_ID_RE.fullmatch(query_id):
+            raise ValueError("invalid_params: query_id 格式非法")
+
+    def _require_proposal_id(proposal_id: str) -> None:
+        if not _PROPOSAL_ID_RE.fullmatch(proposal_id):
+            raise ValueError("invalid_params: proposal_id 格式非法")
+
+    def _write_gateway_audit(
+        *,
+        context: EvidenceContext,
+        operation: str,
+        target: str,
+        outcome: str,
+        reason_code: str,
+        query_id: str | None = None,
+        proposal_id: str | None = None,
+        dataset_version: str | None = None,
+        result_digest: str | None = None,
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        store = LandingStore(state["landing"])
+        evidence = EvidenceStore(store)
+        try:
+            evidence.insert_audit(
+                GatewayAuditRecord(
+                    event_id=uuid.uuid4().hex[:24],
+                    created_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+                    principal=context.principal,
+                    session_id=context.session_id,
+                    channel=context.channel,
+                    source=default_source(),
+                    operation=operation,
+                    target=target,
+                    outcome=outcome,
+                    reason_code=reason_code,
+                    query_id=query_id,
+                    proposal_id=proposal_id,
+                    dataset_version=dataset_version,
+                    result_digest=result_digest,
+                    detail_json=canonical_json_dumps(detail or {}),
+                ),
+                commit=True,
+            )
+        except sqlite3.Error as exc:
+            raise ValueError("evidence_store_unavailable: gateway audit persist failed") from exc
+        finally:
+            store.con.close()
+
+    def _load_query_detail(
+        query_id: str,
+        *,
+        context: EvidenceContext,
+    ) -> QueryEvidenceDetailResponse:
+        _require_query_id(query_id)
+        store = LandingStore(state["landing"])
+        evidence = EvidenceStore(store)
+        try:
+            record = evidence.get_query(query_id)
+        except sqlite3.Error as exc:
+            raise ValueError("evidence_store_unavailable: query evidence read failed") from exc
+        finally:
+            store.con.close()
+        if record is None:
+            raise ValueError("evidence_not_found: query evidence 不存在")
+        if record.principal != context.principal:
+            raise ValueError("evidence_principal_mismatch: query evidence 属于其他主体")
+        if record.session_id != context.session_id:
+            raise ValueError("evidence_session_mismatch: query evidence 不属于当前会话")
+        try:
+            expires_at = datetime.fromisoformat(record.expires_at)
+        except ValueError as exc:
+            raise ValueError("evidence_integrity_failed: expires_at 非法") from exc
+        if expires_at <= datetime.now(expires_at.tzinfo):
+            raise ValueError("query_expired: query evidence 已过期")
+        if record.evidence_schema_version != EVIDENCE_SCHEMA_VERSION:
+            raise ValueError("evidence_integrity_failed: unsupported evidence schema version")
+        if not is_valid_digest(record.result_digest):
+            raise ValueError("evidence_integrity_failed: query evidence digest 非法")
+        detail = QueryEvidenceDetailResponse.model_validate(
+            {
+                "query_id": record.query_id,
+                "source": record.source,
+                "tool": record.tool,
+                "target": record.target,
+                "session_id": record.session_id,
+                "evidence_scope": "principal_session",
+                "normalized_query": _parse_evidence_json(
+                    record.normalized_query_json, field="normalized_query"
+                ),
+                "dataset_version": record.dataset_version,
+                "template_version": record.template_version,
+                "binding_hashes": _parse_evidence_json(
+                    record.binding_hashes_json, field="binding_hashes"
+                ),
+                "result_digest": record.result_digest,
+                "result_summary": _parse_evidence_json(
+                    record.result_summary_json, field="result_summary"
+                ),
+                "warnings": _parse_evidence_json(record.warnings_json, field="warnings"),
+                "row_count": record.row_count,
+                "created_at": record.created_at,
+                "expires_at": record.expires_at,
+            }
+        )
+        _write_gateway_audit(
+            context=context,
+            operation="get_query_evidence",
+            target=query_id,
+            outcome="ok",
+            reason_code="ok",
+            query_id=query_id,
+            dataset_version=record.dataset_version,
+            result_digest=record.result_digest,
+        )
+        return detail
+
+    def _load_proposal_detail(
+        proposal_id: str,
+        *,
+        context: EvidenceContext,
+    ) -> ProposalResponse:
+        _require_proposal_id(proposal_id)
+        store = LandingStore(state["landing"])
+        evidence = EvidenceStore(store)
+        try:
+            proposal = evidence.get_proposal(proposal_id)
+            snapshots = evidence.list_proposal_evidence(proposal_id)
+        except sqlite3.Error as exc:
+            raise ValueError("evidence_store_unavailable: proposal evidence read failed") from exc
+        finally:
+            store.con.close()
+        if proposal is None:
+            raise ValueError("evidence_not_found: proposal evidence 不存在")
+        if proposal.principal != context.principal:
+            raise ValueError("evidence_principal_mismatch: proposal evidence 属于其他主体")
+        if proposal.session_id != context.session_id:
+            raise ValueError("evidence_session_mismatch: proposal evidence 不属于当前会话")
+        if proposal.evidence_schema_version != EVIDENCE_SCHEMA_VERSION:
+            raise ValueError("evidence_integrity_failed: unsupported proposal schema version")
+        if not snapshots:
+            raise ValueError("evidence_integrity_failed: proposal 缺少 evidence snapshot")
+
+        caveats: list[str] = []
+        dataset_versions: set[str] = set()
+        rendered_evidence: list[dict[str, Any]] = []
+        for row in snapshots:
+            if not is_valid_digest(row.result_digest):
+                raise ValueError("evidence_integrity_failed: proposal snapshot digest 非法")
+            normalized_query = _parse_evidence_json(
+                row.normalized_query_json, field="proposal.normalized_query"
+            )
+            binding_hashes = _parse_evidence_json(
+                row.binding_hashes_json, field="proposal.binding_hashes"
+            )
+            result_summary = _parse_evidence_json(
+                row.result_summary_json, field="proposal.result_summary"
+            )
+            warnings = _parse_evidence_json(row.warnings_json, field="proposal.warnings")
+            if row.dataset_version:
+                dataset_versions.add(row.dataset_version)
+            caveats.extend(str(w) for w in warnings if w)
+            rendered_evidence.append(
+                {
+                    "claim": row.claim,
+                    "query": {
+                        "query_id": row.query_id,
+                        "source": proposal.source,
+                        "tool": row.query_tool,
+                        "target": row.query_target,
+                        "normalized_query": normalized_query,
+                        "dataset_version": row.dataset_version,
+                        "template_version": row.template_version,
+                        "binding_hashes": binding_hashes,
+                        "result_digest": row.result_digest,
+                        "result_summary": result_summary,
+                        "warnings": warnings,
+                        "created_at": row.query_created_at,
+                        "expires_at": None,
+                    },
+                }
+            )
+        if len(dataset_versions) > 1:
+            raise ValueError("dataset_version_mismatch: proposal evidence 混用多个数据集版本")
+        if dataset_versions and proposal.dataset_version not in dataset_versions:
+            raise ValueError("dataset_version_mismatch: proposal dataset_version 与 snapshot 不一致")
+
+        detail = ProposalResponse.model_validate(
+            {
+                "proposal_id": proposal.proposal_id,
+                "at": proposal.created_at,
+                "session_id": proposal.session_id,
+                "source": proposal.source,
+                "dataset_version": proposal.dataset_version,
+                "object": proposal.object,
+                "action": proposal.action,
+                "action_desc": proposal.action_desc,
+                "tier": proposal.tier,
+                "conclusion": proposal.conclusion,
+                "evidence": rendered_evidence,
+                "caveats": sorted({c for c in caveats if c}),
+                "governance": proposal.governance,
+            }
+        )
+        _write_gateway_audit(
+            context=context,
+            operation="get_proposal_evidence",
+            target=proposal_id,
+            outcome="ok",
+            reason_code="ok",
+            proposal_id=proposal_id,
+            dataset_version=proposal.dataset_version,
+            detail={"evidence_count": len(rendered_evidence)},
+        )
+        return detail
+
     def custom_openapi():
         if app.openapi_schema:
             return app.openapi_schema
@@ -989,6 +1269,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         schemas = components.setdefault("schemas", {})
         for model in (
             McpQueryMeta, McpLabError, McpObjectQueryResult, McpMetricsQueryResult,
+            QueryEvidenceDetailResponse, ProposalResponse,
         ):
             name = model.__name__
             if name in schemas:
@@ -1882,13 +2163,34 @@ def create_app(landing: str | None = None, templates: str = "templates",
             503: {"model": McpLabError, "description": "MCP 不可用"},
         },
     )
-    def debug_mcp_call(body: McpCallBody) -> dict | JSONResponse:
+    def debug_mcp_call(
+        body: McpCallBody,
+        x_d2a_session_id: Annotated[
+            str | None,
+            Header(
+                alias=_EVIDENCE_SESSION_HEADER,
+                description="M5 MCP evidence session header; required on gateway query/proposal APIs",
+            ),
+        ] = None,
+    ) -> dict | JSONResponse:
+        validated_session = _require_evidence_session(x_d2a_session_id)
+        if isinstance(validated_session, JSONResponse):
+            return validated_session
+        _ = validated_session
         if body.tool not in _MCP_TOOLS:
             raise HTTPException(400, f"工具 '{body.tool}' 不在白名单,可用:{sorted(_MCP_TOOLS)}")
         # model_dump 解开 JsonValue RootModel,避免 object=root='Customer' 一类参数污染
         params = body.model_dump().get("params") or {}
         try:
-            return _mcp_in_process(body.tool, params)
+            return _mcp_in_process(
+                body.tool,
+                params,
+                context=EvidenceContext(
+                    principal="console:configured",
+                    session_id=validated_session,
+                    channel="console",
+                ),
+            )
         except (ValueError, TypeError) as e:
             # 业务/参数错误直接映射;不回落到远端 HTTP(远端 query ID 无法被本进程 proposal 引用)
             return mcp_lab_error_response(e, tool=body.tool)
@@ -3333,8 +3635,20 @@ def create_app(landing: str | None = None, templates: str = "templates",
         },
         tags=["v0.2"],
     )
-    def gateway_proposals(body: ProposalRequest) -> ProposalResponse | JSONResponse:
-        """说档建议卡:复用进程内 QueryService,不创建 Run、不写业务表。"""
+    def gateway_proposals(
+        body: ProposalRequest,
+        x_d2a_session_id: Annotated[
+            str | None,
+            Header(
+                alias=_EVIDENCE_SESSION_HEADER,
+                description="M5 MCP evidence session header; required on gateway query/proposal APIs",
+            ),
+        ] = None,
+    ) -> ProposalResponse | JSONResponse:
+        """M5-T06:按 principal/session 校验已持久 query evidence,原子写 proposal snapshot。"""
+        validated_session = _require_evidence_session(x_d2a_session_id)
+        if isinstance(validated_session, JSONResponse):
+            return validated_session
         try:
             svc = get_query_service()
         except HTTPException as e:
@@ -3350,16 +3664,105 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     ).model_dump(),
                 )
             raise
-        evidence = [{"claim": e.claim, "query_id": e.query_id} for e in body.evidence]
+        evidence = [
+            {
+                "claim": item.claim,
+                "query_id": item.query_id,
+                "result_digest": item.result_digest,
+            }
+            for item in body.evidence
+        ]
         try:
             card = svc.propose_action(
-                body.object, body.action, body.conclusion, evidence)
-            return ProposalResponse.model_validate(proposal_response_from_service(card))
+                body.object,
+                body.action,
+                body.conclusion,
+                evidence,
+                context=_console_evidence_context(validated_session),
+            )
+            return ProposalResponse.model_validate(card)
         except ValueError as e:
             return mcp_lab_error_response(e, tool="propose_action")
         except Exception:
             return mcp_lab_error_response(
-                RuntimeError("proposal failed"), tool="propose_action")
+                RuntimeError("proposal failed"), tool="propose_action",
+            )
+
+    @api.get(
+        "/gateway/queries/{query_id}",
+        response_model=QueryEvidenceDetailResponse,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            403: {"model": McpLabError, "description": "query evidence 属于其他主体"},
+            404: {"model": McpLabError, "description": "query evidence 不存在"},
+            409: {"model": McpLabError, "description": "query 过期或证据冲突"},
+            422: {"model": McpLabError, "description": "session 或 query_id 非法"},
+            500: {"model": McpLabError, "description": "证据存储不可用"},
+        },
+        tags=["v0.3"],
+    )
+    def gateway_query_detail(
+        query_id: str,
+        x_d2a_session_id: Annotated[
+            str | None,
+            Header(
+                alias=_EVIDENCE_SESSION_HEADER,
+                description="M5 MCP evidence session header; required on gateway query/proposal APIs",
+            ),
+        ] = None,
+    ) -> QueryEvidenceDetailResponse | JSONResponse:
+        validated_session = _require_evidence_session(x_d2a_session_id)
+        if isinstance(validated_session, JSONResponse):
+            return validated_session
+        try:
+            return _load_query_detail(
+                query_id,
+                context=_console_evidence_context(validated_session),
+            )
+        except ValueError as e:
+            return mcp_lab_error_response(e, tool=None)
+        except Exception:
+            return mcp_lab_error_response(
+                RuntimeError("query detail failed"), tool=None,
+            )
+
+    @api.get(
+        "/gateway/proposals/{proposal_id}",
+        response_model=ProposalResponse,
+        responses={
+            401: _RESP_HTTP_ERROR[401],
+            403: {"model": McpLabError, "description": "proposal evidence 属于其他主体"},
+            404: {"model": McpLabError, "description": "proposal evidence 不存在"},
+            409: {"model": McpLabError, "description": "proposal evidence 冲突或完整性失败"},
+            422: {"model": McpLabError, "description": "session 或 proposal_id 非法"},
+            500: {"model": McpLabError, "description": "证据存储不可用"},
+        },
+        tags=["v0.3"],
+    )
+    def gateway_proposal_detail(
+        proposal_id: str,
+        x_d2a_session_id: Annotated[
+            str | None,
+            Header(
+                alias=_EVIDENCE_SESSION_HEADER,
+                description="M5 MCP evidence session header; required on gateway query/proposal APIs",
+            ),
+        ] = None,
+    ) -> ProposalResponse | JSONResponse:
+        validated_session = _require_evidence_session(x_d2a_session_id)
+        if isinstance(validated_session, JSONResponse):
+            return validated_session
+        try:
+            return _load_proposal_detail(
+                proposal_id,
+                context=_console_evidence_context(validated_session),
+            )
+        except ValueError as e:
+            return mcp_lab_error_response(e, tool=None)
+        except Exception:
+            return mcp_lab_error_response(
+                RuntimeError("proposal detail failed"), tool=None,
+            )
 
     app.include_router(api)
 

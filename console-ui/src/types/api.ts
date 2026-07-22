@@ -343,9 +343,43 @@ export interface paths {
         put?: never;
         /**
          * Gateway Proposals
-         * @description 说档建议卡:复用进程内 QueryService,不创建 Run、不写业务表。
+         * @description M5-T06:按 principal/session 校验已持久 query evidence,原子写 proposal snapshot。
          */
         post: operations["gateway_proposals_api_gateway_proposals_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/gateway/proposals/{proposal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gateway Proposal Detail */
+        get: operations["gateway_proposal_detail_api_gateway_proposals__proposal_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/gateway/queries/{query_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Gateway Query Detail */
+        get: operations["gateway_query_detail_api_gateway_queries__query_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1566,7 +1600,7 @@ export interface components {
              * Reason Code
              * @enum {string}
              */
-            reason_code: "invalid_params" | "unknown_target" | "not_materialized" | "not_published" | "query_expired" | "tier_forbidden" | "rate_limited" | "mcp_unavailable" | "execution_failed";
+            reason_code: "invalid_params" | "invalid_session" | "unknown_target" | "not_materialized" | "not_published" | "query_expired" | "evidence_not_found" | "evidence_principal_mismatch" | "evidence_session_mismatch" | "evidence_source_mismatch" | "dataset_version_mismatch" | "result_digest_mismatch" | "evidence_integrity_failed" | "tier_forbidden" | "rate_limited" | "mcp_unavailable" | "evidence_store_unavailable" | "execution_failed";
             /**
              * Retryable
              * @default false
@@ -1635,9 +1669,9 @@ export interface components {
         };
         /**
          * McpQueryMeta
-         * @description 查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。
+         * @description 查询公共元数据。M5 起升级为 principal+session 级 evidence 语义。
          *
-         *     M2 起附加实际读取的 dataset/template 版本与 binding_hashes(与 MCP 运行时一致)。
+         *     目录/未实现指标等不可引用结果保持 query/digest/summary/created/expires 为 null。
          */
         McpQueryMeta: {
             /**
@@ -1647,6 +1681,12 @@ export interface components {
             binding_hashes?: {
                 [key: string]: string;
             };
+            /**
+             * Created At
+             * @description query evidence 创建时间；目录/未引用结果为 null
+             * @default null
+             */
+            created_at: string | null;
             /**
              * Dataset Version
              * @description 查询实际读取的 published dataset_version;无 published 时为 null
@@ -1660,11 +1700,17 @@ export interface components {
             duration_ms: number;
             /**
              * Evidence Scope
-             * @description v0.2:query ID 仅在当前 Console 进程/配置签名内有效
-             * @default process
+             * @description M5:query evidence 以 principal + session 为隔离域
+             * @default principal_session
              * @constant
              */
-            evidence_scope: "process";
+            evidence_scope: "principal_session";
+            /**
+             * Expires At
+             * @description query evidence 引用有效期；目录/未引用结果为 null
+             * @default null
+             */
+            expires_at: string | null;
             /** Masked Fields */
             masked_fields?: string[];
             /**
@@ -1674,10 +1720,30 @@ export interface components {
              */
             query_id: string | null;
             /**
+             * Result Digest
+             * @description 脱敏 canonical result 的完整性摘要；不可引用结果为 null
+             * @default null
+             */
+            result_digest: string | null;
+            /**
+             * Result Summary
+             * @description 有界脱敏结果摘要；不提供任意历史完整结果下载
+             * @default null
+             */
+            result_summary: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /**
              * Row Count
              * @default null
              */
             row_count: number | null;
+            /**
+             * Session Id
+             * @description 同一 principal 下的 evidence session；目录/未引用结果为 null
+             * @default null
+             */
+            session_id: string | null;
             /**
              * Target
              * @description 对象名或指标名;目录查询可用空串
@@ -2275,27 +2341,62 @@ export interface components {
             claim: string;
             /** Query Id */
             query_id: string;
+            /** Result Digest */
+            result_digest: string;
         };
         /** ProposalQueryRef */
         ProposalQueryRef: {
+            /** Binding Hashes */
+            binding_hashes?: {
+                [key: string]: string;
+            };
             /**
-             * At
+             * Created At
              * Format: date-time
              * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
              */
-            at: string;
+            created_at: string;
+            /** Dataset Version */
+            dataset_version?: string | null;
+            /**
+             * Expires At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            expires_at?: string | null;
+            /** Normalized Query */
+            normalized_query?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
             /** Query Id */
             query_id: string;
+            /**
+             * Result Digest
+             * @default
+             */
+            result_digest: string;
+            /** Result Summary */
+            result_summary?: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /**
+             * Source
+             * @default
+             */
+            source: string;
             /** Target */
             target: string;
+            /** Template Version */
+            template_version?: string | null;
             /** Tool */
             tool: string;
+            /** Warnings */
+            warnings?: string[];
         };
         /**
          * ProposalRequest
          * @description 建议卡请求,语义与 MCP propose_action 一致:
          *
-         *     evidence 必须引用同会话已记录查询的 meta.query_id;不得凭空生成。
+         *     evidence 必须引用同会话已记录查询的 meta.query_id + result_digest;不得凭空生成。
          */
         ProposalRequest: {
             /** Action */
@@ -2323,6 +2424,8 @@ export interface components {
             caveats: string[];
             /** Conclusion */
             conclusion: string;
+            /** Dataset Version */
+            dataset_version?: string | null;
             /** Evidence */
             evidence: components["schemas"]["ProposalEvidence"][];
             /** Governance */
@@ -2331,6 +2434,10 @@ export interface components {
             object: string;
             /** Proposal Id */
             proposal_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Source */
+            source: string;
             /** Tier */
             tier: string;
         };
@@ -2452,6 +2559,62 @@ export interface components {
             reason: string;
             /** Source */
             source: string;
+            /** Warnings */
+            warnings?: string[];
+        };
+        /** QueryEvidenceDetailResponse */
+        QueryEvidenceDetailResponse: {
+            /** Binding Hashes */
+            binding_hashes?: {
+                [key: string]: string;
+            };
+            /**
+             * Created At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            created_at: string;
+            /** Dataset Version */
+            dataset_version?: string | null;
+            /**
+             * Evidence Scope
+             * @default principal_session
+             * @constant
+             */
+            evidence_scope: "principal_session";
+            /**
+             * Expires At
+             * Format: date-time
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            expires_at: string;
+            /** Normalized Query */
+            normalized_query: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Query Id */
+            query_id: string;
+            /** Result Digest */
+            result_digest: string;
+            /** Result Summary */
+            result_summary: {
+                [key: string]: components["schemas"]["JsonValue-Output"];
+            };
+            /** Row Count */
+            row_count?: number | null;
+            /** Session Id */
+            session_id: string;
+            /** Source */
+            source: string;
+            /** Target */
+            target: string;
+            /** Template Version */
+            template_version?: string | null;
+            /**
+             * Tool
+             * @enum {string}
+             */
+            tool: "query_objects" | "query_metrics";
             /** Warnings */
             warnings?: string[];
         };
@@ -4030,7 +4193,10 @@ export interface operations {
     debug_mcp_call_api_debug_mcp_call_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description M5 MCP evidence session header; required on gateway query/proposal APIs */
+                "X-D2A-Session-ID"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -4213,7 +4379,10 @@ export interface operations {
     gateway_proposals_api_gateway_proposals_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description M5 MCP evidence session header; required on gateway query/proposal APIs */
+                "X-D2A-Session-ID"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -4278,6 +4447,164 @@ export interface operations {
                 };
             };
             /** @description 执行失败 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+        };
+    };
+    gateway_proposal_detail_api_gateway_proposals__proposal_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description M5 MCP evidence session header; required on gateway query/proposal APIs */
+                "X-D2A-Session-ID"?: string | null;
+            };
+            path: {
+                proposal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProposalResponse"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description proposal evidence 属于其他主体 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description proposal evidence 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description proposal evidence 冲突或完整性失败 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description session 或 proposal_id 非法 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description 证据存储不可用 */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+        };
+    };
+    gateway_query_detail_api_gateway_queries__query_id__get: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description M5 MCP evidence session header; required on gateway query/proposal APIs */
+                "X-D2A-Session-ID"?: string | null;
+            };
+            path: {
+                query_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QueryEvidenceDetailResponse"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description query evidence 属于其他主体 */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description query evidence 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description query 过期或证据冲突 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description session 或 query_id 非法 */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+            /** @description 证据存储不可用 */
             500: {
                 headers: {
                     [name: string]: unknown;

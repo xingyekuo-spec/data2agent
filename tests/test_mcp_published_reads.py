@@ -15,6 +15,7 @@ from data2agent.connect.increment import incremental_sync, watermarks_from_pack
 from data2agent.connect.landing import LandingStore
 from data2agent.connect.sync import whitelist_from_pack
 from data2agent.mcp_server.core import MASK, QueryService
+from data2agent.mcp_server.evidence import EvidenceContext
 from data2agent.mcp_server.metrics_impl import registry
 from data2agent.metamodel.dataset_publish_contract import make_build_table
 from data2agent.metamodel.loader import load_pack
@@ -24,6 +25,14 @@ from data2agent.showroom.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
+
+
+def _ctx(session_id: str = "test_session_mcp_published_0001") -> EvidenceContext:
+    return EvidenceContext(
+        principal="test:mcp-published",
+        session_id=session_id,
+        channel="demo",
+    )
 
 
 def _sync_landing(dirpath: Path) -> tuple[LandingStore, object]:
@@ -125,7 +134,7 @@ def test_mcp_rejects_legacy_obj_without_published(tmp_path):
     )
     store.con.commit()
 
-    svc = QueryService(store.db_path, ROOT / "templates", source=SOURCE)
+    svc = QueryService(store.db_path, ROOT / "templates", source=SOURCE, default_context=_ctx())
     with pytest.raises(ValueError, match="not_published") as exc:
         svc.query_objects("Customer", limit=1)
     err = str(exc.value)
@@ -147,7 +156,7 @@ def test_query_execution_errors_do_not_leak_schema(tmp_path, monkeypatch):
         "_object_sql",
         lambda self, *a, **k: (f'SELECT 1 FROM "{leak}" LIMIT 1', []),
     )
-    svc = QueryService(db, ROOT / "templates", source=SOURCE)
+    svc = QueryService(db, ROOT / "templates", source=SOURCE, default_context=_ctx())
     with pytest.raises(ValueError, match="execution_failed") as exc:
         svc.query_objects("Customer", limit=1)
     err = str(exc.value)
@@ -162,7 +171,7 @@ def test_query_execution_errors_do_not_leak_schema(tmp_path, monkeypatch):
 
 def test_metric_uses_one_snapshot_for_all_dependencies(tmp_path):
     db = _publish(tmp_path)
-    svc = QueryService(db, ROOT / "templates", source=SOURCE)
+    svc = QueryService(db, ROOT / "templates", source=SOURCE, default_context=_ctx())
     impl = registry(SOURCE)["gross_margin_rate"]
     assert impl is not None
     assert impl.depends_on == frozenset(
@@ -192,7 +201,7 @@ def test_mcp_serves_frozen_template_after_failed_rebuild(tmp_path):
     assert first.published
     old_version = first.dataset_version
 
-    svc = QueryService(landing.db_path, templates, source=SOURCE)
+    svc = QueryService(landing.db_path, templates, source=SOURCE, default_context=_ctx())
     before = svc.query_objects("Customer", limit=3)
     assert before["meta"]["dataset_version"] == old_version
     assert before["meta"]["masked_fields"] == ["contact"]
@@ -237,7 +246,7 @@ def test_mcp_serves_object_removed_from_disk_template(tmp_path):
     assert result.published
     version = result.dataset_version
 
-    svc = QueryService(landing.db_path, ROOT / "templates", source=SOURCE)
+    svc = QueryService(landing.db_path, ROOT / "templates", source=SOURCE, default_context=_ctx())
     # 模拟升级后磁盘包不再声明 Customer(目录无此项),查询仍走冻结快照。
     svc.pack = svc.pack.model_copy(
         update={"objects": [o for o in svc.pack.objects if o.object != "Customer"]},
@@ -256,7 +265,7 @@ def test_mcp_serves_metric_removed_from_disk_template(tmp_path):
     assert result.published
     version = result.dataset_version
 
-    svc = QueryService(landing.db_path, ROOT / "templates", source=SOURCE)
+    svc = QueryService(landing.db_path, ROOT / "templates", source=SOURCE, default_context=_ctx())
     svc.pack = svc.pack.model_copy(
         update={
             "metrics": [m for m in svc.pack.metrics if m.metric != "gross_margin_rate"],
@@ -276,7 +285,7 @@ def test_query_meta_includes_version_and_binding_hashes(tmp_path):
     db = _publish(tmp_path)
     store = LandingStore(db)
     snap = resolve_published_snapshot(store, SOURCE)
-    svc = QueryService(db, ROOT / "templates", source=SOURCE)
+    svc = QueryService(db, ROOT / "templates", source=SOURCE, default_context=_ctx())
 
     obj = svc.query_objects("Customer", limit=2)
     assert obj["meta"]["dataset_version"] == snap.dataset_version
@@ -319,8 +328,14 @@ def test_mcp_isolates_sources_with_same_object_names(tmp_path):
 
     # Disk catalog only needs Customer; QueryService still loads real pack,
     # but published snapshot carries the minimal frozen template used for reads.
-    svc_a = QueryService(store.db_path, ROOT / "templates", source="src_a")
-    svc_b = QueryService(store.db_path, ROOT / "templates", source="src_b")
+    svc_a = QueryService(
+        store.db_path, ROOT / "templates", source="src_a",
+        default_context=_ctx("test_session_mcp_src_a_0001"),
+    )
+    svc_b = QueryService(
+        store.db_path, ROOT / "templates", source="src_b",
+        default_context=_ctx("test_session_mcp_src_b_0001"),
+    )
 
     # Snapshot packs lack digiwin bindings; object must still resolve via frozen pack.
     # Use a templates root that includes Customer so catalog/unknown checks pass.

@@ -6,12 +6,15 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import type { ApiError } from '@/api/errors'
 import {
+  getProposalDetail,
+  getQueryEvidenceDetail,
   postMcpCall,
   postProposal,
   type McpLabApiError,
   type McpToolResult,
   type ProposalRequest,
   type ProposalResponse,
+  type QueryEvidenceDetailResponse,
 } from '@/api/services'
 import type { components } from '@/types/api'
 import type { RequestState } from '@/types/state'
@@ -22,8 +25,13 @@ export interface QueryHistoryItem {
   query_id: string
   tool: 'query_objects' | 'query_metrics'
   target: string
-  at: string
-  result: McpToolResult
+  created_at: string | null
+  expires_at: string | null
+  session_id: string | null
+  dataset_version: string | null
+  result_digest: string
+  result_summary: Record<string, unknown> | null
+  warnings: string[]
 }
 
 const HISTORY_CAP = 50
@@ -41,6 +49,8 @@ export const useMcpLabStore = defineStore('mcpLab', () => {
   const objectQuery = ref<RequestState<McpToolResult>>({ status: 'idle' })
   const metricsQuery = ref<RequestState<McpToolResult>>({ status: 'idle' })
   const proposal = ref<RequestState<ProposalResponse>>({ status: 'idle' })
+  const queryDetail = ref<RequestState<QueryEvidenceDetailResponse>>({ status: 'idle' })
+  const proposalDetail = ref<RequestState<ProposalResponse>>({ status: 'idle' })
   const objectRefreshError = ref<McpLabApiError | ApiError | null>(null)
   const metricsRefreshError = ref<McpLabApiError | ApiError | null>(null)
   const proposalRefreshError = ref<McpLabApiError | ApiError | null>(null)
@@ -53,20 +63,29 @@ export const useMcpLabStore = defineStore('mcpLab', () => {
   let objectAbort: AbortController | null = null
   let metricsAbort: AbortController | null = null
   let proposalAbort: AbortController | null = null
+  let queryDetailGen = 0
+  let proposalDetailGen = 0
+  let queryDetailAbort: AbortController | null = null
+  let proposalDetailAbort: AbortController | null = null
 
   const citableHistory = computed(() =>
-    history.value.filter((h) => Boolean(h.query_id)),
+    history.value.filter((h) => Boolean(h.query_id) && Boolean(h.result_digest)),
   )
 
   function rememberSuccess(result: McpToolResult): void {
     const meta = metaOf(result)
-    if (!meta?.query_id) return
+    if (!meta?.query_id || !meta.result_digest) return
     const item: QueryHistoryItem = {
       query_id: meta.query_id,
       tool: meta.tool,
       target: meta.target,
-      at: new Date().toISOString(),
-      result,
+      created_at: meta.created_at ?? null,
+      expires_at: meta.expires_at ?? null,
+      session_id: meta.session_id ?? null,
+      dataset_version: meta.dataset_version ?? null,
+      result_digest: meta.result_digest,
+      result_summary: (meta.result_summary as Record<string, unknown> | null | undefined) ?? null,
+      warnings: [...(meta.warnings ?? [])],
     }
     history.value = [item, ...history.value.filter((h) => h.query_id !== item.query_id)]
       .slice(0, HISTORY_CAP)
@@ -76,6 +95,39 @@ export const useMcpLabStore = defineStore('mcpLab', () => {
   function clearHistory(reason = '配置或进程边界已变化,请重新查询后再引用 evidence'): void {
     history.value = []
     historyClearedHint.value = reason
+  }
+
+  /**
+   * 登出或认证失效时销毁当前标签页的 evidence 视图。
+   * 不能只清浏览器 header：内存中的 query/proposal snapshot 也属于旧会话，
+   * 否则重新登录后页面会继续展示并可能引用旧 evidence。
+   */
+  function resetForSessionBoundary(): void {
+    objectGen += 1
+    metricsGen += 1
+    proposalGen += 1
+    queryDetailGen += 1
+    proposalDetailGen += 1
+    objectAbort?.abort()
+    metricsAbort?.abort()
+    proposalAbort?.abort()
+    queryDetailAbort?.abort()
+    proposalDetailAbort?.abort()
+    objectAbort = null
+    metricsAbort = null
+    proposalAbort = null
+    queryDetailAbort = null
+    proposalDetailAbort = null
+    objectQuery.value = { status: 'idle' }
+    metricsQuery.value = { status: 'idle' }
+    proposal.value = { status: 'idle' }
+    queryDetail.value = { status: 'idle' }
+    proposalDetail.value = { status: 'idle' }
+    objectRefreshError.value = null
+    metricsRefreshError.value = null
+    proposalRefreshError.value = null
+    history.value = []
+    historyClearedHint.value = null
   }
 
   async function runObjectQuery(params: Record<string, unknown>): Promise<void> {
@@ -153,10 +205,40 @@ export const useMcpLabStore = defineStore('mcpLab', () => {
     return history.value.find((h) => h.query_id === queryId)
   }
 
+  async function loadQueryDetail(queryId: string): Promise<void> {
+    queryDetailAbort?.abort()
+    queryDetailAbort = new AbortController()
+    const gen = ++queryDetailGen
+    queryDetail.value = { status: 'loading' }
+    const result = await getQueryEvidenceDetail(queryId, { signal: queryDetailAbort.signal })
+    if (gen !== queryDetailGen) return
+    if (result.ok) {
+      queryDetail.value = { status: 'success', data: result.data }
+    } else {
+      queryDetail.value = { status: 'error', error: result.error }
+    }
+  }
+
+  async function loadProposalDetail(proposalId: string): Promise<void> {
+    proposalDetailAbort?.abort()
+    proposalDetailAbort = new AbortController()
+    const gen = ++proposalDetailGen
+    proposalDetail.value = { status: 'loading' }
+    const result = await getProposalDetail(proposalId, { signal: proposalDetailAbort.signal })
+    if (gen !== proposalDetailGen) return
+    if (result.ok) {
+      proposalDetail.value = { status: 'success', data: result.data }
+    } else {
+      proposalDetail.value = { status: 'error', error: result.error }
+    }
+  }
+
   return {
     objectQuery,
     metricsQuery,
     proposal,
+    queryDetail,
+    proposalDetail,
     objectRefreshError,
     metricsRefreshError,
     proposalRefreshError,
@@ -166,7 +248,10 @@ export const useMcpLabStore = defineStore('mcpLab', () => {
     runObjectQuery,
     runMetricsQuery,
     runProposal,
+    loadQueryDetail,
+    loadProposalDetail,
     clearHistory,
+    resetForSessionBoundary,
     findHistory,
   }
 })

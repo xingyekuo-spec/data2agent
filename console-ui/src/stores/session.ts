@@ -6,7 +6,14 @@
  */
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { clearToken, getToken, setToken, setUnauthorizedHandler } from '@/api/client'
+import {
+  clearEvidenceSessionId,
+  clearToken,
+  getToken,
+  setToken,
+  setUnauthorizedHandler,
+} from '@/api/client'
+import { useMcpLabStore } from '@/stores/mcpLab'
 
 export const useSessionStore = defineStore('session', () => {
   const authenticated = ref(getToken() !== null)
@@ -19,8 +26,14 @@ export const useSessionStore = defineStore('session', () => {
     authRequired.value = false
   }
 
+  function clearEvidenceBoundary(): void {
+    clearEvidenceSessionId()
+    useMcpLabStore().resetForSessionBoundary()
+  }
+
   function logout(): void {
     clearToken()
+    clearEvidenceBoundary()
     authenticated.value = false
   }
 
@@ -33,8 +46,9 @@ export const useSessionStore = defineStore('session', () => {
     authRequired.value = false
   }
 
-  // client 在 401 时已清 Token;这里只负责进入认证提示状态
+  // client 在 401 时已清 Token;这里清理同一标签页的 evidence 边界并进入认证提示。
   setUnauthorizedHandler(() => {
+    clearEvidenceBoundary()
     authenticated.value = false
     authRequired.value = true
   })

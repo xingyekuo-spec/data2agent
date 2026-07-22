@@ -7,14 +7,18 @@ import LoadingState from '@/components/shared/LoadingState.vue'
 import { useMcpLabStore, type QueryHistoryItem } from '@/stores/mcpLab'
 import type { components } from '@/types/api'
 import type { McpLabApiError } from '@/api/services'
+import { ensureEvidenceSessionId } from '@/api/client'
 
 type McpQueryMeta = components['schemas']['McpQueryMeta']
+type ProposalEvidence = components['schemas']['ProposalEvidence']
 
 const store = useMcpLabStore()
 const {
   objectQuery,
   metricsQuery,
   proposal,
+  queryDetail,
+  proposalDetail,
   objectRefreshError,
   metricsRefreshError,
   proposalRefreshError,
@@ -26,6 +30,10 @@ const tab = ref<'objects' | 'metrics' | 'proposal'>('objects')
 const showObjectRawJson = ref(false)
 const showMetricsRawJson = ref(false)
 const expandedEvidence = ref<string | null>(null)
+const detailForm = reactive({
+  query_id: '',
+  proposal_id: '',
+})
 
 const objectForm = reactive({
   object: 'Customer',
@@ -48,6 +56,8 @@ const proposalForm = reactive({
   evidence: [{ claim: '', query_id: '' }] as { claim: string; query_id: string }[],
 })
 
+const evidenceSessionId = computed(() => ensureEvidenceSessionId())
+
 const activeResult = computed(() => {
   if (tab.value === 'metrics') return metricsQuery.value
   if (tab.value === 'objects') return objectQuery.value
@@ -67,18 +77,52 @@ function rowsOf(data: Record<string, unknown> | null | undefined): Record<string
 
 function reasonLabel(err: McpLabApiError | null | undefined): string {
   if (!err || !('reason_code' in err) || !err.reason_code) return ''
-    const map: Record<string, string> = {
+  const map: Record<string, string> = {
     invalid_params: '参数错误',
+    invalid_session: '会话无效',
     unknown_target: '未知目标',
     not_materialized: '尚未物化',
     not_published: '未发布',
     query_expired: 'query 已失效',
+    evidence_not_found: '证据不存在',
+    evidence_principal_mismatch: '主体不匹配',
+    evidence_session_mismatch: '会话不匹配',
+    evidence_source_mismatch: '来源不匹配',
+    dataset_version_mismatch: '数据集版本不匹配',
+    result_digest_mismatch: '摘要不匹配',
+    evidence_integrity_failed: '证据损坏',
     tier_forbidden: '档位禁止',
     rate_limited: '限流',
     mcp_unavailable: 'MCP 不可用',
+    evidence_store_unavailable: '证据存储不可用',
     execution_failed: '执行失败',
   }
   return map[err.reason_code] ?? err.reason_code
+}
+
+function shortValue(value: string | null | undefined, keep = 10): string {
+  if (!value) return '—'
+  return value.length <= keep * 2 ? value : `${value.slice(0, keep)}…${value.slice(-keep)}`
+}
+
+function prettyJson(value: unknown): string {
+  return JSON.stringify(value, null, 2)
+}
+
+function evidenceSnapshot(ev: ProposalEvidence): Record<string, unknown> {
+  return {
+    query_id: ev.query.query_id,
+    tool: ev.query.tool,
+    target: ev.query.target,
+    source: ev.query.source,
+    dataset_version: ev.query.dataset_version ?? null,
+    created_at: ev.query.created_at,
+    expires_at: ev.query.expires_at ?? null,
+    result_digest: ev.query.result_digest,
+    result_summary: ev.query.result_summary ?? {},
+    warnings: ev.query.warnings ?? [],
+    normalized_query: ev.query.normalized_query ?? {},
+  }
 }
 
 async function onRunObjects(): Promise<void> {
@@ -124,14 +168,38 @@ function removeEvidenceRow(idx: number): void {
 }
 
 async function onRunProposal(): Promise<void> {
+  const evidence = []
+  for (const row of proposalForm.evidence) {
+    const claim = row.claim.trim()
+    const queryId = row.query_id.trim()
+    if (!claim || !queryId) {
+      proposalRefreshError.value = {
+        kind: 'parse',
+        message: 'evidence 需要同时填写 claim 和 query_id',
+        retriable: false,
+      }
+      return
+    }
+    const history = store.findHistory(queryId)
+    if (!history?.result_digest) {
+      proposalRefreshError.value = {
+        kind: 'parse',
+        message: '所选 query 缺少 result_digest，请重新查询后再引用',
+        retriable: false,
+      }
+      return
+    }
+    evidence.push({
+      claim,
+      query_id: queryId,
+      result_digest: history.result_digest,
+    })
+  }
   await store.runProposal({
     object: proposalForm.object,
     action: proposalForm.action,
     conclusion: proposalForm.conclusion,
-    evidence: proposalForm.evidence.map((e) => ({
-      claim: e.claim,
-      query_id: e.query_id,
-    })),
+    evidence,
   })
 }
 
@@ -142,14 +210,24 @@ function toggleEvidence(queryId: string): void {
 function historyFor(queryId: string): QueryHistoryItem | undefined {
   return store.findHistory(queryId)
 }
+
+async function onLoadQueryDetail(): Promise<void> {
+  await store.loadQueryDetail(detailForm.query_id.trim())
+}
+
+async function onLoadProposalDetail(): Promise<void> {
+  await store.loadProposalDetail(detailForm.proposal_id.trim())
+}
 </script>
 
 <template>
   <section class="mcp-lab" data-testid="mcp-lab-page">
     <div class="d2a-card scope-banner" data-testid="mcp-scope-banner">
       <p>
-        query ID 仅在当前 Console 进程内有效；服务重启或配置变更后需重新查询。
-        建议卡为「说」档结构化输出，不会执行 ERP 写回或其他「做」档动作。
+        query evidence 以当前标签页 session 隔离；建议卡为「说」档结构化输出，不会执行 ERP 写回或其他「做」档动作。
+      </p>
+      <p class="scope-banner__hint" data-testid="evidence-session-id">
+        session={{ evidenceSessionId ?? '尚未生成' }}
       </p>
       <p v-if="historyClearedHint" class="scope-banner__hint" data-testid="history-cleared-hint">
         {{ historyClearedHint }}
@@ -193,6 +271,9 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
           <div v-else-if="objectQuery.status === 'success'" data-testid="object-result">
             <div class="result-meta" data-testid="object-result-meta">
               <span>query_id={{ metaOf(objectQuery.data)?.query_id ?? 'null' }}</span>
+              <span>scope={{ metaOf(objectQuery.data)?.evidence_scope ?? '—' }}</span>
+              <span>session={{ shortValue(metaOf(objectQuery.data)?.session_id) }}</span>
+              <span>digest={{ shortValue(metaOf(objectQuery.data)?.result_digest) }}</span>
               <span>耗时 {{ metaOf(objectQuery.data)?.duration_ms ?? '-' }} ms</span>
               <span>行数 {{ metaOf(objectQuery.data)?.row_count ?? rowsOf(objectQuery.data).length }}</span>
               <span data-testid="object-dataset-version">
@@ -254,6 +335,9 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
           <div v-else-if="metricsQuery.status === 'success'" data-testid="metrics-result">
             <div class="result-meta" data-testid="metrics-result-meta">
               <span>query_id={{ metaOf(metricsQuery.data)?.query_id ?? 'null' }}</span>
+              <span>scope={{ metaOf(metricsQuery.data)?.evidence_scope ?? '—' }}</span>
+              <span>session={{ shortValue(metaOf(metricsQuery.data)?.session_id) }}</span>
+              <span>digest={{ shortValue(metaOf(metricsQuery.data)?.result_digest) }}</span>
               <span>耗时 {{ metaOf(metricsQuery.data)?.duration_ms ?? '-' }} ms</span>
               <span>行数 {{ metaOf(metricsQuery.data)?.row_count ?? rowsOf(metricsQuery.data).length }}</span>
               <span data-testid="metrics-dataset-version">
@@ -304,12 +388,15 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
               <label>claim <input v-model="row.claim" :data-testid="`evidence-claim-${idx}`" /></label>
               <label>query_id
                 <select v-model="row.query_id" :data-testid="`evidence-query-${idx}`">
-                  <option value="">选择当前进程内成功查询</option>
+                  <option value="">选择当前会话中的持久 query evidence</option>
                   <option v-for="h in citableHistory" :key="h.query_id" :value="h.query_id">
-                    {{ h.query_id }} · {{ h.tool }} · {{ h.target }}
+                    {{ h.query_id }} · {{ h.tool }} · {{ h.target }} · {{ shortValue(h.result_digest, 6) }}
                   </option>
                 </select>
               </label>
+              <p v-if="historyFor(row.query_id)?.result_digest" class="muted">
+                digest={{ shortValue(historyFor(row.query_id)?.result_digest, 10) }}
+              </p>
               <el-button size="small" @click="removeEvidenceRow(idx)">删除</el-button>
             </div>
             <el-button size="small" data-testid="evidence-add" @click="addEvidenceRow">添加 evidence</el-button>
@@ -328,6 +415,10 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
           <div v-else-if="proposal.status === 'success'" class="proposal-card" data-testid="proposal-result">
             <h3>{{ proposal.data.conclusion }}</h3>
             <p>档位: {{ proposal.data.tier }} · {{ proposal.data.action_desc }}</p>
+            <p data-testid="proposal-summary-meta">
+              proposal_id={{ proposal.data.proposal_id }} · session={{ shortValue(proposal.data.session_id) }} ·
+              dataset={{ proposal.data.dataset_version ?? '—' }}
+            </p>
             <p data-testid="proposal-governance">{{ proposal.data.governance }}</p>
             <ul v-if="proposal.data.caveats?.length" data-testid="proposal-caveats">
               <li v-for="c in proposal.data.caveats" :key="c">{{ c }}</li>
@@ -339,20 +430,47 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
               data-testid="proposal-evidence-item"
             >
               <button type="button" @click="toggleEvidence(ev.query.query_id)">
-                {{ ev.claim }} ({{ ev.query.query_id }})
+                {{ ev.claim }} ({{ ev.query.query_id }}) · {{ shortValue(ev.query.result_digest, 8) }}
               </button>
               <div v-if="expandedEvidence === ev.query.query_id" data-testid="evidence-expand">
-                <template v-if="historyFor(ev.query.query_id)">
-                  <pre>{{ JSON.stringify(historyFor(ev.query.query_id)?.result, null, 2) }}</pre>
-                </template>
-                <p v-else class="muted" data-testid="evidence-missing">
-                  当前内存中没有该 query 的结果摘要；query ID 仅进程内有效，请重新查询。
-                </p>
+                <pre>{{ prettyJson(evidenceSnapshot(ev)) }}</pre>
               </div>
             </div>
           </div>
         </el-tab-pane>
       </el-tabs>
+    </div>
+
+    <div class="d2a-card" data-testid="evidence-detail-panel">
+      <h3>持久 Evidence 详情</h3>
+      <div class="form-grid">
+        <label>query_id
+          <input v-model="detailForm.query_id" data-testid="detail-query-id" />
+        </label>
+        <el-button size="small" data-testid="detail-query-load" @click="onLoadQueryDetail">读取 Query 详情</el-button>
+        <LoadingState v-if="queryDetail.status === 'loading'" />
+        <ErrorState
+          v-else-if="queryDetail.status === 'error'"
+          :error="queryDetail.error"
+          @retry="onLoadQueryDetail"
+        />
+        <pre v-else-if="queryDetail.status === 'success'" data-testid="detail-query-result">
+{{ prettyJson(queryDetail.data) }}</pre>
+      </div>
+      <div class="form-grid detail-panel">
+        <label>proposal_id
+          <input v-model="detailForm.proposal_id" data-testid="detail-proposal-id" />
+        </label>
+        <el-button size="small" data-testid="detail-proposal-load" @click="onLoadProposalDetail">读取 Proposal 详情</el-button>
+        <LoadingState v-if="proposalDetail.status === 'loading'" />
+        <ErrorState
+          v-else-if="proposalDetail.status === 'error'"
+          :error="proposalDetail.error"
+          @retry="onLoadProposalDetail"
+        />
+        <pre v-else-if="proposalDetail.status === 'success'" data-testid="detail-proposal-result">
+{{ prettyJson(proposalDetail.data) }}</pre>
+      </div>
     </div>
 
     <!-- keep unused activeResult referenced for future shared pane -->
@@ -418,6 +536,9 @@ function historyFor(queryId: string): QueryHistoryItem | undefined {
   gap: 8px;
   padding: 8px;
   border: 1px solid var(--el-border-color-lighter);
+}
+.detail-panel {
+  margin-top: 16px;
 }
 .proposal-card h3 {
   margin: 0 0 8px;

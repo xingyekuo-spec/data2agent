@@ -1846,6 +1846,7 @@
         "type": "object"
       },
       "McpCallBody": {
+        "additionalProperties": false,
         "properties": {
           "params": {
             "additionalProperties": {
@@ -1890,13 +1891,22 @@
           "reason_code": {
             "enum": [
               "invalid_params",
+              "invalid_session",
               "unknown_target",
               "not_materialized",
               "not_published",
               "query_expired",
+              "evidence_not_found",
+              "evidence_principal_mismatch",
+              "evidence_session_mismatch",
+              "evidence_source_mismatch",
+              "dataset_version_mismatch",
+              "result_digest_mismatch",
+              "evidence_integrity_failed",
               "tier_forbidden",
               "rate_limited",
               "mcp_unavailable",
+              "evidence_store_unavailable",
               "execution_failed"
             ],
             "title": "Reason Code",
@@ -2050,7 +2060,7 @@
         "type": "object"
       },
       "McpQueryMeta": {
-        "description": "查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。\n\nM2 起附加实际读取的 dataset/template 版本与 binding_hashes(与 MCP 运行时一致)。",
+        "description": "查询公共元数据。M5 起升级为 principal+session 级 evidence 语义。\n\n目录/未实现指标等不可引用结果保持 query/digest/summary/created/expires 为 null。",
         "properties": {
           "binding_hashes": {
             "additionalProperties": {
@@ -2059,6 +2069,20 @@
             "description": "查询涉及对象的 binding_hash 映射(object → hash)",
             "title": "Binding Hashes",
             "type": "object"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "query evidence 创建时间；目录/未引用结果为 null",
+            "title": "Created At"
           },
           "dataset_version": {
             "anyOf": [
@@ -2080,11 +2104,25 @@
             "type": "integer"
           },
           "evidence_scope": {
-            "const": "process",
-            "default": "process",
-            "description": "v0.2:query ID 仅在当前 Console 进程/配置签名内有效",
+            "const": "principal_session",
+            "default": "principal_session",
+            "description": "M5:query evidence 以 principal + session 为隔离域",
             "title": "Evidence Scope",
             "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "query evidence 引用有效期；目录/未引用结果为 null",
+            "title": "Expires At"
           },
           "masked_fields": {
             "items": {
@@ -2106,6 +2144,35 @@
             "description": "可被建议卡引用的查询 ID;目录查询或无可引用结果时为 null",
             "title": "Query Id"
           },
+          "result_digest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "脱敏 canonical result 的完整性摘要；不可引用结果为 null",
+            "title": "Result Digest"
+          },
+          "result_summary": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "有界脱敏结果摘要；不提供任意历史完整结果下载",
+            "title": "Result Summary"
+          },
           "row_count": {
             "anyOf": [
               {
@@ -2117,6 +2184,19 @@
             ],
             "default": null,
             "title": "Row Count"
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "同一 principal 下的 evidence session；目录/未引用结果为 null",
+            "title": "Session Id"
           },
           "target": {
             "description": "对象名或指标名;目录查询可用空串",
@@ -3613,6 +3693,7 @@
         "type": "object"
       },
       "ProposalEvidence": {
+        "additionalProperties": false,
         "properties": {
           "claim": {
             "title": "Claim",
@@ -3630,6 +3711,7 @@
         "type": "object"
       },
       "ProposalEvidenceInput": {
+        "additionalProperties": false,
         "properties": {
           "claim": {
             "minLength": 1,
@@ -3640,47 +3722,128 @@
             "minLength": 1,
             "title": "Query Id",
             "type": "string"
+          },
+          "result_digest": {
+            "minLength": 1,
+            "title": "Result Digest",
+            "type": "string"
           }
         },
         "required": [
           "claim",
-          "query_id"
+          "query_id",
+          "result_digest"
         ],
         "title": "ProposalEvidenceInput",
         "type": "object"
       },
       "ProposalQueryRef": {
+        "additionalProperties": false,
         "properties": {
-          "at": {
+          "binding_hashes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Binding Hashes",
+            "type": "object"
+          },
+          "created_at": {
             "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
             "format": "date-time",
-            "title": "At",
+            "title": "Created At",
             "type": "string"
+          },
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Version"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Expires At"
+          },
+          "normalized_query": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "title": "Normalized Query",
+            "type": "object"
           },
           "query_id": {
             "title": "Query Id",
+            "type": "string"
+          },
+          "result_digest": {
+            "default": "",
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "result_summary": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "title": "Result Summary",
+            "type": "object"
+          },
+          "source": {
+            "default": "",
+            "title": "Source",
             "type": "string"
           },
           "target": {
             "title": "Target",
             "type": "string"
           },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Version"
+          },
           "tool": {
             "title": "Tool",
             "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
           "query_id",
           "tool",
           "target",
-          "at"
+          "created_at"
         ],
         "title": "ProposalQueryRef",
         "type": "object"
       },
       "ProposalRequest": {
-        "description": "建议卡请求,语义与 MCP propose_action 一致:\n\nevidence 必须引用同会话已记录查询的 meta.query_id;不得凭空生成。",
+        "additionalProperties": false,
+        "description": "建议卡请求,语义与 MCP propose_action 一致:\n\nevidence 必须引用同会话已记录查询的 meta.query_id + result_digest;不得凭空生成。",
         "properties": {
           "action": {
             "title": "Action",
@@ -3714,6 +3877,7 @@
         "type": "object"
       },
       "ProposalResponse": {
+        "additionalProperties": false,
         "properties": {
           "action": {
             "title": "Action",
@@ -3740,6 +3904,17 @@
             "title": "Conclusion",
             "type": "string"
           },
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Version"
+          },
           "evidence": {
             "items": {
               "$ref": "#/components/schemas/ProposalEvidence"
@@ -3759,6 +3934,14 @@
             "title": "Proposal Id",
             "type": "string"
           },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
           "tier": {
             "title": "Tier",
             "type": "string"
@@ -3767,6 +3950,8 @@
         "required": [
           "proposal_id",
           "at",
+          "session_id",
+          "source",
           "object",
           "action",
           "action_desc",
@@ -4148,6 +4333,132 @@
           "created_at"
         ],
         "title": "QuarantineRecord",
+        "type": "object"
+      },
+      "QueryEvidenceDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_hashes": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Binding Hashes",
+            "type": "object"
+          },
+          "created_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dataset_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Version"
+          },
+          "evidence_scope": {
+            "const": "principal_session",
+            "default": "principal_session",
+            "title": "Evidence Scope",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "normalized_query": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "title": "Normalized Query",
+            "type": "object"
+          },
+          "query_id": {
+            "title": "Query Id",
+            "type": "string"
+          },
+          "result_digest": {
+            "title": "Result Digest",
+            "type": "string"
+          },
+          "result_summary": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue-Output"
+            },
+            "title": "Result Summary",
+            "type": "object"
+          },
+          "row_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Row Count"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "template_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Template Version"
+          },
+          "tool": {
+            "enum": [
+              "query_objects",
+              "query_metrics"
+            ],
+            "title": "Tool",
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "query_id",
+          "source",
+          "tool",
+          "target",
+          "session_id",
+          "normalized_query",
+          "result_digest",
+          "result_summary",
+          "created_at",
+          "expires_at"
+        ],
+        "title": "QueryEvidenceDetailResponse",
         "type": "object"
       },
       "RawDataPageResponse": {
@@ -7450,6 +7761,26 @@
     "/api/debug/mcp-call": {
       "post": {
         "operationId": "debug_mcp_call_api_debug_mcp_call_post",
+        "parameters": [
+          {
+            "description": "M5 MCP evidence session header; required on gateway query/proposal APIs",
+            "in": "header",
+            "name": "X-D2A-Session-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "M5 MCP evidence session header; required on gateway query/proposal APIs",
+              "title": "X-D2A-Session-Id"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -7688,8 +8019,28 @@
     },
     "/api/gateway/proposals": {
       "post": {
-        "description": "说档建议卡:复用进程内 QueryService,不创建 Run、不写业务表。",
+        "description": "M5-T06:按 principal/session 校验已持久 query evidence,原子写 proposal snapshot。",
         "operationId": "gateway_proposals_api_gateway_proposals_post",
+        "parameters": [
+          {
+            "description": "M5 MCP evidence session header; required on gateway query/proposal APIs",
+            "in": "header",
+            "name": "X-D2A-Session-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "M5 MCP evidence session header; required on gateway query/proposal APIs",
+              "title": "X-D2A-Session-Id"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -7781,6 +8132,238 @@
         "summary": "Gateway Proposals",
         "tags": [
           "v0.2"
+        ]
+      }
+    },
+    "/api/gateway/proposals/{proposal_id}": {
+      "get": {
+        "operationId": "gateway_proposal_detail_api_gateway_proposals__proposal_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "title": "Proposal Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "M5 MCP evidence session header; required on gateway query/proposal APIs",
+            "in": "header",
+            "name": "X-D2A-Session-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "M5 MCP evidence session header; required on gateway query/proposal APIs",
+              "title": "X-D2A-Session-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProposalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "proposal evidence 属于其他主体"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "proposal evidence 不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "proposal evidence 冲突或完整性失败"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "session 或 proposal_id 非法"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "证据存储不可用"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Gateway Proposal Detail",
+        "tags": [
+          "v0.3"
+        ]
+      }
+    },
+    "/api/gateway/queries/{query_id}": {
+      "get": {
+        "operationId": "gateway_query_detail_api_gateway_queries__query_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "query_id",
+            "required": true,
+            "schema": {
+              "title": "Query Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "M5 MCP evidence session header; required on gateway query/proposal APIs",
+            "in": "header",
+            "name": "X-D2A-Session-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "M5 MCP evidence session header; required on gateway query/proposal APIs",
+              "title": "X-D2A-Session-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueryEvidenceDetailResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "query evidence 属于其他主体"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "query evidence 不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "query 过期或证据冲突"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "session 或 query_id 非法"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpLabError"
+                }
+              }
+            },
+            "description": "证据存储不可用"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Gateway Query Detail",
+        "tags": [
+          "v0.3"
         ]
       }
     },

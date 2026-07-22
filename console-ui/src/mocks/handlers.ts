@@ -281,6 +281,42 @@ export function buildHandlers(): HttpHandler[] {
 
     http.post('*/api/debug/mcp-call', () => respond((f) => f.mcpCall)),
     http.post('*/api/gateway/proposals', () => respond((f) => f.proposal)),
+    http.get('*/api/gateway/queries/:query_id', ({ params }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      const fixture = scenarioFixtures[getScenario()]
+      if (params.query_id !== fixture.queryEvidenceDetail.query_id) {
+        return json(
+          {
+            detail: '持久 evidence 不存在',
+            reason_code: 'evidence_not_found',
+            tool: null,
+            retryable: false,
+            error_id: null,
+          },
+          404,
+        )
+      }
+      return json(fixture.queryEvidenceDetail)
+    }),
+    http.get('*/api/gateway/proposals/:proposal_id', ({ params }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      const fixture = scenarioFixtures[getScenario()]
+      if (params.proposal_id !== fixture.proposalDetail.proposal_id) {
+        return json(
+          {
+            detail: '持久 evidence 不存在',
+            reason_code: 'evidence_not_found',
+            tool: null,
+            retryable: false,
+            error_id: null,
+          },
+          404,
+        )
+      }
+      return json(fixture.proposalDetail)
+    }),
 
     // ---- M5: retry action (structured RetryActionResult / RetryActionError) ----
     http.post('*/api/actions/retry', ({ request }) => {

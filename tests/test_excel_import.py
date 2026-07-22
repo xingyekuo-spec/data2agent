@@ -15,6 +15,7 @@ from data2agent.connect.excel_import import (
 from data2agent.connect.landing import LandingStore, raw_table_name
 from data2agent.connect.mapping_apply import apply_objects
 from data2agent.mcp_server.core import QueryService
+from data2agent.mcp_server.evidence import EvidenceContext
 from data2agent.metamodel.loader import load_pack
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,6 +30,14 @@ EXPECTED_MAPPING = {
     "规格摘要": "spec_summary", "目标价": "target_price", "报价": "quoted_price",
     "币别": "currency", "汇率": "fx_assumption", "结果": "result",
 }
+
+
+def _ctx() -> EvidenceContext:
+    return EvidenceContext(
+        principal="test:excel-import",
+        session_id="test_session_excel_import_0001",
+        channel="demo",
+    )
 
 
 def _rows() -> list[list]:
@@ -155,7 +164,9 @@ def test_end_to_end_apply_and_gateway(csv_file, pack, quotation, tmp_path):
         )
     )
 
-    svc = QueryService(landing.db_path, ROOT / "templates", source=SOURCE)
+    svc = QueryService(
+        landing.db_path, ROOT / "templates", source=SOURCE, default_context=_ctx(),
+    )
     res = svc.query_objects("Quotation", filters={"result": "成交"})
     assert res["rows"] and res["meta"]["source"] == SOURCE
     assert res["meta"]["quarantined"] == 1

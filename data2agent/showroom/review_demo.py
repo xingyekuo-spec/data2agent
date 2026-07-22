@@ -15,6 +15,7 @@ import argparse
 from pathlib import Path
 
 from ..mcp_server.core import QueryService
+from ..mcp_server.evidence import EvidenceContext
 
 
 def build_review(svc: QueryService, customer: str, keyword: str,
@@ -26,10 +27,12 @@ def build_review(svc: QueryService, customer: str, keyword: str,
         raise SystemExit(f"客户 {customer} 不存在(试试 query_objects Customer 目录)")
     cust = cust_res["rows"][0]
     q_cust = cust_res["meta"]["query_id"]
+    d_cust = cust_res["meta"]["result_digest"]
 
     # 2. 该客户历史报价,按型谱关键词收敛(Agent 式的客户端匹配)
     quotes_res = svc.query_objects("Quotation", filters={"customer": customer}, limit=200)
     q_quotes = quotes_res["meta"]["query_id"]
+    d_quotes = quotes_res["meta"]["result_digest"]
     similar = [r for r in quotes_res["rows"] if keyword in (r["spec_summary"] or "")]
     won = sorted((r for r in similar if r["result"] == "成交"),
                  key=lambda r: r["quote_date"], reverse=True)
@@ -37,6 +40,7 @@ def build_review(svc: QueryService, customer: str, keyword: str,
     # 3. 毛利率基线(按客户,CNY 口径)
     margin_res = svc.query_metrics("gross_margin_rate", group_by="客户", limit=200)
     q_margin = margin_res["meta"]["query_id"]
+    d_margin = margin_res["meta"]["result_digest"]
     baseline = next((r["value"] for r in margin_res["rows"]
                      if str(r["group"]).startswith(customer)), None)
 
@@ -45,6 +49,7 @@ def build_review(svc: QueryService, customer: str, keyword: str,
         "claim": f"客户 {customer} {cust['name']}({cust['region']}),"
                  f"账期 {cust['payment_days']} 天,结算币别 {cust['currency']}",
         "query_id": q_cust,
+        "result_digest": d_cust,
     }]
     risks = []
     if cust["payment_days"] >= 90:
@@ -57,12 +62,14 @@ def build_review(svc: QueryService, customer: str, keyword: str,
                      f"最近成交 {ref['quote_no']}({ref['quote_date']}):"
                      f"{ref['quoted_price']} {ref['currency']}",
             "query_id": q_quotes,
+            "result_digest": d_quotes,
         })
         discount = 1 - target_price / ref["quoted_price"]
         if baseline is not None:
             evidence.append({
                 "claim": f"该客户历史毛利率 {baseline:.1%}(CNY 口径)",
                 "query_id": q_margin,
+                "result_digest": d_margin,
             })
             est = baseline - discount
             if est >= 0.25:
@@ -100,8 +107,9 @@ def render_card(card: dict, inquiry: str) -> str:
     ]
     for i, ev in enumerate(card["evidence"], 1):
         q = ev["query"]
+        at = q.get("created_at") or q.get("at") or ""
         lines.append(f"│   {i}. {ev['claim']}")
-        lines.append(f"│      ↳ [{q['query_id']}] {q['tool']}({q['target']}) @ {q['at']}")
+        lines.append(f"│      ↳ [{q['query_id']}] {q['tool']}({q['target']}) @ {at}")
     if card["caveats"]:
         lines.append("│ 口径警示:")
         lines += [f"│   - {c}" for c in card["caveats"]]
@@ -122,7 +130,15 @@ def main() -> int:
 
     if not Path(args.db).exists():
         ap.error(f"落地库不存在:{args.db}(见模块 docstring 的前置命令)")
-    svc = QueryService(args.db, args.templates)
+    svc = QueryService(
+        args.db,
+        args.templates,
+        default_context=EvidenceContext(
+            principal="demo:local",
+            session_id="demo_session_review_local_0001",
+            channel="demo",
+        ),
+    )
     card = build_review(svc, args.customer, args.keyword, args.qty, args.target_price)
     inquiry = (f"{args.customer} · {args.keyword} · {args.qty:g} 支 · "
                f"目标价 {args.target_price:g}")

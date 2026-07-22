@@ -115,27 +115,40 @@ class SetupBody(BaseModel):
 
 
 class McpCallBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     tool: Literal["query_objects", "query_metrics"]
     params: dict[str, JsonValue] = Field(default_factory=dict)
 
 
 McpLabReasonCode = Literal[
     "invalid_params",
+    "invalid_session",
     "unknown_target",
     "not_materialized",
     "not_published",
     "query_expired",
+    "evidence_not_found",
+    "evidence_principal_mismatch",
+    "evidence_session_mismatch",
+    "evidence_source_mismatch",
+    "dataset_version_mismatch",
+    "result_digest_mismatch",
+    "evidence_integrity_failed",
     "tier_forbidden",
     "rate_limited",
     "mcp_unavailable",
+    "evidence_store_unavailable",
     "execution_failed",
 ]
 
+EvidenceChannel = Literal["console", "mcp_stdio", "mcp_http", "demo"]
+
 
 class McpQueryMeta(BaseModel):
-    """查询公共元数据。v0.2 仅承诺 Console 进程级 evidence_scope。
+    """查询公共元数据。M5 起升级为 principal+session 级 evidence 语义。
 
-    M2 起附加实际读取的 dataset/template 版本与 binding_hashes(与 MCP 运行时一致)。
+    目录/未实现指标等不可引用结果保持 query/digest/summary/created/expires 为 null。
     """
 
     query_id: str | None = Field(
@@ -148,9 +161,29 @@ class McpQueryMeta(BaseModel):
     duration_ms: int = Field(ge=0, description="服务端耗时毫秒")
     masked_fields: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
-    evidence_scope: Literal["process"] = Field(
-        default="process",
-        description="v0.2:query ID 仅在当前 Console 进程/配置签名内有效",
+    evidence_scope: Literal["principal_session"] = Field(
+        default="principal_session",
+        description="M5:query evidence 以 principal + session 为隔离域",
+    )
+    session_id: str | None = Field(
+        default=None,
+        description="同一 principal 下的 evidence session；目录/未引用结果为 null",
+    )
+    result_digest: str | None = Field(
+        default=None,
+        description="脱敏 canonical result 的完整性摘要；不可引用结果为 null",
+    )
+    result_summary: dict[str, JsonValue] | None = Field(
+        default=None,
+        description="有界脱敏结果摘要；不提供任意历史完整结果下载",
+    )
+    created_at: datetime | None = Field(
+        default=None,
+        description="query evidence 创建时间；目录/未引用结果为 null",
+    )
+    expires_at: datetime | None = Field(
+        default=None,
+        description="query evidence 引用有效期；目录/未引用结果为 null",
     )
     dataset_version: str | None = Field(
         default=None,
@@ -200,6 +233,35 @@ class McpMetricsQueryResult(BaseModel):
     group_by: str | None = None
     rows: list[dict[str, JsonValue]] = Field(default_factory=list)
     meta: McpQueryMeta
+
+
+class EvidenceContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    principal: str = Field(min_length=1)
+    session_id: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9._~-]+$")
+    channel: EvidenceChannel
+
+
+class QueryEvidenceDetailResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    query_id: str
+    source: str
+    tool: Literal["query_objects", "query_metrics"]
+    target: str
+    session_id: str
+    evidence_scope: Literal["principal_session"] = "principal_session"
+    normalized_query: dict[str, JsonValue]
+    dataset_version: str | None = None
+    template_version: str | None = None
+    binding_hashes: dict[str, str] = Field(default_factory=dict)
+    result_digest: str
+    result_summary: dict[str, JsonValue]
+    warnings: list[str] = Field(default_factory=list)
+    row_count: int | None = None
+    created_at: datetime = Field(description=TZ_TIME_DESC)
+    expires_at: datetime = Field(description=TZ_TIME_DESC)
 
 
 # ---- setup / config ----
@@ -741,15 +803,20 @@ class TemplateMetric(BaseModel):
 
 
 class ProposalEvidenceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     claim: str = Field(min_length=1)
     query_id: str = Field(min_length=1)
+    result_digest: str = Field(min_length=1)
 
 
 class ProposalRequest(BaseModel):
     """建议卡请求,语义与 MCP propose_action 一致:
 
-    evidence 必须引用同会话已记录查询的 meta.query_id;不得凭空生成。
+    evidence 必须引用同会话已记录查询的 meta.query_id + result_digest;不得凭空生成。
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     object: str
     action: str
@@ -758,20 +825,38 @@ class ProposalRequest(BaseModel):
 
 
 class ProposalQueryRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query_id: str
+    source: str = ""
     tool: str
     target: str
-    at: datetime = Field(description=TZ_TIME_DESC)
+    normalized_query: dict[str, JsonValue] = Field(default_factory=dict)
+    dataset_version: str | None = None
+    template_version: str | None = None
+    binding_hashes: dict[str, str] = Field(default_factory=dict)
+    result_digest: str = ""
+    result_summary: dict[str, JsonValue] = Field(default_factory=dict)
+    warnings: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(description=TZ_TIME_DESC)
+    expires_at: datetime | None = Field(default=None, description=TZ_TIME_DESC)
 
 
 class ProposalEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     claim: str
     query: ProposalQueryRef
 
 
 class ProposalResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     proposal_id: str
     at: datetime = Field(description=TZ_TIME_DESC)
+    session_id: str
+    source: str
+    dataset_version: str | None = None
     object: str
     action: str
     action_desc: str

@@ -92,3 +92,28 @@ export const rawPageShape: Pick<RawPage, 'source' | 'table' | 'offset' | 'limit'
 // HttpError:错误体只有 detail 字符串,不会被误认为成功响应
 type HttpError = components['schemas']['HttpError']
 export const errShape: HttpError = { detail: 'x' }
+
+// ---- M5:T08 evidence/detail 契约 ----
+
+type ProposalInput = components['schemas']['ProposalEvidenceInput']
+export const proposalInputShape: ProposalInput = {
+  claim: 'x',
+  query_id: 'qry_1234567890abcdef12345678',
+  result_digest: 'sha256:' + '1'.repeat(64),
+}
+
+type QueryDetail =
+  paths['/api/gateway/queries/{query_id}']['get']['responses'][200]['content']['application/json']
+export const queryDetailShape: Pick<QueryDetail, 'query_id' | 'session_id' | 'result_digest'> = {
+  query_id: 'qry_1234567890abcdef12345678',
+  session_id: 'd2a_session_compile_check_1234',
+  result_digest: 'sha256:' + '2'.repeat(64),
+}
+
+type ProposalDetail =
+  paths['/api/gateway/proposals/{proposal_id}']['get']['responses'][200]['content']['application/json']
+export const proposalDetailShape: Pick<ProposalDetail, 'proposal_id' | 'session_id' | 'source'> = {
+  proposal_id: 'prp_1234567890abcdef12345678',
+  session_id: 'd2a_session_compile_check_1234',
+  source: 'digiwin_e10',
+}

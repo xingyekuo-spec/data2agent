@@ -10,6 +10,7 @@ import type { paths } from '@/types/api'
 
 /** Token 仅存当前标签页 sessionStorage;不得进 localStorage / URL / 日志 / fixture */
 export const TOKEN_KEY = 'd2a_token'
+export const EVIDENCE_SESSION_KEY = 'd2a_evidence_session_id'
 
 export function getToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY)
@@ -21,6 +22,45 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   sessionStorage.removeItem(TOKEN_KEY)
+}
+
+function randomPart(length: number): string {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  let out = ''
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const bytes = new Uint8Array(length)
+    crypto.getRandomValues(bytes)
+    for (const byte of bytes) out += chars[byte % chars.length]
+    return out
+  }
+  for (let i = 0; i < length; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)]
+  }
+  return out
+}
+
+function createEvidenceSessionId(): string {
+  return `d2a_session_${Date.now().toString(36)}_${randomPart(16)}`
+}
+
+export function getEvidenceSessionId(): string | null {
+  return sessionStorage.getItem(EVIDENCE_SESSION_KEY)
+}
+
+export function ensureEvidenceSessionId(): string {
+  const current = getEvidenceSessionId()
+  if (current) return current
+  const created = createEvidenceSessionId()
+  sessionStorage.setItem(EVIDENCE_SESSION_KEY, created)
+  return created
+}
+
+export function clearEvidenceSessionId(): void {
+  sessionStorage.removeItem(EVIDENCE_SESSION_KEY)
+}
+
+function needsEvidenceSession(pathname: string): boolean {
+  return pathname === '/api/debug/mcp-call' || pathname.startsWith('/api/gateway/')
 }
 
 type UnauthorizedHandler = () => void
@@ -48,6 +88,10 @@ client.use({
     const token = getToken()
     if (token) {
       request.headers.set('Authorization', `Bearer ${token}`)
+    }
+    const pathname = new URL(request.url).pathname
+    if (needsEvidenceSession(pathname)) {
+      request.headers.set('X-D2A-Session-ID', ensureEvidenceSessionId())
     }
     return request
   },

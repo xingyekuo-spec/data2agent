@@ -36,6 +36,7 @@ export type QuarantineGroup = components['schemas']['QuarantineGroup']
 export type QuarantineDetail = components['schemas']['QuarantineDetail']
 export type RetryActionResult = components['schemas']['RetryActionResult']
 export type ProposalResponse = components['schemas']['ProposalResponse']
+export type QueryEvidenceDetailResponse = components['schemas']['QueryEvidenceDetailResponse']
 export type DatasetSummary = components['schemas']['DatasetSummary']
 export type DatasetDetail = components['schemas']['DatasetDetail']
 export type DatasetActionResult = components['schemas']['DatasetActionResult']
@@ -67,6 +68,8 @@ export interface ScenarioFixture {
   templates: TemplateObject[]
   templateMetrics: TemplateMetric[]
   proposal: ProposalResponse
+  queryEvidenceDetail: QueryEvidenceDetailResponse
+  proposalDetail: ProposalResponse
   datasets: DatasetSummary[]
   datasetDetails: Record<string, DatasetDetail>
   datasetAction: DatasetActionResult
@@ -799,14 +802,25 @@ export const baseFixture: ScenarioFixture = {
       { customer_code: 'C-001', name: '北极星钓具(美国)', payment_days: 60, contact: '***' },
     ],
     meta: {
-      query_id: 'q1',
+      query_id: 'qry_111111111111111111111111',
       tool: 'query_objects',
       target: 'Customer',
       row_count: 1,
       duration_ms: 12,
       masked_fields: ['contact'],
       warnings: ['binding 为 draft:字段映射按参考表形构造,口径未经现场校准'],
-      evidence_scope: 'process',
+      evidence_scope: 'principal_session',
+      session_id: 'd2a_session_mock_0123456789',
+      result_digest: 'sha256:' + '11'.repeat(32),
+      result_summary: {
+        kind: 'query_objects',
+        returned_row_count: 1,
+        rows_preview: [
+          { customer_code: 'C-001', name: '北极星钓具(美国)', payment_days: 60, contact: '***' },
+        ],
+      },
+      created_at: T,
+      expires_at: '2026-07-19T09:12:00+08:00',
       dataset_version: DS_PUBLISHED,
       template_version: '0.1.0',
       binding_hashes: { Customer: 'sha256:' + 'aa'.repeat(32) },
@@ -891,17 +905,128 @@ export const baseFixture: ScenarioFixture = {
   },
   templates: baseTemplates,
   proposal: {
-    proposal_id: 'p1',
+    proposal_id: 'prp_222222222222222222222222',
     at: T,
-    object: 'SalesOrder',
-    action: 'review',
-    action_desc: '接单评审',
+    session_id: 'd2a_session_mock_0123456789',
+    source: 'digiwin_e10',
+    dataset_version: DS_PUBLISHED,
+    object: 'Quotation',
+    action: 'quote_review',
+    action_desc: '发起接单评审链生成评审卡',
     tier: '说',
     conclusion: '建议接单:毛利高于基线,账期在客户政策内',
     evidence: [
       {
         claim: '该客户近 90 天成交 6 单,平均毛利 31%',
-        query: { query_id: 'q1', tool: 'query_objects', target: 'SalesOrder', at: T },
+        query: {
+          query_id: 'qry_111111111111111111111111',
+          source: 'digiwin_e10',
+          tool: 'query_objects',
+          target: 'Customer',
+          normalized_query: {
+            tool: 'query_objects',
+            source: 'digiwin_e10',
+            object: 'Customer',
+            filters: {},
+            order_by: null,
+            desc: false,
+            limit: 20,
+          },
+          dataset_version: DS_PUBLISHED,
+          template_version: '0.1.0',
+          binding_hashes: { Customer: 'sha256:' + 'aa'.repeat(32) },
+          result_digest: 'sha256:' + '11'.repeat(32),
+          result_summary: {
+            kind: 'query_objects',
+            returned_row_count: 1,
+            rows_preview: [
+              { customer_code: 'C-001', name: '北极星钓具(美国)', payment_days: 60, contact: '***' },
+            ],
+          },
+          warnings: ['binding 为 draft:字段映射按参考表形构造,口径未经现场校准'],
+          created_at: T,
+          expires_at: null,
+        },
+      },
+    ],
+    caveats: ['指标口径:毛利率按不含税金额计算'],
+    governance: '「说」档建议卡:未执行任何写操作;落地执行(做档)需审批治理',
+  },
+  queryEvidenceDetail: {
+    query_id: 'qry_111111111111111111111111',
+    source: 'digiwin_e10',
+    tool: 'query_objects',
+    target: 'Customer',
+    session_id: 'd2a_session_mock_0123456789',
+    evidence_scope: 'principal_session',
+    normalized_query: {
+      tool: 'query_objects',
+      source: 'digiwin_e10',
+      object: 'Customer',
+      filters: {},
+      order_by: null,
+      desc: false,
+      limit: 20,
+    },
+    dataset_version: DS_PUBLISHED,
+    template_version: '0.1.0',
+    binding_hashes: { Customer: 'sha256:' + 'aa'.repeat(32) },
+    result_digest: 'sha256:' + '11'.repeat(32),
+    result_summary: {
+      kind: 'query_objects',
+      returned_row_count: 1,
+      rows_preview: [
+        { customer_code: 'C-001', name: '北极星钓具(美国)', payment_days: 60, contact: '***' },
+      ],
+    },
+    warnings: ['binding 为 draft:字段映射按参考表形构造,口径未经现场校准'],
+    row_count: 1,
+    created_at: T,
+    expires_at: '2026-07-19T09:12:00+08:00',
+  },
+  proposalDetail: {
+    proposal_id: 'prp_222222222222222222222222',
+    at: T,
+    session_id: 'd2a_session_mock_0123456789',
+    source: 'digiwin_e10',
+    dataset_version: DS_PUBLISHED,
+    object: 'Quotation',
+    action: 'quote_review',
+    action_desc: '发起接单评审链生成评审卡',
+    tier: '说',
+    conclusion: '建议接单:毛利高于基线,账期在客户政策内',
+    evidence: [
+      {
+        claim: '该客户近 90 天成交 6 单,平均毛利 31%',
+        query: {
+          query_id: 'qry_111111111111111111111111',
+          source: 'digiwin_e10',
+          tool: 'query_objects',
+          target: 'Customer',
+          normalized_query: {
+            tool: 'query_objects',
+            source: 'digiwin_e10',
+            object: 'Customer',
+            filters: {},
+            order_by: null,
+            desc: false,
+            limit: 20,
+          },
+          dataset_version: DS_PUBLISHED,
+          template_version: '0.1.0',
+          binding_hashes: { Customer: 'sha256:' + 'aa'.repeat(32) },
+          result_digest: 'sha256:' + '11'.repeat(32),
+          result_summary: {
+            kind: 'query_objects',
+            returned_row_count: 1,
+            rows_preview: [
+              { customer_code: 'C-001', name: '北极星钓具(美国)', payment_days: 60, contact: '***' },
+            ],
+          },
+          warnings: ['binding 为 draft:字段映射按参考表形构造,口径未经现场校准'],
+          created_at: T,
+          expires_at: null,
+        },
       },
     ],
     caveats: ['指标口径:毛利率按不含税金额计算'],

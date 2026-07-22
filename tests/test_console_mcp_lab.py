@@ -26,11 +26,17 @@ from data2agent.console.contracts import (
     ProposalRequest,
     ProposalResponse,
 )
+from data2agent.mcp_server.evidence import EvidenceContext
 from data2agent.metamodel.loader import load_pack
 from data2agent.showroom.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
+SESSION_ID = "d2a_session_0123456789"
+
+
+def _session_headers(session_id: str = SESSION_ID) -> dict[str, str]:
+    return {"X-D2A-Session-ID": session_id}
 
 
 @pytest.fixture()
@@ -65,23 +71,29 @@ def _openapi(env):
 
 
 def test_mcp_query_meta_schema_frozen(env):
-    """McpQueryMeta 进入 OpenAPI,并冻结 process 级 evidence_scope。"""
+    """McpQueryMeta 进入 OpenAPI,并冻结 principal_session 级 evidence_scope。"""
     schemas = _openapi(env)["components"]["schemas"]
     assert "McpQueryMeta" in schemas
     meta = schemas["McpQueryMeta"]
     props = meta["properties"]
     for key in (
         "query_id", "tool", "target", "row_count", "duration_ms",
-        "masked_fields", "warnings", "evidence_scope",
+        "masked_fields", "warnings", "evidence_scope", "session_id",
+        "result_digest", "result_summary", "created_at", "expires_at",
         "dataset_version", "template_version", "binding_hashes",
     ):
         assert key in props, f"McpQueryMeta missing {key}"
     scope = props["evidence_scope"]
-    assert scope.get("const") == "process" or scope.get("enum") == ["process"]
+    assert (
+        scope.get("const") == "principal_session"
+        or scope.get("enum") == ["principal_session"]
+    )
     sample = McpQueryMeta(
         query_id="q1", tool="query_objects", target="Customer",
-        row_count=1, duration_ms=12, masked_fields=["phone"], warnings=[])
-    assert sample.evidence_scope == "process"
+        row_count=1, duration_ms=12, masked_fields=["phone"], warnings=[],
+        session_id=SESSION_ID,
+    )
+    assert sample.evidence_scope == "principal_session"
 
 
 def test_mcp_lab_error_schema_frozen(env):
@@ -96,8 +108,12 @@ def test_mcp_lab_error_schema_frozen(env):
     enum = reason.get("enum") or reason.get("const")
     expected = {
         "invalid_params", "unknown_target", "not_materialized", "not_published",
-        "query_expired", "tier_forbidden", "rate_limited", "mcp_unavailable",
-        "execution_failed",
+        "query_expired", "invalid_session", "evidence_not_found",
+        "evidence_principal_mismatch", "evidence_session_mismatch",
+        "evidence_source_mismatch", "dataset_version_mismatch",
+        "result_digest_mismatch", "evidence_integrity_failed",
+        "tier_forbidden", "rate_limited", "mcp_unavailable",
+        "evidence_store_unavailable", "execution_failed",
     }
     assert set(enum) == expected
     parsed = McpLabError(
@@ -118,7 +134,7 @@ def test_mcp_call_error_responses_use_mcp_lab_error(env):
 
 
 def test_proposal_schema_frozen(env):
-    """建议卡契约保持 ProposalResponse;运行时不再是 501 桩。"""
+    """建议卡契约升级为 query_id + result_digest；detail 读取路径进入 OpenAPI。"""
     schemas = _openapi(env)["components"]["schemas"]
     assert "ProposalRequest" in schemas
     assert "ProposalResponse" in schemas
@@ -127,12 +143,25 @@ def test_proposal_schema_frozen(env):
     assert "governance" in resp_props
     assert "evidence" in resp_props
     assert "tier" in resp_props
+    assert "session_id" in resp_props
+    assert "source" in resp_props
+    assert "dataset_version" in resp_props
     op = _openapi(env)["paths"]["/api/gateway/proposals"]["post"]
     assert "501" not in op["responses"]
+    detail_paths = _openapi(env)["paths"]
+    assert "/api/gateway/queries/{query_id}" in detail_paths
+    assert "/api/gateway/proposals/{proposal_id}" in detail_paths
 
     with pytest.raises(ValidationError):
         ProposalRequest(
             object="SalesOrder", action="review", conclusion="c", evidence=[])
+    with pytest.raises(ValidationError):
+        ProposalRequest(
+            object="SalesOrder",
+            action="review",
+            conclusion="c",
+            evidence=[{"claim": "x", "query_id": "qry_x"}],
+        )
 
 
 def test_mcp_call_whitelist_rejects_propose_action(env):
@@ -164,8 +193,11 @@ def test_mcp_query_meta_required_on_typed_data_results(env):
 def test_proposal_response_governance_is_say_tier(env):
     """governance 文案冻结为说档、未执行写操作语义。"""
     sample = ProposalResponse.model_validate({
-        "proposal_id": "p1",
+        "proposal_id": "prp_1",
         "at": "2026-07-21T00:00:00+00:00",
+        "session_id": SESSION_ID,
+        "source": SOURCE,
+        "dataset_version": "ds_20260721",
         "object": "SalesOrder",
         "action": "review",
         "action_desc": "复核",
@@ -174,10 +206,19 @@ def test_proposal_response_governance_is_say_tier(env):
         "evidence": [{
             "claim": "金额偏高",
             "query": {
-                "query_id": "q1",
+                "query_id": "qry_1",
+                "source": SOURCE,
                 "tool": "query_objects",
                 "target": "SalesOrder",
-                "at": "2026-07-21T00:00:00+00:00",
+                "normalized_query": {"tool": "query_objects", "object": "SalesOrder"},
+                "dataset_version": "ds_20260721",
+                "template_version": "0.1.0",
+                "binding_hashes": {"SalesOrder": "sha256:abc"},
+                "result_digest": "sha256:abc",
+                "result_summary": {"kind": "query_objects", "returned_row_count": 1},
+                "warnings": [],
+                "created_at": "2026-07-21T00:00:00+00:00",
+                "expires_at": "2026-07-22T00:00:00+00:00",
             },
         }],
         "caveats": [],
@@ -201,47 +242,104 @@ def test_mcp_call_reuses_query_service_across_requests(env):
     """同一 Console 进程内连续查询应递增 query_id(共享 QueryService)。"""
     client, _app, _cfg = _client(env)
     r1 = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
     r2 = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
     assert r1.status_code == 200, r1.text
     assert r2.status_code == 200, r2.text
     q1 = r1.json()["meta"]["query_id"]
     q2 = r2.json()["meta"]["query_id"]
     assert q1 and q2 and q1 != q2
-    assert q1.startswith("q") and q2.startswith("q")
+    assert q1.startswith("qry_") and q2.startswith("qry_")
+
+
+def test_console_same_session_survives_query_service_recreation(env, tmp_path):
+    import shutil
+
+    client, app, _cfg = _client(env)
+    r1 = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
+    assert r1.status_code == 200, r1.text
+    meta1 = r1.json()["meta"]
+
+    new_templates = tmp_path / "templates-recreated"
+    shutil.copytree(ROOT / "templates", new_templates)
+    app.state.d2a_state["templates"] = str(new_templates)
+
+    r2 = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
+    assert r2.status_code == 200, r2.text
+    meta2 = r2.json()["meta"]
+    assert meta1["session_id"] == SESSION_ID
+    assert meta2["session_id"] == SESSION_ID
+    assert meta1["query_id"] != meta2["query_id"]
+
+
+def test_console_different_sessions_produce_isolated_evidence(env):
+    client, _app, _cfg = _client(env)
+    r1 = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers("d2a_session_alpha_0123456789"))
+    r2 = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers("d2a_session_beta_0123456789"))
+    assert r1.status_code == 200 and r2.status_code == 200
+    meta1 = r1.json()["meta"]
+    meta2 = r2.json()["meta"]
+    assert meta1["session_id"] == "d2a_session_alpha_0123456789"
+    assert meta2["session_id"] == "d2a_session_beta_0123456789"
+    assert meta1["query_id"] != meta2["query_id"]
+    assert meta1["result_digest"] != ""
+    assert meta2["result_digest"] != ""
 
 
 def test_shared_query_service_allows_propose_after_mcp_call(env):
     """mcp-call 写入的 query_id 可被同实例 propose_action 引用。"""
     client, app, _cfg = _client(env)
     r = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}})
+        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}},
+        headers=_session_headers())
     assert r.status_code == 200, r.text
-    qid = r.json()["meta"]["query_id"]
+    meta = r.json()["meta"]
     svc = app.state.d2a_state["query_service"]
     assert svc is not None
     card = svc.propose_action(
         "Quotation", "quote_review", "需复核报价",
-        [{"claim": "报价行可见", "query_id": qid}])
+        [{
+            "claim": "报价行可见",
+            "query_id": meta["query_id"],
+            "result_digest": meta["result_digest"],
+        }],
+        context=EvidenceContext(
+            principal="console:configured",
+            session_id=SESSION_ID,
+            channel="console",
+        ),
+    )
     assert card["proposal_id"]
-    assert card["evidence"][0]["query"]["query_id"] == qid
+    assert card["evidence"][0]["query"]["query_id"] == meta["query_id"]
 
 
-def test_query_service_resets_when_config_signature_changes(env, tmp_path):
-    """签名变化后旧 query 日志清空,且新 ID 不得与旧 ID 重号(避免 evidence 错绑)。"""
+def test_query_service_recreation_keeps_persisted_evidence_usable(env, tmp_path):
+    """签名变化重建服务后,同会话的持久 query evidence 仍可被 proposal 引用。"""
     import shutil
 
     client, app, _cfg = _client(env)
     r1 = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
     r1b = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
     assert r1.status_code == 200 and r1b.status_code == 200
     old_ids = {r1.json()["meta"]["query_id"], r1b.json()["meta"]["query_id"]}
     assert len(old_ids) == 2
     old_svc = app.state.d2a_state["query_service"]
-    stale_qid = r1b.json()["meta"]["query_id"]  # 仅存在于旧服务日志
+    stale_meta = r1b.json()["meta"]
 
     # 换一套等价 templates 路径 → 配置签名变化 → 原子替换服务并清空日志
     new_templates = tmp_path / "templates-reloaded"
@@ -249,24 +347,42 @@ def test_query_service_resets_when_config_signature_changes(env, tmp_path):
     app.state.d2a_state["templates"] = str(new_templates)
 
     r2 = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
     assert r2.status_code == 200, r2.text
     new_qid = r2.json()["meta"]["query_id"]
     assert new_qid not in old_ids
     new_svc = app.state.d2a_state["query_service"]
     assert new_svc is not old_svc
-    with pytest.raises(ValueError, match="无法溯源"):
-        new_svc.propose_action(
-            "Quotation", "quote_review", "新服务不应看见旧 ID",
-            [{"claim": "x", "query_id": stale_qid}])
-    # 旧 evidence 经 gateway 也必须失败,不能因重号误绑到新查询
-    expired = client.post("/api/gateway/proposals", json={
+    reused = new_svc.propose_action(
+        "Quotation",
+        "quote_review",
+        "重建服务后仍可复用持久 evidence",
+        [{
+            "claim": "旧查询仍有效",
+            "query_id": stale_meta["query_id"],
+            "result_digest": stale_meta["result_digest"],
+        }],
+        context=EvidenceContext(
+            principal="console:configured",
+            session_id=SESSION_ID,
+            channel="console",
+        ),
+    )
+    assert reused["proposal_id"]
+    assert reused["evidence"][0]["query"]["query_id"] == stale_meta["query_id"]
+
+    ok = client.post("/api/gateway/proposals", json={
         "object": "Quotation", "action": "quote_review",
-        "conclusion": "旧 evidence",
-        "evidence": [{"claim": "x", "query_id": stale_qid}],
-    })
-    assert expired.status_code == 409
-    assert expired.json()["reason_code"] == "query_expired"
+        "conclusion": "旧 evidence 可被持久复用",
+        "evidence": [{
+            "claim": "x",
+            "query_id": stale_meta["query_id"],
+            "result_digest": stale_meta["result_digest"],
+        }],
+    }, headers=_session_headers())
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["evidence"][0]["query"]["query_id"] == stale_meta["query_id"]
 
 
 def test_mcp_call_invalid_filters_shape_returns_invalid_params(env):
@@ -277,7 +393,7 @@ def test_mcp_call_invalid_filters_shape_returns_invalid_params(env):
     r = client.post("/api/debug/mcp-call", json={
         "tool": "query_objects",
         "params": {"object": "Customer", "filters": [1]},
-    })
+    }, headers=_session_headers())
     assert r.status_code == 422, r.text
     err = McpLabError.model_validate(r.json())
     assert err.reason_code == "invalid_params"
@@ -300,7 +416,7 @@ def test_mcp_call_malformed_params_return_invalid_params(env, params):
     client, _app, _cfg = _client(env)
     r = client.post("/api/debug/mcp-call", json={
         "tool": "query_objects", "params": params,
-    })
+    }, headers=_session_headers())
     assert r.status_code == 422, r.text
     err = McpLabError.model_validate(r.json())
     assert err.reason_code == "invalid_params"
@@ -322,7 +438,7 @@ def test_mcp_call_object_catalog_rejects_bad_params(env, params):
     client, _app, _cfg = _client(env)
     r = client.post("/api/debug/mcp-call", json={
         "tool": "query_objects", "params": params,
-    })
+    }, headers=_session_headers())
     assert r.status_code == 422, r.text
     err = McpLabError.model_validate(r.json())
     assert err.reason_code == "invalid_params"
@@ -342,7 +458,7 @@ def test_mcp_lab_endpoints_return_mcp_lab_error_when_needs_setup(tmp_path):
 
     call = client.post("/api/debug/mcp-call", json={
         "tool": "query_objects", "params": {"object": "Customer"},
-    })
+    }, headers=_session_headers())
     assert call.status_code == 409, call.text
     err = McpLabError.model_validate(call.json())
     assert err.reason_code == "mcp_unavailable"
@@ -351,8 +467,8 @@ def test_mcp_lab_endpoints_return_mcp_lab_error_when_needs_setup(tmp_path):
     prop = client.post("/api/gateway/proposals", json={
         "object": "Quotation", "action": "quote_review",
         "conclusion": "x",
-        "evidence": [{"claim": "c", "query_id": "q1"}],
-    })
+        "evidence": [{"claim": "c", "query_id": "qry_1", "result_digest": "sha256:x"}],
+    }, headers=_session_headers())
     assert prop.status_code == 409, prop.text
     err2 = McpLabError.model_validate(prop.json())
     assert err2.reason_code == "mcp_unavailable"
@@ -388,6 +504,33 @@ def test_proposal_empty_evidence_returns_mcp_lab_error(env):
     assert err.tool == "propose_action"
 
 
+def test_gateway_routes_require_valid_session_header(env):
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    bad_call = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers("short"))
+    assert bad_call.status_code == 422
+    err = McpLabError.model_validate(bad_call.json())
+    assert err.reason_code == "invalid_session"
+
+    bad_prop = client.post("/api/gateway/proposals", json={
+        "object": "Quotation",
+        "action": "quote_review",
+        "conclusion": "x",
+        "evidence": [{"claim": "c", "query_id": "qry_1", "result_digest": "sha256:x"}],
+    })
+    assert bad_prop.status_code == 422
+    err2 = McpLabError.model_validate(bad_prop.json())
+    assert err2.reason_code == "invalid_session"
+
+    bad_query_detail = client.get("/api/gateway/queries/qry_1")
+    assert bad_query_detail.status_code == 422
+    err3 = McpLabError.model_validate(bad_query_detail.json())
+    assert err3.reason_code == "invalid_session"
+
+
 def test_resolve_vue_dist_under_portable_home(tmp_path, monkeypatch):
     """便携布局 home/app/console-ui/dist 应可被 resolve_vue_dist 发现。"""
     from data2agent.console.app import resolve_vue_dist
@@ -407,16 +550,22 @@ def test_resolve_vue_dist_under_portable_home(tmp_path, monkeypatch):
 # ---- M6-T03 / T04: 查询 API 与 proposal gateway ----
 
 
-def test_mcp_call_meta_includes_duration_and_process_scope(env):
+def test_mcp_call_meta_includes_duration_and_persisted_evidence(env):
     client, _app, _cfg = _client(env)
     r = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
     assert r.status_code == 200, r.text
     meta = r.json()["meta"]
-    assert meta["query_id"] and str(meta["query_id"]).startswith("q")
+    assert meta["query_id"] and str(meta["query_id"]).startswith("qry_")
     assert meta["tool"] == "query_objects"
     assert meta["target"] == "Customer"
-    assert meta["evidence_scope"] == "process"
+    assert meta["evidence_scope"] == "principal_session"
+    assert meta["session_id"] == SESSION_ID
+    assert meta["result_digest"].startswith("sha256:")
+    assert meta["result_summary"]["kind"] == "query_objects"
+    assert meta["created_at"]
+    assert meta["expires_at"]
     assert isinstance(meta["duration_ms"], int) and meta["duration_ms"] >= 0
     assert "contact" in meta["masked_fields"]
     assert any("draft" in w for w in meta["warnings"])
@@ -427,7 +576,8 @@ def test_mcp_call_unknown_target_returns_mcp_lab_error(env):
 
     client, _app, _cfg = _client(env)
     r = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Nope"}})
+        "tool": "query_objects", "params": {"object": "Nope"}},
+        headers=_session_headers())
     assert r.status_code == 404
     err = McpLabError.model_validate(r.json())
     assert err.reason_code == "unknown_target"
@@ -441,40 +591,66 @@ def test_mcp_call_not_published_returns_mcp_lab_error(tmp_path):
     app = create_app(str(landing.db_path), ROOT / "templates")
     client = TestClient(app)
     r = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}})
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
     assert r.status_code == 409
     err = McpLabError.model_validate(r.json())
     assert err.reason_code == "not_published"
 
 
-def test_proposal_gateway_success_and_expired_query(env):
+def test_proposal_gateway_validates_digest_and_returns_proposal(env):
     from data2agent.console.contracts import McpLabError, ProposalResponse
 
     client, _app, _cfg = _client(env)
     q = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}})
+        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}},
+        headers=_session_headers())
     assert q.status_code == 200
-    qid = q.json()["meta"]["query_id"]
+    meta = q.json()["meta"]
+
+    bad = client.post("/api/gateway/proposals", json={
+        "object": "Quotation", "action": "quote_review",
+        "conclusion": "谨慎接",
+        "evidence": [{
+            "claim": "报价可见",
+            "query_id": meta["query_id"],
+            "result_digest": "sha256:test",
+        }],
+    }, headers=_session_headers())
+    assert bad.status_code == 422, bad.text
+    err = McpLabError.model_validate(bad.json())
+    assert err.reason_code == "invalid_params"
+    with pytest.raises(ValidationError):
+        ProposalResponse.model_validate(bad.json())
 
     ok = client.post("/api/gateway/proposals", json={
         "object": "Quotation", "action": "quote_review",
         "conclusion": "谨慎接",
-        "evidence": [{"claim": "报价可见", "query_id": qid}],
-    })
+        "evidence": [{
+            "claim": "报价可见",
+            "query_id": meta["query_id"],
+            "result_digest": meta["result_digest"],
+        }],
+    }, headers=_session_headers())
     assert ok.status_code == 200, ok.text
     card = ProposalResponse.model_validate(ok.json())
-    assert card.tier == "说"
-    assert "未执行" in card.governance
-    assert card.evidence[0].query.query_id == qid
+    assert card.proposal_id.startswith("prp_")
+    assert card.evidence[0].query.query_id == meta["query_id"]
 
-    expired = client.post("/api/gateway/proposals", json={
-        "object": "Quotation", "action": "quote_review",
-        "conclusion": "谨慎接",
-        "evidence": [{"claim": "编造", "query_id": "q99999"}],
-    })
-    assert expired.status_code == 409
-    err = McpLabError.model_validate(expired.json())
-    assert err.reason_code == "query_expired"
+
+def test_gateway_detail_routes_fail_closed_before_evidence_store(env):
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    query_resp = client.get("/api/gateway/queries/qry_test", headers=_session_headers())
+    assert query_resp.status_code == 422
+    qerr = McpLabError.model_validate(query_resp.json())
+    assert qerr.reason_code == "invalid_params"
+
+    proposal_resp = client.get("/api/gateway/proposals/prp_test", headers=_session_headers())
+    assert proposal_resp.status_code == 422
+    perr = McpLabError.model_validate(proposal_resp.json())
+    assert perr.reason_code == "invalid_params"
 
 
 def test_proposal_gateway_no_side_effects(env):
@@ -501,12 +677,128 @@ def test_proposal_gateway_no_side_effects(env):
 
     before = counts()
     q = client.post("/api/debug/mcp-call", json={
-        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}})
-    qid = q.json()["meta"]["query_id"]
+        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}},
+        headers=_session_headers())
+    meta = q.json()["meta"]
     r = client.post("/api/gateway/proposals", json={
         "object": "Quotation", "action": "quote_review",
         "conclusion": "不写库",
-        "evidence": [{"claim": "x", "query_id": qid}],
-    })
+        "evidence": [{
+            "claim": "x",
+            "query_id": meta["query_id"],
+            "result_digest": meta["result_digest"],
+        }],
+    }, headers=_session_headers())
     assert r.status_code == 200
     assert counts() == before
+
+
+def test_query_detail_returns_persisted_evidence(env):
+    client, _app, _cfg = _client(env)
+    q = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers())
+    assert q.status_code == 200, q.text
+    meta = q.json()["meta"]
+
+    detail = client.get(
+        f"/api/gateway/queries/{meta['query_id']}",
+        headers=_session_headers(),
+    )
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["query_id"] == meta["query_id"]
+    assert body["session_id"] == SESSION_ID
+    assert body["result_digest"] == meta["result_digest"]
+    assert body["result_summary"] == meta["result_summary"]
+    assert body["evidence_scope"] == "principal_session"
+
+
+def test_query_detail_rejects_cross_session(env):
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    q = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Customer", "limit": 1}},
+        headers=_session_headers("d2a_session_alpha_0123456789"))
+    meta = q.json()["meta"]
+
+    denied = client.get(
+        f"/api/gateway/queries/{meta['query_id']}",
+        headers=_session_headers("d2a_session_beta_0123456789"),
+    )
+    assert denied.status_code == 409
+    err = McpLabError.model_validate(denied.json())
+    assert err.reason_code == "evidence_session_mismatch"
+
+
+def test_query_detail_missing_returns_not_found(env):
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    missing = client.get(
+        "/api/gateway/queries/qry_000000000000000000000000",
+        headers=_session_headers(),
+    )
+    assert missing.status_code == 404
+    err = McpLabError.model_validate(missing.json())
+    assert err.reason_code == "evidence_not_found"
+
+
+def test_proposal_detail_returns_frozen_snapshot(env):
+    client, _app, _cfg = _client(env)
+    q = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}},
+        headers=_session_headers())
+    meta = q.json()["meta"]
+    created = client.post("/api/gateway/proposals", json={
+        "object": "Quotation", "action": "quote_review",
+        "conclusion": "谨慎接",
+        "evidence": [{
+            "claim": "报价可见",
+            "query_id": meta["query_id"],
+            "result_digest": meta["result_digest"],
+        }],
+    }, headers=_session_headers())
+    assert created.status_code == 200, created.text
+    proposal_id = created.json()["proposal_id"]
+
+    detail = client.get(
+        f"/api/gateway/proposals/{proposal_id}",
+        headers=_session_headers(),
+    )
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["proposal_id"] == proposal_id
+    assert body["session_id"] == SESSION_ID
+    assert body["evidence"][0]["query"]["query_id"] == meta["query_id"]
+    assert body["evidence"][0]["query"]["result_digest"] == meta["result_digest"]
+    assert body["evidence"][0]["query"]["expires_at"] is None
+
+
+def test_proposal_detail_rejects_cross_session(env):
+    from data2agent.console.contracts import McpLabError
+
+    client, _app, _cfg = _client(env)
+    q = client.post("/api/debug/mcp-call", json={
+        "tool": "query_objects", "params": {"object": "Quotation", "limit": 1}},
+        headers=_session_headers("d2a_session_alpha_0123456789"))
+    meta = q.json()["meta"]
+    created = client.post("/api/gateway/proposals", json={
+        "object": "Quotation", "action": "quote_review",
+        "conclusion": "谨慎接",
+        "evidence": [{
+            "claim": "报价可见",
+            "query_id": meta["query_id"],
+            "result_digest": meta["result_digest"],
+        }],
+    }, headers=_session_headers("d2a_session_alpha_0123456789"))
+    proposal_id = created.json()["proposal_id"]
+
+    denied = client.get(
+        f"/api/gateway/proposals/{proposal_id}",
+        headers=_session_headers("d2a_session_beta_0123456789"),
+    )
+    assert denied.status_code == 409
+    err = McpLabError.model_validate(denied.json())
+    assert err.reason_code == "evidence_session_mismatch"
