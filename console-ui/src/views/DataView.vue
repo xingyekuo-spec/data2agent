@@ -8,9 +8,11 @@ import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
+import ObjectLineageDrawer from '@/components/shared/ObjectLineageDrawer.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useDataStore } from '@/stores/data'
 import { useDatasetsStore } from '@/stores/datasets'
+import { useLineageStore } from '@/stores/lineage'
 import {
   canPublish,
   canRollback,
@@ -48,6 +50,30 @@ const { rawSel, rawQuery, objQuery } = store
 const { filters: datasetFilters, page: datasetPage } = datasetsStore
 const route = useRoute()
 const router = useRouter()
+const lineageStore = useLineageStore()
+const lineageDrawerVisible = ref(false)
+
+function openLineage(rowIndex: number) {
+  const page = objPage.value
+  if (page?.status !== 'success') return
+  const refs = page.data.lineage_refs
+  const ref_ = refs?.[rowIndex]
+  if (!ref_ || !ref_.key_token) return
+  lineageStore.setTarget(page.data.object, ref_.key_token)
+  lineageDrawerVisible.value = true
+  void lineageStore.load()
+}
+
+function closeLineage() {
+  lineageDrawerVisible.value = false
+}
+
+const hasLineageRefs = computed(() => {
+  const page = objPage.value
+  return page?.status === 'success'
+    && Array.isArray(page.data.lineage_refs)
+    && page.data.lineage_refs.length > 0
+})
 
 // el-tabs 默认激活 pane 行为不明确,显式固定为 Raw
 const activeTab = ref('raw')
@@ -528,6 +554,18 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                 </template>
                 <template #default="{ row }">{{ formatCell(row[col.name]) }}</template>
               </el-table-column>
+              <el-table-column v-if="hasLineageRefs" label="血缘" width="80" data-testid="obj-lineage-col">
+                <template #default="{ $index }">
+                  <el-button
+                    size="small"
+                    text
+                    :data-testid="`lineage-btn-${$index}`"
+                    @click="openLineage($index)"
+                  >
+                    血缘
+                  </el-button>
+                </template>
+              </el-table-column>
             </el-table>
             <p v-if="objPage.data.truncations.length" class="trunc-note" data-testid="obj-truncations">
               {{ objPage.data.truncations.length }} 行存在截断字段(预览不是完整值):
@@ -731,6 +769,12 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
         data-testid="json-view"
       >{{ JSON.stringify(currentJson, null, 2) }}</pre>
     </div>
+
+    <ObjectLineageDrawer
+      :visible="lineageDrawerVisible"
+      data-testid="obj-lineage-drawer"
+      @close="closeLineage"
+    />
   </section>
 </template>
 

@@ -2669,6 +2669,40 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 raise HTTPException(e.status, e.detail) from e
             warnings = [f"列 {c['name']} 分类未知,按未确认处理展示"
                         for c in cols if c["classification"] == "unknown"]
+
+            # M4-T09: lineage_refs 与 rows 对齐
+            lineage_refs: list[dict] = []
+            obj_vers = db.list_object_versions(snap.dataset_version)
+            obj_ver = next(
+                (o for o in obj_vers if o.object == object), None,
+            )
+            if (
+                obj_ver is not None
+                and obj_ver.lineage_schema_version is not None
+            ):
+                from ..connect.field_lineage import (
+                    canonical_object_key_json,
+                    object_key_token,
+                )
+                for idx, row in enumerate(page["rows"]):
+                    try:
+                        key_vals = {k: row.get(k) for k in tpl.keys}
+                        token = object_key_token(tpl.keys, key_vals)
+                        key_json = canonical_object_key_json(
+                            tpl.keys, key_vals,
+                        )
+                        lineage_refs.append({
+                            "row_index": idx,
+                            "key_token": token,
+                            "object_key": json.loads(key_json),
+                        })
+                    except Exception:
+                        lineage_refs.append({
+                            "row_index": idx,
+                            "key_token": "",
+                            "object_key": [],
+                        })
+
             return {
                 "object": object,
                 "columns": cols,
@@ -2681,6 +2715,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 "query": q,
                 "searchable": page["searchable"],
                 "warnings": warnings,
+                "lineage_refs": lineage_refs,
                 "generated_at": datetime.now().astimezone(),
             }
 
