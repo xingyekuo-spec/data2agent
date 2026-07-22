@@ -582,8 +582,12 @@ def build_draft_binding(
     field_map = payload.get("field_map") or {}
     if not isinstance(key_map, Mapping) or not isinstance(field_map, Mapping):
         raise PreviewError("draft_invalid", "key_map/field_map 须为对象")
+    # build_select 拒绝空 field_map;须在预检阶段转为 422,不得落到 500。
+    if not field_map:
+        raise PreviewError("draft_invalid", "field_map 不能为空")
 
     table_set = set(tables)
+    anchor = tables[0]
     parsed_maps: list[tuple[str, str, object]] = []  # (label, prop, FieldExpr)
     for label, mapping in (("key_map", key_map), ("field_map", field_map)):
         for prop, expr in mapping.items():
@@ -598,6 +602,13 @@ def build_draft_binding(
                     "draft_invalid",
                     f"{label}.{prop} 引用表 '{parsed.table}' 不在草稿 tables 内",
                 )
+            # 与 build_select 一致:非锚表字段必须声明 (join 锚表.外键)。
+            if parsed.table != anchor and parsed.join_fk is None:
+                raise PreviewError(
+                    "draft_invalid",
+                    f"{label}.{prop} 非锚表字段 {parsed.table}.{parsed.column} "
+                    f"必须声明 (join {anchor}.外键)",
+                )
             if parsed.join_fk is not None:
                 fk_table = parsed.join_fk[0]
                 if fk_table not in table_set:
@@ -606,14 +617,13 @@ def build_draft_binding(
                         f"{label}.{prop} join 表 '{fk_table}' 不在草稿 tables 内",
                     )
                 # build_select 要求 join 外键必须在锚表 tables[0] 上。
-                if fk_table != tables[0]:
+                if fk_table != anchor:
                     raise PreviewError(
                         "draft_invalid",
-                        f"{label}.{prop} join 外键须在锚表 '{tables[0]}' 上,"
+                        f"{label}.{prop} join 外键须在锚表 '{anchor}' 上,"
                         f"got '{fk_table}'",
                     )
             parsed_maps.append((label, str(prop), parsed))
-
     prop_names = {p.name for p in template.properties}
     key_names = set(template.keys)
     for label, prop, _parsed in parsed_maps:

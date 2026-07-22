@@ -639,6 +639,34 @@ def test_draft_join_fk_not_on_anchor_is_draft_invalid_by_api(env):
     assert "Traceback" not in r.text
 
 
+def test_draft_empty_field_map_is_draft_invalid_by_api(env):
+    """空 field_map → 422,不得 500 preview_failed。"""
+    draft = _customer_draft(field_map={})
+    r = _client(env).post(
+        PREVIEW_URL, json=_body(draft_binding=draft), headers=_auth())
+    _assert_preview_error(r, status=422, reason_code="draft_invalid")
+    assert r.status_code != 500
+    assert "ValueError" not in r.text
+    assert "Traceback" not in r.text
+
+
+def test_draft_non_anchor_field_without_join_is_draft_invalid_by_api(env):
+    """非锚表字段缺 join → 422,不得 500 preview_failed。"""
+    draft = _customer_draft(field_map={
+        "customer_code": "CUSTOMER.CUSTOMER_CODE",
+        "name": "CUSTOMER.CUSTOMER_NAME",
+        "region": "CUSTOMER.COUNTRY_REGION",
+        "currency": "CURRENCY.CURRENCY_CODE",  # 合法表但缺 join
+        "payment_days": "CUSTOMER.PAYMENT_TERM_DAYS",
+        "contact": "CUSTOMER.CONTACT_EMAIL",
+    })
+    r = _client(env).post(
+        PREVIEW_URL, json=_body(draft_binding=draft), headers=_auth())
+    _assert_preview_error(r, status=422, reason_code="draft_invalid")
+    assert r.status_code != 500
+    assert "ValueError" not in r.text
+    assert "Traceback" not in r.text
+
 # ---- 零业务副作用 ----
 
 

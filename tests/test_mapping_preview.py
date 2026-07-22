@@ -996,3 +996,91 @@ def test_draft_join_fk_must_be_on_anchor(tmp_path):
         )
     assert ei.value.reason_code == "draft_invalid"
     assert "锚表" in ei.value.detail
+
+
+def test_draft_empty_field_map_is_draft_invalid_not_500(tmp_path):
+    """空 field_map 须预检 422,不得落到 build_select ValueError/500。"""
+    pack = _pack()
+    landing = _seed(tmp_path, _default_rows())
+    draft = {
+        "tables": [ANCHOR],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {},
+        "derived": {},
+        "notes": "",
+    }
+    with pytest.raises(PreviewError) as ei:
+        preview_mapping(
+            landing, pack, object_name="Item", source=SOURCE, draft_binding=draft,
+        )
+    assert ei.value.reason_code == "draft_invalid"
+    assert "field_map" in ei.value.detail
+
+
+def test_draft_non_anchor_field_without_join_is_draft_invalid(tmp_path):
+    """非锚表字段缺 join 须预检 422,不得落到 build_select ValueError/500。"""
+    pack = _pack()
+    pack.objects.append(
+        ObjectTemplate(
+            object="Other",
+            display_name="其它",
+            domain="辅助",
+            keys=["code"],
+            properties=[Property(name="code", type="string")],
+            bindings=[
+                SourceBinding(
+                    source=SOURCE,
+                    tables=["OTHER"],
+                    status="verified",
+                    field_map={"code": "OTHER.CODE"},
+                ),
+            ],
+        ),
+    )
+    pack.objects[0].bindings[0].tables = [ANCHOR, "OTHER"]
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    item = TableInfo(
+        name=ANCHOR,
+        columns=[
+            ("Id", "int"), ("CODE", "text"), ("NAME", "text"),
+            ("STATUS", "text"), ("SECRET", "text"), ("ST", "text"),
+            ("OTHER_ID", "int"),
+        ],
+        pk=["Id"],
+    )
+    other = TableInfo(
+        name="OTHER",
+        columns=[("Id", "int"), ("CODE", "text"), ("NAME", "text")],
+        pk=["Id"],
+    )
+    landing.ensure_raw_table(SOURCE, item)
+    landing.ensure_raw_table(SOURCE, other)
+    landing.upsert_rows(
+        SOURCE, item,
+        [{"Id": 1, "CODE": "A", "NAME": "n", "STATUS": "1",
+          "SECRET": "s1", "ST": "X", "OTHER_ID": 10}],
+        "b1",
+    )
+    landing.upsert_rows(
+        SOURCE, other,
+        [{"Id": 10, "CODE": "O1", "NAME": "joined"}],
+        "b1",
+    )
+    draft = {
+        "tables": [ANCHOR, "OTHER"],
+        "key_map": {"code": f"{ANCHOR}.CODE"},
+        "field_map": {
+            "code": f"{ANCHOR}.CODE",
+            "name": "OTHER.NAME",  # 缺 (join ANCHOR.OTHER_ID)
+            "status": f"{ANCHOR}.STATUS (map 1→open / 2→closed / 9→open)",
+            "secret": f"{ANCHOR}.SECRET",
+        },
+        "derived": {},
+        "notes": "",
+    }
+    with pytest.raises(PreviewError) as ei:
+        preview_mapping(
+            landing, pack, object_name="Item", source=SOURCE, draft_binding=draft,
+        )
+    assert ei.value.reason_code == "draft_invalid"
+    assert "必须声明" in ei.value.detail
