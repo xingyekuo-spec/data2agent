@@ -8,13 +8,18 @@
 
 join 与 map 可同时出现,顺序固定为先 join 后 map;binding.tables[0] 为锚表
 (对象一行 = 锚表一行)。本模块被 MCP query_objects 消费,后续抽取管道复用。
+
+M4-T03:build_select_plan 为 canonical builder;正式 apply 可投影 provenance
+(锚/关联主键、join 外键、_d2a_batch_id)。build_select 保持兼容包装,
+Preview/MCP 默认 SQL 不变。
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Literal, Optional
 
 from .metamodel.schema import ObjectTemplate, SourceBinding
 
@@ -27,6 +32,20 @@ _EXPR_RE = re.compile(
     re.X,
 )
 
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+# provenance 内部别名保留前缀;不得与模板属性或 __derived 条件列冲突。
+_PROV_PREFIX = "__d2a_p_"
+_BATCH_COL = "_d2a_batch_id"
+
+ProvenanceRole = Literal[
+    "anchor_pk",
+    "join_pk",
+    "join_fk",
+    "extract_batch",
+    "derived_condition",
+]
+
 
 @dataclass(frozen=True)
 class FieldExpr:
@@ -34,6 +53,37 @@ class FieldExpr:
     column: str
     join_fk: tuple[str, str] | None = None   # (外键所在表, 外键字段)
     value_map: dict[str, str] | None = None  # 源值 -> 对象值
+
+
+@dataclass(frozen=True)
+class ProvenanceProjection:
+    """SelectPlan 中的源记录身份投影(不进入对象 output)。"""
+
+    alias: str
+    role: ProvenanceRole
+    logical_table: str
+    column: str
+    sql_alias: str  # FROM 子句中的表别名:a / j1 / ...
+    join_key: tuple[str, str] | None = None  # (目标逻辑表, 锚表外键列)
+    property_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class SelectPlan:
+    """canonical SELECT 计划:字段表达式 + 可选 provenance 投影。"""
+
+    sql: str
+    params: list
+    exprs: dict[str, FieldExpr]
+    provenance: tuple[ProvenanceProjection, ...]
+    anchor: str
+    joins: tuple[tuple[tuple[str, str], str], ...]  # ((目标表, fk), sql_alias)
+
+    def as_legacy_tuple(self) -> tuple[str, list, dict[str, FieldExpr]]:
+        return self.sql, self.params, self.exprs
+
+    def provenance_aliases(self) -> frozenset[str]:
+        return frozenset(p.alias for p in self.provenance)
 
 
 def parse_field_expr(raw: str) -> FieldExpr:
@@ -52,16 +102,29 @@ def parse_field_expr(raw: str) -> FieldExpr:
     return FieldExpr(m["table"], m["column"], join_fk, value_map)
 
 
-_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-
 def _validate_ident(name: str, *, label: str) -> str:
     if not _IDENT_RE.match(name):
         raise ValueError(f"非法{label}标识符: {name!r}")
     return name
 
 
-def build_select(
+def split_row_provenance(
+    row: dict,
+    plan: SelectPlan,
+) -> tuple[dict, dict[str, object]]:
+    """将 SQL 行拆成 (转换用字段行, provenance 别名→值)。
+
+    仅剥离 `__d2a_p_*` 内部投影;derived 条件列(`__col`)仍留给 mapping_transform。
+    """
+    strip = {
+        p.alias for p in plan.provenance if p.alias.startswith(_PROV_PREFIX)
+    }
+    transform_row = {k: v for k, v in row.items() if k not in strip}
+    prov = {k: row[k] for k in strip if k in row}
+    return transform_row, prov
+
+
+def build_select_plan(
     template: ObjectTemplate,
     binding: SourceBinding,
     *,
@@ -74,18 +137,20 @@ def build_select(
     extra_anchor_cols: list[str] | None = None,     # 额外锚表列(派生决策表用),别名 __列名
     anchor_pk_cols: list[str] | None = None,        # 内部:锚表主键列(DDL 序)
     anchor_pk_values: list[tuple] | None = None,    # 内部:冻结主键元组;与 cols 同用
-) -> tuple[str, list, dict[str, FieldExpr]]:
-    """按 binding 生成参数化 SELECT。返回 (sql, params, 属性->表达式)。
+    include_provenance: bool = False,
+    table_pk_cols: Callable[[str], Sequence[str]] | None = None,
+) -> SelectPlan:
+    """按 binding 生成 SelectPlan。include_provenance 时附加源记录身份投影。
 
-    默认直读源表形(展厅/测试);映射应用传 physical + active_col
-    在落地库 raw_* 上物化对象层。limit=None 不限行(仅限内部消费者)。
-
-    anchor_pk_cols / anchor_pk_values 仅供 Preview 等内部消费者锁定冻结样本行;
-    默认 unset 时行为与既有查询完全一致。
+    Preview/MCP 应继续用 build_select(include_provenance=False 默认路径)。
+    正式 apply 传 include_provenance=True 与 table_pk_cols。
     """
     physical = physical or (lambda t: t)
     if not binding.tables:
         raise ValueError(f"{template.object}: binding 未声明 tables,无法确定锚表")
+    if include_provenance and table_pk_cols is None:
+        raise ValueError("include_provenance=True 时必须提供 table_pk_cols")
+
     anchor = binding.tables[0]
     prop_names = {p.name for p in template.properties}
     exprs: dict[str, FieldExpr] = {}
@@ -96,6 +161,10 @@ def build_select(
                 f"{template.object}: field_map 未知属性 '{prop}',"
                 f"可用:{sorted(prop_names)}")
         prop = _validate_ident(prop, label="属性")
+        if prop.startswith(_PROV_PREFIX):
+            raise ValueError(
+                f"{template.object}: 属性名不得使用 provenance 保留前缀 "
+                f"{_PROV_PREFIX!r}: '{prop}'")
         exprs[prop] = parse_field_expr(raw)
     if not exprs:
         raise ValueError(f"{template.object}: binding({binding.source})未声明 field_map")
@@ -118,12 +187,135 @@ def build_select(
             raise ValueError(f"非锚表字段 {e.table}.{e.column} 必须声明 (join {anchor}.外键)")
         return f'a."{e.column}"'
 
-    select = ", ".join(f'{sql_col(e)} AS "{p}"' for p, e in exprs.items())
+    select_parts = [f'{sql_col(e)} AS "{p}"' for p, e in exprs.items()]
+    used_aliases: set[str] = set(exprs)
+
+    provenance: list[ProvenanceProjection] = []
+
     # extra_anchor_cols 可能来自草稿 derived.when:必须先校验为合法标识符,
     # 禁止把客户端字符串直接拼进 a."…"(否则可改写 SELECT)。
     for col in extra_anchor_cols or []:
         col = _validate_ident(col, label="额外锚表列")
-        select += f', a."{col}" AS "__{col}"'
+        alias = f"__{col}"
+        if alias in used_aliases or alias.startswith(_PROV_PREFIX):
+            raise ValueError(f"额外锚表列别名冲突: {alias!r}")
+        select_parts.append(f'a."{col}" AS "{alias}"')
+        used_aliases.add(alias)
+        if include_provenance:
+            provenance.append(
+                ProvenanceProjection(
+                    alias=alias,
+                    role="derived_condition",
+                    logical_table=anchor,
+                    column=col,
+                    sql_alias="a",
+                )
+            )
+
+    if include_provenance:
+        assert table_pk_cols is not None
+        # 属性 → 所用 join_key,便于后续合并 FieldTrace
+        props_by_join: dict[tuple[str, str], list[str]] = {}
+        for prop, e in exprs.items():
+            if e.join_fk is not None:
+                props_by_join.setdefault((e.table, e.join_fk[1]), []).append(prop)
+
+        anchor_pks = [
+            _validate_ident(c, label="锚表主键列")
+            for c in table_pk_cols(anchor)
+        ]
+        if not anchor_pks:
+            raise ValueError(f"锚表 {anchor} 无 DDL 主键,无法投影 provenance")
+        for i, col in enumerate(anchor_pks):
+            alias = f"{_PROV_PREFIX}a_pk_{i}_{col}"
+            if alias in used_aliases:
+                raise ValueError(f"provenance 别名冲突: {alias!r}")
+            select_parts.append(f'a."{col}" AS "{alias}"')
+            used_aliases.add(alias)
+            provenance.append(
+                ProvenanceProjection(
+                    alias=alias,
+                    role="anchor_pk",
+                    logical_table=anchor,
+                    column=col,
+                    sql_alias="a",
+                )
+            )
+        batch_alias = f"{_PROV_PREFIX}a_batch"
+        if batch_alias in used_aliases:
+            raise ValueError(f"provenance 别名冲突: {batch_alias!r}")
+        select_parts.append(f'a."{_BATCH_COL}" AS "{batch_alias}"')
+        used_aliases.add(batch_alias)
+        provenance.append(
+            ProvenanceProjection(
+                alias=batch_alias,
+                role="extract_batch",
+                logical_table=anchor,
+                column=_BATCH_COL,
+                sql_alias="a",
+            )
+        )
+
+        for (target, fk), jalias in joins.items():
+            fk = _validate_ident(fk, label="join 外键列")
+            props = tuple(props_by_join.get((target, fk), ()))
+            fk_alias = f"{_PROV_PREFIX}{jalias}_fk_{fk}"
+            if fk_alias in used_aliases:
+                raise ValueError(f"provenance 别名冲突: {fk_alias!r}")
+            select_parts.append(f'a."{fk}" AS "{fk_alias}"')
+            used_aliases.add(fk_alias)
+            provenance.append(
+                ProvenanceProjection(
+                    alias=fk_alias,
+                    role="join_fk",
+                    logical_table=anchor,
+                    column=fk,
+                    sql_alias="a",
+                    join_key=(target, fk),
+                    property_names=props,
+                )
+            )
+            join_pks = [
+                _validate_ident(c, label="关联表主键列")
+                for c in table_pk_cols(target)
+            ]
+            if not join_pks:
+                raise ValueError(f"关联表 {target} 无 DDL 主键,无法投影 provenance")
+            for i, col in enumerate(join_pks):
+                pk_alias = f"{_PROV_PREFIX}{jalias}_pk_{i}_{col}"
+                if pk_alias in used_aliases:
+                    raise ValueError(f"provenance 别名冲突: {pk_alias!r}")
+                select_parts.append(f'{jalias}."{col}" AS "{pk_alias}"')
+                used_aliases.add(pk_alias)
+                provenance.append(
+                    ProvenanceProjection(
+                        alias=pk_alias,
+                        role="join_pk",
+                        logical_table=target,
+                        column=col,
+                        sql_alias=jalias,
+                        join_key=(target, fk),
+                        property_names=props,
+                    )
+                )
+            jbatch = f"{_PROV_PREFIX}{jalias}_batch"
+            if jbatch in used_aliases:
+                raise ValueError(f"provenance 别名冲突: {jbatch!r}")
+            select_parts.append(f'{jalias}."{_BATCH_COL}" AS "{jbatch}"')
+            used_aliases.add(jbatch)
+            provenance.append(
+                ProvenanceProjection(
+                    alias=jbatch,
+                    role="extract_batch",
+                    logical_table=target,
+                    column=_BATCH_COL,
+                    sql_alias=jalias,
+                    join_key=(target, fk),
+                    property_names=props,
+                )
+            )
+
+    select = ", ".join(select_parts)
 
     where, params = [], []
     for prop, val in (filters or {}).items():
@@ -176,4 +368,43 @@ def build_select(
     where_clause = f" WHERE {' AND '.join(where)}" if where else ""
     limit_clause = "" if limit is None else f" LIMIT {max(1, min(int(limit), 200))}"
     sql = f"SELECT {select} FROM {from_clause}{where_clause}{order}{limit_clause}"
-    return sql, params, exprs
+    return SelectPlan(
+        sql=sql,
+        params=params,
+        exprs=exprs,
+        provenance=tuple(provenance),
+        anchor=anchor,
+        joins=tuple(joins.items()),
+    )
+
+
+def build_select(
+    template: ObjectTemplate,
+    binding: SourceBinding,
+    *,
+    filters: dict | None = None,
+    order_by: str | None = None,
+    desc: bool = False,
+    limit: Optional[int] = 20,
+    physical: Callable[[str], str] | None = None,
+    active_col: str | None = None,
+    extra_anchor_cols: list[str] | None = None,
+    anchor_pk_cols: list[str] | None = None,
+    anchor_pk_values: list[tuple] | None = None,
+) -> tuple[str, list, dict[str, FieldExpr]]:
+    """兼容包装:返回 (sql, params, 属性->表达式);等价于无 provenance 的 SelectPlan。"""
+    plan = build_select_plan(
+        template,
+        binding,
+        filters=filters,
+        order_by=order_by,
+        desc=desc,
+        limit=limit,
+        physical=physical,
+        active_col=active_col,
+        extra_anchor_cols=extra_anchor_cols,
+        anchor_pk_cols=anchor_pk_cols,
+        anchor_pk_values=anchor_pk_values,
+        include_provenance=False,
+    )
+    return plan.as_legacy_tuple()
