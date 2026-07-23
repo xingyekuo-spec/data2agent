@@ -8,18 +8,33 @@ sources:
     adapter: sqlite_readonly        # 生产:mssql_readonly
     path: showroom/e10.sqlite       # mssql:删除本行,改用 dsn_env
     # dsn_env: D2A_E10_DSN
-    whitelist_from_bindings: true   # 白名单由模板 binding 推导(推荐)
-    extra_whitelist: []
+
+    # 抽取表与同步策略(独立于模板维护,只修改这里即可控制ERP抽取范围)
+    tables:
+      CUSTOMER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      CURRENCY:
+        mode: full_refresh
+      ITEM:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      QUOTATION:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER_D:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+
     windows: []                     # 生产示例:["22:00-06:30"];空 = 不限
     rate: { batch_size: 5000, rows_per_second: 2000 }
     lookback: 3d                    # 增量回看窗口
     sync_every: 30m                 # 同步节奏(窗口内)
     reconcile_at: "05:30"           # 每日 L1 对账;删除本行则不排
     apply_after_sync: true          # 同步后自动物化对象层(sink=http 时忽略)
-    # 落地出口(§12.3):默认 local=写本地库(同机)。
-    # Pattern A 中间服务器改为推给平台(平台跑 ingest;现场见 docs/runbook/portable.md):
+    # 落地出口:默认 local=写本地库(同机)。
+    # Pattern A 中间服务器改为推给平台:
     # sink: { type: http, url: "https://平台域名", token_env: D2A_INGEST_TOKEN }
-    # 正式试点必须由平台反向代理终止 TLS;直连 http://平台IP:8850 仅限受控内网技术验证。
-    # 注:推送模式下须移除上面的 reconcile_at —— 跨机对账(E6b)未实现,
-    #     中间机只有水位无 raw,本地对账会误判(config 校验会直接拒绝)。
-    # 现场验收:docs/runbook/push-validation.md

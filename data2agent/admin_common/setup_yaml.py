@@ -27,7 +27,14 @@ def build_middle_connect_yaml(
             "digiwin_e10": {
                 "adapter": "mssql_readonly",
                 "dsn_env": "D2A_E10_DSN",
-                "whitelist_from_bindings": True,
+                "tables": {
+                    "CUSTOMER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                    "CURRENCY": {"mode": "full_refresh"},
+                    "ITEM": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                    "QUOTATION": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                    "SALES_ORDER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                    "SALES_ORDER_D": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                },
                 "windows": [],
                 "rate": {"batch_size": batch_size, "rows_per_second": rows_per_second},
                 "lookback": lookback,
