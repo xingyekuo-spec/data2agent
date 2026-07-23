@@ -255,9 +255,10 @@ def build_validation_report(
                                      "actual_raw_tables": sorted(actual_raw),
                                      "missing": sorted(missing_from_raw)}))
     else:
-        # 逐表新鲜度:合并 d2a_sync_state 和 d2a_run_step 两种证据源
+        # 逐表新鲜度:本地水位状态或明确的 table-complete 事件。
+        # HTTP batch 只表示一批数据落地，绝不能视为整表同步完成。
         per_table_last: dict[str, datetime] = {}
-        # 增量表:水位状态(覆盖 local 和 HTTP push)
+        # 本地增量表:水位状态。
         for r in db.con.execute(
             "SELECT table_name, last_run_at FROM d2a_sync_state WHERE source = ?",
             (source,)
@@ -267,20 +268,16 @@ def build_validation_report(
                     per_table_last[r["table_name"]] = datetime.fromisoformat(r["last_run_at"])
                 except ValueError:
                     pass
-        # 全量表 / 推送批次:run step(JOIN d2a_sync_run 确保源隔离)
+        # 本地 full_refresh / HTTP table-complete:表级 run step(确保源隔离)。
         for r in db.con.execute(
             "SELECT s.target, MAX(s.finished_at) as last_ok "
             "FROM d2a_run_step s JOIN d2a_sync_run r ON s.run_id = r.id "
-            "WHERE r.source = ? AND s.status = 'ok' AND s.target != '' "
+            "WHERE r.source = ? AND s.kind = 'table' AND s.status = 'ok' AND s.target != '' "
             "GROUP BY s.target",
             (source,)
         ).fetchall():
             if r["last_ok"]:
                 tbl = r["target"]
-                # 推送 target 格式: raw_<source>__<table> → 提取 table 名
-                prefix = f"raw_{source}__"
-                if tbl.startswith(prefix):
-                    tbl = tbl[len(prefix):]
                 try:
                     dt = datetime.fromisoformat(r["last_ok"])
                     if tbl not in per_table_last or dt > per_table_last[tbl]:
@@ -306,27 +303,25 @@ def build_validation_report(
                 if now > next_expected + timedelta(seconds=grace_s):
                     stale_tables.append(tbl)
 
-        if unverified_tables:
+        if unverified_tables or stale_tables:
+            parts: list[str] = []
+            if unverified_tables:
+                parts.append(f"{len(unverified_tables)} 张表缺少同步记录: "
+                             + ", ".join(unverified_tables))
+            if stale_tables:
+                parts.append(f"{len(stale_tables)} 张表同步已过期: "
+                             + ", ".join(stale_tables))
             checks.append(_check("raw_presence", "warning",
-                                 f"{len(unverified_tables)} 张表缺少同步记录,无法确认当前是否仍在抽取: "
-                                 + ", ".join(unverified_tables),
+                                 "；".join(parts),
                                  blocking=False,
                                  detail={"unverified": unverified_tables,
-                                         "per_table_last": {
-                                             t: per_table_last[t].isoformat(timespec="seconds")
-                                             for t in per_table_last},
-                                 }))
-        elif stale_tables:
-            checks.append(_check("raw_presence", "warning",
-                                 f"{len(stale_tables)} 张表同步已过期(超出预期运行窗口 {grace_s // 60} 分钟): "
-                                 + ", ".join(stale_tables),
-                                 blocking=False,
-                                 detail={"stale": stale_tables,
+                                         "stale": stale_tables,
                                          "per_table_last": {
                                              t: per_table_last[t].isoformat(timespec="seconds")
                                              for t in per_table_last},
                                          "windows": source_cfg.windows if source_cfg else [],
-                                         "sync_every": source_cfg.sync_every if source_cfg else "?"}))
+                                         "sync_every": source_cfg.sync_every if source_cfg else "?",
+                                 }))
         else:
             checks.append(_check("raw_presence", "pass",
                                  f"平台 binding 依赖的 {len(binding_tables)} 张表 raw 数据均存在且同步新鲜。",

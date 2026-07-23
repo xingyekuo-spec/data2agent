@@ -216,11 +216,13 @@ class TestRawPresence:
         pack = load_pack(ROOT / "templates")
         landing = LandingStore(tmp_path / "landing.sqlite")
 
-        # 创建一个 run,只为 5 张表写 step(排除 CURRENCY)
+        # CUSTOMER 无记录；CURRENCY 有过期记录，二者都必须在同一报告中出现。
         run_id = landing.start_run(SOURCE, "sync")
-        for i, tbl in enumerate(["CUSTOMER", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]):
+        for i, tbl in enumerate(["ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]):
             sid = landing.add_step(run_id, i + 1, "table", tbl)
             landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
+        landing.add_step(run_id, 5, "table", "CURRENCY", status="ok",
+                         finished_at="2020-01-01T00:00:00")
         landing.finish_run(run_id, tables=5, rows=500, status="ok")
 
         # 确保 raw 表存在(创建空表)
@@ -233,7 +235,8 @@ class TestRawPresence:
         )
         checks = {c["check_id"]: c for c in report["checks"]}
         assert checks["raw_presence"]["status"] == "warning"
-        assert "CURRENCY" in checks["raw_presence"]["detail"].get("unverified", [])
+        assert "CUSTOMER" in checks["raw_presence"]["detail"].get("unverified", [])
+        assert "CURRENCY" in checks["raw_presence"]["detail"].get("stale", [])
         landing.con.rollback()
 
     def test_other_source_does_not_pollute(self, tmp_path):

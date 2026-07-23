@@ -291,11 +291,13 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
 - 落地出口抽象为 Sink(`connect/sink.py`):`LocalSink`(写本地库,同机/开发默认)、
   `HttpPushSink`(POST 给平台;中间服务器用,stdlib urllib 零额外依赖、值推送前归一化、
   失败指数退避重试);`incremental_sync` 默认 `LocalSink(landing)`,行为向后兼容;
-- 平台接收端 `data2agent.ingest`(FastAPI,`POST /ingest/batch` → 复用 landing 幂等落地,
-  可选 Bearer Token;`python -m data2agent.ingest`);
+- 平台接收端 `data2agent.ingest`(FastAPI):`POST /ingest/batch` 只负责幂等落地;
+  中间机在一张表的全部批次成功后再 `POST /ingest/table-complete`。完成事件包含表结构、
+  行数与批次数，零行表也必须发送，平台据此创建空 Raw 表并保存表级新鲜度证据;
 - connect.yaml 加 `sink: {type: http, url, token_env}`;**中间用 http sink 时本地只留
   水位/审计/运行状态、不落 raw**(水位是元数据非业务数据),且不在中间 apply(映射在平台侧);
-- 验证:中间/平台双进程集成测试 —— 推送落地与直连 sync 逐表逐行一致、中间零 raw 表
+- 验证:中间/平台双进程集成测试 —— 推送落地与直连 sync 逐表逐行一致、中间零 raw 表、
+  表级完成事件与零行表完成证据
   (`tests/test_sink_ingest.py`);现场验证见 [runbook/push-validation](../runbook/push-validation.md)
   (主路径为便携包 + 平台 Vue Console);安装见 [portable](../runbook/portable.md),
   链路验收见 [push-validation](../runbook/push-validation.md);
