@@ -15,89 +15,52 @@ excel-import  按映射文件导入报价历史到落地库(之后 apply 物化)
 from __future__ import annotations
 
 import argparse
-import os
 
 from ..metamodel.loader import load_pack
 from .dataset_publish import build_dataset
-from .increment import DEFAULT_LOOKBACK_DAYS, incremental_sync, watermarks_from_pack
+from .increment import incremental_sync
 from .landing import LandingStore
 from .mapping_apply import DEFAULT_BREAKER_THRESHOLD
 from .reconcile import reconcile
-from .sync import whitelist_from_pack
 
 
 def _add_common(sp: argparse.ArgumentParser) -> None:
-    src = sp.add_mutually_exclusive_group(required=False)
-    src.add_argument("--sqlite", help="SQLite 源库路径(开发 / 参考库)")
-    src.add_argument("--mssql-dsn-env", help="存放 MSSQL 连接串的环境变量名(凭据不落配置)")
-    src.add_argument("--config", help="connect.yaml 路径(使用 tables 配置)")
+    sp.add_argument("--config", required=True, help="connect.yaml 路径(抽取配置唯一来源)")
     sp.add_argument("--source", default="digiwin_e10", help="数据源名")
-    sp.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径")
+    sp.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径(默认值;--config 中的 landing 优先)")
     sp.add_argument("--templates", default="templates", help="模板包目录")
     sp.add_argument("--batch-size", type=int, default=5000)
-    sp.add_argument("--rows-per-second", type=int, default=0, help="0 为不限流(参考链);生产必配")
+    sp.add_argument("--rows-per-second", type=int, default=0, help="0 为不限流(参考库);生产必配")
 
 
 def _build(args, ap):
-    """构建适配器、落地库和水位映射。
+    """构建适配器、落地库和水位映射。所有抽取操作必须通过 --config 获取 tables 配置。"""
+    from .config import load_config
+    cfg = load_config(args.config)
+    if args.source not in cfg.sources:
+        ap.error(f"配置中没有源 '{args.source}',可用: {sorted(cfg.sources)}")
+    scfg = cfg.sources[args.source]
+    whitelist = scfg.table_whitelist()
+    watermarks = scfg.table_watermarks()
 
-    返回 (pack_or_none, adapter, landing, watermarks)。
-    --config 模式: pack 为 None, watermarks 来自 tables 配置。
-    旧模式: pack 来自模板, watermarks 来自 binding。
-    """
-    if getattr(args, 'config', None):
-        from .config import load_config
-        cfg = load_config(args.config)
-        if args.source not in cfg.sources:
-            ap.error(f"配置中没有源 '{args.source}',可用: {sorted(cfg.sources)}")
-        scfg = cfg.sources[args.source]
-        whitelist = scfg.table_whitelist()
-        watermarks = scfg.table_watermarks()
-
-        landing = LandingStore(cfg.landing)
-        hook = lambda action, sql, rows, ms: landing.log_audit(args.source, action, sql, rows, ms)  # noqa: E731
-        kwargs = dict(batch_size=scfg.rate.batch_size,
-                      rows_per_second=scfg.rate.rows_per_second,
-                      audit_hook=hook)
-
-        import os as _os
-        if scfg.adapter == "sqlite_readonly":
-            from .adapters.sqlite import SqliteReadOnlyAdapter
-            path = scfg.path or _os.environ.get(scfg.dsn_env or "", "")
-            adapter = SqliteReadOnlyAdapter(path, whitelist, **kwargs)
-        else:
-            from .adapters.mssql import MssqlReadOnlyAdapter
-            dsn = _os.environ.get(scfg.dsn_env or "", "")
-            if not dsn:
-                ap.error(f"环境变量 {scfg.dsn_env} 为空")
-            adapter = MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
-        return None, adapter, landing, watermarks
-
-    # Legacy mode (no --config): require --sqlite or --mssql-dsn-env
-    if not args.sqlite and not args.mssql_dsn_env:
-        ap.error("需要 --config connect.yaml 或 --sqlite/--mssql-dsn-env(开发用)")
-
-    landing = LandingStore(args.landing)
+    landing = LandingStore(cfg.landing)
     hook = lambda action, sql, rows, ms: landing.log_audit(args.source, action, sql, rows, ms)  # noqa: E731
-    kwargs = dict(batch_size=args.batch_size, rows_per_second=args.rows_per_second,
+    kwargs = dict(batch_size=scfg.rate.batch_size,
+                  rows_per_second=scfg.rate.rows_per_second,
                   audit_hook=hook)
 
-    pack = load_pack(args.templates)
-    whitelist = whitelist_from_pack(pack, args.source)
-    if not whitelist:
-        ap.error(f"模板中没有 source={args.source} 的 binding,白名单为空")
-    watermarks = watermarks_from_pack(pack, args.source)
-
-    if args.sqlite:
+    import os as _os
+    if scfg.adapter == "sqlite_readonly":
         from .adapters.sqlite import SqliteReadOnlyAdapter
-        adapter = SqliteReadOnlyAdapter(args.sqlite, whitelist, **kwargs)
+        path = scfg.path or _os.environ.get(scfg.dsn_env or "", "")
+        adapter = SqliteReadOnlyAdapter(path, whitelist, **kwargs)
     else:
-        dsn = os.environ.get(args.mssql_dsn_env, "")
-        if not dsn:
-            ap.error(f"环境变量 {args.mssql_dsn_env} 为空")
         from .adapters.mssql import MssqlReadOnlyAdapter
+        dsn = _os.environ.get(scfg.dsn_env or "", "")
+        if not dsn:
+            ap.error(f"环境变量 {scfg.dsn_env} 为空")
         adapter = MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
-    return pack, adapter, landing, watermarks
+    return None, adapter, landing, watermarks, scfg, cfg
 
 
 def main() -> int:
@@ -110,8 +73,6 @@ def main() -> int:
     sp = sub.add_parser("sync", help="同步到落地库(默认水位增量)")
     _add_common(sp)
     sp.add_argument("--full", action="store_true", help="强制全量(忽略水位,不建立状态)")
-    sp.add_argument("--lookback-days", type=float, default=DEFAULT_LOOKBACK_DAYS,
-                    help=f"回看窗口天数(默认 {DEFAULT_LOOKBACK_DAYS})")
 
     rp = sub.add_parser("reconcile", help="分段对账(L1;--deep 全段修复)")
     _add_common(rp)
@@ -216,6 +177,7 @@ def main() -> int:
     if args.cmd == "migrate-config":
         from .sync import migrate_config_to_tables
         if args.dry_run:
+            from .increment import watermarks_from_pack
             import yaml
             from pathlib import Path
             data = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
@@ -256,7 +218,7 @@ def main() -> int:
     if args.cmd == "apply":
         return _apply_loop(args)
 
-    pack, adapter, landing, watermarks = _build(args, ap)
+    pack, adapter, landing, watermarks, scfg, cfg = _build(args, ap)
 
     if args.cmd == "backfill":
         wm_col = watermarks.get(args.table)
@@ -277,18 +239,10 @@ def main() -> int:
     if args.cmd == "sync":
         if args.full:
             watermarks = {}
-        lookback = args.lookback_days
-        landing_display = args.landing
-        if getattr(args, 'config', None):
-            from .config import load_config
-            cfg = load_config(args.config)
-            scfg = cfg.sources[args.source]
-            lookback = scfg.lookback_days()
-            landing_display = cfg.landing
         report = incremental_sync(adapter, landing, args.source, watermarks,
-                                  lookback_days=lookback)
+                                  lookback_days=scfg.lookback_days())
         print(f"同步完成:run #{report.run_id},{len(report.tables)} 表,"
-              f"共 {report.total_rows} 行 → {landing_display}")
+              f"共 {report.total_rows} 行 → {cfg.landing}")
         for t in report.tables:
             wm = f"  水位 → {t.high_water}" if t.high_water else ""
             print(f"  - {t.table:<16} {t.rows:>6} 行 / {t.batches} 批  [{t.strategy}]{wm}")

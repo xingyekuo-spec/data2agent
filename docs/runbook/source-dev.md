@@ -53,8 +53,8 @@ sources:
 ## 3. CLI 命令
 
 ```bash
-# 验证配置可加载(结构校验)
-python -m data2agent.connect migrate-config --config connect.yaml --dry-run
+# 验证配置可加载
+python -c "from data2agent.connect.config import load_config; load_config('connect.yaml'); print('OK')"
 
 # 单次抽取(增量)
 python -m data2agent.connect sync --config connect.yaml
@@ -62,16 +62,16 @@ python -m data2agent.connect sync --config connect.yaml
 # 全量重抽
 python -m data2agent.connect sync --config connect.yaml --full
 
-# 常驻调度(窗口内定时抽取);--once 立即跑一轮后退出
+# 常驻调度;--once 立即跑一轮后退出
 python -m data2agent.connect serve --config connect.yaml --once
 
-# 查看同步状态(水位 / 最近运行 / 隔离区概览)
+# 查看同步状态
 python -m data2agent.connect status
 ```
 
-`serve` 常驻模式启动后按 `sync_every` 周期调度;修改 `connect.yaml` 需重启服务才能生效。
+`serve` 常驻后按 `sync_every` 周期调度。修改 `connect.yaml` 后需重启服务才能生效 —— 当前版本不会自动感知配置变化。
 
-`apply` 命令用于平台侧(拆机部署);中间机 local 模式下 `apply_after_sync: true` 会在同步后自动执行。
+`apply` 命令用于平台侧映射阶段(拆机部署);中间机 local 模式下 `apply_after_sync: true` 会在同步后自动执行。
 
 ## 4. 抽取表管理
 
@@ -112,13 +112,13 @@ python -m data2agent.connect migrate-config --config connect.yaml
 ## 7. 常见问题
 
 **Q: 新增抽取表后是否需要重启?**
-不需要。`serve` 常驻模式在下个窗口自动感知 `connect.yaml` 变更。手动模式直接运行 `sync` 即可。
+需要。当前版本 `serve` 不会自动感知 `connect.yaml` 变更，需重启服务才能加载新配置。手动模式直接运行 `sync` 即可。
 
 **Q: 删除 tables 中的表会导致数据丢失吗?**
 不会。已落地的 raw 数据保留在 landing 库中,只是后续不再抽取该表。
 
 **Q: 如何确认 watermark 字段是否正确?**
-运行 `connect test` 会逐表验证 watermark 列是否存在。字段语义(修改时间 vs 审核时间)属现场核对项,参考字典中的字段名仅为参考形状。
+API 连接测试（`/api/test-connection`）会逐表验证 watermark 列是否存在。字段语义（修改时间 vs 审核时间）属现场核对项，参考字典中的字段名仅为参考形状。
 
 **Q: 真实 SQL Server 环境如何配置?**
 将 `adapter` 改为 `mssql_readonly`,删除 `path`,改用 `dsn_env` 指向环境变量:

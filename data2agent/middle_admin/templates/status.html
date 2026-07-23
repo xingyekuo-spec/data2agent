@@ -98,7 +98,22 @@ document.getElementById('btn-test').addEventListener('click', function () {
         el.innerHTML = '连接成功 · ' + body.elapsed_ms + ' ms · 表: ' +
           esc((body.tables || []).join(', '));
       } else {
-        el.innerHTML = '连接失败: ' + esc(body.detail || body.error || '未知错误');
+        var failures = [];
+        if (body.results) {
+          for (var tbl in body.results) {
+            if (!body.results.hasOwnProperty(tbl)) continue;
+            var r = body.results[tbl];
+            var msgs = [];
+            if (!r.ok) msgs.push(r.error || '表不存在');
+            if (!r.pk_ok) msgs.push('缺少主键');
+            if (!r.wm_ok) msgs.push(r.wm_error || '水位列异常');
+            if (msgs.length) failures.push(tbl + ': ' + msgs.join('; '));
+          }
+        }
+        var msg = failures.length > 0
+          ? '连接失败:<br>' + failures.map(function(f) { return '  - ' + esc(f); }).join('<br>')
+          : '连接失败: ' + esc(body.detail || body.error || '未知错误');
+        el.innerHTML = msg;
       }
     });
 });

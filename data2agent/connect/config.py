@@ -51,6 +51,7 @@ def in_window(now: dtime, windows: list[str]) -> bool:
 
 
 class RateConfig(BaseModel):
+    model_config = {"extra": "forbid"}
     batch_size: int = 5000
     rows_per_second: int = 2000
 
@@ -58,6 +59,7 @@ class RateConfig(BaseModel):
 class SinkConfig(BaseModel):
     """raw 落地出口(§12.3):local=写本地库(同机);http=推给平台(Pattern A 中间服务器)。"""
 
+    model_config = {"extra": "forbid"}
     type: Literal["local", "http"] = "local"
     url: str | None = None                # http:平台接收端点(如 https://平台:8850)
     token_env: str | None = None          # http:Token 所在环境变量(凭据不落配置)
@@ -81,6 +83,7 @@ class TableExtractConfig(BaseModel):
 
 
 class SourceConfig(BaseModel):
+    model_config = {"extra": "forbid"}
     adapter: str                          # sqlite_readonly / mssql_readonly
     dsn_env: str | None = None            # mssql:连接串所在环境变量
     path: str | None = None               # sqlite:源库路径
@@ -154,6 +157,7 @@ class SourceConfig(BaseModel):
 
 
 class ConnectConfig(BaseModel):
+    model_config = {"extra": "forbid"}
     templates: str = "templates"
     landing: str = "landing/factory.sqlite"
     sources: dict[str, SourceConfig]

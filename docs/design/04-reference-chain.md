@@ -98,7 +98,7 @@ Mock 不得生成正式验收结论;参考链也不等于生产安全验证。
 
 - 6 表的 `mode` 和 `watermark` 字段与 `connect.example.yaml` 对齐;
 - `mode: full_refresh` 仅用于无可靠水位字段的小维表(如 CURRENCY);
-- 连接测试工具(`python -m data2agent.connect test`)验证 PK 列和 watermark 列存在;
+- 连接测试 API (`/api/test-connection` on middle_admin) 验证 PK 列和 watermark 列存在;
 - 抽取表清单不再从模板 binding 自动推导,所有变更通过 `connect.yaml` 显式管理。
 
 ## 7. 决议记录

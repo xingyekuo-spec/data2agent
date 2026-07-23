@@ -131,6 +131,25 @@ class TestLoadConfigTables:
             load_config(cfg_file)
 
 
+class TestUnknownFields:
+    def test_source_config_rejects_unknown_field(self, tmp_path):
+        cfg_file = tmp_path / "connect.yaml"
+        cfg_file.write_text(
+            "sources:\n  e10:\n    adapter: sqlite_readonly\n    path: x\n"
+            "    tables:\n"
+            "      CUSTOMER:\n"
+            "        mode: incremental\n"
+            "        watermark: UPD\n"
+            "    lookbak: 30d\n",
+            encoding="utf-8")
+        with pytest.raises(ValueError):
+            load_config(cfg_file)
+
+    def test_table_config_rejects_unknown_field(self):
+        with pytest.raises(ValueError):
+            TableExtractConfig(mode="incremental", watermark="X", enabled=True)
+
+
 class TestMigration:
     def test_migrate_whitelist_from_bindings_true(self, tmp_path, monkeypatch):
         from data2agent.connect.sync import migrate_config_to_tables
