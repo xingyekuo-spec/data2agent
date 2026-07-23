@@ -81,8 +81,10 @@ def test_ensure_landing_db_precreates(tmp_path):
 
 def test_admin_url():
     mod = _load_launcher()
-    assert mod.admin_url("127.0.0.1", 8851, False).endswith("/config")
-    assert mod.admin_url("127.0.0.1", 8851, True) == "http://127.0.0.1:8851/"
+    assert mod.admin_url("127.0.0.1", 8851, False, role="middle").endswith("/config")
+    assert mod.admin_url("127.0.0.1", 8851, True, role="middle") == "http://127.0.0.1:8851/"
+    assert mod.admin_url("127.0.0.1", 8849, False, role="platform").endswith("/v1/setup")
+    assert mod.admin_url("127.0.0.1", 8849, True, role="platform").endswith("/v1/")
 
 
 def test_second_instance_opens_existing_admin(tmp_path, monkeypatch):

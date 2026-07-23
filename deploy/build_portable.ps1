@@ -9,6 +9,7 @@
       data2agent.exe        # single entry (pass -LauncherExe)
       runtime\              # CPython embeddable + site-packages
       app\templates\
+      app\erp-configs\      # independent ERP table extraction profiles
       config\
       data\logs\
       README.txt
@@ -70,6 +71,7 @@ if (Test-Path $portable) { Remove-Item -Recurse -Force $portable }
 New-Item -ItemType Directory -Force -Path $portable | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'runtime') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'app\templates') | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $portable 'app\erp-configs') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'config') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'data\logs') | Out-Null
 
@@ -111,6 +113,10 @@ if ($LASTEXITCODE -ne 0) { throw 'pip install data2agent failed' }
 Write-Step 'Copy templates -> app/templates'
 Copy-Item -Recurse -Force (Join-Path $root 'templates\*') (Join-Path $portable 'app\templates')
 
+# --- 4a. Independent ERP extraction profiles ------------------------------
+Write-Step 'Copy ERP extraction profiles -> app/erp-configs'
+Copy-Item -Recurse -Force (Join-Path $root 'erp-configs\*') (Join-Path $portable 'app\erp-configs')
+
 # --- 4b. Vue Console dist (platform; required for /v1) ----------------------
 if ($Role -eq 'platform') {
     $vueDist = Join-Path $root 'console-ui\dist'
@@ -149,12 +155,28 @@ Keep this folder intact (runtime\ must stay next to data2agent.exe).
 "@
 Set-Content -Path (Join-Path $portable 'README.txt') -Value $readme -Encoding utf8
 
+# Keep a user-visible, immutable build label in every extracted package.  The
+# Vue settings page reads this through the platform API, making it possible to
+# distinguish a current package from an older folder with the same wheel version.
+$packageVersion = & $runtimePy -c "from data2agent import __version__; print(__version__)"
+if ($LASTEXITCODE -ne 0) { throw 'cannot read installed data2agent version' }
+@{
+    application_version = $packageVersion.Trim()
+    release_version = $Version
+} | ConvertTo-Json | Set-Content -Path (Join-Path $portable 'BUILD-INFO.json') -Encoding utf8
+
 if ($LauncherExe -and (Test-Path $LauncherExe)) {
     Write-Step "Copy launcher -> data2agent.exe"
     Copy-Item -Force $LauncherExe (Join-Path $portable 'data2agent.exe')
 }
 
-# --- 6. Zip ----------------------------------------------------------------
+# --- 6. Verify assembled package before zipping ----------------------------
+Write-Step 'Verify portable contents'
+& $runtimePy (Join-Path $root 'scripts\check_portable_package.py') `
+    --portable $portable --role $Role --expected-templates (Join-Path $root 'templates')
+if ($LASTEXITCODE -ne 0) { throw 'portable package verification failed' }
+
+# --- 7. Zip ----------------------------------------------------------------
 Write-Step "Zip $pkgName.zip"
 $zipPath = Join-Path $OutDir "$pkgName.zip"
 if (Test-Path $zipPath) { Remove-Item -Force $zipPath }

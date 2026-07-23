@@ -35,7 +35,7 @@ export const emptyInstallFixture = {
   audit: [],
   accessAudit: { items: [], offset: 0, limit: 50, total: 0, generated_at: '2026-07-18T09:12:00+08:00' },
   rawCatalog: { items: [], warnings: [], generated_at: '2026-07-18T09:12:00+08:00' },
-  config: { needs_setup: true, templates: '', landing: '' },
+  config: { app_version: '0.4.0', build_version: null, needs_setup: true, templates: '', landing: '' },
   rawTable: { table: '', offset: 0, limit: 50, total: 0, rows: [] },
   pipeline: {
     generated_at: '2026-07-18T09:12:00+08:00',

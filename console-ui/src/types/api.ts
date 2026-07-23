@@ -998,6 +998,10 @@ export interface components {
         };
         /** ConfigViewResponse */
         ConfigViewResponse: {
+            /** App Version */
+            app_version: string;
+            /** Build Version */
+            build_version?: string | null;
             /**
              * Landing
              * @default

@@ -1,0 +1,188 @@
+# 鼎捷 E10 中间机默认抽取配置。
+#
+# 这是 ERP 抽取范围与同步策略的唯一默认来源，独立于 templates/ 中的
+# 业务对象、字段映射和 materializer。现场只在中间机 connect.yaml 的
+# sources.digiwin_e10.tables 下维护实际需要读取的表。
+#
+# 本文件中的呆滞库存表来自 2026-07-22 现场核对清单。该清单没有确认各表
+# 可用的增量水位字段，新增项均采用 full_refresh；现场确认水位后，可直接在
+# 中间机 connect.yaml 中改为 incremental + watermark，无需改业务对象模板。
+tables:
+  CUSTOMER:
+    mode: incremental
+    watermark: LAST_MODIFIED_DATE
+  CURRENCY:
+    mode: full_refresh
+  ITEM:
+    mode: incremental
+    watermark: LAST_MODIFIED_DATE
+  ITEM_WAREHOUSE:
+    # 已核对库存和最后出入库字段；尚未核对可靠的修改时间水位，故默认全量。
+    mode: full_refresh
+  QUOTATION:
+    mode: incremental
+    watermark: LAST_MODIFIED_DATE
+  SALES_ORDER:
+    mode: incremental
+    watermark: LAST_MODIFIED_DATE
+  SALES_ORDER_D:
+    mode: incremental
+    watermark: LAST_MODIFIED_DATE
+
+  # 库存现状（呆滞库存基线）
+  INV_COST_BAL:
+    mode: full_refresh
+  INV_COST_BAL_DETAIL:
+    mode: full_refresh
+  INV_SUMMARY:
+    mode: full_refresh
+  INV_SUMMARY_COST_DETAIL:
+    mode: full_refresh
+  INV_OPENING_COST:
+    mode: full_refresh
+  INV_UNIT_COST:
+    mode: full_refresh
+  ITEM_WAREHOUSE_BIN:
+    mode: full_refresh
+
+  # 销售订单链路
+  SALES_ORDER_DOC:
+    mode: full_refresh
+  SALES_ORDER_DOC_D:
+    mode: full_refresh
+  SALES_ORDER_DOC_SD:
+    mode: full_refresh
+  SALES_ORDER_DOC_INSTAL:
+    mode: full_refresh
+  SALES_DELIVERY:
+    mode: full_refresh
+  SALES_DELIVERY_D:
+    mode: full_refresh
+  SALES_ISSUE:
+    mode: full_refresh
+  SALES_ISSUE_D:
+    mode: full_refresh
+  SALES_RETURN:
+    mode: full_refresh
+  SALES_RETURN_D:
+    mode: full_refresh
+  SALES_RETURN_RECEIPT:
+    mode: full_refresh
+  SALES_RETURN_RECEIPT_D:
+    mode: full_refresh
+
+  # 采购订单链路
+  PURCHASE_ORDER:
+    mode: full_refresh
+  PURCHASE_ORDER_D:
+    mode: full_refresh
+  PURCHASE_ORDER_SD:
+    mode: full_refresh
+  PURCHASE_ORDER_SD1:
+    mode: full_refresh
+  PURCHASE_ORDER_SSD:
+    mode: full_refresh
+  PO_REQ_SOURCE:
+    mode: full_refresh
+  PURCHASE_ARRIVAL:
+    mode: full_refresh
+  PURCHASE_ARRIVAL_D:
+    mode: full_refresh
+  PURCHASE_GOODS:
+    mode: full_refresh
+  PURCHASE_GOODS_D:
+    mode: full_refresh
+  PURCHASE_RETURN:
+    mode: full_refresh
+  PURCHASE_RETURN_D:
+    mode: full_refresh
+  SUPPLIER_PURCHASE:
+    mode: full_refresh
+  SUPPLIER_ADDRESS:
+    mode: full_refresh
+  SUPPLIER_CONTACT:
+    mode: full_refresh
+  ITEM_SUPPLIER:
+    mode: full_refresh
+
+  # BOM 结构
+  BOM_D:
+    mode: full_refresh
+  BOM_PRODUCT:
+    mode: full_refresh
+  BOM_SD:
+    mode: full_refresh
+  BOM_MANUAL_CONFIG:
+    mode: full_refresh
+  BOM_MANUAL_CONFIG_D:
+    mode: full_refresh
+  BOM_RULE:
+    mode: full_refresh
+  BOM_RULE_D:
+    mode: full_refresh
+
+  # 物料主数据
+  ITEM_FEATURE:
+    mode: full_refresh
+  ITEM_PLANT:
+    mode: full_refresh
+  ITEM_PURCHASE:
+    mode: full_refresh
+  ITEM_SALES:
+    mode: full_refresh
+  ITEM_LOT:
+    mode: full_refresh
+  ITEM_MAPPING:
+    mode: full_refresh
+  ITEM_MAPPING_D:
+    mode: full_refresh
+
+  # ECN 工程变更
+  ECN:
+    mode: full_refresh
+  ECN_D:
+    mode: full_refresh
+  ECN_SD:
+    mode: full_refresh
+  ECN_TASK:
+    mode: full_refresh
+  ECN_PRODUCT:
+    mode: full_refresh
+  ECN_AUTO_CONFIG:
+    mode: full_refresh
+  ECN_AUTO_CONFIG_D:
+    mode: full_refresh
+  ECN_FACT_TABLE:
+    mode: full_refresh
+
+  # 生产工单链路
+  MO:
+    mode: full_refresh
+  MO_D:
+    mode: full_refresh
+  MO_DEMAND:
+    mode: full_refresh
+  MO_ISSUED_SETS:
+    mode: full_refresh
+  MO_PRODUCT:
+    mode: full_refresh
+  MO_CHANGE:
+    mode: full_refresh
+  MO_CHANGE_D:
+    mode: full_refresh
+  MO_RECEIPT:
+    mode: full_refresh
+  MO_RECEIPT_D:
+    mode: full_refresh
+  MO_RECEIPT_REQUISTION:
+    mode: full_refresh
+  MO_RECEIPT_REQUISTION_D:
+    mode: full_refresh
+  MO_SPLIT:
+    mode: full_refresh
+  MO_DAILY_PRODUCTION_QTY:
+    mode: full_refresh
+  MO_ROUTING_MATERIAL:
+    mode: full_refresh
+  MO_ROUTING:
+    mode: full_refresh

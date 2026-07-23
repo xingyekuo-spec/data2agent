@@ -223,6 +223,19 @@ def resolve_vue_dist() -> Path | None:
     return None
 
 
+def resolve_build_version() -> str | None:
+    """Read the immutable portable build label when the application has one."""
+    home = (os.environ.get("D2A_HOME") or "").strip()
+    if not home:
+        return None
+    try:
+        raw = json.loads((Path(home) / "BUILD-INFO.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    value = raw.get("release_version") if isinstance(raw, dict) else None
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
 def _budget_text(value: str, budget: int = _AUDIT_SQL_BUDGET) -> str:
     if len(value.encode("utf-8", "ignore")) <= budget:
         return value
@@ -2144,11 +2157,12 @@ def create_app(landing: str | None = None, templates: str = "templates",
         responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
     )
     def get_config() -> dict:
+        version = {"app_version": __version__, "build_version": resolve_build_version()}
         if needs_setup():
-            return {"needs_setup": True, "templates": "", "landing": ""}
+            return {**version, "needs_setup": True, "templates": "", "landing": ""}
         path = require_config_path()
         out = _platform_config_subset(load_config(path))
-        out["needs_setup"] = False
+        out.update({**version, "needs_setup": False})
         return out
 
     @api.post(

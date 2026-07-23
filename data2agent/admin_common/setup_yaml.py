@@ -2,11 +2,44 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from .home_layout import HomeLayout, resolve_templates
+
+
+_ERP_TABLE_PROFILE = "digiwin_e10.yaml"
+
+
+def resolve_erp_table_profile(home: HomeLayout) -> Path:
+    """Return the independent ERP extraction profile used for first setup.
+
+    Portable packages carry it in ``app/erp-configs``.  The repository fallback
+    keeps source-tree development and tests independent from object templates.
+    """
+    portable = home.app / "erp-configs" / _ERP_TABLE_PROFILE
+    if portable.is_file():
+        return portable
+    return Path(__file__).resolve().parents[2] / "erp-configs" / _ERP_TABLE_PROFILE
+
+
+def load_default_erp_tables(home: HomeLayout) -> dict[str, dict[str, str]]:
+    """Load the default E10 table policy without consulting business templates."""
+    profile = resolve_erp_table_profile(home)
+    try:
+        raw: Any = yaml.safe_load(profile.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise RuntimeError(f"ERP 配置模板不可读取: {profile}") from exc
+    tables = raw.get("tables") if isinstance(raw, dict) else None
+    if not isinstance(tables, dict) or not tables:
+        raise RuntimeError(f"ERP 配置模板格式无效: {profile}")
+    if not all(isinstance(name, str) and isinstance(spec, dict)
+               for name, spec in tables.items()):
+        raise RuntimeError(f"ERP 配置模板 tables 格式无效: {profile}")
+    return deepcopy(tables)
 
 
 def build_middle_connect_yaml(
@@ -27,14 +60,7 @@ def build_middle_connect_yaml(
             "digiwin_e10": {
                 "adapter": "mssql_readonly",
                 "dsn_env": "D2A_E10_DSN",
-                "tables": {
-                    "CUSTOMER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
-                    "CURRENCY": {"mode": "full_refresh"},
-                    "ITEM": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
-                    "QUOTATION": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
-                    "SALES_ORDER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
-                    "SALES_ORDER_D": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
-                },
+                "tables": load_default_erp_tables(home),
                 "windows": [],
                 "rate": {"batch_size": batch_size, "rows_per_second": rows_per_second},
                 "lookback": lookback,

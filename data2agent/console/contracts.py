@@ -293,6 +293,8 @@ SetupResponse = SetupSuccessResponse | SetupFailureResponse
 
 
 class ConfigViewResponse(BaseModel):
+    app_version: str
+    build_version: str | None = None
     needs_setup: bool
     templates: str = ""
     landing: str = ""

@@ -106,8 +106,18 @@ if (Test-Path $cfgPath) {
 }
 
 $templatesDir = Join-Path $AppDir 'templates'
+$erpProfilePath = Join-Path $AppDir 'erp-configs\digiwin_e10.yaml'
 $landingPath  = Join-Path $DataDir 'middle.sqlite'
 $sinkUrl      = "http://${PlatformIP}:${PlatformPort}"
+
+if (-not (Test-Path $erpProfilePath)) {
+    throw "Independent ERP table profile missing: $erpProfilePath"
+}
+# The profile contains a top-level `tables:` node.  Indent it below the source
+# node without parsing/recreating the policy in PowerShell.
+$erpTablesYaml = ((Get-Content -Path $erpProfilePath) | ForEach-Object {
+    if ($_ -eq '') { '' } else { '    ' + $_ }
+}) -join "`r`n"
 
 # No reconcile_at in push mode (E6b not implemented; load_config rejects it).
 $yaml = @"
@@ -118,24 +128,7 @@ sources:
   digiwin_e10:
     adapter: mssql_readonly
     dsn_env: D2A_E10_DSN
-    tables:
-      CUSTOMER:
-        mode: incremental
-        watermark: LAST_MODIFIED_DATE
-      CURRENCY:
-        mode: full_refresh
-      ITEM:
-        mode: incremental
-        watermark: LAST_MODIFIED_DATE
-      QUOTATION:
-        mode: incremental
-        watermark: LAST_MODIFIED_DATE
-      SALES_ORDER:
-        mode: incremental
-        watermark: LAST_MODIFIED_DATE
-      SALES_ORDER_D:
-        mode: incremental
-        watermark: LAST_MODIFIED_DATE
+$erpTablesYaml
     windows: []
     rate: { batch_size: 5000, rows_per_second: 2000 }
     lookback: $Lookback

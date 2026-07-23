@@ -97,6 +97,13 @@ onMounted(() => {
           <p class="card-subtitle">
             敏感 Token 存放在 <code>config/secrets.env</code>;本页只编辑非敏感路径配置。
           </p>
+          <p
+            v-if="config"
+            class="app-version"
+            data-testid="settings-app-version"
+          >
+            当前应用版本：v{{ config.app_version }}<span v-if="config.build_version">（构建 {{ config.build_version }}）</span>
+          </p>
         </div>
         <el-button
           :loading="loading"
@@ -189,6 +196,12 @@ onMounted(() => {
 
 .card-subtitle {
   margin: 0 0 16px;
+  color: var(--d2a-text-secondary);
+  font-size: 12px;
+}
+
+.app-version {
+  margin: -8px 0 16px;
   color: var(--d2a-text-secondary);
   font-size: 12px;
 }

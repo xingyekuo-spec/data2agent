@@ -9,7 +9,8 @@ sources:
     path: showroom/e10.sqlite       # mssql:删除本行,改用 dsn_env
     # dsn_env: D2A_E10_DSN
 
-    # 抽取表与同步策略(独立于模板维护,只修改这里即可控制ERP抽取范围)
+    # 抽取表与同步策略(独立于模板维护,只修改这里即可控制ERP抽取范围)。
+    # 便携包首次配置使用 app/erp-configs/digiwin_e10.yaml 生成同一完整清单。
     tables:
       CUSTOMER:
         mode: incremental
@@ -19,6 +20,9 @@ sources:
       ITEM:
         mode: incremental
         watermark: LAST_MODIFIED_DATE
+      ITEM_WAREHOUSE:
+        # 呆滞库存场景当前直接依赖此表；尚未核对可靠修改水位，默认全量。
+        mode: full_refresh
       QUOTATION:
         mode: incremental
         watermark: LAST_MODIFIED_DATE
@@ -28,6 +32,80 @@ sources:
       SALES_ORDER_D:
         mode: incremental
         watermark: LAST_MODIFIED_DATE
+
+      # 2026-07-22 呆滞库存场景现场核对表；未确认可靠增量水位，默认全量。
+      INV_COST_BAL: { mode: full_refresh }
+      INV_COST_BAL_DETAIL: { mode: full_refresh }
+      INV_SUMMARY: { mode: full_refresh }
+      INV_SUMMARY_COST_DETAIL: { mode: full_refresh }
+      INV_OPENING_COST: { mode: full_refresh }
+      INV_UNIT_COST: { mode: full_refresh }
+      ITEM_WAREHOUSE_BIN: { mode: full_refresh }
+      SALES_ORDER_DOC: { mode: full_refresh }
+      SALES_ORDER_DOC_D: { mode: full_refresh }
+      SALES_ORDER_DOC_SD: { mode: full_refresh }
+      SALES_ORDER_DOC_INSTAL: { mode: full_refresh }
+      SALES_DELIVERY: { mode: full_refresh }
+      SALES_DELIVERY_D: { mode: full_refresh }
+      SALES_ISSUE: { mode: full_refresh }
+      SALES_ISSUE_D: { mode: full_refresh }
+      SALES_RETURN: { mode: full_refresh }
+      SALES_RETURN_D: { mode: full_refresh }
+      SALES_RETURN_RECEIPT: { mode: full_refresh }
+      SALES_RETURN_RECEIPT_D: { mode: full_refresh }
+      PURCHASE_ORDER: { mode: full_refresh }
+      PURCHASE_ORDER_D: { mode: full_refresh }
+      PURCHASE_ORDER_SD: { mode: full_refresh }
+      PURCHASE_ORDER_SD1: { mode: full_refresh }
+      PURCHASE_ORDER_SSD: { mode: full_refresh }
+      PO_REQ_SOURCE: { mode: full_refresh }
+      PURCHASE_ARRIVAL: { mode: full_refresh }
+      PURCHASE_ARRIVAL_D: { mode: full_refresh }
+      PURCHASE_GOODS: { mode: full_refresh }
+      PURCHASE_GOODS_D: { mode: full_refresh }
+      PURCHASE_RETURN: { mode: full_refresh }
+      PURCHASE_RETURN_D: { mode: full_refresh }
+      SUPPLIER_PURCHASE: { mode: full_refresh }
+      SUPPLIER_ADDRESS: { mode: full_refresh }
+      SUPPLIER_CONTACT: { mode: full_refresh }
+      ITEM_SUPPLIER: { mode: full_refresh }
+      BOM_D: { mode: full_refresh }
+      BOM_PRODUCT: { mode: full_refresh }
+      BOM_SD: { mode: full_refresh }
+      BOM_MANUAL_CONFIG: { mode: full_refresh }
+      BOM_MANUAL_CONFIG_D: { mode: full_refresh }
+      BOM_RULE: { mode: full_refresh }
+      BOM_RULE_D: { mode: full_refresh }
+      ITEM_FEATURE: { mode: full_refresh }
+      ITEM_PLANT: { mode: full_refresh }
+      ITEM_PURCHASE: { mode: full_refresh }
+      ITEM_SALES: { mode: full_refresh }
+      ITEM_LOT: { mode: full_refresh }
+      ITEM_MAPPING: { mode: full_refresh }
+      ITEM_MAPPING_D: { mode: full_refresh }
+      ECN: { mode: full_refresh }
+      ECN_D: { mode: full_refresh }
+      ECN_SD: { mode: full_refresh }
+      ECN_TASK: { mode: full_refresh }
+      ECN_PRODUCT: { mode: full_refresh }
+      ECN_AUTO_CONFIG: { mode: full_refresh }
+      ECN_AUTO_CONFIG_D: { mode: full_refresh }
+      ECN_FACT_TABLE: { mode: full_refresh }
+      MO: { mode: full_refresh }
+      MO_D: { mode: full_refresh }
+      MO_DEMAND: { mode: full_refresh }
+      MO_ISSUED_SETS: { mode: full_refresh }
+      MO_PRODUCT: { mode: full_refresh }
+      MO_CHANGE: { mode: full_refresh }
+      MO_CHANGE_D: { mode: full_refresh }
+      MO_RECEIPT: { mode: full_refresh }
+      MO_RECEIPT_D: { mode: full_refresh }
+      MO_RECEIPT_REQUISTION: { mode: full_refresh }
+      MO_RECEIPT_REQUISTION_D: { mode: full_refresh }
+      MO_SPLIT: { mode: full_refresh }
+      MO_DAILY_PRODUCTION_QTY: { mode: full_refresh }
+      MO_ROUTING_MATERIAL: { mode: full_refresh }
+      MO_ROUTING: { mode: full_refresh }
 
     windows: []                     # 生产示例:["22:00-06:30"];空 = 不限
     rate: { batch_size: 5000, rows_per_second: 2000 }

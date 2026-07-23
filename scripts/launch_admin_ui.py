@@ -395,8 +395,16 @@ def ensure_landing_db(python: Path, landing: Path, *, home: Path,
     )
 
 
-def admin_url(host: str, port: int, configured: bool) -> str:
-    return f"http://{host}:{port}/" + ("" if configured else "config")
+def admin_url(host: str, port: int, configured: bool, *, role: str) -> str:
+    """Return the canonical UI route for the installed role.
+
+    Platform is Vue-only.  Do not rely on the root compatibility redirect here:
+    a portable launcher must never open an old root page from a stale service.
+    """
+    base = f"http://{host}:{port}"
+    if role == "platform":
+        return base + ("/v1/" if configured else "/v1/setup")
+    return base + "/" + ("" if configured else "config")
 
 
 def open_admin(url: str) -> None:
@@ -524,7 +532,7 @@ def main(argv: list[str] | None = None) -> int:
     port = cfg["port"]
     host = "127.0.0.1"
     configured = Path(cfg["config_file"]).is_file()
-    url = admin_url(host, port, configured)
+    url = admin_url(host, port, configured, role=args.role)
 
     # Secondary instance: just open the already-running admin UI.
     if not acquire_single_instance(cfg["mutex"]):

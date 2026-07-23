@@ -463,6 +463,21 @@
       },
       "ConfigViewResponse": {
         "properties": {
+          "app_version": {
+            "title": "App Version",
+            "type": "string"
+          },
+          "build_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Version"
+          },
           "landing": {
             "default": "",
             "title": "Landing",
@@ -479,6 +494,7 @@
           }
         },
         "required": [
+          "app_version",
           "needs_setup"
         ],
         "title": "ConfigViewResponse",
@@ -6648,7 +6664,7 @@
   },
   "info": {
     "title": "data2agent 运维控制台",
-    "version": "0.2.0"
+    "version": "0.4.0"
   },
   "openapi": "3.1.0",
   "paths": {
