@@ -43,6 +43,41 @@ _CHECK_TITLES = {
 }
 
 
+def _next_expected_run(last_finished: datetime, source_cfg) -> datetime:
+    """计算上次成功运行后下一次预期运行时间,考虑错峰窗口。
+
+    无窗口: last_finished + sync_every
+    有窗口: 从 last_finished 开始,找到下一个落在窗口内的时间点
+    """
+    from ..connect.config import parse_window
+    sync_s = source_cfg.sync_every_seconds() if source_cfg else 1800
+    windows = source_cfg.windows if source_cfg else []
+
+    if not windows:
+        return last_finished + timedelta(seconds=sync_s)
+
+    # 有窗口:从 last_finished 开始,按 sync_every 步进直到找到窗口内的时间
+    candidate = last_finished + timedelta(seconds=sync_s)
+    # 最多尝试 7 天(防止死循环)
+    for _ in range(7 * 24 * 60 * 60 // max(int(sync_s), 60)):
+        t = candidate.time()
+        in_any = False
+        for w in windows:
+            start, end = parse_window(w)
+            if start <= end:
+                if start <= t < end:
+                    in_any = True
+                    break
+            elif t >= start or t < end:
+                in_any = True
+                break
+        if in_any:
+            return candidate
+        candidate += timedelta(seconds=sync_s)
+    # 兜底:返回远超当前的时间(永不陈旧)
+    return datetime.now() + timedelta(days=365)
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -184,34 +219,29 @@ def build_validation_report(
         if binding.enabled and binding.source == source for table in binding.tables
     } if pack is not None else set()
 
-    # 查询最近各表成功同步时间(使用 d2a_run_step 覆盖增量/全量/推送三种模式)
-    sync_freshness: dict[str, str] = {}
-    for r in db.con.execute(
-        "SELECT target, MAX(finished_at) as last_ok FROM d2a_run_step "
-        "WHERE kind = 'table' AND status = 'ok' AND target != '' "
-        "GROUP BY target",
-    ).fetchall():
-        if r["last_ok"]:
-            sync_freshness[r["target"]] = r["last_ok"]
-
-    # 允许周期:取 sync_every 的 3 倍作为陈旧阈值(默认约 90 分钟)
-    # d2a_run_step.finished_at 存储无时区 ISO 时间戳
-    sync_every_s = (source_cfg.sync_every_seconds() if source_cfg else 1800)
-    stale_threshold = datetime.now() - timedelta(seconds=max(sync_every_s * 3, 600))
+    # 运行级新鲜度:使用最近成功 run(覆盖 sync/ingest/增量/全量/推送)
+    last_run = _latest_run(db, source, ("sync", "ingest"))
+    is_stale = False
+    stale_detail = ""
+    if last_run is not None and last_run["status"] == "ok" and last_run["finished_at"]:
+        try:
+            last_dt = datetime.fromisoformat(last_run["finished_at"])
+            # 计算下一次预期运行时间,考虑错峰窗口
+            next_expected = _next_expected_run(last_dt, source_cfg)
+            # 宽限期:至少 10 分钟,至多 sync_every * 2
+            grace_s = max(source_cfg.sync_every_seconds() * 2, 600) if source_cfg else 600
+            if datetime.now() > next_expected + timedelta(seconds=grace_s):
+                is_stale = True
+                delta_min = int((datetime.now() - next_expected).total_seconds() / 60)
+                stale_detail = f"预期 {next_expected.isoformat(timespec='minutes')},已超 {delta_min} 分钟"
+        except (ValueError, TypeError):
+            is_stale = True
+            stale_detail = "无法解析上次运行时间"
+    else:
+        is_stale = True
+        stale_detail = "没有成功的同步运行记录"
 
     missing_from_raw = [t for t in binding_tables if t not in actual_raw]
-    stale_tables = []
-    for t in (binding_tables & actual_raw):
-        last = sync_freshness.get(t)
-        if last is None:
-            stale_tables.append(t)
-        else:
-            try:
-                last_dt = datetime.fromisoformat(last)
-                if last_dt < stale_threshold:
-                    stale_tables.append(t)
-            except ValueError:
-                stale_tables.append(t)
 
     if not binding_tables:
         checks.append(_check("raw_presence", "skipped",
@@ -223,17 +253,18 @@ def build_validation_report(
                              detail={"binding_tables": sorted(binding_tables),
                                      "actual_raw_tables": sorted(actual_raw),
                                      "missing": sorted(missing_from_raw)}))
-    elif stale_tables:
+    elif is_stale:
         checks.append(_check("raw_presence", "warning",
-                             f"{len(stale_tables)} 张表超过 {sync_every_s * 3 // 60} 分钟未成功同步,可能已停止抽取: "
-                             + ", ".join(sorted(stale_tables)),
+                             f"最近同步已过期: {stale_detail}",
                              blocking=False,
-                             detail={"stale_tables": sorted(stale_tables),
-                                     "freshness": sync_freshness}))
+                             detail={"last_run_at": last_run["finished_at"] if last_run else None,
+                                     "windows": source_cfg.windows if source_cfg else [],
+                                     "sync_every": source_cfg.sync_every if source_cfg else "?"}))
     else:
         checks.append(_check("raw_presence", "pass",
                              f"平台 binding 依赖的 {len(binding_tables)} 张表 raw 数据均存在且同步新鲜。",
-                             detail={"table_count": len(binding_tables)}))
+                             detail={"table_count": len(binding_tables),
+                                     "last_run_at": last_run["finished_at"]}))
 
     # 7. published snapshot
     if snap is None:
