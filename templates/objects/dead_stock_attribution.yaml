@@ -30,7 +30,7 @@ relations:
   - { name: duplicate_material_candidates, target: DuplicateMaterialCandidate, cardinality: "0..n", desc: R6 重复料候选 }
 bindings:
   - source: digiwin_e10
-    tables: [D2A_DEAD_STOCK_ATTRIBUTION, D2A_DEAD_STOCK_ITEM, ITEM, PURCHASE_ORDER, PURCHASE_ORDER_D, PURCHASE_ORDER_SD, PURCHASE_ORDER_SD1, PURCHASE_ORDER_SSD, PURCHASE_ARRIVAL_D, SUPPLIER_PURCHASE, MO, MO_D, MO_ISSUED_SETS, BOM_D, SALES_ORDER_DOC, SALES_ORDER_DOC_D, SALES_ORDER_DOC_SD, PO_REQ_SOURCE, ECN, ECN_D, ECN_SD, ECN_TASK]
+    tables: [D2A_DEAD_STOCK_ATTRIBUTION]
     materializer: dead_stock_attribution_v3
     status: draft
     key_map:
@@ -56,4 +56,4 @@ bindings:
       warnings: D2A_DEAD_STOCK_ATTRIBUTION.warnings
       as_of_date: D2A_DEAD_STOCK_ATTRIBUTION.as_of_date
       calculation_version: D2A_DEAD_STOCK_ATTRIBUTION.calculation_version
-    notes: M3 逐标签归因。R1、R2/R2M、R3、R4、R5 与 R6 独立评估，可多标签；R4/R6 为低置信候选，关联人员仅作经办信息展示。
+    notes: 原始表和字段已核对，但单据关联、主数据映射与业务口径未核对；当前不生成归因标签。

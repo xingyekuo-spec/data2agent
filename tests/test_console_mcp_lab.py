@@ -58,7 +58,11 @@ def env(tmp_path):
         "sources:\n"
         "  digiwin_e10:\n"
         "    adapter: sqlite_readonly\n"
-        f"    path: {src}\n",
+        f"    path: {src}\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n",
         encoding="utf-8")
     return landing, cfg_file
 

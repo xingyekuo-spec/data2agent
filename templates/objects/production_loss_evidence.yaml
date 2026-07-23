@@ -29,7 +29,7 @@ properties:
   - { name: calculation_version, type: string, desc: 计算版本 }
 bindings:
   - source: digiwin_e10
-    tables: [D2A_PRODUCTION_LOSS_EVIDENCE, D2A_DEAD_STOCK_ITEM, ITEM, MO, MO_D, MO_ISSUED_SETS, BOM_D]
+    tables: [D2A_PRODUCTION_LOSS_EVIDENCE]
     materializer: dead_stock_attribution_v1
     status: draft
     key_map:
@@ -59,4 +59,4 @@ bindings:
       warnings: D2A_PRODUCTION_LOSS_EVIDENCE.warnings
       as_of_date: D2A_PRODUCTION_LOSS_EVIDENCE.as_of_date
       calculation_version: D2A_PRODUCTION_LOSS_EVIDENCE.calculation_version
-    notes: M2 R5。未结案工单保留 provisional，不生成 R5 归因标签。
+    notes: R5 所需工单、领退料和 BOM 关联字段尚未核对，当前不生成证据。

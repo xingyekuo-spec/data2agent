@@ -23,6 +23,8 @@ from .landing import LandingStore, normalize_value
 class Sink(Protocol):
     def ensure_table(self, source: str, info: TableInfo) -> None: ...
     def write(self, source: str, info: TableInfo, rows: list[dict], batch_id: str) -> int: ...
+    def complete_table(self, source: str, info: TableInfo, completion_id: str,
+                       rows: int, batches: int) -> None: ...
 
 
 class LocalSink:
@@ -36,6 +38,11 @@ class LocalSink:
 
     def write(self, source: str, info: TableInfo, rows: list[dict], batch_id: str) -> int:
         return self.landing.upsert_rows(source, info, rows, batch_id)
+
+    def complete_table(self, source: str, info: TableInfo, completion_id: str,
+                       rows: int, batches: int) -> None:
+        # 本地模式的 d2a_run_step(table) 由 incremental_sync 写入，已是完成证据。
+        return None
 
 
 def _urllib_post(url: str, payload: dict, token: str | None, timeout: float) -> None:
@@ -87,3 +94,25 @@ class HttpPushSink:
                 last = e
                 time.sleep(min(2 ** attempt, 10))
         raise RuntimeError(f"推送批次失败(重试 {self.retries} 次):{last}")
+
+    def complete_table(self, source: str, info: TableInfo, completion_id: str,
+                       rows: int, batches: int) -> None:
+        """全部批次确认后声明一张表完成；零行表也必须发送此事件。"""
+        payload = {
+            "source": source,
+            "table": info.name,
+            "columns": [[c, t] for c, t in info.columns],
+            "pk": list(info.pk),
+            "completion_id": completion_id,
+            "rows": rows,
+            "batches": batches,
+        }
+        last: Exception | None = None
+        for attempt in range(self.retries):
+            try:
+                self._post(f"{self.url}/ingest/table-complete", payload, self.token, self.timeout)
+                return
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                last = e
+                time.sleep(min(2 ** attempt, 10))
+        raise RuntimeError(f"推送表完成事件失败(重试 {self.retries} 次):{last}")

@@ -28,7 +28,7 @@ properties:
   - { name: calculation_version, type: string, desc: 计算版本 }
 bindings:
   - source: digiwin_e10
-    tables: [D2A_MATERIAL_ORDER_EVIDENCE, D2A_DEAD_STOCK_ITEM, ITEM, SALES_ORDER_DOC, SALES_ORDER_DOC_D, SALES_ORDER_DOC_SD, PURCHASE_ORDER, PURCHASE_ORDER_D, PURCHASE_ORDER_SD, PURCHASE_ORDER_SD1, PO_REQ_SOURCE]
+    tables: [D2A_MATERIAL_ORDER_EVIDENCE]
     materializer: dead_stock_attribution_v2
     status: draft
     key_map:
@@ -59,4 +59,4 @@ bindings:
       warnings: D2A_MATERIAL_ORDER_EVIDENCE.warnings
       as_of_date: D2A_MATERIAL_ORDER_EVIDENCE.as_of_date
       calculation_version: D2A_MATERIAL_ORDER_EVIDENCE.calculation_version
-    notes: M3a R1。仅在采购早于订单取消/减量事件且需求来源关联完整时生成归因候选。
+    notes: R1 所需单据关联字段尚未核对，当前不生成证据。

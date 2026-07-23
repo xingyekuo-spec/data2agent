@@ -1,13 +1,14 @@
 """抽取 CLI:python -m data2agent.connect {sync|reconcile|apply|backfill|serve|status|quarantine}
 
-sync       默认水位增量(binding.watermark 推导,无水位表 full_refresh),--full 强制全量
-reconcile  分段对账 L1(--deep 全段 L2 修复);抓物理删除与不动水位的原地改动
+sync       --config connect.yaml [--source name] [--full];抽取范围/水位策略来自 tables 配置
+reconcile  --config connect.yaml [--deep] 分段对账 L1;抓物理删除与不动水位的原地改动
 apply      映射应用:raw_* → 数据集候选并默认发布(隔离区 + 熔断);
            --stage-only 只构建候选;--every N 秒常驻循环(拆机部署平台侧)
-backfill   指定表的水位区间重抽(upsert 幂等,不动水位)
-serve      按 connect.yaml 调度常驻(错峰窗口硬约束;--once 立即各跑一轮)
+backfill   --config connect.yaml --table T --from F --to T(upsert 幂等,不动水位)
+serve      --config connect.yaml [--once] 按 connect.yaml 调度常驻(错峰窗口硬约束)
 status     水位 / 最近运行 / 隔离区概览
 quarantine list 查看隔离明细;retry 修复后完整重建数据集并自动发布
+migrate-config --config connect.yaml [--dry-run] 迁移旧配置到显式 tables
 excel-suggest 读 Excel/CSV 表头,生成 列→属性 映射建议(人工确认一次)
 excel-import  按映射文件导入报价历史到落地库(之后 apply 物化)
 """
@@ -15,47 +16,48 @@ excel-import  按映射文件导入报价历史到落地库(之后 apply 物化)
 from __future__ import annotations
 
 import argparse
-import os
 
 from ..metamodel.loader import load_pack
 from .dataset_publish import build_dataset
-from .increment import DEFAULT_LOOKBACK_DAYS, incremental_sync, watermarks_from_pack
+from .increment import incremental_sync
 from .landing import LandingStore
 from .mapping_apply import DEFAULT_BREAKER_THRESHOLD
 from .reconcile import reconcile
-from .sync import whitelist_from_pack
 
 
 def _add_common(sp: argparse.ArgumentParser) -> None:
-    src = sp.add_mutually_exclusive_group(required=True)
-    src.add_argument("--sqlite", help="SQLite 源库路径(开发 / 参考库)")
-    src.add_argument("--mssql-dsn-env", help="存放 MSSQL 连接串的环境变量名(凭据不落配置)")
-    sp.add_argument("--source", default="digiwin_e10", help="binding 数据源名(推导白名单)")
-    sp.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径")
-    sp.add_argument("--templates", default="templates", help="模板包目录")
-    sp.add_argument("--batch-size", type=int, default=5000)
-    sp.add_argument("--rows-per-second", type=int, default=0, help="0 为不限流(参考链);生产必配")
+    sp.add_argument("--config", required=True, help="connect.yaml 路径(抽取配置唯一来源)")
+    sp.add_argument("--source", default="digiwin_e10", help="数据源名")
 
 
 def _build(args, ap):
-    pack = load_pack(args.templates)
-    whitelist = whitelist_from_pack(pack, args.source)
-    if not whitelist:
-        ap.error(f"模板中没有 source={args.source} 的 binding,白名单为空")
-    landing = LandingStore(args.landing)
+    """构建适配器、落地库和水位映射。所有抽取操作必须通过 --config 获取 tables 配置。"""
+    from .config import load_config
+    cfg = load_config(args.config)
+    if args.source not in cfg.sources:
+        ap.error(f"配置中没有源 '{args.source}',可用: {sorted(cfg.sources)}")
+    scfg = cfg.sources[args.source]
+    whitelist = scfg.table_whitelist()
+    watermarks = scfg.table_watermarks()
+
+    landing = LandingStore(cfg.landing)
     hook = lambda action, sql, rows, ms: landing.log_audit(args.source, action, sql, rows, ms)  # noqa: E731
-    kwargs = dict(batch_size=args.batch_size, rows_per_second=args.rows_per_second,
+    kwargs = dict(batch_size=scfg.rate.batch_size,
+                  rows_per_second=scfg.rate.rows_per_second,
                   audit_hook=hook)
-    if args.sqlite:
+
+    import os as _os
+    if scfg.adapter == "sqlite_readonly":
         from .adapters.sqlite import SqliteReadOnlyAdapter
-        adapter = SqliteReadOnlyAdapter(args.sqlite, whitelist, **kwargs)
+        path = scfg.path or _os.environ.get(scfg.dsn_env or "", "")
+        adapter = SqliteReadOnlyAdapter(path, whitelist, **kwargs)
     else:
-        dsn = os.environ.get(args.mssql_dsn_env, "")
-        if not dsn:
-            ap.error(f"环境变量 {args.mssql_dsn_env} 为空")
         from .adapters.mssql import MssqlReadOnlyAdapter
+        dsn = _os.environ.get(scfg.dsn_env or "", "")
+        if not dsn:
+            ap.error(f"环境变量 {scfg.dsn_env} 为空")
         adapter = MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
-    return pack, adapter, landing
+    return None, adapter, landing, watermarks, scfg, cfg
 
 
 def main() -> int:
@@ -68,8 +70,6 @@ def main() -> int:
     sp = sub.add_parser("sync", help="同步到落地库(默认水位增量)")
     _add_common(sp)
     sp.add_argument("--full", action="store_true", help="强制全量(忽略水位,不建立状态)")
-    sp.add_argument("--lookback-days", type=float, default=DEFAULT_LOOKBACK_DAYS,
-                    help=f"回看窗口天数(默认 {DEFAULT_LOOKBACK_DAYS})")
 
     rp = sub.add_parser("reconcile", help="分段对账(L1;--deep 全段修复)")
     _add_common(rp)
@@ -124,6 +124,10 @@ def main() -> int:
     xi.add_argument("--landing", default="landing/factory.sqlite")
     xi.add_argument("--templates", default="templates")
 
+    mp = sub.add_parser("migrate-config", help="迁移旧配置:whitelist_from_bindings → tables")
+    mp.add_argument("--config", required=True, help="connect.yaml 路径")
+    mp.add_argument("--dry-run", action="store_true", help="仅预览,不写入")
+
     args = ap.parse_args()
 
     if args.cmd == "excel-suggest":
@@ -167,6 +171,41 @@ def main() -> int:
         serve(load_config(args.config), once=args.once)
         return 0
 
+    if args.cmd == "migrate-config":
+        from .sync import migrate_config_to_tables
+        if args.dry_run:
+            from .increment import watermarks_from_pack
+            import yaml
+            from pathlib import Path
+            data = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
+            pk = load_pack(data.get("templates", "templates"))
+            for src_name, sdata in (data.get("sources") or {}).items():
+                wfb = sdata.get("whitelist_from_bindings", True)
+                extra = set(sdata.get("extra_whitelist", []))
+                ts = set()
+                if wfb:
+                    ts |= {t for o in pk.objects for b in o.bindings
+                           if b.source == src_name and b.enabled for t in b.tables}
+                ts |= extra
+                try:
+                    wm = watermarks_from_pack(pk, src_name)
+                except Exception:
+                    wm = {}
+                print(f"[{src_name}] 将生成 {len(ts)} 张表的 tables 配置:")
+                for tbl in sorted(ts):
+                    w = wm.get(tbl)
+                    mode = f"incremental (watermark: {w})" if w else "full_refresh"
+                    print(f"  {tbl}: {mode}")
+            return 0
+        bak_path, result = migrate_config_to_tables(args.config)
+        print(f"备份已保存到: {bak_path}")
+        for src, tables in result.items():
+            print(f"[{src}] 已生成 {len(tables)} 张表:")
+            for t in tables:
+                print(f"  - {t}")
+        print("迁移完成。请检查新配置后重启服务。")
+        return 0
+
     if args.cmd == "status":
         return _status(args)
 
@@ -176,12 +215,13 @@ def main() -> int:
     if args.cmd == "apply":
         return _apply_loop(args)
 
-    pack, adapter, landing = _build(args, ap)
+    pack, adapter, landing, watermarks, scfg, cfg = _build(args, ap)
 
     if args.cmd == "backfill":
-        wm_col = watermarks_from_pack(pack, args.source).get(args.table)
+        wm_col = watermarks.get(args.table)
         if wm_col is None:
-            ap.error(f"表 {args.table} 没有水位声明,无法按区间回补(可用 sync --full)")
+            ap.error(f"表 {args.table} 不在配置的增量表中,无法按区间回补。"
+                     f"增量表: {sorted(watermarks)}")
         info = adapter.table_info(args.table)
         landing.ensure_raw_table(args.source, info)
         import uuid
@@ -194,18 +234,18 @@ def main() -> int:
         return 0
 
     if args.cmd == "sync":
-        watermarks = {} if args.full else watermarks_from_pack(pack, args.source)
+        if args.full:
+            watermarks = {}
         report = incremental_sync(adapter, landing, args.source, watermarks,
-                                  lookback_days=args.lookback_days)
+                                  lookback_days=scfg.lookback_days())
         print(f"同步完成:run #{report.run_id},{len(report.tables)} 表,"
-              f"共 {report.total_rows} 行 → {args.landing}")
+              f"共 {report.total_rows} 行 → {cfg.landing}")
         for t in report.tables:
             wm = f"  水位 → {t.high_water}" if t.high_water else ""
             print(f"  - {t.table:<16} {t.rows:>6} 行 / {t.batches} 批  [{t.strategy}]{wm}")
         return 0
 
-    report = reconcile(adapter, landing, args.source,
-                       watermarks_from_pack(pack, args.source), deep=args.deep)
+    report = reconcile(adapter, landing, args.source, watermarks, deep=args.deep)
     mode = "deep" if args.deep else "L1"
     print(f"对账完成({mode}):run #{report.run_id},检查 {len(report.segments)} 段,"
           f"不一致 {len(report.mismatched)} 段,软删 {report.total_soft_deleted} 行")

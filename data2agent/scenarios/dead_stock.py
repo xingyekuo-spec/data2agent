@@ -1,41 +1,34 @@
-"""呆滞库存 M1 预计算。
+"""呆滞库存 M1 预计算（基于已核对的 E10 字段）。
 
-本模块只处理稳定、确定性的库存账龄和金额。采购超采与生产损耗归因在 M2
-进入独立证据对象，避免把复杂规则塞进 YAML field_map。
+现场资料目前只确认了库存余额、最后出库/入库日期等字段，未确认物料编码、
+库存状态、单位成本、原始快照日和跨表关系。因而本实现只发布可核验的库存
+事实；所有呆滞判定保持 ``unknown``，不能把资料中不存在的字段当作事实。
 """
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
 from data2agent.connect.adapters.base import TableInfo
 from data2agent.connect.landing import LandingStore, raw_table_name
 
+from .e10_dead_stock_schema import DEAD_STOCK_M1_COLUMNS
+
 RESULT_TABLE = "D2A_DEAD_STOCK_ITEM"
-CALCULATION_VERSION = "dead-stock-v1"
+CALCULATION_VERSION = "dead-stock-v2-verified-table-fields"
 DEFAULT_THRESHOLD_DAYS = 90
 
 _RESULT_INFO = TableInfo(
     name=RESULT_TABLE,
     columns=[
-        ("item_code", "text"),
-        ("plant_id", "text"),
-        ("warehouse_code", "text"),
-        ("item_name", "text"),
-        ("specification", "text"),
-        ("material_type", "text"),
-        ("inventory_qty", "real"),
-        ("unit_cost", "real"),
-        ("dead_stock_amount", "real"),
-        ("last_issue_date", "text"),
-        ("first_stock_in_date", "text"),
-        ("age_anchor_date", "text"),
-        ("dead_stock_days", "int"),
-        ("threshold_days", "int"),
-        ("determination_status", "text"),
-        ("inventory_status", "text"),
-        ("as_of_date", "text"),
-        ("calculation_version", "text"),
+        ("item_code", "text"), ("plant_id", "text"), ("warehouse_code", "text"),
+        ("item_name", "text"), ("specification", "text"), ("material_type", "text"),
+        ("inventory_qty", "real"), ("unit_cost", "real"), ("dead_stock_amount", "real"),
+        ("last_issue_date", "text"), ("last_receipt_date", "text"),
+        ("first_stock_in_date", "text"), ("age_anchor_date", "text"),
+        ("dead_stock_days", "int"), ("threshold_days", "int"),
+        ("determination_status", "text"), ("inventory_status", "text"),
+        ("as_of_date", "text"), ("calculation_version", "text"),
     ],
     pk=["plant_id", "warehouse_code", "item_code"],
 )
@@ -48,11 +41,8 @@ def _quoted(name: str) -> str:
 def _parse_date(value: object) -> date | None:
     if value is None:
         return None
-    raw = str(value).strip()
-    if not raw:
-        return None
     try:
-        return date.fromisoformat(raw[:10])
+        return date.fromisoformat(str(value).strip()[:10])
     except ValueError:
         return None
 
@@ -63,115 +53,72 @@ def _active_table(store: LandingStore, source: str, logical_table: str) -> str:
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,),
     ).fetchone()
     if exists is None:
-        raise ValueError(f"dead_stock_item_v1 缺少已同步原始表: {logical_table}")
+        raise ValueError(f"dead_stock_item_v2 缺少已同步原始表: {logical_table}")
     return _quoted(table)
 
 
-def _latest_dates(store: LandingStore, sql: str) -> dict[int, date]:
-    out: dict[int, date] = {}
-    for row in store.con.execute(sql):
-        parsed = _parse_date(row["event_date"])
-        if parsed is not None:
-            out[int(row["ITEM_ID"])] = parsed
-    return out
+def _require_columns(store: LandingStore, source: str, logical_table: str, required: frozenset[str]) -> None:
+    physical = raw_table_name(source, logical_table)
+    columns = {str(row["name"]) for row in store.con.execute(f"PRAGMA table_info({_quoted(physical)})")}
+    missing = sorted(required - columns)
+    if missing:
+        raise ValueError(
+            f"dead_stock_item_v2 原始表 {logical_table} 缺少已核对字段: {', '.join(missing)}",
+        )
+
+
+def _extracted_as_of(store: LandingStore, warehouse: str) -> date:
+    row = store.con.execute(
+        f"SELECT MAX(SUBSTR(_d2a_extracted_at, 1, 10)) AS as_of_date "
+        f"FROM {warehouse} WHERE _d2a_deleted_at IS NULL",
+    ).fetchone()
+    as_of = _parse_date(row["as_of_date"])
+    if as_of is None:
+        raise ValueError("dead_stock_item_v2 无法从平台抽取时间确定数据日期")
+    return as_of
 
 
 def materialize_dead_stock_item(store: LandingStore, source: str) -> int:
-    """从已同步 E10 raw 表生成 M1 内部结果表，返回活跃结果行数。"""
-    item = _active_table(store, source, "ITEM")
-    balance = _active_table(store, source, "INV_COST_BAL")
-    cost = _active_table(store, source, "INV_UNIT_COST")
-    receipt = _active_table(store, source, "INV_RECEIPT")
-    sales_issue = _active_table(store, source, "SALES_ISSUE")
-    sales_issue_d = _active_table(store, source, "SALES_ISSUE_D")
-    mo_issued = _active_table(store, source, "MO_ISSUED_SETS")
+    """物化已核对的仓库库存事实，缺少口径时保持 unknown。"""
+    warehouse = _active_table(store, source, "ITEM_WAREHOUSE")
+    _require_columns(store, source, "ITEM_WAREHOUSE", DEAD_STOCK_M1_COLUMNS)
+    as_of = _extracted_as_of(store, warehouse)
 
-    as_of_raw = store.con.execute(
-        f"SELECT MAX(SUBSTR(LAST_MODIFIED_DATE, 1, 10)) AS as_of_date "
-        f"FROM {balance} WHERE _d2a_deleted_at IS NULL"
-    ).fetchone()["as_of_date"]
-    as_of = _parse_date(as_of_raw)
-    if as_of is None:
-        raise ValueError("dead_stock_item_v1 无法确定库存快照日期")
-
-    sales_dates = _latest_dates(
-        store,
-        f"""
-        SELECT d.ITEM_ID, MAX(h.DOC_DATE) AS event_date
-        FROM {sales_issue_d} d
-        JOIN {sales_issue} h ON h.Id = d.SALES_ISSUE_ID
-        WHERE d._d2a_deleted_at IS NULL AND h._d2a_deleted_at IS NULL
-        GROUP BY d.ITEM_ID
-        """,
-    )
-    production_dates = _latest_dates(
-        store,
-        f"""
-        SELECT ITEM_ID, MAX(ISSUE_DATE) AS event_date
-        FROM {mo_issued}
-        WHERE _d2a_deleted_at IS NULL
-        GROUP BY ITEM_ID
-        """,
-    )
-    first_receipts = _latest_dates(
-        store,
-        f"""
-        SELECT ITEM_ID, MIN(RECEIPT_DATE) AS event_date
-        FROM {receipt}
-        WHERE _d2a_deleted_at IS NULL
-        GROUP BY ITEM_ID
-        """,
-    )
+    duplicate = store.con.execute(
+        f"""SELECT ITEM_ID, WAREHOUSE_ID, COUNT(*) AS count
+            FROM {warehouse} WHERE _d2a_deleted_at IS NULL
+            GROUP BY ITEM_ID, WAREHOUSE_ID HAVING COUNT(*) > 1 LIMIT 1""",
+    ).fetchone()
+    if duplicate is not None:
+        raise ValueError(
+            "dead_stock_item_v2 无法确定 ITEM_WAREHOUSE 的业务主键；"
+            "请补充同一 ITEM_ID/WAREHOUSE_ID 多行时的主键和余额口径",
+        )
 
     rows: list[dict] = []
     for row in store.con.execute(
-        f"""
-        SELECT b.ITEM_ID, b.PLANT_ID, b.WAREHOUSE_CODE, b.INVENTORY_QTY,
-               b.INVENTORY_STATUS, i.ITEM_CODE, i.ITEM_NAME,
-               i.ITEM_SPECIFICATION, i.CATEGORY_CODE, c.UNIT_COST
-        FROM {balance} b
-        JOIN {item} i ON i.Id = b.ITEM_ID AND i._d2a_deleted_at IS NULL
-        LEFT JOIN {cost} c ON c.ITEM_ID = b.ITEM_ID AND c._d2a_deleted_at IS NULL
-        WHERE b._d2a_deleted_at IS NULL
-        """
+        f"""SELECT ITEM_ID, WAREHOUSE_ID, INVENTORY_QTY, LAST_ISSUE_DATE, LAST_RECEIPT_DATE
+            FROM {warehouse} WHERE _d2a_deleted_at IS NULL""",
     ):
-        item_id = int(row["ITEM_ID"])
-        issue_candidates = [
-            value for value in (sales_dates.get(item_id), production_dates.get(item_id))
-            if value is not None
-        ]
-        last_issue = max(issue_candidates) if issue_candidates else None
-        first_receipt = first_receipts.get(item_id)
-        anchor = last_issue or first_receipt
-        inventory_qty = float(row["INVENTORY_QTY"] or 0)
-        unit_cost = float(row["UNIT_COST"] or 0)
-        inventory_status = str(row["INVENTORY_STATUS"] or "unknown")
-        dead_stock_days = (as_of - anchor).days if anchor is not None else None
-
-        if inventory_status != "usable" or anchor is None:
-            determination = "unknown"
-        elif inventory_qty > 0 and dead_stock_days is not None and dead_stock_days > DEFAULT_THRESHOLD_DAYS:
-            determination = "dead_stock"
-        else:
-            determination = "active"
-
+        last_issue = _parse_date(row["LAST_ISSUE_DATE"])
+        last_receipt = _parse_date(row["LAST_RECEIPT_DATE"])
+        # 首次入库日及库存状态尚未核对；不能以最后入库日替代，也不能据此判呆滞。
+        dead_stock_days = (as_of - last_issue).days if last_issue is not None else None
         rows.append({
-            "item_code": row["ITEM_CODE"],
-            "plant_id": row["PLANT_ID"],
-            "warehouse_code": row["WAREHOUSE_CODE"],
-            "item_name": row["ITEM_NAME"],
-            "specification": row["ITEM_SPECIFICATION"],
-            "material_type": row["CATEGORY_CODE"],
-            "inventory_qty": inventory_qty,
-            "unit_cost": unit_cost,
-            "dead_stock_amount": round(inventory_qty * unit_cost, 2),
+            "item_code": str(row["ITEM_ID"]),
+            "plant_id": "unknown",
+            "warehouse_code": str(row["WAREHOUSE_ID"]),
+            "item_name": None, "specification": None, "material_type": None,
+            "inventory_qty": float(row["INVENTORY_QTY"] or 0),
+            "unit_cost": None, "dead_stock_amount": None,
             "last_issue_date": last_issue.isoformat() if last_issue else None,
-            "first_stock_in_date": first_receipt.isoformat() if first_receipt else None,
-            "age_anchor_date": anchor.isoformat() if anchor else None,
+            "last_receipt_date": last_receipt.isoformat() if last_receipt else None,
+            "first_stock_in_date": None,
+            "age_anchor_date": last_issue.isoformat() if last_issue else None,
             "dead_stock_days": dead_stock_days,
             "threshold_days": DEFAULT_THRESHOLD_DAYS,
-            "determination_status": determination,
-            "inventory_status": inventory_status,
+            "determination_status": "unknown",
+            "inventory_status": "unknown",
             "as_of_date": as_of.isoformat(),
             "calculation_version": CALCULATION_VERSION,
         })

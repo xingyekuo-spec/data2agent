@@ -29,7 +29,7 @@ properties:
   - { name: calculation_version, type: string, desc: 计算版本 }
 bindings:
   - source: digiwin_e10
-    tables: [D2A_PURCHASE_OVERBUY_EVIDENCE, D2A_DEAD_STOCK_ITEM, ITEM, PURCHASE_ORDER, PURCHASE_ORDER_D, PURCHASE_ORDER_SD, PURCHASE_ORDER_SD1, PURCHASE_ORDER_SSD, PURCHASE_ARRIVAL_D, SUPPLIER_PURCHASE]
+    tables: [D2A_PURCHASE_OVERBUY_EVIDENCE]
     materializer: dead_stock_attribution_v1
     status: draft
     key_map:
@@ -60,4 +60,4 @@ bindings:
       warnings: D2A_PURCHASE_OVERBUY_EVIDENCE.warnings
       as_of_date: D2A_PURCHASE_OVERBUY_EVIDENCE.as_of_date
       calculation_version: D2A_PURCHASE_OVERBUY_EVIDENCE.calculation_version
-    notes: M2 R2/R2M。采购与库存只能按工厂、品号间接关联；缺需求、收货或 MOQ 时保持 unknown。
+    notes: R2/R2M 所需主键、外键和 MOQ 字段尚未核对，当前不生成证据。

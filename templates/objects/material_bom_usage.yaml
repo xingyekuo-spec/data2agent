@@ -24,7 +24,7 @@ relations:
   - { name: substitute_candidates, target: MaterialSubstituteCandidate, cardinality: "0..n", desc: 可消耗/转用候选 }
 bindings:
   - source: digiwin_e10
-    tables: [D2A_MATERIAL_BOM_USAGE, D2A_DEAD_STOCK_ITEM, ITEM, BOM_D, MO]
+    tables: [D2A_MATERIAL_BOM_USAGE]
     materializer: dead_stock_attribution_v3
     status: draft
     key_map:
@@ -47,4 +47,4 @@ bindings:
       warnings: D2A_MATERIAL_BOM_USAGE.warnings
       as_of_date: D2A_MATERIAL_BOM_USAGE.as_of_date
       calculation_version: D2A_MATERIAL_BOM_USAGE.calculation_version
-    notes: M3c 使用关系证据；未结案工单需求用于后续消耗建议，不直接形成根因。
+    notes: BOM、物料和工单关联字段尚未核对，当前不生成使用关系证据。

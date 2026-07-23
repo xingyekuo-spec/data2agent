@@ -15,7 +15,11 @@ def test_merge_whitelist_preserves_secrets_and_backs_up(tmp_path):
     p.write_text(
         "templates: t\nlanding: L\nsources:\n  digiwin_e10:\n"
         "    adapter: mssql_readonly\n    dsn_env: D2A_E10_DSN\n"
-        "    sync_every: 30m\n    sink: {type: http, url: http://a:8850, token_env: D2A_INGEST_TOKEN}\n",
+        "    sync_every: 30m\n    sink: {type: http, url: http://a:8850, token_env: D2A_INGEST_TOKEN}\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n",
         encoding="utf-8",
     )
     ok, errors = merge_whitelist_and_save(
@@ -33,7 +37,14 @@ def test_merge_whitelist_preserves_secrets_and_backs_up(tmp_path):
 
 def test_merge_whitelist_validate_failure_restores_backup(tmp_path):
     p = tmp_path / "connect.yaml"
-    p.write_text("templates: t\nlanding: L\n", encoding="utf-8")
+    p.write_text(
+        "templates: t\nlanding: L\n"
+        "sources:\n  e10:\n    adapter: sqlite_readonly\n    path: x\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n",
+        encoding="utf-8")
 
     def fail_validate(_path: Path) -> None:
         raise ValueError("invalid config")

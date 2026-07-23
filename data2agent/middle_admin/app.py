@@ -30,7 +30,7 @@ from ..admin_common.setup_yaml import (
 from ..connect.config import ConnectConfig, SourceConfig, load_config
 from ..connect.landing import LandingStore
 from ..connect.scheduler import build_adapter, run_sync_cycle
-from ..metamodel.loader import load_pack
+
 from .status import build_status
 
 _PKG = Path(__file__).resolve().parent
@@ -111,7 +111,10 @@ def _config_subset(cfg: ConnectConfig) -> dict:
                      "rows_per_second": scfg.rate.rows_per_second},
             "lookback": scfg.lookback,
             "sync_every": scfg.sync_every,
-            "extra_whitelist": scfg.extra_whitelist,
+            "tables": {
+                tbl: {"mode": spec.mode, "watermark": spec.watermark}
+                for tbl, spec in (scfg.tables or {}).items()
+            },
             "sink": {"url": scfg.sink.url,
                      "token_env": scfg.sink.token_env,
                      "token_env_set": _env_set(scfg.sink.token_env)},
@@ -142,14 +145,33 @@ def _sanitize_detail(message: str) -> str:
     return message[:500]
 
 
-def _probe_connection(name: str, scfg: SourceConfig, pack, landing_path: str) -> list[str]:
+def _probe_connection(name: str, scfg: SourceConfig, landing_path: str) -> dict:
+    """连接测试:验证表存在、主键和水位列。返回 {表名: {ok, pk_ok, wm_ok, error}}。"""
     landing = LandingStore(landing_path)
-    adapter = build_adapter(name, scfg, pack, landing)
-    tables: list[str] = []
+    adapter = build_adapter(name, scfg, landing)
+    results: dict[str, dict] = {}
     for tbl in sorted(adapter.whitelist):
-        adapter.table_info(tbl)
-        tables.append(tbl)
-    return tables
+        try:
+            info = adapter.table_info(tbl)
+            spec = (scfg.tables or {}).get(tbl)
+            pk_ok = bool(info.pk)
+            wm_ok = True
+            wm_error = None
+            if spec and spec.mode == "incremental" and spec.watermark:
+                cols_lower = {name.casefold() for name, _ in info.columns}
+                if spec.watermark.lower() not in cols_lower:
+                    wm_ok = False
+                    wm_error = f"水位列 {spec.watermark} 不存在于表 {tbl}"
+            results[tbl] = {
+                "ok": pk_ok and wm_ok,
+                "pk_ok": pk_ok,
+                "wm_ok": wm_ok,
+                "wm_error": wm_error,
+                "error": None if pk_ok else "缺少主键(增量引擎要求)",
+            }
+        except Exception as e:
+            results[tbl] = {"ok": False, "error": str(e)[:200]}
+    return results
 
 
 def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict[str, str]]]:
@@ -359,19 +381,30 @@ def create_app(
         cfg = reload_config()
         started = time.perf_counter()
         try:
-            # load_pack 可能因模板校验失败抛错 —— 须在 try 内,否则未捕获直接 500
-            pack = load_pack(cfg.templates)
             name, scfg = _resolve_source(cfg, body.source)
             with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(_probe_connection, name, scfg, pack, cfg.landing)
-                tables = future.result(timeout=10.0)
+                future = pool.submit(_probe_connection, name, scfg, cfg.landing)
+                results = future.result(timeout=10.0)
         except FuturesTimeoutError:
             return {"ok": False, "error": "timeout", "detail": "连接测试超过 10 秒"}
         except Exception as e:
             return {"ok": False, "error": type(e).__name__,
                     "detail": _sanitize_detail(str(e))}
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        return {"ok": True, "elapsed_ms": elapsed_ms, "tables": tables}
+        tables_ok = sum(1 for r in results.values() if r.get("ok"))
+        tables_with_pk = sum(1 for r in results.values() if r.get("pk_ok"))
+        tables_with_wm = sum(1 for r in results.values() if r.get("wm_ok"))
+        all_ok = all(r.get("ok", False) for r in results.values())
+        all_pk = all(r.get("pk_ok", False) for r in results.values())
+        all_wm = all(r.get("wm_ok", True) for r in results.values())
+        ok = all_ok and all_pk and all_wm
+        return {"ok": ok, "elapsed_ms": elapsed_ms,
+                "tables": sorted(results.keys()),
+                "table_count": len(results),
+                "tables_ok": tables_ok,
+                "tables_with_pk": tables_with_pk,
+                "tables_with_wm": tables_with_wm,
+                "results": results}
 
     @api.post("/actions/trigger")
     def trigger_action(body: TriggerBody) -> dict:
@@ -380,12 +413,8 @@ def create_app(
         if body.action != "sync":
             raise HTTPException(400, f"不支持的动作 '{body.action}'")
         cfg = reload_config()
-        try:
-            pack = load_pack(cfg.templates)
-        except Exception as e:
-            raise HTTPException(400, f"模板加载失败:{_sanitize_detail(str(e))}")
         name, scfg = _resolve_source(cfg, body.source)
-        executed = run_sync_cycle(name, scfg, pack, cfg.landing)
+        executed = run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
         return {"action": "sync", "source": name, "executed": executed,
                 "overlap_warning": True,
                 "note": "" if executed else "错峰窗口外,未发起(窗口约束同样生效)"}

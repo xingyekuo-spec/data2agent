@@ -18,7 +18,7 @@ properties:
   - { name: calculation_version, type: string, desc: 计算版本 }
 bindings:
   - source: digiwin_e10
-    tables: [D2A_DUPLICATE_MATERIAL_CANDIDATE, D2A_DEAD_STOCK_ITEM, ITEM]
+    tables: [D2A_DUPLICATE_MATERIAL_CANDIDATE]
     materializer: dead_stock_attribution_v3
     status: draft
     key_map:
@@ -36,4 +36,4 @@ bindings:
       warnings: D2A_DUPLICATE_MATERIAL_CANDIDATE.warnings
       as_of_date: D2A_DUPLICATE_MATERIAL_CANDIDATE.as_of_date
       calculation_version: D2A_DUPLICATE_MATERIAL_CANDIDATE.calculation_version
-    notes: R6 低置信候选，仅证明规格字段相同，不证明可替代或责任归因。
+    notes: R6 所需物料编码与规格字段关联尚未核对，当前不生成候选。

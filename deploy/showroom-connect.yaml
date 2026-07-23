@@ -1,5 +1,5 @@
 # 参考链 compose 用的抽取配置:走只读账号 d2a_reader 连 E10-like SQL Server。
-# 参考链不设错峰窗口(便于立即看到数据);生产示例见 connect.example.yaml。
+# 参考链不设错峰窗口(便于立即看到数据)。
 templates: templates
 landing: /data/factory.sqlite
 
@@ -7,7 +7,24 @@ sources:
   digiwin_e10:
     adapter: mssql_readonly
     dsn_env: D2A_E10_DSN
-    whitelist_from_bindings: true
+    tables:
+      CUSTOMER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      CURRENCY:
+        mode: full_refresh
+      ITEM:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      QUOTATION:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER_D:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
     windows: []
     rate: { batch_size: 5000, rows_per_second: 2000 }
     lookback: 3d

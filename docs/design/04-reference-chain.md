@@ -28,7 +28,24 @@ PostgreSQL 不属于当前参考链目标;只有达到产品路线定义的容�
 
 - E10 参考表形(6 表)+ 确定性 seed(渔具外销厂,seed=42 / asof=2026-07-10,金额/状态/溯源自洽);
 - 表字典生成(`docs/dict/digiwin_e10.md`);
-- binding↔表形一致性测试(防漂移)。
+- binding↔表形一致性测试(防漂移);
+- 抽取表配置使用 `connect.yaml` 显式 `tables` 字段(独立于模板维护),6 张 E10 基线表策略如下:
+
+```yaml
+sources:
+  digiwin_e10:
+    adapter: sqlite_readonly
+    path: showroom/e10.sqlite
+    tables:
+      CUSTOMER:       { mode: incremental, watermark: LAST_MODIFIED_DATE }
+      CURRENCY:       { mode: full_refresh }
+      ITEM:           { mode: incremental, watermark: LAST_MODIFIED_DATE }
+      QUOTATION:      { mode: incremental, watermark: LAST_MODIFIED_DATE }
+      SALES_ORDER:    { mode: incremental, watermark: LAST_MODIFIED_DATE }
+      SALES_ORDER_D:  { mode: incremental, watermark: LAST_MODIFIED_DATE }
+```
+
+完整的参考链 `connect.example.yaml` 见仓库根目录。
 
 ## 4. 接单评审参考链(粗颗粒,详设前置条件:网关"说"档)
 
@@ -75,7 +92,16 @@ Mock 不得生成正式验收结论;参考链也不等于生产安全验证。
 - v0.4:增加网络失败/重试、commit receipt、schema mismatch、E6b 和 TLS 入口验证;
 - PostgreSQL 只有达到 SQLite 换库阈值后才进入参考链矩阵。
 
-## 6. 决议记录
+## 6. 配置验证
+
+参考链验收时需确认 `connect.yaml` 的 `tables` 配置与参考表形一致:
+
+- 6 表的 `mode` 和 `watermark` 字段与 `connect.example.yaml` 对齐;
+- `mode: full_refresh` 仅用于无可靠水位字段的小维表(如 CURRENCY);
+- 连接测试 API (`/api/test-connection` on middle_admin) 验证 PK 列和 watermark 列存在;
+- 抽取表清单不再从模板 binding 自动推导,所有变更通过 `connect.yaml` 显式管理。
+
+## 7. 决议记录
 
 - compose 已落地(仓库根 `docker-compose.yml`):mssql(SQL Server 2022,`MSSQL_IMAGE`/`MSSQL_PLATFORM` 可切 Azure SQL Edge)→ seed(灌数 + 建只读账号 d2a_reader)→ connector(serve 常驻,走只读账号)→ 共享卷 → mcp(streamable-http :8848);
 - 参考链编排载体 = 脚本版(入库,离线可跑)+ 真 Agent 版(MCP 提示词)并存,见 §4;

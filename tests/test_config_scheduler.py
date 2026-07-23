@@ -49,6 +49,10 @@ def test_load_config(tmp_path):
         "  digiwin_e10:\n"
         "    adapter: sqlite_readonly\n"
         "    path: s.sqlite\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n"
         "    windows: [\"22:00-06:30\"]\n"
         "    lookback: 2d\n"
         "    sync_every: 15m\n",
@@ -61,7 +65,11 @@ def test_load_config(tmp_path):
 def test_config_rejects_mssql_without_dsn_env(tmp_path):
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(
-        "sources:\n  e10:\n    adapter: mssql_readonly\n", encoding="utf-8")
+        "sources:\n  e10:\n    adapter: mssql_readonly\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n", encoding="utf-8")
     with pytest.raises(ValueError, match="dsn_env"):
         load_config(cfg_file)
 
@@ -71,6 +79,10 @@ def test_config_rejects_reconcile_at_in_push_mode(tmp_path):
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(
         "sources:\n  e10:\n    adapter: mssql_readonly\n    dsn_env: D2A_E10_DSN\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n"
         "    reconcile_at: \"05:30\"\n"
         "    sink: { type: http, url: \"http://platform:8850\" }\n",
         encoding="utf-8")
@@ -82,6 +94,10 @@ def test_config_rejects_bad_window(tmp_path):
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(
         "sources:\n  e10:\n    adapter: sqlite_readonly\n    path: x\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n"
         "    windows: [\"深夜到清晨\"]\n", encoding="utf-8")
     with pytest.raises(ValueError, match="窗口格式"):
         load_config(cfg_file)
@@ -136,12 +152,27 @@ def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
     src, landing = env
     # 取"从现在起 2~3 小时后"的窗口:任何时刻跑测试都必然在窗口外(含跨零点)
     t2, t3 = datetime.now() + timedelta(hours=2), datetime.now() + timedelta(hours=3)
-    scfg = SourceConfig(adapter="sqlite_readonly", path=str(src),
-                        windows=[f"{t2:%H:%M}-{t3:%H:%M}"])
-    assert sched.run_sync_cycle(SOURCE, scfg, pack, landing.db_path) is False, "窗口外不发起"
 
-    scfg_open = SourceConfig(adapter="sqlite_readonly", path=str(src))
-    assert sched.run_sync_cycle(SOURCE, scfg_open, pack, landing.db_path) is True
+        # 六张基线表加上已核对的呆滞库存输入表
+    baseline_tables = {
+        "CUSTOMER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+        "CURRENCY": {"mode": "full_refresh"},
+        "ITEM": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+        "QUOTATION": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+        "SALES_ORDER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+        "SALES_ORDER_D": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+        "ITEM_WAREHOUSE": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+    }
+
+    scfg = SourceConfig(adapter="sqlite_readonly", path=str(src),
+                        tables=baseline_tables,
+                        windows=[f"{t2:%H:%M}-{t3:%H:%M}"])
+    # run_sync_cycle 不再接收 pack 参数
+    assert sched.run_sync_cycle(SOURCE, scfg, landing.db_path) is False, "窗口外不发起"
+
+    scfg_open = SourceConfig(adapter="sqlite_readonly", path=str(src),
+                             tables=baseline_tables)
+    assert sched.run_sync_cycle(SOURCE, scfg_open, landing.db_path) is True
     assert landing.count(SOURCE, "SALES_ORDER") == 97
     pub = landing.get_published_dataset(SOURCE)
     assert pub is not None and pub.status == "published", "apply_after_sync 应自动发布数据集"
@@ -161,7 +192,28 @@ def test_serve_once(env, pack, tmp_path):
         "  digiwin_e10:\n"
         "    adapter: sqlite_readonly\n"
         f"    path: {src}\n"
-        "    reconcile_at: \"05:30\"\n",
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: LAST_MODIFIED_DATE\n"
+        "      CURRENCY:\n"
+        "        mode: full_refresh\n"
+        "      ITEM:\n"
+        "        mode: incremental\n"
+        "        watermark: LAST_MODIFIED_DATE\n"
+        "      QUOTATION:\n"
+        "        mode: incremental\n"
+        "        watermark: LAST_MODIFIED_DATE\n"
+        "      SALES_ORDER:\n"
+        "        mode: incremental\n"
+        "        watermark: LAST_MODIFIED_DATE\n"
+            "      SALES_ORDER_D:\n"
+            "        mode: incremental\n"
+            "        watermark: LAST_MODIFIED_DATE\n"
+            "      ITEM_WAREHOUSE:\n"
+            "        mode: incremental\n"
+            "        watermark: LAST_MODIFIED_DATE\n"
+            "    reconcile_at: \"05:30\"\n",
         encoding="utf-8")
     serve(load_config(cfg_file), once=True)
     landing = LandingStore(tmp_path / "serve_landing.sqlite")

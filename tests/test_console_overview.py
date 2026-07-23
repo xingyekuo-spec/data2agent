@@ -161,9 +161,17 @@ def test_overview_dataset_version_follows_config_source_order(tmp_path):
         "  z_source:\n"
         "    adapter: sqlite_readonly\n"
         f"    path: {tmp_path / 'z.sqlite'}\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n"
         "  a_source:\n"
         "    adapter: sqlite_readonly\n"
-        f"    path: {tmp_path / 'a.sqlite'}\n",
+        f"    path: {tmp_path / 'a.sqlite'}\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n",
         encoding="utf-8",
     )
     cfg = load_config(cfg_file)
@@ -415,9 +423,15 @@ def test_overview_raw_failure_is_null_not_partial(tmp_path):
         "  source_a:\n"
         "    adapter: sqlite_readonly\n"
         f"    path: {tmp_path / 'a.sqlite'}\n"
+        "    tables:\n"
+        "      BROKEN:\n"
+        "        mode: full_refresh\n"
         "  source_b:\n"
         "    adapter: sqlite_readonly\n"
-        f"    path: {tmp_path / 'b.sqlite'}\n",
+        f"    path: {tmp_path / 'b.sqlite'}\n"
+        "    tables:\n"
+        "      T1:\n"
+        "        mode: full_refresh\n",
         encoding="utf-8")
     cfg = load_config(cfg_file)
     client = TestClient(create_app(cfg.landing, cfg.templates, cfg))

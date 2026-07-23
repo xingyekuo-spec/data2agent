@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 _DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -51,6 +51,7 @@ def in_window(now: dtime, windows: list[str]) -> bool:
 
 
 class RateConfig(BaseModel):
+    model_config = {"extra": "forbid"}
     batch_size: int = 5000
     rows_per_second: int = 2000
 
@@ -58,17 +59,35 @@ class RateConfig(BaseModel):
 class SinkConfig(BaseModel):
     """raw 落地出口(§12.3):local=写本地库(同机);http=推给平台(Pattern A 中间服务器)。"""
 
+    model_config = {"extra": "forbid"}
     type: Literal["local", "http"] = "local"
     url: str | None = None                # http:平台接收端点(如 https://平台:8850)
     token_env: str | None = None          # http:Token 所在环境变量(凭据不落配置)
 
 
+class TableExtractConfig(BaseModel):
+    model_config = {"extra": "forbid"}
+    mode: Literal["incremental", "full_refresh"]
+    watermark: str | None = None
+
+    @model_validator(mode="after")
+    def watermark_required_for_incremental(self):
+        if self.mode == "incremental" and not self.watermark:
+            raise ValueError("incremental 模式必须配置 watermark")
+        if self.mode == "full_refresh" and self.watermark is not None:
+            raise ValueError("full_refresh 模式不允许配置 watermark")
+        if self.watermark is not None:
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", self.watermark):
+                raise ValueError(f"非法水位列名 '{self.watermark}'(须为 SQL 标识符)")
+        return self
+
+
 class SourceConfig(BaseModel):
+    model_config = {"extra": "forbid"}
     adapter: str                          # sqlite_readonly / mssql_readonly
     dsn_env: str | None = None            # mssql:连接串所在环境变量
     path: str | None = None               # sqlite:源库路径
-    whitelist_from_bindings: bool = True
-    extra_whitelist: list[str] = []
+    tables: dict[str, TableExtractConfig] | None = None
     windows: list[str] = []               # 错峰窗口,空 = 不限
     rate: RateConfig = RateConfig()
     lookback: str = "3d"
@@ -91,6 +110,45 @@ class SourceConfig(BaseModel):
             parse_window(w)
         return v
 
+    @field_validator("tables")
+    @classmethod
+    def tables_non_empty(cls, v):
+        if v is not None and len(v) == 0:
+            raise ValueError("tables 不能为空;如需停用数据源请删除整个 source 节点")
+        return v
+
+    @field_validator("tables")
+    @classmethod
+    def tables_valid_identifiers(cls, v):
+        if v is None:
+            return v
+        import re
+        ident = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+        folded: dict[str, str] = {}
+        for name in v:
+            if not ident.match(name):
+                raise ValueError(f"非法表名 '{name}'(须为 SQL 标识符)")
+            lower = name.casefold()
+            if lower in folded:
+                raise ValueError(
+                    f"表名大小写冲突: '{name}' 与 '{folded[lower]}' 折叠后重复")
+            folded[lower] = name
+        return v
+
+    def table_whitelist(self) -> set[str]:
+        if self.tables is None:
+            return set()
+        return set(self.tables.keys())
+
+    def table_watermarks(self) -> dict[str, str]:
+        if self.tables is None:
+            return {}
+        return {
+            table: spec.watermark
+            for table, spec in self.tables.items()
+            if spec.mode == "incremental" and spec.watermark
+        }
+
     def lookback_days(self) -> float:
         return parse_duration_seconds(self.lookback) / 86400
 
@@ -99,6 +157,7 @@ class SourceConfig(BaseModel):
 
 
 class ConnectConfig(BaseModel):
+    model_config = {"extra": "forbid"}
     templates: str = "templates"
     landing: str = "landing/factory.sqlite"
     sources: dict[str, SourceConfig]
@@ -106,12 +165,25 @@ class ConnectConfig(BaseModel):
 
 def load_config(path: str | Path) -> ConnectConfig:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+
+    for name, sdata in (data.get("sources") or {}).items():
+        if "whitelist_from_bindings" in sdata or "extra_whitelist" in sdata:
+            raise ValueError(
+                f"源 {name}: 检测到已废弃的 whitelist_from_bindings / extra_whitelist 字段。"
+                f"请运行 'python -m data2agent.connect migrate-config --config {path}' 迁移配置。"
+            )
+
     cfg = ConnectConfig(**data)
     for name, s in cfg.sources.items():
         if s.adapter == "mssql_readonly" and not s.dsn_env:
             raise ValueError(f"源 {name}: mssql_readonly 必须配 dsn_env(凭据不落配置文件)")
         if s.adapter == "sqlite_readonly" and not (s.path or s.dsn_env):
             raise ValueError(f"源 {name}: sqlite_readonly 须配 path 或 dsn_env")
+        if s.tables is None:
+            raise ValueError(
+                f"源 {name}: 缺少 tables 配置。"
+                f"请运行 'python -m data2agent.connect migrate-config --config {path}' 迁移配置。"
+            )
         if s.sink.type == "http" and not s.sink.url:
             raise ValueError(f"源 {name}: sink.type=http 必须配 sink.url(平台接收端点)")
         if s.sink.type == "http" and s.reconcile_at is not None:

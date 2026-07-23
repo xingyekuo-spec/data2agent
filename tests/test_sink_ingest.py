@@ -8,11 +8,13 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
+from data2agent.connect.adapters.base import TableInfo  # noqa: E402
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
 from data2agent.connect.landing import LandingStore, raw_table_name  # noqa: E402
 from data2agent.connect.sink import HttpPushSink, LocalSink  # noqa: E402
 from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
+from data2agent.console.validation import build_validation_report  # noqa: E402
 from data2agent.ingest.app import create_app  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
 from data2agent.showroom.seed import build, write_db  # noqa: E402
@@ -79,6 +81,74 @@ def test_ingest_batch_lands_rows(tmp_path):
     assert landing.count(SOURCE, "CURRENCY") == 2
 
 
+def test_ingest_batch_retry_keeps_original_completion_time(tmp_path):
+    """重放历史数据批次不能把它伪装成新的表级证据。"""
+    landing = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(landing.db_path))
+    body = {"source": SOURCE, "table": "CURRENCY", "columns": [["Id", "int"]],
+            "pk": ["Id"], "batch_id": "retry-time", "rows": [{"Id": 1}]}
+    assert client.post("/ingest/batch", json=body).status_code == 200
+    (step_id,) = landing.con.execute(
+        "SELECT id FROM d2a_run_step WHERE kind = 'batch' AND batch_id = ?", ("retry-time",)
+    ).fetchone()
+    landing.con.execute("UPDATE d2a_run_step SET finished_at = ? WHERE id = ?",
+                        ("2020-01-01T00:00:00", step_id))
+    landing.con.commit()
+    retried = client.post("/ingest/batch", json=body)
+    assert retried.status_code == 200 and retried.json()["duplicate"] is True
+    (finished_at,) = landing.con.execute(
+        "SELECT finished_at FROM d2a_run_step WHERE id = ?", (step_id,)
+    ).fetchone()
+    assert finished_at == "2020-01-01T00:00:00"
+
+
+def test_table_complete_creates_zero_row_raw_table(tmp_path):
+    """零行表也必须有 raw 表和表级完成事件。"""
+    landing = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(landing.db_path))
+    body = {"source": SOURCE, "table": "EMPTY_DIM", "columns": [["Id", "int"]],
+            "pk": ["Id"], "completion_id": "empty-1", "rows": 0, "batches": 0}
+    result = client.post("/ingest/table-complete", json=body)
+    assert result.status_code == 200 and result.json()["completed"] is True
+    assert landing.count(SOURCE, "EMPTY_DIM") == 0
+    step = landing.con.execute(
+        "SELECT kind, target, status, rows_out FROM d2a_run_step WHERE batch_id = ?",
+        ("empty-1",),
+    ).fetchone()
+    assert tuple(step) == ("table", "EMPTY_DIM", "ok", 0)
+    # 幂等重试不刷新首次完成时间。
+    landing.con.execute("UPDATE d2a_run_step SET finished_at = '2020-01-01T00:00:00' WHERE batch_id = ?",
+                        ("empty-1",))
+    landing.con.commit()
+    assert client.post("/ingest/table-complete", json=body).json()["duplicate"] is True
+    (finished_at,) = landing.con.execute(
+        "SELECT finished_at FROM d2a_run_step WHERE batch_id = ?", ("empty-1",)
+    ).fetchone()
+    assert finished_at == "2020-01-01T00:00:00"
+
+
+def test_http_sync_emits_completion_for_zero_row_table(tmp_path):
+    """中间机真实同步零行表时，仍必须推送 table-complete。"""
+    class EmptyAdapter:
+        def tables(self):
+            return [TableInfo("EMPTY_DIM", [("Id", "int")], ["Id"])]
+
+        def read_increment(self, _table, since=None, watermark_col=None):
+            return iter(())
+
+    platform = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(platform.db_path))
+    middle = LandingStore(tmp_path / "middle.sqlite")
+    sink = HttpPushSink("http://platform", post=_testclient_post(client))
+    report = incremental_sync(EmptyAdapter(), middle, SOURCE, sink=sink)
+    assert report.tables[0].rows == 0
+    assert platform.count(SOURCE, "EMPTY_DIM") == 0
+    step = platform.con.execute(
+        "SELECT kind, target, status FROM d2a_run_step WHERE kind = 'table'"
+    ).fetchone()
+    assert tuple(step) == ("table", "EMPTY_DIM", "ok")
+
+
 def test_ingest_rejects_missing_pk(tmp_path):
     landing = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(landing.db_path))
@@ -124,6 +194,18 @@ def test_push_matches_direct_sync(source_db, pack, tmp_path):
     d = dict(direct.con.execute(f'SELECT DOC_NO, TOTAL_AMOUNT FROM "{raw}"').fetchall())
     p = dict(platform.con.execute(f'SELECT DOC_NO, TOTAL_AMOUNT FROM "{raw}"').fetchall())
     assert d == p
+    completed = platform.con.execute(
+        "SELECT target FROM d2a_run_step WHERE kind = 'table' AND status = 'ok' "
+        "ORDER BY target"
+    ).fetchall()
+    assert [r["target"] for r in completed] == sorted(TABLES)
+    validation_run = platform.start_run(SOURCE, "validation", commit=False)
+    report = build_validation_report(
+        platform, run_id=validation_run, pack=pack, source=SOURCE,
+        config=None, include_mcp_probe=False,
+    )
+    checks = {c["check_id"]: c for c in report["checks"]}
+    assert checks["raw_presence"]["status"] == "pass"
 
 
 def test_middle_holds_no_raw_but_has_watermark(source_db, pack, tmp_path):

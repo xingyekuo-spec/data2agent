@@ -236,19 +236,24 @@ R6 只返回“重复建料候选”。本项目不调用 LLM 做语义判定；
 
 ### 5.1 来源链路
 
-真实表名和外键必须在现场数据字典核对后进入 verified binding。设计阶段的主要候选来源：
+2026-07-22 已取得并核对原始表名与关键字段。以下内容只确认“表存在及字段名”，
+不确认主键、外键、单头单身关联、状态码、成本口径或快照口径，因此 binding 仍为
+`draft`，不能据此生成责任或呆滞结论：
 
-| 领域 | 候选来源 |
+| 领域 | 已核对来源 |
 |------|----------|
-| 库存与成本 | `INV_COST_BAL`、`INV_SUMMARY`、`INV_UNIT_COST`、仓库/批号状态表 |
+| 库存与成本 | `INV_COST_BAL`、`INV_COST_BAL_DETAIL`、`INV_SUMMARY`、`INV_SUMMARY_COST_DETAIL`、`INV_OPENING_COST`、`INV_UNIT_COST`、`ITEM_WAREHOUSE`、`ITEM_WAREHOUSE_BIN` |
 | 销售需求与出库 | `SALES_ORDER_DOC*`、`SALES_DELIVERY*`、`SALES_ISSUE*`、`SALES_RETURN*` |
 | 采购与需求来源 | `PURCHASE_ORDER*`、`PO_REQ_SOURCE`、`PURCHASE_GOODS*`、`PURCHASE_RETURN*`、`SUPPLIER_PURCHASE` |
 | 生产需求与领退料 | `MO`、`MO_D`、`MO_DEMAND`、`MO_ISSUED_SETS`、`MO_CHANGE*`、`MO_RECEIPT*` |
-| BOM 与替代 | `BOM_D`、`BOM_PRODUCT`、`ITEM_MAPPING*` |
+| BOM 与替代 | `BOM_D`、`BOM_PRODUCT`、`BOM_SD`、`BOM_MANUAL_CONFIG*`、`BOM_RULE*`、`ITEM_MAPPING*` |
 | ECN | `ECN`、`ECN_D`、`ECN_SD`、`ECN_TASK` |
-| 主数据与组织 | `ITEM_FEATURE`、`ITEM_PLANT`、部门/员工维度 |
+| 主数据与组织 | `ITEM_FEATURE`、`ITEM_PLANT`、`ITEM_PURCHASE`、`ITEM_SALES`、`ITEM_LOT`、`ITEM_SUPPLIER` |
 
-当前文档中的关联路径均为候选，不视为已验证事实。尤其需要核对 `PO_REQ_SOURCE`、采购多级子表和工单领退料的真实外键。
+其中 M1 已仅使用 `ITEM_WAREHOUSE.ITEM_ID`、`WAREHOUSE_ID`、`INVENTORY_QTY`、
+`LAST_ISSUE_DATE` 与 `LAST_RECEIPT_DATE` 发布库存事实；其他字段不会被猜测使用。
+后续最优先核对 `PO_REQ_SOURCE`、采购多级子表和工单领退料的真实外键，以及物料编码、
+成本、库存状态和原始快照日期字段。
 
 ### 5.2 YAML 模板与抽取配置
 

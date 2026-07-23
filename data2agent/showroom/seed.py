@@ -294,6 +294,7 @@ def _orders(rng: random.Random, asof: date, quotations: list[dict], customers: l
 def _stock_history(rng: random.Random, asof: date, items: list[dict]) -> dict[str, list[dict]]:
     """为呆滞库存 M1 构造库存、入库和出库/领料事实。"""
     balances: list[dict] = []
+    warehouses: list[dict] = []
     costs: list[dict] = []
     receipts: list[dict] = []
     sales_headers: list[dict] = []
@@ -325,32 +326,40 @@ def _stock_history(rng: random.Random, asof: date, items: list[dict]) -> dict[st
             **_audit(rng, receipt_at),
         })
 
-        # 每十一个料号保留为从未出库，用首次入库日期测试账龄锚点。
-        if index % 11 == 0:
-            continue
-        issue_day = asof - timedelta(days=135 if index % 5 == 0 else 20 + (index % 30))
-        issue_at = _worktime(rng, issue_day)
-        if item["CATEGORY_CODE"] in {"RAW", "ACC"}:
-            production_id += 1
-            production_issues.append({
-                "Id": production_id, "MO_ID": None, "ITEM_ID": item["Id"], "ISSUE_DATE": _d(issue_day),
-                "ISSUED_QTY": qty / 2, "RETURNED_QTY": 0,
-                **_audit(rng, issue_at),
-            })
-        else:
-            sales_id += 1
-            sales_line_id += 1
-            sales_headers.append({
-                "Id": sales_id, "DOC_NO": f"SI{issue_day:%y%m}-{sales_id:03d}",
-                "DOC_DATE": _d(issue_day), **_audit(rng, issue_at),
-            })
-            sales_lines.append({
-                "Id": sales_line_id, "SALES_ISSUE_ID": sales_id, "ITEM_ID": item["Id"],
-                "ISSUED_QTY": qty / 2, **_audit(rng, issue_at),
-            })
+        issue_day = None if index % 11 == 0 else asof - timedelta(
+            days=135 if index % 5 == 0 else 20 + (index % 30),
+        )
+        if issue_day is not None:
+            issue_at = _worktime(rng, issue_day)
+            if item["CATEGORY_CODE"] in {"RAW", "ACC"}:
+                production_id += 1
+                production_issues.append({
+                    "Id": production_id, "MO_ID": None, "ITEM_ID": item["Id"], "ISSUE_DATE": _d(issue_day),
+                    "ISSUED_QTY": qty / 2, "RETURNED_QTY": 0,
+                    **_audit(rng, issue_at),
+                })
+            else:
+                sales_id += 1
+                sales_line_id += 1
+                sales_headers.append({
+                    "Id": sales_id, "DOC_NO": f"SI{issue_day:%y%m}-{sales_id:03d}",
+                    "DOC_DATE": _d(issue_day), **_audit(rng, issue_at),
+                })
+                sales_lines.append({
+                    "Id": sales_line_id, "SALES_ISSUE_ID": sales_id, "ITEM_ID": item["Id"],
+                    "ISSUED_QTY": qty / 2, **_audit(rng, issue_at),
+                })
+        warehouses.append({
+            "Id": index, "ITEM_ID": item["Id"], "WAREHOUSE_ID": "W01",
+            "INVENTORY_QTY": qty,
+            "LAST_ISSUE_DATE": _d(issue_day) if issue_day is not None else None,
+            "LAST_RECEIPT_DATE": _d(receipt_day), "SAFE_STOCK": qty * 0.1,
+            **_audit(rng, receipt_at, snapshot_at),
+        })
 
     return {
         "INV_COST_BAL": balances,
+        "ITEM_WAREHOUSE": warehouses,
         "INV_UNIT_COST": costs,
         "INV_RECEIPT": receipts,
         "SALES_ISSUE": sales_headers,

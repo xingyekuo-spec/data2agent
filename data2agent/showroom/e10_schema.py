@@ -74,6 +74,17 @@ TABLES: dict[str, tuple[str, list[Column]]] = {
             ("INVENTORY_STATUS", "TEXT", "库存状态:usable / frozen / pending_inspection / scrapped"),
         ]),
     ),
+    "ITEM_WAREHOUSE": (
+        "品号仓库库存（E10-like 参考表）",
+        _table([
+            ("ITEM_ID", "INTEGER", "品号（参考库外键 → ITEM.Id）"),
+            ("WAREHOUSE_ID", "TEXT", "仓库标识"),
+            ("INVENTORY_QTY", "NUMERIC", "库存数量"),
+            ("LAST_ISSUE_DATE", "TEXT", "最后出库日期"),
+            ("LAST_RECEIPT_DATE", "TEXT", "最后入库日期"),
+            ("SAFE_STOCK", "NUMERIC", "安全库存"),
+        ]),
+    ),
     "INV_UNIT_COST": (
         "存货单位成本",
         _table([

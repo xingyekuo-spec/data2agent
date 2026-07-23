@@ -22,7 +22,7 @@ properties:
   - { name: calculation_version, type: string, desc: 计算版本 }
 bindings:
   - source: digiwin_e10
-    tables: [D2A_SPECIAL_CONDITION_EVIDENCE, D2A_DEAD_STOCK_ITEM, ITEM, BOM_D]
+    tables: [D2A_SPECIAL_CONDITION_EVIDENCE]
     materializer: dead_stock_attribution_v3
     status: draft
     key_map:
@@ -45,4 +45,4 @@ bindings:
       warnings: D2A_SPECIAL_CONDITION_EVIDENCE.warnings
       as_of_date: D2A_SPECIAL_CONDITION_EVIDENCE.as_of_date
       calculation_version: D2A_SPECIAL_CONDITION_EVIDENCE.calculation_version
-    notes: R4 低置信候选，只表达特殊使用条件证据，不表达责任归因。
+    notes: R4 所需 BOM 与物料关联字段尚未核对，当前不生成候选。

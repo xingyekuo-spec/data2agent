@@ -22,7 +22,7 @@ properties:
   - { name: calculation_version, type: string, desc: 计算版本 }
 bindings:
   - source: digiwin_e10
-    tables: [D2A_MATERIAL_SUBSTITUTE_CANDIDATE, D2A_MATERIAL_BOM_USAGE, D2A_DEAD_STOCK_ITEM, ITEM, BOM_D, MO]
+    tables: [D2A_MATERIAL_SUBSTITUTE_CANDIDATE]
     materializer: dead_stock_attribution_v3
     status: draft
     key_map:
@@ -47,4 +47,4 @@ bindings:
       warnings: D2A_MATERIAL_SUBSTITUTE_CANDIDATE.warnings
       as_of_date: D2A_MATERIAL_SUBSTITUTE_CANDIDATE.as_of_date
       calculation_version: D2A_MATERIAL_SUBSTITUTE_CANDIDATE.calculation_version
-    notes: M3c 候选只表示存在潜在消耗场景，调拨/替代前仍需 ERP 版本、品质和工程约束复核。
+    notes: BOM、工单和物料映射尚未核对，当前不生成转用候选。

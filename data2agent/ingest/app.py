@@ -1,4 +1,4 @@
-"""ingest FastAPI 应用:POST /ingest/batch → 幂等落地。
+"""ingest FastAPI 应用:批次落地与表级完成确认。
 
 安全:可选 Bearer Token(--token / D2A_INGEST_TOKEN);无 Token 为开放(仅内网可信段)。
 落地复用 connect.landing.upsert_rows(按业务键 upsert,重推安全)。
@@ -23,6 +23,21 @@ class BatchBody(BaseModel):
     pk: list[str]
     batch_id: str
     rows: list[dict]
+
+
+class TableCompleteBody(BaseModel):
+    """中间机确认一张表的全部批次均已被平台接收。
+
+    该事件是 HTTP 推送模式唯一的表级新鲜度证据；即使 rows=0 也必须发送。
+    """
+
+    source: str
+    table: str
+    columns: list[list[str]]
+    pk: list[str]
+    completion_id: str
+    rows: int
+    batches: int
 
 
 def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
@@ -76,6 +91,10 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
             landing.log_audit(body.source, "ingest",
                               f"batch {body.batch_id} → {raw_table_name(body.source, body.table)}",
                               n, 0.0, body.batch_id)
+            if existing_success:
+                # 重放旧 batch 仍记录审计，但不能刷新首次成功时间。
+                return {"ingested": n, "table": body.table,
+                        "batch_id": body.batch_id, "duplicate": True}
             landing.update_step(step_id, status="ok", rows_in=n, rows_out=n)
             landing.finish_run(run_id, tables=1, rows=n, status="ok")
         except Exception as e:
@@ -98,5 +117,54 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
             raise HTTPException(
                 500, f"批次 {body.batch_id} 数据已写入,但观测记录失败:{e}") from e
         return {"ingested": n, "table": body.table, "batch_id": body.batch_id}
+
+    @app.post("/ingest/table-complete", dependencies=[Depends(auth)])
+    def ingest_table_complete(body: TableCompleteBody) -> dict:
+        """记录表级完成事件，供平台 Validation 判断新鲜度。"""
+        if not body.pk:
+            raise HTTPException(422, f"{body.table}: 缺主键,无法创建 raw 表")
+        if body.rows < 0 or body.batches < 0:
+            raise HTTPException(422, "rows 和 batches 不能为负数")
+        bad = [c for c in body.columns if len(c) != 2]
+        if bad:
+            raise HTTPException(422, f"columns 须为 [列名, 类型] 二元组,got {bad[:3]}")
+
+        info = TableInfo(name=body.table,
+                         columns=[(c[0], c[1]) for c in body.columns], pk=list(body.pk))
+        landing = LandingStore(landing_path)
+        # 零行表不会经过 /ingest/batch；完成事件仍必须建立空 raw 表。
+        landing.ensure_raw_table(body.source, info)
+        existing = landing.con.execute(
+            "SELECT s.id, s.run_id, s.status AS step_status, r.status AS run_status "
+            "FROM d2a_run_step s JOIN d2a_sync_run r ON r.id = s.run_id "
+            "WHERE r.source = ? AND s.kind = 'table' AND s.target = ? AND s.batch_id = ?",
+            (body.source, body.table, body.completion_id),
+        ).fetchone()
+        if existing is not None and existing["step_status"] == "ok" and existing["run_status"] == "ok":
+            return {"completed": True, "table": body.table,
+                    "completion_id": body.completion_id, "duplicate": True}
+
+        if existing is None:
+            run_id = landing.start_run(body.source, "ingest")
+            step_id = landing.add_step(run_id, 1, "table", body.table,
+                                       batch_id=body.completion_id)
+        else:
+            run_id, step_id = existing["run_id"], existing["id"]
+        try:
+            landing.log_audit(body.source, "ingest_complete",
+                              f"table {body.table} complete ({body.completion_id})",
+                              body.rows, 0.0, body.completion_id)
+            landing.update_step(step_id, status="ok", rows_in=body.rows, rows_out=body.rows)
+            landing.finish_run(run_id, tables=1, rows=body.rows, status="ok")
+        except Exception as e:
+            try:
+                landing.update_step(step_id, status="failed", error=str(e)[:500])
+                landing.finish_run(run_id, tables=0, rows=body.rows, status="failed",
+                                   detail=f"table completion observation failed:{str(e)[:300]}")
+            except Exception:
+                pass
+            raise HTTPException(500, f"表 {body.table} 完成记录失败:{e}") from e
+        return {"completed": True, "table": body.table,
+                "completion_id": body.completion_id}
 
     return app

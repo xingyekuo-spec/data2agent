@@ -82,7 +82,11 @@ def _pipeline_cfg(tmp_path: Path, landing: LandingStore, src: Path) -> object:
         "  digiwin_e10:\n"
         "    adapter: sqlite_readonly\n"
         f"    path: {src}\n"
-        "    sync_every: 30m\n",
+        "    sync_every: 30m\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n",
         encoding="utf-8",
     )
     return load_config(cfg_file)
