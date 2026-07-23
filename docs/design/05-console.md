@@ -115,7 +115,36 @@ python scripts/export_console_openapi.py --check console-ui/openapi.json
   `app/console-ui/dist`;
 - Vue dist 缺失时 `/v1/` 返回明确错误页,不回落到另一套平台管理页面。
 
-## 7. 运行方式
+## 7. 中间机管理界面(middle_admin)
+
+middle_admin(`:8851`)提供中间服务器本机配置入口,核心功能:
+
+### 7.1 表策略编辑器
+
+配置页(`/config`)提供表格化的抽取表管理:
+
+- 每张表显示 `mode`(incremental / full_refresh)和 `watermark` 列名;
+- 支持添加、删除、编辑表条目;
+- `mode: full_refresh` 的表不显示 watermark 字段;
+- 编辑 buffer 保存时原子替换 `connect.yaml` 的 `tables` 段落,避免部分写入。
+
+### 7.2 连接测试增强
+
+连接测试按钮现在额外验证:
+
+- 每张配置表的 **主键(PK)列** 是否存在;
+- 增量模式表的 **watermark 列** 是否存在;
+- 测试结果逐表列出 OK/失败原因。
+
+### 7.3 与平台模板的关系
+
+中间机的 `tables` 配置控制"从 ERP 抽哪些表",平台模板控制"raw 字段如何映射到业务对象"。两者独立维护:
+
+- 中间机新增表 → 数据落入 raw 层 → 平台侧可在模板中映射新表的字段;
+- 中间机删除表 → 该表不再参与后续抽取,已落地的 raw 数据保留;
+- 模板的 binding 字段映射使用表中的物理字段名,不感知抽取策略。
+
+## 8. 运行方式
 
 现场运行使用便携包:
 

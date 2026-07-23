@@ -864,7 +864,8 @@ class TestUnknownObjectRetryGating:
         cfg = ConnectConfig(
             templates=str(ROOT / "templates"),
             landing=landing.db_path,
-            sources={"digiwin_e10": SourceConfig(adapter="sqlite_readonly", path=":memory:")},
+            sources={"digiwin_e10": SourceConfig(adapter="sqlite_readonly", path=":memory:",
+                                 tables={"CUSTOMER": {"mode": "full_refresh"}})},
         )
         return landing, cfg
 

@@ -11,22 +11,19 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from ..metamodel.loader import load_pack
-from ..metamodel.schema import TemplatePack
 from .config import ConnectConfig, SourceConfig, in_window
 from .dataset_publish import build_dataset
-from .increment import incremental_sync, watermarks_from_pack
+from .increment import incremental_sync
 from .landing import LandingStore
 from .reconcile import reconcile
-from .sync import whitelist_from_pack
 
 log = logging.getLogger("data2agent.connect")
 
 
-def build_adapter(name: str, scfg: SourceConfig, pack: TemplatePack,
+def build_adapter(name: str, scfg: SourceConfig,
                   landing: LandingStore):
-    whitelist = whitelist_from_pack(pack, name) if scfg.whitelist_from_bindings else set()
-    whitelist |= set(scfg.extra_whitelist)
+    """构建适配器:白名单仅从 tables 配置生成。"""
+    whitelist = scfg.table_whitelist()
     hook = lambda action, sql, rows, ms: landing.log_audit(name, action, sql, rows, ms)  # noqa: E731
     kwargs = dict(batch_size=scfg.rate.batch_size,
                   rows_per_second=scfg.rate.rows_per_second, audit_hook=hook)
@@ -57,28 +54,27 @@ def build_sink(scfg: SourceConfig, landing: LandingStore):
     return LocalSink(landing)
 
 
-def run_sync_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
-                   landing_path: str) -> bool:
-    """一轮 sync(+apply)。返回是否实际执行(窗口外为 False)。
-
-    每轮自建 LandingStore:apscheduler 任务跑在工作线程,
-    sqlite 连接不可跨线程复用。
-    """
+def run_sync_cycle(name: str, scfg: SourceConfig,
+                   landing_path: str, templates: str = "templates") -> bool:
+    """一轮 sync(+apply)。返回是否实际执行(窗口外为 False)。"""
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip source=%s reason=窗口外 windows=%s", name, scfg.windows)
         return False
     landing = LandingStore(landing_path)
-    adapter = build_adapter(name, scfg, pack, landing)
+    adapter = build_adapter(name, scfg, landing)
     sink = build_sink(scfg, landing)
+    watermarks = scfg.table_watermarks()
     report = incremental_sync(
-        adapter, landing, name, watermarks_from_pack(pack, name),
+        adapter, landing, name, watermarks,
         lookback_days=scfg.lookback_days(), sink=sink,
         should_continue=lambda: in_window(datetime.now().time(), scfg.windows))
     log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
              name, report.run_id, report.total_rows, len(report.tables),
              report.paused, scfg.sink.type)
-    # sink=http:raw 已推给平台,映射在平台侧跑,不在中间 apply
+    # sink=http: raw 已推给平台,映射在平台侧跑,不在中间 apply
     if scfg.apply_after_sync and not report.paused and scfg.sink.type == "local":
+        from ..metamodel.loader import load_pack as _load_pack
+        pack = _load_pack(templates)  # local apply 仍需模板
         apply_report = build_dataset(landing, pack, name, auto_publish=True)
         log.info(
             "apply source=%s objects=%s quarantined=%s aborted=%s "
@@ -92,14 +88,14 @@ def run_sync_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
     return True
 
 
-def run_reconcile_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
+def run_reconcile_cycle(name: str, scfg: SourceConfig,
                         landing_path: str, deep: bool = False) -> bool:
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip reconcile source=%s reason=窗口外", name)
         return False
     landing = LandingStore(landing_path)
-    adapter = build_adapter(name, scfg, pack, landing)
-    report = reconcile(adapter, landing, name, watermarks_from_pack(pack, name), deep=deep)
+    adapter = build_adapter(name, scfg, landing)
+    report = reconcile(adapter, landing, name, scfg.table_watermarks(), deep=deep)
     log.info("reconcile source=%s run=%s segments=%s mismatched=%s soft_deleted=%s",
              name, report.run_id, len(report.segments),
              len(report.mismatched), report.total_soft_deleted)
@@ -109,13 +105,12 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig, pack: TemplatePack,
 def serve(cfg: ConnectConfig, once: bool = False) -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    pack = load_pack(cfg.templates)
 
     if once:
         for name, scfg in cfg.sources.items():
-            run_sync_cycle(name, scfg, pack, cfg.landing)
+            run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
             if scfg.reconcile_at is not None:
-                run_reconcile_cycle(name, scfg, pack, cfg.landing)
+                run_reconcile_cycle(name, scfg, cfg.landing)
         return
 
     from apscheduler.schedulers.blocking import BlockingScheduler
@@ -126,15 +121,16 @@ def serve(cfg: ConnectConfig, once: bool = False) -> None:
     for name, scfg in cfg.sources.items():
         scheduler.add_job(
             run_sync_cycle, IntervalTrigger(seconds=scfg.sync_every_seconds()),
-            args=(name, scfg, pack, cfg.landing), id=f"sync:{name}",
+            args=(name, scfg, cfg.landing, cfg.templates), id=f"sync:{name}",
             max_instances=1, coalesce=True,
-            next_run_time=datetime.now())  # 启动即跑首轮(仍受窗口约束)
+            next_run_time=datetime.now())
         if scfg.reconcile_at:
             hh, mm = scfg.reconcile_at.split(":")
             scheduler.add_job(
                 run_reconcile_cycle, CronTrigger(hour=int(hh), minute=int(mm)),
-                args=(name, scfg, pack, cfg.landing), id=f"reconcile:{name}",
+                args=(name, scfg, cfg.landing), id=f"reconcile:{name}",
                 max_instances=1, coalesce=True)
-        log.info("scheduled source=%s sync_every=%s reconcile_at=%s windows=%s",
-                 name, scfg.sync_every, scfg.reconcile_at, scfg.windows or "不限")
+        log.info("scheduled source=%s sync_every=%s reconcile_at=%s windows=%s tables=%s",
+                 name, scfg.sync_every, scfg.reconcile_at, scfg.windows or "不限",
+                 len(scfg.table_whitelist()))
     scheduler.start()

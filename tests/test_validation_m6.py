@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
+from data2agent.connect.adapters.base import TableInfo
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.dataset_publish import build_dataset
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack
@@ -144,3 +145,136 @@ def test_validation_masking_fails_when_live_probe_returns_plain_sensitive_value(
     assert checks["mcp_query"]["status"] == "pass"
     assert checks["masking"]["status"] == "fail"
     published_landing.con.rollback()
+
+
+class TestNextExpectedRun:
+    """_next_expected_run 窗口感知计算。"""
+
+    def _cfg(self, sync_every="30m", windows=None):
+        from data2agent.connect.config import SourceConfig
+        return SourceConfig(
+            adapter="sqlite_readonly", path="x",
+            tables={"CUSTOMER": {"mode": "incremental", "watermark": "UPD"}},
+            sync_every=sync_every, windows=windows or [],
+        )
+
+    def test_no_windows_next_is_last_plus_sync_every(self):
+        from data2agent.console.validation import _next_expected_run
+        from datetime import datetime
+        cfg = self._cfg(sync_every="30m")
+        result = _next_expected_run(datetime(2026, 7, 23, 10, 0, 0), cfg)
+        assert result == datetime(2026, 7, 23, 10, 30, 0)
+
+    def test_window_skips_to_opening(self):
+        from data2agent.console.validation import _next_expected_run
+        from datetime import datetime
+        cfg = self._cfg(sync_every="30m", windows=["22:00-06:30"])
+        # 上次 06:20 → candidate 06:50 → 不在窗口 → 步进到 22:00
+        result = _next_expected_run(datetime(2026, 7, 23, 6, 20, 0), cfg)
+        assert result == datetime(2026, 7, 23, 22, 0, 0)
+
+    def test_window_mid_run_stays(self):
+        from data2agent.console.validation import _next_expected_run
+        from datetime import datetime
+        cfg = self._cfg(sync_every="30m", windows=["22:00-06:30"])
+        # 上次 23:00 → candidate 23:30 → 仍在窗口
+        result = _next_expected_run(datetime(2026, 7, 23, 23, 0, 0), cfg)
+        assert result == datetime(2026, 7, 23, 23, 30, 0)
+
+    def test_long_sync_every_not_zero_loop(self):
+        from data2agent.console.validation import _next_expected_run
+        from datetime import datetime
+        cfg = self._cfg(sync_every="8d", windows=["22:00-06:30"])
+        # 上次 7/23 08:00(窗口外) → candidate 7/31 08:00 → 不在窗口 → 跳到 22:00
+        result = _next_expected_run(datetime(2026, 7, 23, 8, 0, 0), cfg)
+        assert result == datetime(2026, 7, 31, 22, 0, 0)
+
+class TestRawPresence:
+    """raw_presence 检查:存在性与诚实局限性。"""
+
+    def test_recent_sync_passes(self, published_landing):
+        from data2agent.console.validation import build_validation_report
+        pack = load_pack(ROOT / "templates")
+        run_id = published_landing.start_run(SOURCE, "sync")
+        # 为全部 6 张表创建 step 记录
+        tables = ["CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
+        for i, tbl in enumerate(tables):
+            sid = published_landing.add_step(run_id, i + 1, "table", tbl)
+            published_landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
+        published_landing.finish_run(run_id, tables=6, rows=600, status="ok")
+
+        report = build_validation_report(
+            published_landing, run_id=run_id, pack=pack, source=SOURCE,
+            config=None, include_mcp_probe=False,
+        )
+        checks = {c["check_id"]: c for c in report["checks"]}
+        assert checks["raw_presence"]["status"] == "pass"
+
+    def test_table_without_sync_record_is_unverified(self, tmp_path):
+        """缺少同步记录的表应报告 warning,不能假装正常。"""
+        from data2agent.console.validation import build_validation_report
+        pack = load_pack(ROOT / "templates")
+        landing = LandingStore(tmp_path / "landing.sqlite")
+
+        # CUSTOMER 无记录；CURRENCY 有过期记录，二者都必须在同一报告中出现。
+        run_id = landing.start_run(SOURCE, "sync")
+        for i, tbl in enumerate(["ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]):
+            sid = landing.add_step(run_id, i + 1, "table", tbl)
+            landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
+        landing.add_step(run_id, 5, "table", "CURRENCY", status="ok",
+                         finished_at="2020-01-01T00:00:00")
+        landing.finish_run(run_id, tables=5, rows=500, status="ok")
+
+        # 确保 raw 表存在(创建空表)
+        for tbl in ["CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]:
+            landing.ensure_raw_table(SOURCE, TableInfo(tbl, [("id", "int")], ["id"]))
+
+        report = build_validation_report(
+            landing, run_id=run_id, pack=pack, source=SOURCE,
+            config=None, include_mcp_probe=False,
+        )
+        checks = {c["check_id"]: c for c in report["checks"]}
+        assert checks["raw_presence"]["status"] == "warning"
+        assert "CUSTOMER" in checks["raw_presence"]["detail"].get("unverified", [])
+        assert "CURRENCY" in checks["raw_presence"]["detail"].get("stale", [])
+        landing.con.rollback()
+
+    def test_other_source_does_not_pollute(self, tmp_path):
+        """其他数据源的 step 记录不影响当前源的逐表新鲜度。"""
+        from data2agent.console.validation import build_validation_report
+        pack = load_pack(ROOT / "templates")
+        landing = LandingStore(tmp_path / "landing.sqlite")
+
+        # 为 6 张表创建 raw 空表
+        tables = ["CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
+        for tbl in tables:
+            landing.ensure_raw_table(SOURCE, TableInfo(tbl, [("id", "int")], ["id"]))
+
+        # 当前源:6 张表都有最近 step 记录
+        run_id = landing.start_run(SOURCE, "sync")
+        for i, tbl in enumerate(tables):
+            sid = landing.add_step(run_id, i + 1, "table", tbl)
+            landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
+        landing.finish_run(run_id, tables=6, rows=600, status="ok")
+
+        # 另一个源有同名表但过期
+        other = landing.start_run("other_source", "sync")
+        for i, tbl in enumerate(["CUSTOMER", "CURRENCY"]):
+            sid = landing.add_step(other, i + 1, "table", tbl)
+            landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
+        landing.finish_run(other, tables=2, rows=200, status="ok")
+        # 把 other_source 的 step finished_at 改到过去
+        landing.con.execute(
+            "UPDATE d2a_run_step SET finished_at = '2020-01-01T00:00:00' WHERE run_id = ?",
+            (other,),
+        )
+        landing.con.commit()
+
+        report = build_validation_report(
+            landing, run_id=run_id, pack=pack, source=SOURCE,
+            config=None, include_mcp_probe=False,
+        )
+        checks = {c["check_id"]: c for c in report["checks"]}
+        # 当前源有完整记录 → pass(不被 other_source 污染)
+        assert checks["raw_presence"]["status"] == "pass"
+        landing.con.rollback()

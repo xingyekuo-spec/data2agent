@@ -1,6 +1,6 @@
 # 01 · 元模型与模板包
 
-> 状态:对象/绑定契约已实现;v0.3 版本身份、原子发布、映射 Preview 与字段血缘已落地(r4,2026-07-22)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py`、`data2agent/connect/mapping_transform.py` · 当前消费者:映射引擎、Preview、MCP 网关、白名单推导、本地对账、数据集发布/published 快照、字段血缘;后续消费者:v0.4 跨机协议
+> 状态:对象/绑定契约已实现;v0.3 版本身份、原子发布、映射 Preview 与字段血缘已落地(r4,2026-07-22)· 实现:`data2agent/metamodel/`、`data2agent/mapping.py`、`data2agent/connect/mapping_transform.py` · 当前消费者:映射引擎、Preview、MCP 网关、本地对账、数据集发布/published 快照、字段血缘;后续消费者:v0.4 跨机协议。抽取表清单由 `connect.yaml` 的 `tables` 字段显式管理,不再从 binding 自动推导。
 > 上层基线:[路线图](../roadmap.md)
 
 ## 1. 设计目标

@@ -107,6 +107,9 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                                     rows_in=rows, rows_out=rows, batch_id=batch_id)
                 report.paused = True
                 break
+            # HTTP 模式必须先由平台确认整张表完成，成功后才前进中间机水位。
+            # 这同时为零行表提供明确的完成证据。
+            sink.complete_table(source, info, batch_id, rows, batches)
             if wm_col:  # 全部批次提交后才前进水位
                 landing.set_high_water(source, info.name, wm_col, max_wm, batch_id)
             landing.update_step(

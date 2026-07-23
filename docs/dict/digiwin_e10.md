@@ -10,6 +10,24 @@
 通用惯例:`Id` 代理主键;`*_ID` 外键指向对应表的 `Id`;
 `LAST_MODIFIED_DATE` 为增量抽取水位字段;`Owner_Org_ROid` 为 E10 多组织字段。
 
+## 抽取配置(connect.yaml)
+
+物理表名和 watermark 字段应写入中间机的 `connect.yaml` 的 `tables` 段落。以下为参考库的 6 张基线表及推荐策略:
+
+| 表名 | 模式 | 水位字段 | 说明 |
+| --- | --- | --- | --- |
+| CURRENCY | `full_refresh` | (无) | 币别基础档,数据量极小,走全量刷新 |
+| CUSTOMER | `incremental` | `LAST_MODIFIED_DATE` | 客户主档,含敏感字段(联系人/电话/邮箱) |
+| ITEM | `incremental` | `LAST_MODIFIED_DATE` | 品号主档,含敏感字段(标准成本) |
+| QUOTATION | `incremental` | `LAST_MODIFIED_DATE` | 报价单(参考库简化为单头) |
+| SALES_ORDER | `incremental` | `LAST_MODIFIED_DATE` | 销售订单单头 |
+| SALES_ORDER_D | `incremental` | `LAST_MODIFIED_DATE` | 销售订单单身 |
+
+> **注意区分两个层次**:本字典描述的是**表形**(字段名、类型、含义),属于参考形状;
+> 中间机 `tables` 配置中的 `mode` / `watermark` 是**经现场核对的确定值**。
+> 真实客户环境的水位字段语义(是修改时间还是审核时间)以现场确认为准,
+> 参见[抽取框架设计](../design/02-extraction.md)第 11 节现场核对清单。
+
 ## CURRENCY —— 币别基础档
 
 | 字段 | 类型 | 说明 |

@@ -51,7 +51,11 @@ def _cfg_file(tmp_path: Path, src: Path, landing: LandingStore) -> Path:
         "sources:\n"
         "  digiwin_e10:\n"
         "    adapter: sqlite_readonly\n"
-        f"    path: {src}\n",
+        f"    path: {src}\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n",
         encoding="utf-8",
     )
     return cfg
@@ -116,8 +120,16 @@ def test_scheduler_auto_publishes_after_sync(synced, pack):
     src, landing, _ = synced
     # Fresh landing so sync+apply run together
     landing2 = LandingStore(Path(landing.db_path).parent / "sched.sqlite")
-    scfg = SourceConfig(adapter="sqlite_readonly", path=str(src))
-    assert sched.run_sync_cycle(SOURCE, scfg, pack, landing2.db_path) is True
+    scfg = SourceConfig(adapter="sqlite_readonly", path=str(src),
+                        tables={
+                            "CUSTOMER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                            "CURRENCY": {"mode": "full_refresh"},
+                            "ITEM": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                            "QUOTATION": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                            "SALES_ORDER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                            "SALES_ORDER_D": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                        })
+    assert sched.run_sync_cycle(SOURCE, scfg, landing2.db_path) is True
     pub = landing2.get_published_dataset(SOURCE)
     assert pub is not None and pub.status == "published"
     assert _legacy_obj_tables(landing2) == []

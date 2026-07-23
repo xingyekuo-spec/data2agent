@@ -53,7 +53,7 @@ class SourceAdapter(Protocol):
 **安全强制(适配器层内实现,不可绕过)**:
 
 1. **只读**:只允许 SELECT;连接串要求只读账号,MSSQL 加 `ApplicationIntent=ReadOnly`;任何非 SELECT 语句直接抛异常;
-2. **白名单**:默认由模板 binding 的 `tables` 自动推导(元模型再次作为唯一事实来源),配置可追加 `extra_whitelist`;白名单外的表名一律拒绝;
+2. **表白名单**:由 `connect.yaml` 每源的 `tables` 字段显式声明抽取表及策略(`mode` / `watermark`);未声明表名一律拒绝;
 3. **限流**:`batch_size`(默认 5000)+ `rows_per_second` 节流 + 语句超时;
 4. **审计**:发往源库的每一条 SQL 记入 `d2a_audit_log`(语句、行数、耗时、批次号)。
 
@@ -89,8 +89,8 @@ since = high_water - lookback          # 回看窗口,默认 3 天,吸收迟到�
 规则:
 
 - 水位**只在落地事务提交后前进**,且只前进不后退;任何批次失败,水位停在原地,下轮重来(upsert 幂等);
-- 无可靠水位字段的表(小维表如 CURRENCY):走全量刷新 —— 由 binding 有无 `watermark` 声明**自动推导**,无独立配置项(元模型仍是唯一事实来源;不可靠水位应从 binding 移除 `watermark`,而非加配置覆盖);
-- 水位字段语义(是"修改时间"还是"审核时间")属现场核对项,binding `watermark` 为准。
+- 无可靠水位字段的表(小维表如 CURRENCY):走全量刷新 —— 由 `connect.yaml` 每表的 `mode: full_refresh` 显式声明;增量表须同时配置 `watermark` 字段名;
+- 水位字段语义(是"修改时间"还是"审核时间")属现场核对项,以 `connect.yaml` 每表配置的 `watermark` 为准。
 
 ## 6. 分段对账(reconcile.py)
 
@@ -152,7 +152,7 @@ transform(map/join/derived) / result_value / extract_batch_id / map_batch_id
 ## 8. 调度与运行(scheduler.py + __main__.py)
 
 - apscheduler 按源调度;**错峰窗口**(如 `windows: ["22:00-06:30"]`)硬约束:窗口外不发起,运行中越界则在批次边界优雅暂停、下窗口续跑(水位机制天然支持断点);
-- CLI(`python -m data2agent.connect`):`sync`(`--source` / `--full` / `--lookback-days` + 源连接参数)/ `apply` / `backfill --table --from --to` / `reconcile [--deep]` / `serve [--once]`(常驻调度,`--once` 立即各跑一轮后退出,验证配置用)/ `status` / `quarantine list|retry` / `excel-suggest` / `excel-import`;
+- CLI(`python -m data2agent.connect`):`sync --config <connect.yaml> [--source <name>] [--full]`(抽取范围/策略来自 tables 配置)/ `apply` / `backfill --config ... --table --from --to` / `reconcile --config ... [--deep]` / `serve --config ... [--once]`(常驻调度)/ `status` / `quarantine list|retry` / `migrate-config --config ... [--dry-run]` / `excel-suggest` / `excel-import`;
 - 每轮汇总进 `d2a_sync_run`(起止、行数、隔离数、对账结果),结构化日志输出。
 
 ## 9. 配置(connect.yaml)
@@ -164,17 +164,36 @@ sources:
   digiwin_e10:
     adapter: mssql_readonly         # 开发 / 参考库:sqlite_readonly + path
     dsn_env: D2A_E10_DSN            # 凭据只从环境变量读,绝不落配置文件/仓库
-    whitelist_from_bindings: true
-    extra_whitelist: []
+
+    # 抽取表与同步策略(独立于模板维护,只修改这里即可控制 ERP 抽取范围)
+    tables:
+      CUSTOMER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      CURRENCY:
+        mode: full_refresh
+      ITEM:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      QUOTATION:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER_D:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+
     windows: ["22:00-06:30"]
     rate: { batch_size: 5000, rows_per_second: 2000 }
     lookback: 3d
     sync_every: 30m                 # 窗口内的同步节奏
     reconcile_at: "05:30"           # 每日 L1 对账
-    apply_after_sync: true          # 同步后自动物化对象层
+    apply_after_sync: true          # 同步后自动物化对象层(sink=http 时忽略)
 ```
 
-每表策略无需配置:有 `binding.watermark` 声明 → 水位增量;没有 → full_refresh(自动推导,元模型仍是唯一事实来源)。示例见仓库根 `connect.example.yaml`。
+每表策略在 `tables` 字段中显式声明(`mode: incremental` + `watermark` 或 `mode: full_refresh`),无需额外配置项。示例见仓库根 `connect.example.yaml`。
 
 ## 10. 安全机制与试点门槛
 
@@ -183,7 +202,7 @@ sources:
 | 承诺 | 机制 | 层 |
 | --- | --- | --- |
 | 只读账号 | 仅 SELECT + ReadOnly intent,非 SELECT 抛异常 | 适配器 |
-| 白名单表 | binding 推导 + 白名单外拒绝 | 适配器 |
+| 白名单表 | tables 字段显式声明 + 未声明拒绝 | 适配器 |
 | 限时 | 错峰窗口硬约束,越界批次边界暂停 | 调度 |
 | 限流 | batch_size + rows_per_second + 语句超时 | 适配器 |
 | 全部可审计 | d2a_audit_log 逐条 SQL + d2a_sync_run 逐轮汇总 | 全层 |
@@ -272,11 +291,13 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
 - 落地出口抽象为 Sink(`connect/sink.py`):`LocalSink`(写本地库,同机/开发默认)、
   `HttpPushSink`(POST 给平台;中间服务器用,stdlib urllib 零额外依赖、值推送前归一化、
   失败指数退避重试);`incremental_sync` 默认 `LocalSink(landing)`,行为向后兼容;
-- 平台接收端 `data2agent.ingest`(FastAPI,`POST /ingest/batch` → 复用 landing 幂等落地,
-  可选 Bearer Token;`python -m data2agent.ingest`);
+- 平台接收端 `data2agent.ingest`(FastAPI):`POST /ingest/batch` 只负责幂等落地;
+  中间机在一张表的全部批次成功后再 `POST /ingest/table-complete`。完成事件包含表结构、
+  行数与批次数，零行表也必须发送，平台据此创建空 Raw 表并保存表级新鲜度证据;
 - connect.yaml 加 `sink: {type: http, url, token_env}`;**中间用 http sink 时本地只留
   水位/审计/运行状态、不落 raw**(水位是元数据非业务数据),且不在中间 apply(映射在平台侧);
-- 验证:中间/平台双进程集成测试 —— 推送落地与直连 sync 逐表逐行一致、中间零 raw 表
+- 验证:中间/平台双进程集成测试 —— 推送落地与直连 sync 逐表逐行一致、中间零 raw 表、
+  表级完成事件与零行表完成证据
   (`tests/test_sink_ingest.py`);现场验证见 [runbook/push-validation](../runbook/push-validation.md)
   (主路径为便携包 + 平台 Vue Console);安装见 [portable](../runbook/portable.md),
   链路验收见 [push-validation](../runbook/push-validation.md);

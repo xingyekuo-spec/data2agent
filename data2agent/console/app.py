@@ -2317,7 +2317,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
     def action_sync(body: ActionBody) -> dict:
         cfg = require_config()
         executed = run_sync_cycle(
-            body.source, _scfg(cfg, body.source), require_pack(), cfg.landing)
+            body.source, _scfg(cfg, body.source), cfg.landing, cfg.templates)
         return {"executed": executed,
                 "note": "" if executed else "错峰窗口外,未发起(窗口约束对控制台同样生效)"}
 
@@ -2333,7 +2333,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
     def action_reconcile(body: ActionBody) -> dict:
         cfg = require_config()
         executed = run_reconcile_cycle(
-            body.source, _scfg(cfg, body.source), require_pack(),
+            body.source, _scfg(cfg, body.source),
             cfg.landing, deep=body.deep)
         return {"executed": executed,
                 "note": "" if executed else "错峰窗口外,未发起"}

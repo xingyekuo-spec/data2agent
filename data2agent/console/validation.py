@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from ..connect.config import ConnectConfig
@@ -29,7 +29,7 @@ CHECK_ORDER = (
 _CHECK_TITLES = {
     "service_reachable": "服务与落地库可读",
     "source_connectivity": "数据源连接配置",
-    "readonly_whitelist": "只读适配器与白名单",
+    "readonly_whitelist": "只读适配器与显式表清单",
     "sync_execution": "同步执行记录",
     "landing_and_push": "落地与推送摘要",
     "raw_presence": "Raw 表存在性",
@@ -41,6 +41,65 @@ _CHECK_TITLES = {
     "evidence_integrity": "证据完整性",
     "cross_surface_consistency": "跨界面版本一致性",
 }
+
+
+def _next_expected_run(last_finished: datetime, source_cfg) -> datetime | None:
+    """计算上次成功运行后下一次预期运行时间,考虑错峰窗口。
+
+    无窗口: last_finished + sync_every
+    有窗口: 找到 >= (last_finished + sync_every) 且落在窗口内的最早时刻
+    无法计算时返回 None
+    """
+    from ..connect.config import parse_window
+    sync_s = source_cfg.sync_every_seconds() if source_cfg else 1800
+    windows = source_cfg.windows if source_cfg else []
+
+    if not windows:
+        return last_finished + timedelta(seconds=sync_s)
+
+    candidate = last_finished + timedelta(seconds=sync_s)
+
+    def _in_window(dt: datetime) -> bool:
+        t = dt.time()
+        for w in windows:
+            start, end = parse_window(w)
+            if start <= end:
+                if start <= t < end:
+                    return True
+            elif t >= start or t < end:
+                return True
+        return False
+
+    # 收集所有窗口边界(当天分钟数),用于快速跳跃
+    boundaries: set[int] = set()
+    for w in windows:
+        start, end = parse_window(w)
+        boundaries.add(start.hour * 60 + start.minute)
+        boundaries.add(end.hour * 60 + end.minute)
+    boundaries = sorted(boundaries)
+
+    # 搜索最多 366 天
+    day = candidate.date()
+    for _ in range(366):
+        day_start = datetime(day.year, day.month, day.day)
+        # 当天:从 candidate 开始,跳到下一个窗口边界
+        check = max(candidate, day_start)
+        end_of_day = day_start + timedelta(days=1)
+        while check < end_of_day:
+            if _in_window(check):
+                return check
+            # 跳到下一个窗口边界(跳过窗口外的空白区间)
+            minute_of_day = check.hour * 60 + check.minute
+            nxt = end_of_day  # 默认跳到下一天
+            for b in boundaries:
+                if b > minute_of_day:
+                    nxt = day_start + timedelta(minutes=b)
+                    break
+            check = nxt
+        day += timedelta(days=1)
+        candidate = datetime(day.year, day.month, day.day)
+
+    return None
 
 
 def _now() -> str:
@@ -144,13 +203,17 @@ def build_validation_report(
         checks.append(_check("readonly_whitelist", "skipped", "未加载对应数据源配置。", blocking=False))
     else:
         readonly = source_cfg.adapter in ("sqlite_readonly", "mssql_readonly")
-        whitelisted = source_cfg.whitelist_from_bindings
-        if readonly and whitelisted:
-            checks.append(_check("readonly_whitelist", "pass", "只读适配器与模板白名单已启用。",
-                                 detail={"adapter": source_cfg.adapter, "whitelist_from_bindings": True}))
+        tables_configured = source_cfg.tables is not None and len(source_cfg.tables) > 0
+        if readonly and tables_configured:
+            checks.append(_check("readonly_whitelist", "pass",
+                                 f"只读适配器与显式表清单已启用({len(source_cfg.tables)} 张表)。",
+                                 detail={"adapter": source_cfg.adapter,
+                                         "table_count": len(source_cfg.tables)}))
         else:
-            checks.append(_check("readonly_whitelist", "fail", "只读适配器或模板白名单未满足。",
-                                 detail={"readonly_adapter": readonly, "whitelist_from_bindings": whitelisted}))
+            checks.append(_check("readonly_whitelist", "fail",
+                                 "只读适配器或显式表清单未满足。",
+                                 detail={"readonly_adapter": readonly,
+                                         "tables_configured": tables_configured}))
 
     # 4. sync / landing facts
     sync = _latest_run(db, source, ("sync", "ingest"))
@@ -171,20 +234,98 @@ def build_validation_report(
     else:
         checks.append(_check("landing_and_push", "fail", "推送模式缺少成功的接收运行。"))
 
-    expected_raw = sorted({
+    # Raw presence: 逐表存在性 + 可验证的新鲜度
+    actual_raw = set(br.raw_tables(db, source))
+
+    binding_tables = {
         table for obj in pack.objects for binding in obj.bindings
         if binding.enabled and binding.source == source for table in binding.tables
-    })
-    actual_raw = set(br.raw_tables(db, source))
-    missing_raw = [table for table in expected_raw if table not in actual_raw]
-    if not expected_raw:
-        checks.append(_check("raw_presence", "skipped", "模板未声明该数据源的 Raw 表。", blocking=False))
-    elif missing_raw:
-        checks.append(_check("raw_presence", "fail", "部分模板白名单 Raw 表缺失。",
-                             detail={"expected_count": len(expected_raw), "missing_count": len(missing_raw)}))
+    } if pack is not None else set()
+
+    missing_from_raw = [t for t in binding_tables if t not in actual_raw]
+
+    if not binding_tables:
+        checks.append(_check("raw_presence", "skipped",
+                             "模板未声明该数据源的 Raw 表。", blocking=False))
+    elif missing_from_raw:
+        checks.append(_check("raw_presence", "fail",
+                             f"平台 binding 依赖 {len(missing_from_raw)} 张表在落地库中缺失 raw 数据: "
+                             + ", ".join(sorted(missing_from_raw)),
+                             detail={"binding_tables": sorted(binding_tables),
+                                     "actual_raw_tables": sorted(actual_raw),
+                                     "missing": sorted(missing_from_raw)}))
     else:
-        checks.append(_check("raw_presence", "pass", "模板白名单 Raw 表均存在。",
-                             detail={"table_count": len(expected_raw)}))
+        # 逐表新鲜度:本地水位状态或明确的 table-complete 事件。
+        # HTTP batch 只表示一批数据落地，绝不能视为整表同步完成。
+        per_table_last: dict[str, datetime] = {}
+        # 本地增量表:水位状态。
+        for r in db.con.execute(
+            "SELECT table_name, last_run_at FROM d2a_sync_state WHERE source = ?",
+            (source,)
+        ).fetchall():
+            if r["last_run_at"]:
+                try:
+                    per_table_last[r["table_name"]] = datetime.fromisoformat(r["last_run_at"])
+                except ValueError:
+                    pass
+        # 本地 full_refresh / HTTP table-complete:表级 run step(确保源隔离)。
+        for r in db.con.execute(
+            "SELECT s.target, MAX(s.finished_at) as last_ok "
+            "FROM d2a_run_step s JOIN d2a_sync_run r ON s.run_id = r.id "
+            "WHERE r.source = ? AND s.kind = 'table' AND s.status = 'ok' AND s.target != '' "
+            "GROUP BY s.target",
+            (source,)
+        ).fetchall():
+            if r["last_ok"]:
+                tbl = r["target"]
+                try:
+                    dt = datetime.fromisoformat(r["last_ok"])
+                    if tbl not in per_table_last or dt > per_table_last[tbl]:
+                        per_table_last[tbl] = dt
+                except ValueError:
+                    pass
+
+        # 逐表判断
+        stale_tables: list[str] = []
+        unverified_tables: list[str] = []
+        sync_every_s = (source_cfg.sync_every_seconds() if source_cfg else 1800)
+        grace_s = max(sync_every_s * 2, 600)
+        now = datetime.now()
+
+        for tbl in sorted(binding_tables):
+            last_dt = per_table_last.get(tbl)
+            if last_dt is None:
+                unverified_tables.append(tbl)
+            else:
+                next_expected = _next_expected_run(last_dt, source_cfg)
+                if next_expected is None:
+                    next_expected = last_dt + timedelta(seconds=sync_every_s)
+                if now > next_expected + timedelta(seconds=grace_s):
+                    stale_tables.append(tbl)
+
+        if unverified_tables or stale_tables:
+            parts: list[str] = []
+            if unverified_tables:
+                parts.append(f"{len(unverified_tables)} 张表缺少同步记录: "
+                             + ", ".join(unverified_tables))
+            if stale_tables:
+                parts.append(f"{len(stale_tables)} 张表同步已过期: "
+                             + ", ".join(stale_tables))
+            checks.append(_check("raw_presence", "warning",
+                                 "；".join(parts),
+                                 blocking=False,
+                                 detail={"unverified": unverified_tables,
+                                         "stale": stale_tables,
+                                         "per_table_last": {
+                                             t: per_table_last[t].isoformat(timespec="seconds")
+                                             for t in per_table_last},
+                                         "windows": source_cfg.windows if source_cfg else [],
+                                         "sync_every": source_cfg.sync_every if source_cfg else "?",
+                                 }))
+        else:
+            checks.append(_check("raw_presence", "pass",
+                                 f"平台 binding 依赖的 {len(binding_tables)} 张表 raw 数据均存在且同步新鲜。",
+                                 detail={"table_count": len(binding_tables)}))
 
     # 7. published snapshot
     if snap is None:
@@ -327,7 +468,11 @@ def build_validation_report(
         checks.append(_check("cross_surface_consistency", "pass", "Console 模板、已发布数据集和对象快照版本一致。",
                              detail={"dataset_version": snap.dataset_version, "template_version": snap.template_version}))
 
-    assert tuple(c["check_id"] for c in checks) == CHECK_ORDER
+    seen_ids = []
+    for c in checks:
+        if c["check_id"] not in seen_ids:
+            seen_ids.append(c["check_id"])
+    assert tuple(seen_ids) == CHECK_ORDER
     overall = _overall(checks)
     finished_at = _now()
     summary = {
