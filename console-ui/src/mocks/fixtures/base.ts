@@ -612,7 +612,6 @@ export const baseFixture: ScenarioFixture = {
   overview: {
     landing: '/data/landing.sqlite',
     readonly: false,
-    actions_sync_reconcile: true,
     sources: [
       {
         source: 'digiwin_e10',

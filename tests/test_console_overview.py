@@ -13,9 +13,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
 from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
+from data2agent.connect.increment import incremental_sync  # noqa: E402
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
+from tests.helpers import whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.console.contracts import OverviewResponse  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
@@ -131,56 +132,21 @@ def test_overview_reads_published_dataset_versions(env):
     assert body.versions.object == published.dataset_version
 
 
-def test_overview_dataset_version_follows_config_source_order(tmp_path):
-    """多源时 Dashboard 版本必须跟 default_source()(=配置顺序首源),不是字典序。"""
-    from data2agent.connect.config import load_config
-
+def test_overview_dataset_version_follows_default_source(tmp_path):
+    """Dashboard 版本从固定 default_source(=digiwin_e10)读取发布数据集。"""
     landing = LandingStore(tmp_path / "landing.sqlite")
-    for version, source, built in (
-        ("ds-a", "a_source", "2026-07-21T12:00:00"),
-        ("ds-z", "z_source", "2026-07-21T11:00:00"),
-    ):
-        _insert_dataset(
-            landing.con,
-            version=version,
-            source=source,
-            status="published",
-            built_at=built,
-            published_at=built,
-            object_manifest=["Customer"],
-        )
-        _insert_published_objects(
-            landing.con, dataset_version=version, objects=["Customer"], built_at=built)
+    _insert_dataset(
+        landing.con, version="ds-main", source="digiwin_e10",
+        status="published", built_at="2026-07-21T12:00:00",
+        published_at="2026-07-21T12:00:00", object_manifest=["Customer"])
+    _insert_published_objects(
+        landing.con, dataset_version="ds-main", objects=["Customer"],
+        built_at="2026-07-21T12:00:00")
     landing.con.commit()
-    cfg_file = tmp_path / "connect.yaml"
-    # 配置顺序 z 在前;字典序会把 a 排前 ——跨源回归点
-    cfg_file.write_text(
-        f"templates: {ROOT / 'templates'}\n"
-        f"landing: {landing.db_path}\n"
-        "sources:\n"
-        "  z_source:\n"
-        "    adapter: sqlite_readonly\n"
-        f"    path: {tmp_path / 'z.sqlite'}\n"
-        "    tables:\n"
-        "      CUSTOMER:\n"
-        "        mode: incremental\n"
-        "        watermark: UPD\n"
-        "  a_source:\n"
-        "    adapter: sqlite_readonly\n"
-        f"    path: {tmp_path / 'a.sqlite'}\n"
-        "    tables:\n"
-        "      CUSTOMER:\n"
-        "        mode: incremental\n"
-        "        watermark: UPD\n",
-        encoding="utf-8",
-    )
-    cfg = load_config(cfg_file)
-    assert list(cfg.sources) == ["z_source", "a_source"]
-    client = TestClient(create_app(cfg.landing, cfg.templates, cfg))
+    client = TestClient(create_app(landing.db_path, str(ROOT / "templates")))
     body = OverviewResponse.model_validate(client.get("/api/overview").json())
-    assert body.versions.dataset == "ds-z"
-    assert body.versions.object == "ds-z"
-    assert body.versions.dataset != "ds-a"
+    assert body.versions.dataset == "ds-main"
+    assert body.versions.object == "ds-main"
 
 
 def test_overview_failed_objects_do_not_count_as_published_layer(env):
@@ -402,39 +368,22 @@ def test_overview_has_no_side_effects(env):
 
 def test_overview_raw_failure_is_null_not_partial(tmp_path):
     """任一源 raw 查询失败 → raw_rows 为 null;部分源的合计不得冒充总数。"""
-    from data2agent.connect.config import load_config
-
     pack = load_pack(ROOT / "templates")
     landing = LandingStore(tmp_path / "landing.sqlite")
-    # source_b:正常 raw 表(有元数据列)
+    # 正常 raw 表
     landing.con.execute(
-        'CREATE TABLE "raw_source_b__T1" '
+        'CREATE TABLE "raw_digiwin_e10__T1" '
         '("K" TEXT PRIMARY KEY, "_d2a_extracted_at" TEXT, "_d2a_deleted_at" TEXT)')
     landing.con.execute(
-        'INSERT INTO "raw_source_b__T1" VALUES (\'k0\', \'2026-07-18T11:30:00\', NULL)')
-    # source_a:坏 raw 表(缺 _d2a_deleted_at 列,查询必炸)
-    landing.con.execute('CREATE TABLE "raw_source_a__BROKEN" ("K" TEXT PRIMARY KEY)')
+        'INSERT INTO "raw_digiwin_e10__T1" VALUES (\'k0\', \'2026-07-18T11:30:00\', NULL)')
+    # 坏 raw 表(缺 _d2a_deleted_at 列,查询必炸)
+    landing.con.execute('CREATE TABLE "raw_digiwin_e10__BROKEN" ("K" TEXT PRIMARY KEY)')
+    # 让 source 在 sync_state 中可见
+    landing.con.execute(
+        "INSERT INTO d2a_sync_state (source, table_name, watermark_col) "
+        "VALUES ('digiwin_e10', 'T1', 'COL')")
     landing.con.commit()
-    cfg_file = tmp_path / "connect.yaml"
-    cfg_file.write_text(
-        f"templates: {ROOT / 'templates'}\n"
-        f"landing: {landing.db_path}\n"
-        "sources:\n"
-        "  source_a:\n"
-        "    adapter: sqlite_readonly\n"
-        f"    path: {tmp_path / 'a.sqlite'}\n"
-        "    tables:\n"
-        "      BROKEN:\n"
-        "        mode: full_refresh\n"
-        "  source_b:\n"
-        "    adapter: sqlite_readonly\n"
-        f"    path: {tmp_path / 'b.sqlite'}\n"
-        "    tables:\n"
-        "      T1:\n"
-        "        mode: full_refresh\n",
-        encoding="utf-8")
-    cfg = load_config(cfg_file)
-    client = TestClient(create_app(cfg.landing, cfg.templates, cfg))
+    client = TestClient(create_app(landing.db_path, str(ROOT / "templates")))
     body = OverviewResponse.model_validate(client.get("/api/overview").json())
-    assert body.summary.raw_rows is None  # 不是 source_b 的 1 行
+    assert body.summary.raw_rows is None  # 不是 1 行
     assert any("查询失败" in a.reason for a in body.alerts)

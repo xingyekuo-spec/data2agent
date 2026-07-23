@@ -12,7 +12,6 @@ from data2agent.admin_common.secrets_file import apply_secrets_to_environ, load_
 from data2agent.admin_common.setup_yaml import (
     build_middle_connect_yaml,
     build_odbc_dsn,
-    load_default_erp_tables,
     write_yaml,
 )
 from data2agent.connect.config import load_config
@@ -31,49 +30,23 @@ def test_secrets_roundtrip(tmp_path, monkeypatch):
 def test_build_middle_yaml_validates(tmp_path):
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
-    # point templates at repo
     root = Path(__file__).resolve().parents[1]
     (tmp_path / "app").mkdir()
-    # symlink or just rely on resolve_templates falling back to repo
     data = build_middle_connect_yaml(home, platform_url="http://10.0.0.1:8850")
-    # force templates to repo for load_config
     data["templates"] = str(root / "templates")
     path = home.connect_yaml
     write_yaml(path, data)
-    # load_config needs mssql dsn_env present as name only — ok
     cfg = load_config(path)
     assert cfg.sources["digiwin_e10"].sink.type == "http"
     assert cfg.sources["digiwin_e10"].sink.url == "http://10.0.0.1:8850"
-    assert cfg.sources["digiwin_e10"].tables["ITEM_WAREHOUSE"].mode == "full_refresh"
+    assert cfg.sources["digiwin_e10"].tables == {}
 
 
-def test_middle_setup_uses_independent_erp_profile(tmp_path):
+def test_new_install_has_empty_tables(tmp_path):
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
-    tables = load_default_erp_tables(home)
-    assert "ITEM_WAREHOUSE" in tables
-    assert tables["ITEM_WAREHOUSE"] == {"mode": "full_refresh"}
-    # Object templates are neither loaded nor used to obtain this table policy.
-    from data2agent.scenarios.e10_dead_stock_schema import VERIFIED_E10_COLUMNS
-
-    assert set(VERIFIED_E10_COLUMNS).issubset(tables)
-    assert len(tables) == len(VERIFIED_E10_COLUMNS) + 6
-    assert all(spec["mode"] == "full_refresh"
-               for name, spec in tables.items() if name in VERIFIED_E10_COLUMNS)
-
-
-def test_middle_setup_prefers_portable_erp_profile(tmp_path):
-    home = HomeLayout(tmp_path)
-    home.ensure_dirs()
-    profile = home.app / "erp-configs" / "digiwin_e10.yaml"
-    profile.parent.mkdir(parents=True)
-    profile.write_text(
-        "tables:\n  FACTORY_STOCK:\n    mode: full_refresh\n",
-        encoding="utf-8",
-    )
-    assert load_default_erp_tables(home) == {
-        "FACTORY_STOCK": {"mode": "full_refresh"},
-    }
+    data = build_middle_connect_yaml(home, platform_url="http://10.0.0.1:8850")
+    assert data["sources"]["digiwin_e10"]["tables"] == {}
 
 
 def test_load_home_secrets_if_present(tmp_path, monkeypatch):

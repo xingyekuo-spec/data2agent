@@ -16,9 +16,10 @@ from data2agent.connect.dataset_publish import (  # noqa: E402
     build_dataset,
     resolve_published_snapshot,
 )
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
+from data2agent.connect.increment import incremental_sync  # noqa: E402
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
+from tests.helpers import whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.console.contracts import (  # noqa: E402
     OverviewResponse,

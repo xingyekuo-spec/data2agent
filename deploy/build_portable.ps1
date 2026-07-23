@@ -9,7 +9,6 @@
       data2agent.exe        # single entry (pass -LauncherExe)
       runtime\              # CPython embeddable + site-packages
       app\templates\
-      app\erp-configs\      # independent ERP table extraction profiles
       config\
       data\logs\
       README.txt
@@ -71,7 +70,6 @@ if (Test-Path $portable) { Remove-Item -Recurse -Force $portable }
 New-Item -ItemType Directory -Force -Path $portable | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'runtime') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'app\templates') | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $portable 'app\erp-configs') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'config') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'data\logs') | Out-Null
 
@@ -113,11 +111,7 @@ if ($LASTEXITCODE -ne 0) { throw 'pip install data2agent failed' }
 Write-Step 'Copy templates -> app/templates'
 Copy-Item -Recurse -Force (Join-Path $root 'templates\*') (Join-Path $portable 'app\templates')
 
-# --- 4a. Independent ERP extraction profiles ------------------------------
-Write-Step 'Copy ERP extraction profiles -> app/erp-configs'
-Copy-Item -Recurse -Force (Join-Path $root 'erp-configs\*') (Join-Path $portable 'app\erp-configs')
-
-# --- 4b. Vue Console dist (platform; required for /) ------------------------
+# --- 4a. Vue Console dist (platform; required for /) ------------------------
 if ($Role -eq 'platform') {
     $vueDist = Join-Path $root 'console-ui\dist'
     $vueIndex = Join-Path $vueDist 'index.html'

@@ -20,8 +20,8 @@ def _default_log_dir(landing: str, config_path: str | None) -> Path:
     if env := os.environ.get("D2A_LOG_DIR"):
         return Path(env)
     if config_path:
-        from ..connect.config import load_config
-        return Path(load_config(config_path).landing).parent / "logs"
+        from ..connect.config import load_platform_config
+        return Path(load_platform_config(config_path).landing).parent / "logs"
     return Path(landing).parent / "logs"
 
 
@@ -67,12 +67,12 @@ def main(argv: list[str] | None = None) -> int:
     config = None
     config_path = args.config
     if config_path:
-        from ..connect.config import load_config
-        config = load_config(config_path)
+        from ..connect.config import load_platform_config
+        config = load_platform_config(config_path)
     elif home is not None and home.platform_yaml.is_file():
-        from ..connect.config import load_config
+        from ..connect.config import load_platform_config
         config_path = str(home.platform_yaml)
-        config = load_config(config_path)
+        config = load_platform_config(config_path)
 
     landing = args.landing
     if landing is None and config is not None:

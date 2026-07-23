@@ -14,8 +14,6 @@ from datetime import datetime, timedelta
 from typing import Callable, Optional
 import json
 
-from ..mapping import parse_field_expr
-from ..metamodel.schema import TemplatePack
 from .adapters.base import SourceAdapter
 from .landing import LandingStore
 from .sink import LocalSink, Sink
@@ -25,23 +23,6 @@ DEFAULT_LOOKBACK_DAYS = 3
 
 _WM_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S",
                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d")
-
-
-def watermarks_from_pack(pack: TemplatePack, source: str) -> dict[str, str]:
-    """binding.watermark(表.字段)→ {表: 水位列}。同表冲突声明视为契约错误。"""
-    out: dict[str, str] = {}
-    for o in pack.objects:
-        for b in o.bindings:
-            if b.source != source or not b.watermark or not b.enabled:
-                continue
-            if b.materializer:
-                continue
-            expr = parse_field_expr(b.watermark)
-            if expr.table in out and out[expr.table] != expr.column:
-                raise ValueError(
-                    f"表 {expr.table} 的水位列声明冲突:{out[expr.table]} vs {expr.column}")
-            out[expr.table] = expr.column
-    return out
 
 
 def subtract_lookback(high_water: str, days: float) -> str:

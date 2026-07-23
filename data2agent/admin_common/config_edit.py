@@ -18,7 +18,6 @@ MIDDLE_EDITABLE = {
     "sources.*.rate.rows_per_second",
     "sources.*.lookback",
     "sources.*.sync_every",
-    "sources.*.tables",
     "sources.*.sink.url",
 }
 
@@ -81,20 +80,6 @@ def merge_whitelist_and_save(
     shutil.copy2(path, backup_path)
 
     merged = copy.deepcopy(data)
-
-    # Atomic subtree: sources.<source>.tables is replaced as a whole
-    sources_patch = patch.get("sources", {})
-    if sources_patch:
-        for src_name, src_patch in list(sources_patch.items()):
-            if isinstance(src_patch, dict) and "tables" in src_patch:
-                merged.setdefault("sources", {}).setdefault(src_name, {})
-                merged["sources"][src_name]["tables"] = copy.deepcopy(src_patch["tables"])
-                # Remove tables from patch copy so generic merge doesn't re-apply it
-                src_patch = {k: v for k, v in src_patch.items() if k != "tables"}
-                if src_patch:
-                    patch["sources"][src_name] = src_patch
-                else:
-                    del patch["sources"][src_name]
 
     for dotted, value in _flatten(patch):
         if _is_editable(dotted, editable):

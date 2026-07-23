@@ -18,9 +18,10 @@ from data2agent.admin_common.home_layout import HomeLayout  # noqa: E402
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
 from data2agent.connect.config import load_config  # noqa: E402
 from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
+from data2agent.connect.increment import incremental_sync  # noqa: E402
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
+from tests.helpers import whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.console.contracts import (  # noqa: E402
     ActionExecutionResult,
@@ -57,8 +58,6 @@ REQUIRED_API_ROUTES = {
     ("GET", "/api/logs"),
     ("GET", "/api/debug/raw-table"),
     ("POST", "/api/debug/mcp-call"),
-    ("POST", "/api/actions/sync"),
-    ("POST", "/api/actions/reconcile"),
     ("POST", "/api/actions/apply"),
     ("POST", "/api/actions/retry"),
     ("GET", "/api/datasets"),
@@ -82,8 +81,6 @@ NAMED_SUCCESS_SCHEMAS = {
     ("get", "/api/logs"): "LogsResponse",
     ("get", "/api/debug/raw-table"): "RawTablePageResponse",
     ("post", "/api/debug/mcp-call"): "McpToolResult",
-    ("post", "/api/actions/sync"): "ActionExecutionResult",
-    ("post", "/api/actions/reconcile"): "ActionExecutionResult",
     ("post", "/api/actions/apply"): "ApplyActionResult",
     ("post", "/api/actions/retry"): "RetryActionResult",
     # 普通 anyOf(无 discriminator):保证 TS 生成 ok 的 boolean 字面量,可收窄
@@ -187,7 +184,7 @@ def test_required_api_routes_present(tmp_path):
                 found.add((method.upper(), path))
     missing = REQUIRED_API_ROUTES - found
     assert not missing, f"missing API routes: {sorted(missing)}"
-    assert len(REQUIRED_API_ROUTES) == 23
+    assert len(REQUIRED_API_ROUTES) == 21
 
 
 def test_success_responses_use_named_schemas(tmp_path):
@@ -401,25 +398,6 @@ def test_setup_response_union_narrowable(tmp_path):
             f"{name}.ok must be required for TS discriminant narrowing"
         )
         assert "default" not in schemas[name]["properties"]["ok"]
-
-
-def test_action_executed_false_is_success_body(env, tmp_path):
-    from datetime import datetime, timedelta
-
-    landing, cfg_file = env
-    t2 = datetime.now() + timedelta(hours=2)
-    t3 = datetime.now() + timedelta(hours=3)
-    closed = tmp_path / "closed.yaml"
-    closed.write_text(
-        cfg_file.read_text(encoding="utf-8")
-        + f'    windows: ["{t2:%H:%M}-{t3:%H:%M}"]\n',
-        encoding="utf-8")
-    client = TestClient(create_app("ignored", "ignored", load_config(closed)))
-    r = client.post("/api/actions/sync", json={"source": SOURCE})
-    assert r.status_code == 200
-    body = ActionExecutionResult.model_validate(r.json())
-    assert body.executed is False
-    assert "窗口" in body.note
 
 
 def test_apply_response_model(env):

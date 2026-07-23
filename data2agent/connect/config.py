@@ -112,13 +112,6 @@ class SourceConfig(BaseModel):
 
     @field_validator("tables")
     @classmethod
-    def tables_non_empty(cls, v):
-        if v is not None and len(v) == 0:
-            raise ValueError("tables 不能为空;如需停用数据源请删除整个 source 节点")
-        return v
-
-    @field_validator("tables")
-    @classmethod
     def tables_valid_identifiers(cls, v):
         if v is None:
             return v
@@ -166,13 +159,6 @@ class ConnectConfig(BaseModel):
 def load_config(path: str | Path) -> ConnectConfig:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
 
-    for name, sdata in (data.get("sources") or {}).items():
-        if "whitelist_from_bindings" in sdata or "extra_whitelist" in sdata:
-            raise ValueError(
-                f"源 {name}: 检测到已废弃的 whitelist_from_bindings / extra_whitelist 字段。"
-                f"请运行 'python -m data2agent.connect migrate-config --config {path}' 迁移配置。"
-            )
-
     cfg = ConnectConfig(**data)
     for name, s in cfg.sources.items():
         if s.adapter == "mssql_readonly" and not s.dsn_env:
@@ -180,10 +166,7 @@ def load_config(path: str | Path) -> ConnectConfig:
         if s.adapter == "sqlite_readonly" and not (s.path or s.dsn_env):
             raise ValueError(f"源 {name}: sqlite_readonly 须配 path 或 dsn_env")
         if s.tables is None:
-            raise ValueError(
-                f"源 {name}: 缺少 tables 配置。"
-                f"请运行 'python -m data2agent.connect migrate-config --config {path}' 迁移配置。"
-            )
+            raise ValueError(f"源 {name}: 缺少 tables 配置。")
         if s.sink.type == "http" and not s.sink.url:
             raise ValueError(f"源 {name}: sink.type=http 必须配 sink.url(平台接收端点)")
         if s.sink.type == "http" and s.reconcile_at is not None:
@@ -192,3 +175,19 @@ def load_config(path: str | Path) -> ConnectConfig:
                 "跨机对账(E6b)尚未实现,中间机的 landing 只有水位、无 raw,"
                 "本地对账会误判整库不一致。请移除 reconcile_at;对账待 E6b 落地后由中间驱动。")
     return cfg
+
+
+class PlatformConfig(BaseModel):
+    """平台配置模型:只包含平台职责字段,不含 ERP 连接或抽取计划。"""
+
+    model_config = {"extra": "forbid"}
+    templates: str = "templates"
+    landing: str = "landing/factory.sqlite"
+
+
+def load_platform_config(path: str | Path) -> PlatformConfig:
+    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    # Reject sources block — platform must not carry ERP config
+    if "sources" in data:
+        raise ValueError("平台配置不得包含 sources 字段;抽取计划仅属于中间机 connect.yaml")
+    return PlatformConfig(**data)

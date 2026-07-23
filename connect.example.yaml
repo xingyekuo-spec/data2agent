@@ -10,7 +10,7 @@ sources:
     # dsn_env: D2A_E10_DSN
 
     # 抽取表与同步策略(独立于模板维护,只修改这里即可控制ERP抽取范围)。
-    # 便携包首次配置使用 app/erp-configs/digiwin_e10.yaml 生成同一完整清单。
+    # 首次安装时此处为空映射,通过中间机管理页面连接后扫描并选择。
     tables:
       CUSTOMER:
         mode: incremental

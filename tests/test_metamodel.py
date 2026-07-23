@@ -56,8 +56,8 @@ def test_binding_status_disabled_accepted():
 
 def test_disabled_binding_excluded_from_extraction():
     """禁用 binding 不进白名单、不推导水位;共享表若另有启用 binding 仍保留。"""
-    from data2agent.connect.increment import watermarks_from_pack
-    from data2agent.connect.sync import whitelist_from_pack
+    from tests.helpers import watermarks_from_pack
+    from tests.helpers import whitelist_from_pack
     from data2agent.metamodel.schema import TemplatePack
 
     quotation = ObjectTemplate(

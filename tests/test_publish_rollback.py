@@ -14,9 +14,10 @@ from data2agent.connect.dataset_publish import (
     resolve_published_snapshot,
     rollback_dataset,
 )
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.increment import incremental_sync
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore
-from data2agent.connect.sync import whitelist_from_pack
+from tests.helpers import whitelist_from_pack
 from data2agent.metamodel.dataset_publish_contract import make_build_table
 from data2agent.metamodel.loader import load_pack
 from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord

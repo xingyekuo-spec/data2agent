@@ -7,7 +7,6 @@ export const emptyInstallFixture = {
   overview: {
     landing: '',
     readonly: true,
-    actions_sync_reconcile: false,
     sources: [],
     objects: [],
     needs_setup: true,

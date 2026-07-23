@@ -12,9 +12,10 @@ from data2agent.connect.config import (
     load_config,
     parse_duration_seconds,
 )
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.increment import incremental_sync
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore
-from data2agent.connect.sync import whitelist_from_pack
+from tests.helpers import whitelist_from_pack
 from data2agent.metamodel.loader import load_pack
 from data2agent.showroom.seed import build, write_db
 

@@ -14,10 +14,11 @@ from starlette.requests import ClientDisconnect
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.dataset_publish import build_dataset
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.increment import incremental_sync
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore
 from data2agent.connect.mapping_preview import MASKED, PreviewError
-from data2agent.connect.sync import whitelist_from_pack
+from tests.helpers import whitelist_from_pack
 from data2agent.console.app import create_app
 from data2agent.console.contracts import MappingPreviewError, MappingPreviewResponse
 from data2agent.metamodel.loader import load_pack

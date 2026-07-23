@@ -100,17 +100,7 @@ HTTP 推送模式下:
 - 每张表的全部数据批次确认后，中间机会额外发送表完成事件；即使本轮为零行也会创建空 Raw 表并记录完成时间。平台 Validation 以该事件判断表级新鲜度，单个数据批次不代表整表完成;
 - 中间机不需要 `templates` 目录(模板在平台侧维护),但 `templates` 字段在 `connect.yaml` 顶层仍建议填写以支持本地 `validate` 命令。
 
-## 6. 配置迁移
-
-如果从旧版 `whitelist_from_bindings` / `extra_whitelist` 配置迁移:
-
-```bash
-python -m data2agent.connect migrate-config --config connect.yaml
-```
-
-该命令读取旧字段,结合模板 binding 推断表清单,生成新的 `tables` 段落并移除旧字段。
-
-## 7. 常见问题
+## 6. 常见问题
 
 **Q: 新增抽取表后是否需要重启?**
 需要。当前版本 `serve` 不会自动感知 `connect.yaml` 变更，需重启服务才能加载新配置。手动模式直接运行 `sync` 即可。

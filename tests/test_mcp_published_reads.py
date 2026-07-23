@@ -11,9 +11,10 @@ import pytest
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.dataset_publish import build_dataset, resolve_published_snapshot
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.increment import incremental_sync
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore
-from data2agent.connect.sync import whitelist_from_pack
+from tests.helpers import whitelist_from_pack
 from data2agent.mcp_server.core import MASK, QueryService
 from data2agent.mcp_server.evidence import EvidenceContext
 from data2agent.mcp_server.metrics_impl import registry
