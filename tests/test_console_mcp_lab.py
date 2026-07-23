@@ -16,9 +16,10 @@ from pydantic import ValidationError
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.config import load_config
 from data2agent.connect.dataset_publish import build_dataset
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.increment import incremental_sync
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore
-from data2agent.connect.sync import whitelist_from_pack
+from tests.helpers import whitelist_from_pack
 from data2agent.console.app import create_app
 from data2agent.console.contracts import (
     McpCallBody,

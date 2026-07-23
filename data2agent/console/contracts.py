@@ -331,7 +331,6 @@ class OverviewObject(BaseModel):
 class OverviewResponse(BaseModel):
     landing: str
     readonly: bool
-    actions_sync_reconcile: bool
     sources: list[OverviewSource]
     objects: list[OverviewObject]
     needs_setup: bool = False

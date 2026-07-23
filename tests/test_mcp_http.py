@@ -68,10 +68,10 @@ def test_audit_sink_records_tool_calls(tmp_path):
 
     from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
     from data2agent.connect.dataset_publish import build_dataset
-    from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+    from data2agent.connect.increment import incremental_sync
     from data2agent.connect.landing import LandingStore
-    from data2agent.connect.sync import whitelist_from_pack
     from data2agent.mcp_server.core import QueryService
+    from tests.helpers import watermarks_from_pack, whitelist_from_pack
     from data2agent.metamodel.loader import load_pack
     from data2agent.showroom.seed import build, write_db
 

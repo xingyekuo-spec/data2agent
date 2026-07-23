@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from ..connect.config import ConnectConfig, parse_duration_seconds
+from ..connect.config import PlatformConfig, parse_duration_seconds
 from ..connect.dataset_publish import (
     PublishedSnapshotError,
     published_read_tx,
@@ -376,7 +376,7 @@ def _node(node: str, status: str, reason: str = "", **kw: Any) -> dict[str, Any]
 def compute_nodes(
     db: LandingStore,
     pack: TemplatePack,
-    cfg: ConnectConfig | None,
+    cfg: PlatformConfig | None,
     source: str,
     *,
     probes: dict[str, Probe] | None = None,
@@ -390,9 +390,8 @@ def compute_nodes(
     """
     now = now or now_aware()
     probes = probes or {}
-    scfg = cfg.sources.get(source) if cfg else None
-    threshold = freshness_threshold(scfg.sync_every if scfg else None)
-    is_http_sink = bool(scfg and scfg.sink.type == "http")
+    threshold = freshness_threshold("30m")
+    is_http_sink = True  # 平台始终接收 HTTP 推送，不再读取中间机配置
 
     nodes: list[dict[str, Any]] = []
 
@@ -668,7 +667,7 @@ def compute_nodes(
     return nodes
 
 
-def build_pipeline(db: LandingStore, pack: TemplatePack, cfg: ConnectConfig | None,
+def build_pipeline(db: LandingStore, pack: TemplatePack, cfg: PlatformConfig | None,
                    source: str, *, probes: dict[str, Probe] | None = None,
                    now: datetime | None = None,
                    component_version: str | None = None) -> dict[str, Any]:

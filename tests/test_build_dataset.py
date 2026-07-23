@@ -9,9 +9,10 @@ import pytest
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.dataset_publish import build_dataset
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.increment import incremental_sync
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore, raw_table_name
-from data2agent.connect.sync import whitelist_from_pack
+from tests.helpers import whitelist_from_pack
 from data2agent.metamodel.dataset_publish_contract import (
     evaluate_publish,
     is_dataset_ready,

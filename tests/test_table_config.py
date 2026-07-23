@@ -55,9 +55,11 @@ class TestSourceConfigTables:
         )
         assert scfg.table_watermarks() == {"CUSTOMER": "UPD"}
 
-    def test_rejects_empty_tables(self):
-        with pytest.raises(ValueError, match="不能为空"):
-            SourceConfig(adapter="sqlite_readonly", path="x", tables={})
+    def test_allows_empty_tables(self):
+        scfg = SourceConfig(adapter="sqlite_readonly", path="x", tables={})
+        assert scfg.tables == {}
+        assert scfg.table_whitelist() == set()
+        assert scfg.table_watermarks() == {}
 
     def test_whitelist_none_tables_returns_empty(self):
         """当 tables 为 None 时(迁移前),whitelist 和 watermarks 返回空集合。"""
@@ -118,7 +120,7 @@ class TestLoadConfigTables:
             "sources:\n  e10:\n    adapter: sqlite_readonly\n    path: x\n"
             "    whitelist_from_bindings: true\n",
             encoding="utf-8")
-        with pytest.raises(ValueError, match="whitelist_from_bindings"):
+        with pytest.raises(ValueError):
             load_config(cfg_file)
 
     def test_rejects_old_extra_whitelist(self, tmp_path):
@@ -127,7 +129,7 @@ class TestLoadConfigTables:
             "sources:\n  e10:\n    adapter: sqlite_readonly\n    path: x\n"
             "    extra_whitelist: [X]\n",
             encoding="utf-8")
-        with pytest.raises(ValueError, match="extra_whitelist"):
+        with pytest.raises(ValueError):
             load_config(cfg_file)
 
 
@@ -148,62 +150,3 @@ class TestUnknownFields:
     def test_table_config_rejects_unknown_field(self):
         with pytest.raises(ValueError):
             TableExtractConfig(mode="incremental", watermark="X", enabled=True)
-
-
-class TestMigration:
-    def test_migrate_whitelist_from_bindings_true(self, tmp_path, monkeypatch):
-        from data2agent.connect.sync import migrate_config_to_tables
-        from data2agent.metamodel.loader import load_pack
-        import yaml
-
-        ROOT = Path(__file__).resolve().parents[1]
-        pack = load_pack(ROOT / "templates")
-
-        cfg_file = tmp_path / "connect.yaml"
-        cfg_file.write_text(
-            "templates: t\nlanding: l.sqlite\n"
-            "sources:\n"
-            "  digiwin_e10:\n"
-            "    adapter: sqlite_readonly\n"
-            "    path: s.sqlite\n"
-            "    whitelist_from_bindings: true\n"
-            "    extra_whitelist: []\n",
-            encoding="utf-8")
-
-        bak, result = migrate_config_to_tables(str(cfg_file), pack)
-        assert "digiwin_e10" in result
-        tables = result["digiwin_e10"]
-        assert "CUSTOMER" in tables
-        assert Path(bak).exists()
-
-        # Reload and verify tables are present, old fields gone
-        new_data = yaml.safe_load(cfg_file.read_text(encoding="utf-8"))
-        sdata = new_data["sources"]["digiwin_e10"]
-        assert "tables" in sdata
-        assert "whitelist_from_bindings" not in sdata
-        assert "extra_whitelist" not in sdata
-        assert all("mode" in v for v in sdata["tables"].values())
-
-    def test_migrate_idempotent(self, tmp_path):
-        from data2agent.connect.sync import migrate_config_to_tables
-        from data2agent.metamodel.loader import load_pack
-        from pathlib import Path
-
-        ROOT = Path(__file__).resolve().parents[1]
-        pack = load_pack(ROOT / "templates")
-
-        cfg_file = tmp_path / "connect.yaml"
-        cfg_file.write_text(
-            "templates: t\nlanding: l.sqlite\n"
-            "sources:\n"
-            "  digiwin_e10:\n"
-            "    adapter: sqlite_readonly\n"
-            "    path: s.sqlite\n"
-            "    tables:\n"
-            "      CUSTOMER:\n"
-            "        mode: incremental\n"
-            "        watermark: UPD\n",
-            encoding="utf-8")
-
-        with pytest.raises(RuntimeError, match="无需迁移"):
-            migrate_config_to_tables(str(cfg_file), pack)

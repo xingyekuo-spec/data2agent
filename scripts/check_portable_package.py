@@ -59,9 +59,6 @@ def main() -> int:
 
     portable = args.portable.resolve()
     _check_templates(portable, args.expected_templates.resolve())
-    profile = portable / "app" / "erp-configs" / "digiwin_e10.yaml"
-    if not profile.is_file() or "ITEM_WAREHOUSE:" not in profile.read_text(encoding="utf-8"):
-        _fail("independent E10 ERP profile missing or incomplete")
     build_info = portable / "BUILD-INFO.json"
     if not build_info.is_file() or '"release_version"' not in build_info.read_text(encoding="utf-8"):
         _fail("portable build label missing")

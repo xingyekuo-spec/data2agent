@@ -9,10 +9,11 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
+from data2agent.connect.increment import incremental_sync  # noqa: E402
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore  # noqa: E402
 from data2agent.connect.mapping_apply import apply_objects  # noqa: E402
-from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
+from tests.helpers import whitelist_from_pack  # noqa: E402
 from data2agent.middle_admin.app import create_app  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
 from data2agent.showroom.seed import build, write_db  # noqa: E402

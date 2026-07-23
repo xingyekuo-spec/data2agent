@@ -173,24 +173,6 @@
         "title": "ActionBody",
         "type": "object"
       },
-      "ActionExecutionResult": {
-        "properties": {
-          "executed": {
-            "title": "Executed",
-            "type": "boolean"
-          },
-          "note": {
-            "default": "",
-            "title": "Note",
-            "type": "string"
-          }
-        },
-        "required": [
-          "executed"
-        ],
-        "title": "ActionExecutionResult",
-        "type": "object"
-      },
       "ApplyActionBody": {
         "description": "apply 专用请求体；publish 不得进入 sync/reconcile/retry 共用的 ActionBody。",
         "properties": {
@@ -3213,10 +3195,6 @@
       },
       "OverviewResponse": {
         "properties": {
-          "actions_sync_reconcile": {
-            "title": "Actions Sync Reconcile",
-            "type": "boolean"
-          },
           "alerts": {
             "items": {
               "$ref": "#/components/schemas/OverviewAlert"
@@ -3307,7 +3285,6 @@
         "required": [
           "landing",
           "readonly",
-          "actions_sync_reconcile",
           "sources",
           "objects",
           "generated_at",
@@ -6748,80 +6725,6 @@
         "summary": "Action Apply"
       }
     },
-    "/api/actions/reconcile": {
-      "post": {
-        "operationId": "action_reconcile_api_actions_reconcile_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ActionBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ActionExecutionResult"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "缺少或无效的 Bearer Token"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "冲突/未配置/只读/熔断"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          },
-          {}
-        ],
-        "summary": "Action Reconcile"
-      }
-    },
     "/api/actions/retry": {
       "post": {
         "operationId": "action_retry_api_actions_retry_post",
@@ -6904,80 +6807,6 @@
           {}
         ],
         "summary": "Action Retry"
-      }
-    },
-    "/api/actions/sync": {
-      "post": {
-        "operationId": "action_sync_api_actions_sync_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ActionBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ActionExecutionResult"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "缺少或无效的 Bearer Token"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "Not Found"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "冲突/未配置/只读/熔断"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          },
-          {}
-        ],
-        "summary": "Action Sync"
       }
     },
     "/api/audit": {

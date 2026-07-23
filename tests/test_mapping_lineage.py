@@ -20,10 +20,11 @@ from data2agent.connect.field_lineage import (
     canonical_object_key_json,
     object_key_token,
 )
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.increment import incremental_sync
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore, raw_table_name
 from data2agent.connect.mapping_apply import apply_object, apply_objects
-from data2agent.connect.sync import whitelist_from_pack
+from tests.helpers import whitelist_from_pack
 from data2agent.metamodel.loader import load_pack
 from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 from data2agent.showroom.seed import build, write_db

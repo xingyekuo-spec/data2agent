@@ -20,10 +20,9 @@ from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
 from data2agent.connect.field_lineage import object_key_token  # noqa: E402
 from data2agent.connect.increment import (  # noqa: E402
     incremental_sync,
-    watermarks_from_pack,
 )
 from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
+from tests.helpers import watermarks_from_pack, whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
 from data2agent.showroom.seed import build, write_db  # noqa: E402

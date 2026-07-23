@@ -130,18 +130,6 @@ describe('mock handlers', () => {
     }
   })
 
-  it('未匹配请求直接报错,不静默穿透', async () => {
-    // /api/actions/sync 未在 Mock 中声明:strictUnhandledRequest 抛错,
-    // 客户端必须收到失败(绝不能变成成功或空数据)
-    const result = await call(
-      client.POST('/api/actions/sync', { body: { source: 'digiwin_e10', object: null, deep: false } }),
-    )
-    expect(result.ok).toBe(false)
-    if (!result.ok) {
-      expect(result.error.kind === 'http' || result.error.kind === 'network').toBe(true)
-    }
-  })
-
   it('/api/* 未匹配即抛错;Vite 模块等非 API 请求放行不抛错', () => {
     expect(() =>
       strictUnhandledRequest(new Request('http://localhost:5174/api/not-declared')),

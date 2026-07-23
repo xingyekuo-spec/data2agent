@@ -10,14 +10,27 @@ vi.mock('@/api/services', () => ({
   postMcpCall: vi.fn(),
 }))
 
-import { getOverview, postApply, postMcpCall } from '@/api/services'
+import {
+  getOverview,
+  postApply,
+  postMcpCall,
+  type McpLabApiError,
+  type McpToolResult,
+} from '@/api/services'
 import { useDeadStockValidationStore } from '@/stores/deadStockValidation'
+import type { components, JsonValueOutput } from '@/types/api'
+
+type OverviewResponse = components['schemas']['OverviewResponse']
+type ApplyActionResult = components['schemas']['ApplyActionResult']
 
 function ok<T>(data: T) {
   return { ok: true as const, data, response: new Response() }
 }
 
-function mcpResult(target: string, rows: Record<string, unknown>[]) {
+function mcpResult(
+  target: string,
+  rows: Record<string, JsonValueOutput>[],
+): McpToolResult {
   return {
     object: target,
     rows,
@@ -37,35 +50,65 @@ describe('DeadStockValidationView', () => {
     vi.mocked(getOverview).mockReset()
     vi.mocked(postApply).mockReset()
     vi.mocked(postMcpCall).mockReset()
-    vi.mocked(getOverview).mockResolvedValue(ok({
+    const overview: OverviewResponse = {
       versions: { app: 'dev', template: '0.5.0', dataset: 'ds-v1', object: 'ds-v1' },
       summary: {
         materialized_objects: 15,
         template_objects: 15,
         data_updated_at: '2026-07-23T10:00:00+08:00',
+        last_run_at: '2026-07-23T10:00:00+08:00',
+        object_rows: 9,
+        quarantine_pending: 0,
+        raw_rows: 9,
       },
       objects: [
-        { object: 'DeadStockItem', rows: 2, status: 'published', mapped_at: '2026-07-23T10:00:00+08:00' },
-        { object: 'DeadStockAttribution', rows: 6, status: 'published', mapped_at: '2026-07-23T10:00:00+08:00' },
-        { object: 'MaterialSubstituteCandidate', rows: 1, status: 'published', mapped_at: '2026-07-23T10:00:00+08:00' },
+        {
+          object: 'DeadStockItem',
+          display_name: '呆滞库存',
+          rows: 2,
+          quarantined: 0,
+          mapped_at: '2026-07-23T10:00:00+08:00',
+        },
+        {
+          object: 'DeadStockAttribution',
+          display_name: '呆滞归因',
+          rows: 6,
+          quarantined: 0,
+          mapped_at: '2026-07-23T10:00:00+08:00',
+        },
+        {
+          object: 'MaterialSubstituteCandidate',
+          display_name: '替代料候选',
+          rows: 1,
+          quarantined: 0,
+          mapped_at: '2026-07-23T10:00:00+08:00',
+        },
       ],
       sources: [],
       alerts: [],
       recent_runs: [],
       sync_trend: [],
       needs_setup: false,
-    } as any) as any)
-    vi.mocked(postApply).mockResolvedValue(ok({
-      source: 'digiwin_e10',
+      binding_summary: { verified: 15, draft: 0, disabled: 0 },
+      count_notes: [],
+      generated_at: '2026-07-23T10:00:00+08:00',
+      landing: 'landing/factory.sqlite',
+      readonly: false,
+    }
+    vi.mocked(getOverview).mockResolvedValue(ok(overview))
+
+    const applyResult: ApplyActionResult = {
+      executed: true,
+      aborted: [],
       dataset_version: 'ds-v2',
       published: true,
-      status: 'published',
       results: [],
-    } as any) as any)
+    }
+    vi.mocked(postApply).mockResolvedValue(ok(applyResult))
     vi.mocked(postMcpCall).mockImplementation(async (tool, params) => {
       if (tool === 'query_metrics') {
         const metric = String(params.metric ?? '')
-        return ok({
+        return ok<McpToolResult>({
           metric,
           rows: metric === 'substitute_consumable_quantity'
             ? [{ group: 'P01', value: 200 }]
@@ -77,7 +120,7 @@ describe('DeadStockValidationView', () => {
             result_digest: 'sha256:' + 'cd'.repeat(32),
             warnings: ['draft'],
           },
-        } as any) as any
+        })
       }
       const object = String(params.object ?? '')
       if (object === 'DeadStockItem') {
@@ -88,14 +131,14 @@ describe('DeadStockValidationView', () => {
           inventory_qty: 300,
           dead_stock_amount: 1200,
           dead_stock_days: 420,
-        }]) as any) as any
+        }]))
       }
       if (object === 'MaterialSubstituteCandidate') {
         return ok(mcpResult(object, [{
           item_code: 'RM-0005',
           candidate_parent_item_code: 'FR-0001',
           potential_consume_qty: 200,
-        }]) as any) as any
+        }]))
       }
       if (object === 'DeadStockAttribution') {
         return ok(mcpResult(object, [{
@@ -103,9 +146,9 @@ describe('DeadStockValidationView', () => {
           root_cause: 'R4',
           confidence_level: 'LOW',
           evidence_object: 'SpecialConditionEvidence',
-        }]) as any) as any
+        }]))
       }
-      return ok(mcpResult(object, []) as any) as any
+      return ok(mcpResult(object, []))
     })
   })
 
@@ -151,16 +194,17 @@ describe('DeadStockValidationView', () => {
   })
 
   it('shows a publish entry point when no published dataset exists', async () => {
+    const notPublishedError: McpLabApiError = {
+      kind: 'http',
+      status: 409,
+      message: '当前来源没有可用的已发布数据集',
+      retriable: false,
+      reason_code: 'not_published',
+    }
     vi.mocked(postMcpCall).mockResolvedValue({
       ok: false,
-      error: {
-        kind: 'http',
-        status: 409,
-        message: '当前来源没有可用的已发布数据集',
-        retriable: false,
-        reason_code: 'not_published',
-      },
-    } as any)
+      error: notPublishedError,
+    })
     const pinia = createPinia()
     setActivePinia(pinia)
     const wrapper = mount(DeadStockValidationView, {

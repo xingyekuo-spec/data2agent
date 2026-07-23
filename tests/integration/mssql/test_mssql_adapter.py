@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.increment import incremental_sync
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore, raw_table_name
-from data2agent.connect.sync import whitelist_from_pack
+from tests.helpers import whitelist_from_pack
 from data2agent.metamodel.loader import load_pack
 
 DSN = os.environ.get("D2A_IT_MSSQL_DSN")

@@ -12,7 +12,7 @@
  *   node scripts/e2e-acceptance.mjs            # Mock + Real
  *   node scripts/e2e-acceptance.mjs --mock     # 仅 Mock
  *   node scripts/e2e-acceptance.mjs --real     # 仅 Real
- * 环境:D2A_PYTHON 指定后端解释器(默认 ../.venv/bin/python);
+ * 环境:D2A_PYTHON 指定后端解释器(默认 python3);
  *       PLAYWRIGHT_BROWSERS_PATH 可指向已有浏览器缓存(CI 先 npx playwright install)。
  */
 import { spawn, spawnSync } from 'node:child_process'
@@ -22,7 +22,7 @@ import { join, resolve } from 'node:path'
 import { chromium } from 'playwright'
 
 const ROOT = resolve('..')
-const PYTHON = process.env.D2A_PYTHON ?? join(ROOT, '.venv/bin/python')
+const PYTHON = process.env.D2A_PYTHON ?? 'python3'
 const ONLY = process.argv[2]
 const SOURCE = 'digiwin_e10'
 
@@ -280,11 +280,16 @@ async function runMock(browser) {
       'M6:MCP Lab 不再是占位页')
     expect((await page.textContent('[data-testid="mcp-scope-banner"]')).includes('标签页 session'),
       'M5:标签页 evidence session 边界提示可见')
+    await page.locator('[data-testid="open-interface-query_objects"]').click()
+    await page.locator('[data-testid="object-interface-panel"]').waitFor({ state: 'visible' })
     await page.locator('[data-testid="object-run"]').click()
     await page.waitForTimeout(500)
     expect((await page.locator('[data-testid="object-result"]').count()) === 1, 'M6:Mock 对象查询有结果')
     expect((await page.textContent('[data-testid="object-dataset-version"]')).includes('ds-20260718-091100-a1b2'),
       'M2:MCP Lab 展示查询 dataset_version')
+    await page.locator('[data-testid="back-to-interface-list"]').click()
+    await page.locator('[data-testid="open-interface-propose_action"]').click()
+    await page.locator('[data-testid="proposal-interface-panel"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="no-execute-hint"]')).includes('不提供执行建议'),
       'M6:明确无执行建议/写回')
     await page.close()
@@ -298,12 +303,41 @@ async function runReal(browser) {
   const tmp = mkdtempSync(join(tmpdir(), 'd2a-e2e-'))
   const src = join(tmp, 'e10.sqlite')
   const landing = join(tmp, 'landing.sqlite')
-  sh(PYTHON, ['-m', 'data2agent.showroom.seed'], { cwd: ROOT })
-  // seed 默认写 showroom/e10.sqlite;复制到临时目录隔离
-  sh('cp', [join(ROOT, 'showroom/e10.sqlite'), src])
-  sh(PYTHON, ['-m', 'data2agent.connect', 'sync', '--sqlite', src, '--landing', landing], { cwd: ROOT })
-  sh(PYTHON, ['-m', 'data2agent.connect', 'apply', '--landing', landing], { cwd: ROOT })
-  sh(PYTHON, ['-m', 'data2agent.connect', 'reconcile', '--sqlite', src, '--landing', landing], { cwd: ROOT })
+  const middleConfig = join(tmp, 'connect.yaml')
+  const platformConfig = join(tmp, 'platform.yaml')
+  sh(PYTHON, ['-m', 'data2agent.showroom.seed', '--db', src], { cwd: ROOT })
+  writeFileSync(
+    middleConfig,
+    `templates: ${join(ROOT, 'templates')}
+landing: ${landing}
+sources:
+  digiwin_e10:
+    adapter: sqlite_readonly
+    path: ${src}
+    tables:
+      CURRENCY: { mode: full_refresh }
+      CUSTOMER: { mode: incremental, watermark: LAST_MODIFIED_DATE }
+      ITEM: { mode: incremental, watermark: LAST_MODIFIED_DATE }
+      ITEM_WAREHOUSE: { mode: full_refresh }
+      QUOTATION: { mode: incremental, watermark: LAST_MODIFIED_DATE }
+      SALES_ORDER: { mode: incremental, watermark: LAST_MODIFIED_DATE }
+      SALES_ORDER_D: { mode: incremental, watermark: LAST_MODIFIED_DATE }
+    windows: []
+    sync_every: 30m
+`,
+  )
+  writeFileSync(
+    platformConfig,
+    `templates: ${join(ROOT, 'templates')}
+landing: ${landing}
+`,
+  )
+  sh(PYTHON, ['-m', 'data2agent.connect', 'sync', '--config', middleConfig], { cwd: ROOT })
+  sh(PYTHON, [
+    '-m', 'data2agent.connect', 'apply',
+    '--source', SOURCE, '--landing', landing, '--templates', join(ROOT, 'templates'),
+  ], { cwd: ROOT })
+  sh(PYTHON, ['-m', 'data2agent.connect', 'reconcile', '--config', middleConfig], { cwd: ROOT })
   postIngestBatch(landing)
   // M4:补一条 legacy 运行(无 run_type / 无 step)
   const legacyInsert = "import sqlite3;c=sqlite3.connect('" + landing + "');"
@@ -311,16 +345,9 @@ async function runReal(browser) {
     + "VALUES ('digiwin_e10','2020-01-01 00:00:00','2020-01-01 00:00:05','ok','老记录')\");"
     + 'c.commit()'
   sh(PYTHON, ['-c', legacyInsert])
-  // 带 sync_every 的配置:无配置时观测层对新鲜度只能判 unknown(诚实口径)
-  const cfgPath = join(tmp, 'connect.yaml')
-  writeFileSync(
-    cfgPath,
-    `templates: ${join(ROOT, 'templates')}\nlanding: ${landing}\nsources:\n  digiwin_e10:\n    adapter: sqlite_readonly\n    path: ${src}\n    sync_every: 30m\n`,
-  )
-
   const consoleProc = startProc(
     PYTHON,
-    ['-m', 'data2agent.console', '--config', cfgPath,
+    ['-m', 'data2agent.console', '--config', platformConfig,
       '--port', String(CONSOLE_PORT), '--token', 'e2e-token'],
     'console',
   )
@@ -328,17 +355,17 @@ async function runReal(browser) {
   try {
     await waitFor(`http://localhost:${REAL_UI_PORT}/`)
     const page = await browser.newPage()
+    await page.addInitScript((token) => {
+      sessionStorage.setItem('d2a_token', token)
+    }, 'e2e-token')
     await page.goto(`http://localhost:${REAL_UI_PORT}/`, { waitUntil: 'networkidle' })
 
     expect((await waitText(page, '[data-testid="env-badge"]')) === 'REAL', '顶栏显示 REAL 标识')
     expect((await page.locator('[data-testid="scenario-switcher"]').count()) === 0, 'REAL 无场景切换面板')
-    // 认证:401 弹窗 → 输入 token → 数据加载
-    await page.locator('input[data-testid="auth-token-input"]').fill('e2e-token')
-    await page.locator('[data-testid="auth-submit"]').click()
     await page.locator('[data-testid="stat-grid"]').waitFor({ state: 'visible' })
-    expect(true, '401 认证后可登录加载')
+    expect(true, '预置当前标签页 Token 后可加载')
     const cards = await page.locator('[data-testid="stat-value"]').allTextContents()
-    expect(cards[1] === '5/5', `真实覆盖率 5/5(实际 ${cards[1]})`)
+    expect(cards[1] === '15/15', `真实覆盖率 15/15(实际 ${cards[1]})`)
 
     await page.locator('.el-menu-item', { hasText: '管道状态' }).click()
     await page.locator('[data-testid="pipeline-flow"]').waitFor({ state: 'visible' })
@@ -346,7 +373,7 @@ async function runReal(browser) {
       page.locator('.flow__node', { hasText: name }).first().getAttribute('data-status')
     expect((await statusOf('erp')) === 'healthy', 'Real:erp healthy')
     expect((await statusOf('extract')) === 'healthy', 'Real:extract healthy')
-    expect((await statusOf('push')) === 'idle', 'Real:push 本地直写 idle')
+    expect((await statusOf('push')) === 'failed', 'Real:push 接收端未启动 failed')
     expect((await statusOf('mapping')) === 'warning', 'Real:mapping warning(全部 draft)')
     expect((await statusOf('mcp')) === 'failed', 'Real:mcp failed(未启动)')
 
@@ -991,13 +1018,17 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
       expect(n > 0, `M6:八页面 ${path} 可见 ${testid}`)
     }
 
-    // Settings 只读辅助页(不计入八主页面)
+    // Settings 平台专用配置页(不计入八主页面):只暴露非敏感平台路径。
     await page.goto(`http://localhost:${REAL_UI_PORT}/settings`, { waitUntil: 'networkidle' })
     await page.waitForTimeout(800)
-    expect((await page.locator('[data-testid="config-view"]').count()) === 1,
-      'M6:Settings 只读配置可见')
-    expect((await page.locator('button:has-text("保存"), button:has-text("Save"), input[type="password"]').count()) === 0,
-      'M6:Settings 无保存/密码写入口')
+    expect((await page.locator('[data-testid="settings-app-version"]').count()) === 1,
+      'M0-P:Settings 显示平台版本')
+    expect((await page.locator('[data-testid="settings-templates"]').count()) === 1
+      && (await page.locator('[data-testid="settings-landing"]').count()) === 1,
+    'M0-P:Settings 只编辑平台路径')
+    expect((await page.locator('input[type="password"]').count()) === 0
+      && !(await page.textContent('body')).includes('sources'),
+    'M0-P:Settings 不暴露 Token 或 ERP sources')
 
     await page.close()
   } finally {

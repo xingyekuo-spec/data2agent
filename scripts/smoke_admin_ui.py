@@ -27,6 +27,32 @@ def _ok(msg: str) -> None:
     print(f"OK  {msg}")
 
 
+# 冒烟测试固定表配置:与 showroom seed 中的表对齐。
+# 抽取范围只来自显式 tables 字段，不从模板 binding 推导。
+_SMOKE_TABLES = """
+    tables:
+      CUSTOMER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      CURRENCY:
+        mode: full_refresh
+      ITEM:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      ITEM_WAREHOUSE:
+        mode: full_refresh
+      QUOTATION:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER_D:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+"""
+
+
 def _prepare(tmp: Path) -> Path:
     from data2agent.connect.landing import LandingStore
     from data2agent.showroom.seed import build, write_db
@@ -38,6 +64,7 @@ def _prepare(tmp: Path) -> Path:
     (tmp / "logs").mkdir()
     (tmp / "logs" / "d2a-connector.log").write_text("INFO smoke line\n", encoding="utf-8")
 
+    tables_block = _SMOKE_TABLES
     cfg = tmp / "connect.yaml"
     cfg.write_text(
         f"templates: {ROOT / 'templates'}\n"
@@ -46,7 +73,7 @@ def _prepare(tmp: Path) -> Path:
         "  digiwin_e10:\n"
         "    adapter: sqlite_readonly\n"
         f"    path: {src}\n"
-        "    whitelist_from_bindings: true\n"
+        f"{tables_block}\n"
         "    windows: []\n"
         "    rate: { batch_size: 5000, rows_per_second: 2000 }\n"
         "    lookback: 3d\n"
@@ -124,18 +151,24 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
 def smoke_console(cfg: Path, log_dir: Path) -> None:
     from fastapi.testclient import TestClient
 
-    from data2agent.connect.config import load_config
+    from data2agent.connect.config import load_config, PlatformConfig
     from data2agent.console.app import create_app
 
     token = "smoke-token"
     loaded = load_config(cfg)
+    platform_cfg = PlatformConfig(templates=loaded.templates, landing=loaded.landing)
+    import yaml as _yaml
+    platform_yaml = cfg.parent / "platform.yaml"
+    platform_yaml.write_text(
+        _yaml.safe_dump({"templates": loaded.templates, "landing": loaded.landing}),
+        encoding="utf-8")
     client = TestClient(
         create_app(
             loaded.landing,
             loaded.templates,
-            loaded,
+            platform_cfg,
             token=token,
-            config_path=cfg,
+            config_path=platform_yaml,
             log_dir=log_dir,
         )
     )

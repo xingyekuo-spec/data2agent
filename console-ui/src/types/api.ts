@@ -44,23 +44,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/actions/reconcile": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Action Reconcile */
-        post: operations["action_reconcile_api_actions_reconcile_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/actions/retry": {
         parameters: {
             query?: never;
@@ -72,23 +55,6 @@ export interface paths {
         put?: never;
         /** Action Retry */
         post: operations["action_retry_api_actions_retry_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/actions/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Action Sync */
-        post: operations["action_sync_api_actions_sync_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -875,16 +841,6 @@ export interface components {
              * @default digiwin_e10
              */
             source: string;
-        };
-        /** ActionExecutionResult */
-        ActionExecutionResult: {
-            /** Executed */
-            executed: boolean;
-            /**
-             * Note
-             * @default
-             */
-            note: string;
         };
         /**
          * ApplyActionBody
@@ -2125,8 +2081,6 @@ export interface components {
         };
         /** OverviewResponse */
         OverviewResponse: {
-            /** Actions Sync Reconcile */
-            actions_sync_reconcile: boolean;
             /** Alerts */
             alerts: components["schemas"]["OverviewAlert"][];
             binding_summary: components["schemas"]["BindingSummary"];
@@ -3488,66 +3442,6 @@ export interface operations {
             };
         };
     };
-    action_reconcile_api_actions_reconcile_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ActionBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ActionExecutionResult"];
-                };
-            };
-            /** @description 缺少或无效的 Bearer Token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpError"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpError"];
-                };
-            };
-            /** @description 冲突/未配置/只读/熔断 */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpError"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     action_retry_api_actions_retry_post: {
         parameters: {
             query?: never;
@@ -3613,66 +3507,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RetryActionError"];
-                };
-            };
-        };
-    };
-    action_sync_api_actions_sync_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ActionBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ActionExecutionResult"];
-                };
-            };
-            /** @description 缺少或无效的 Bearer Token */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpError"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpError"];
-                };
-            };
-            /** @description 冲突/未配置/只读/熔断 */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpError"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -10,10 +10,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.connect.adapters.base import TableInfo  # noqa: E402
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
+from data2agent.connect.increment import incremental_sync  # noqa: E402
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore, raw_table_name  # noqa: E402
 from data2agent.connect.sink import HttpPushSink, LocalSink  # noqa: E402
-from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
+from tests.helpers import whitelist_from_pack  # noqa: E402
 from data2agent.console.validation import build_validation_report  # noqa: E402
 from data2agent.ingest.app import create_app  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402

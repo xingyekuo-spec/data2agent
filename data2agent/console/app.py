@@ -43,7 +43,7 @@ from ..admin_common.home_layout import HomeLayout
 from ..admin_common.logs import tail_lines
 from ..admin_common.secrets_file import apply_secrets_to_environ, save_secrets
 from ..admin_common.setup_yaml import build_platform_yaml, write_yaml
-from ..connect.config import ConnectConfig, load_config
+from ..connect.config import PlatformConfig, load_platform_config
 from ..connect.landing import LandingStore
 from ..connect.dataset_publish import (
     PublishedSnapshotError,
@@ -55,7 +55,6 @@ from ..connect.dataset_publish import (
 )
 from ..connect.mapping_preview import PreviewError, preview_mapping
 from ..connect.field_lineage import LineageKeyError, require_lineage_key_token
-from ..connect.scheduler import run_reconcile_cycle, run_sync_cycle
 from ..mapping import parse_field_expr
 from ..metamodel.dataset_publish_contract import validate_build_table
 from ..metamodel.loader import load_pack
@@ -463,30 +462,17 @@ def _probe_apply(log_dir: Path | None) -> tuple[bool, str]:
         return False, "process"
 
 
-def _actions_sync_reconcile(cfg: ConnectConfig | None) -> bool:
-    if cfg is None:
-        return False
-    for scfg in cfg.sources.values():
-        if scfg.adapter != "mssql_readonly":
-            continue
-        if not scfg.dsn_env or scfg.dsn_env == "D2A_E10_DSN_PLACEHOLDER":
-            return False
-        if not os.environ.get(scfg.dsn_env):
-            return False
-    return True
-
-
-def _platform_config_subset(cfg: ConnectConfig) -> dict[str, Any]:
+def _platform_config_subset(cfg: PlatformConfig) -> dict[str, Any]:
     return {"templates": cfg.templates, "landing": cfg.landing}
 
 
 def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict[str, str]]]:
-    """在临时副本上合并并 load_config,不写原文件。"""
+    """在临时副本上合并并 load_platform_config,不写原文件。"""
     with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
         tmp_path = Path(tmp.name)
     shutil.copy2(path, tmp_path)
     try:
-        return merge_whitelist_and_save(tmp_path, PLATFORM_EDITABLE, patch, validate=load_config)
+        return merge_whitelist_and_save(tmp_path, PLATFORM_EDITABLE, patch, validate=load_platform_config)
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -578,7 +564,7 @@ def _compute_serving_state(
 
 
 def create_app(landing: str | None = None, templates: str = "templates",
-               config: ConnectConfig | None = None, token: str | None = None,
+               config: PlatformConfig | None = None, token: str | None = None,
                config_path: str | Path | None = None,
                log_dir: str | Path | None = None,
                home: str | Path | None = None) -> FastAPI:
@@ -591,7 +577,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         if token is None:
             token = os.environ.get("D2A_CONSOLE_TOKEN") or None
         if config is None and home_layout.platform_yaml.is_file():
-            config = load_config(home_layout.platform_yaml)
+            config = load_platform_config(home_layout.platform_yaml)
             config_path = home_layout.platform_yaml
 
     if config is not None:  # 配置在场时以其为准,避免两套路径
@@ -642,7 +628,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         path = state["config_path"]
         if path is None or not Path(path).is_file():
             return
-        cfg = load_config(path)
+        cfg = load_platform_config(path)
         state["config"] = cfg
         state["landing"] = cfg.landing
         state["templates"] = cfg.templates
@@ -704,7 +690,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
             raise HTTPException(409, "尚未完成首次配置")
         return LandingStore(state["landing"])
 
-    def require_config() -> ConnectConfig:
+    def require_config() -> PlatformConfig:
         cfg = state["config"]
         if cfg is None:
             raise HTTPException(
@@ -796,9 +782,51 @@ def create_app(landing: str | None = None, templates: str = "templates",
             raise HTTPException(409, "尚未完成首次配置或模板不可用")
         return pack
 
+    def _observed_sources() -> list[str]:
+        """从落地库 raw 表和 sync_state 推导实际观测到的来源（优先）。"""
+        sources: set[str] = set()
+        try:
+            if state["landing"]:
+                db = LandingStore(state["landing"])
+                rows = db.con.execute(
+                    "SELECT DISTINCT source FROM d2a_sync_state").fetchall()
+                sources.update(r[0] for r in rows)
+                for row in db.con.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' "
+                    "AND name LIKE 'raw_%__%'"
+                ).fetchall():
+                    name = row[0]
+                    parts = name[4:].split("__", 1)
+                    if len(parts) == 2:
+                        sources.add(parts[0])
+        except Exception:
+            pass
+        return sorted(sources)
+
+    def _allowed_sources() -> list[str]:
+        """从模板 binding 推导允许的来源（仅用于授权/映射校验）。"""
+        sources: set[str] = set()
+        if state["pack"] is not None:
+            for o in state["pack"].objects:
+                for b in o.bindings:
+                    if b.source and b.enabled:
+                        sources.add(b.source)
+        return sorted(sources)
+
+    def _known_sources() -> list[str]:
+        """返回所有已知来源：实际观测优先，模板允许其次。"""
+        observed = set(_observed_sources())
+        allowed = set(_allowed_sources())
+        return sorted(observed) + sorted(allowed - observed)
+
     def default_source() -> str:
-        cfg = state["config"]
-        return next(iter(cfg.sources), "digiwin_e10") if cfg else "digiwin_e10"
+        observed = _observed_sources()
+        if observed:
+            return observed[0]
+        allowed = _allowed_sources()
+        if allowed:
+            return allowed[0]
+        return "digiwin_e10"
 
     def _query_service_max_tier() -> str:
         return os.environ.get("D2A_MCP_MAX_TIER", "说")
@@ -1352,7 +1380,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         cfg_path = home_layout.platform_yaml
         write_yaml(cfg_path, data)
         try:
-            load_config(cfg_path)
+            load_platform_config(cfg_path)
         except Exception as e:
             cfg_path.unlink(missing_ok=True)
             return SetupFailureResponse(
@@ -1384,9 +1412,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         db = store()
         pack = require_pack()
         cfg = state["config"]
-        sources = sorted({r[0] for r in db.con.execute(
-            "SELECT DISTINCT source FROM d2a_sync_state")}
-            | (set(cfg.sources) if cfg else set()))
+        sources = _observed_sources()
         out_sources = []
         for s in sources:
             sync_state = [dict(r) for r in db.con.execute(
@@ -1416,7 +1442,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
             # raw 行数:任一源查询失败则整体为 null,部分合计不得冒充总数
             raw_rows_total = 0
             raw_failed = False
-            agg_sources = sorted(set(cfg.sources) if cfg else {s["source"] for s in out_sources})
+            agg_sources = sorted({s["source"] for s in out_sources})
             for s in agg_sources:
                 try:
                     tables = obs.raw_table_names(db, s)
@@ -1474,7 +1500,6 @@ def create_app(landing: str | None = None, templates: str = "templates",
                                   query_failures=query_failures)
 
         return {"landing": state["landing"], "readonly": cfg is None,
-                "actions_sync_reconcile": _actions_sync_reconcile(cfg),
                 "sources": out_sources, "objects": objects,
                 "needs_setup": False,
                 "generated_at": datetime.now().astimezone(),
@@ -1862,7 +1887,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 if cfg is None:
                     retry_allowed = False
                     retry_disabled_reason = "只读模式"
-                elif src not in cfg.sources:
+                elif src not in _known_sources():
                     retry_allowed = False
                     retry_disabled_reason = "未知数据源"
                 else:
@@ -2165,8 +2190,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
         version = {"app_version": __version__, "build_version": resolve_build_version()}
         if needs_setup():
             return {**version, "needs_setup": True, "templates": "", "landing": ""}
-        path = require_config_path()
-        out = _platform_config_subset(load_config(path))
+        if state["config"] is not None:
+            cfg = state["config"]
+        else:
+            cfg = load_platform_config(require_config_path())
+        out = _platform_config_subset(cfg)
         out.update({**version, "needs_setup": False})
         return out
 
@@ -2179,7 +2207,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         path = require_config_path()
         patch = body.model_dump(exclude_none=True)
         ok, errors = merge_whitelist_and_save(
-            path, PLATFORM_EDITABLE, patch, validate=load_config)
+            path, PLATFORM_EDITABLE, patch, validate=load_platform_config)
         if ok:
             hydrate_from_disk()
         return {"ok": ok, "errors": errors, "restart_required": True}
@@ -2318,45 +2346,6 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     # ---- 动作(复用 connect 引擎,窗口 / 白名单原样生效)----
 
-    def _scfg(cfg: ConnectConfig, source: str):
-        scfg = cfg.sources.get(source)
-        if scfg is None:
-            raise HTTPException(404, f"配置中没有源 '{source}',可用:{sorted(cfg.sources)}")
-        return scfg
-
-    @api.post(
-        "/actions/sync",
-        response_model=ActionExecutionResult,
-        responses={
-            401: _RESP_HTTP_ERROR[401],
-            404: {"model": HttpError},
-            409: _RESP_HTTP_ERROR[409],
-        },
-    )
-    def action_sync(body: ActionBody) -> dict:
-        cfg = require_config()
-        executed = run_sync_cycle(
-            body.source, _scfg(cfg, body.source), cfg.landing, cfg.templates)
-        return {"executed": executed,
-                "note": "" if executed else "错峰窗口外,未发起(窗口约束对控制台同样生效)"}
-
-    @api.post(
-        "/actions/reconcile",
-        response_model=ActionExecutionResult,
-        responses={
-            401: _RESP_HTTP_ERROR[401],
-            404: {"model": HttpError},
-            409: _RESP_HTTP_ERROR[409],
-        },
-    )
-    def action_reconcile(body: ActionBody) -> dict:
-        cfg = require_config()
-        executed = run_reconcile_cycle(
-            body.source, _scfg(cfg, body.source),
-            cfg.landing, deep=body.deep)
-        return {"executed": executed,
-                "note": "" if executed else "错峰窗口外,未发起"}
-
     @api.post(
         "/actions/apply",
         response_model=ApplyActionResult,
@@ -2422,9 +2411,9 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     object=body.object,
                     status="aborted",
                 ).model_dump())
-        if body.source not in cfg.sources:
+        if body.source not in _known_sources():
             raise HTTPException(
-                404, f"配置中没有源 '{body.source}',可用:{sorted(cfg.sources)}")
+                404, f"未知来源 '{body.source}',可用:{_known_sources()}")
 
         bindings = [b for b in tpl.bindings if b.source == body.source]
         if not bindings:
@@ -2803,7 +2792,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
         cfg = state["config"]
         allowed = (
-            br.allowed_sources(pack, sorted(cfg.sources) if cfg else [])
+            br.allowed_sources(pack, _known_sources())
             if cfg is not None
             else None
         )
@@ -2908,7 +2897,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         pack = require_pack()
         try:
             items, warnings = br.raw_catalog(
-                db, pack, br.allowed_sources(pack, sorted(cfg.sources) if cfg else []))
+                db, pack, br.allowed_sources(pack, _known_sources()))
         except Exception as e:
             try:
                 db.log_access(
@@ -2953,7 +2942,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
             db, request, source=source, resource=table, offset=offset, limit=limit)
         try:
             br.require_source(
-                br.allowed_sources(pack, sorted(cfg.sources) if cfg else []), db, source)
+                br.allowed_sources(pack, _known_sources()), db, source)
             br.require_raw_table(db, source, table, br.allowed_raw_tables(pack, source))
         except br.BrowseError as e:
             db.log_access(

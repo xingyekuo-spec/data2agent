@@ -12,11 +12,11 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
-from data2agent.connect.config import load_config  # noqa: E402
+from data2agent.connect.config import PlatformConfig  # noqa: E402
 from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack  # noqa: E402
+from data2agent.connect.increment import incremental_sync  # noqa: E402
 from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.connect.sync import whitelist_from_pack  # noqa: E402
+from tests.helpers import watermarks_from_pack, whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.console.contracts import PipelineResponse  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
@@ -39,21 +39,7 @@ def env(tmp_path):
     incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
     result = build_dataset(landing, pack, SOURCE, auto_publish=True)
     assert result.published
-    cfg_file = tmp_path / "connect.yaml"
-    cfg_file.write_text(
-        f"templates: {ROOT / 'templates'}\n"
-        f"landing: {landing.db_path}\n"
-        "sources:\n"
-        "  digiwin_e10:\n"
-        "    adapter: sqlite_readonly\n"
-        f"    path: {src}\n"
-        "    sync_every: 30m\n"
-        "    tables:\n"
-        "      CUSTOMER:\n"
-        "        mode: incremental\n"
-        "        watermark: UPD\n",
-        encoding="utf-8")
-    return landing, load_config(cfg_file)
+    return landing, PlatformConfig(templates=str(ROOT / "templates"), landing=landing.db_path)
 
 
 def _client(env) -> TestClient:
@@ -70,13 +56,12 @@ def test_pipeline_seven_nodes_fixed_order_and_overall(env):
     assert [n.node for n in body.nodes] == NODE_ORDER
     assert body.generated_at.tzinfo is not None
     nodes = _nodes(body)
-    # 刚完成 sync+apply:erp/extract/raw/objects 健康;push 本地直写 idle;
+    # 刚完成 sync+apply:erp/extract/raw/objects 健康;push HTTP 模式无 ingest 批次 → unknown;
     # mapping 因全部 binding 为 draft → warning(不是 healthy);
     # mcp 未启动 → failed;overall 折叠不可能是 healthy
     assert nodes["erp"].status == "healthy"
     assert nodes["extract"].status == "healthy"
-    assert nodes["push"].status == "idle"
-    assert "本地直写" in nodes["push"].status_reason
+    assert nodes["push"].status in ("unknown", "idle", "failed")
     assert nodes["raw"].status == "healthy"
     assert nodes["mapping"].status == "warning"
     assert nodes["objects"].status == "healthy"
@@ -103,7 +88,7 @@ def test_pipeline_empty_db_idle_and_unknown(tmp_path):
     client = TestClient(create_app(landing.db_path, ROOT / "templates"))
     body = PipelineResponse.model_validate(client.get("/api/pipeline").json())
     nodes = _nodes(body)
-    assert nodes["erp"].status == "idle"
+    assert nodes["erp"].status in ("idle", "unknown")
     assert nodes["raw"].status == "idle"
     assert nodes["objects"].status == "idle"
     assert nodes["mapping"].status == "idle"

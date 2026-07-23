@@ -19,7 +19,6 @@ function jsonResponse(status: number, body: unknown): Response {
 const OVERVIEW_OK = {
   landing: '/tmp/landing.sqlite',
   readonly: true,
-  actions_sync_reconcile: false,
   sources: [],
   objects: [],
   needs_setup: false,

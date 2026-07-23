@@ -9,10 +9,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.increment import incremental_sync, watermarks_from_pack
+from data2agent.connect.increment import incremental_sync
+from tests.helpers import watermarks_from_pack
 from data2agent.connect.landing import LandingStore
 from data2agent.connect.mapping_apply import MappingCircuitBreaker
-from data2agent.connect.sync import whitelist_from_pack
+from tests.helpers import whitelist_from_pack
 from data2agent.console.app import create_app
 from data2agent.console.contracts import RetryActionError, RetryActionResult
 from data2agent.metamodel.loader import load_pack
@@ -180,6 +181,11 @@ class TestRetryPreflight:
             templates=str(ROOT / "templates"),
             landing=landing.db_path,
             sources={"other_source": SourceConfig(adapter="sqlite_readonly", path=str(tmp_path / "dummy.sqlite"))})
+        # 将 other_source 插入 sync_state 使 _known_sources() 识别
+        landing.con.execute(
+            "INSERT INTO d2a_sync_state (source, table_name, watermark_col) "
+            "VALUES ('other_source', 'T1', 'COL')")
+        landing.con.commit()
         before = self._run_count(landing)
         client = TestClient(create_app(
             landing.db_path, ROOT / "templates", cfg))

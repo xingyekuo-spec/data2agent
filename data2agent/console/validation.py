@@ -12,7 +12,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from ..connect.config import ConnectConfig
+from ..connect.config import PlatformConfig
 from ..connect.dataset_publish import PublishedSnapshotError, resolve_published_snapshot
 from ..connect.landing import LandingStore
 from ..metamodel.schema import TemplatePack
@@ -173,7 +173,7 @@ def _validation_context(
 
 def build_validation_report(
     db: LandingStore, *, run_id: int, pack: TemplatePack, source: str,
-    config: ConnectConfig | None, include_mcp_probe: bool,
+    config: PlatformConfig | None, include_mcp_probe: bool,
     mcp_probe: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """读取一次冻结快照，构造固定 13 项报告（不做任何业务写入）。"""
@@ -189,31 +189,37 @@ def build_validation_report(
     except sqlite3.Error:
         checks.append(_check("service_reachable", "fail", "落地库不可读。"))
 
-    source_cfg = config.sources.get(source) if config is not None else None
-    if config is None:
-        checks.append(_check("source_connectivity", "skipped", "未加载连接配置，不能执行源连接检查。",
+    # 2. source_connectivity: 从 ingest/raw 证据判定
+    ingest_runs = _latest_run(db, source, ("ingest", "sync"))
+    raw_tables_exist = len(br.raw_tables(db, source)) > 0
+    if ingest_runs is not None or raw_tables_exist:
+        checks.append(_check("source_connectivity", "pass",
+                             "平台已接收数据或存在 raw 表；中间机连接状态由中间机自行管理。"))
+    else:
+        checks.append(_check("source_connectivity", "warning",
+                             "尚未收到任何 ingest 数据，请确认中间机已连接并配置抽取表。",
                              blocking=False))
-    elif source_cfg is None:
-        checks.append(_check("source_connectivity", "fail", "当前数据源不在连接配置中。"))
-    else:
-        checks.append(_check("source_connectivity", "pass", "数据源配置已加载；本次未发起写操作。",
-                             detail={"adapter": source_cfg.adapter}))
 
-    if source_cfg is None:
-        checks.append(_check("readonly_whitelist", "skipped", "未加载对应数据源配置。", blocking=False))
+    # 3. readonly_whitelist: 验证绑定表在 raw 数据中的覆盖
+    binding_tables_set = {
+        table for obj in pack.objects for binding in obj.bindings
+        if binding.enabled and binding.source == source for table in binding.source_tables
+    } if pack is not None else set()
+    actual_raw_tables = set(br.raw_tables(db, source))
+    if not binding_tables_set:
+        checks.append(_check("readonly_whitelist", "skipped",
+                             "模板未声明该数据源的绑定表。", blocking=False))
     else:
-        readonly = source_cfg.adapter in ("sqlite_readonly", "mssql_readonly")
-        tables_configured = source_cfg.tables is not None and len(source_cfg.tables) > 0
-        if readonly and tables_configured:
+        covered = actual_raw_tables & binding_tables_set
+        if len(covered) == len(binding_tables_set):
             checks.append(_check("readonly_whitelist", "pass",
-                                 f"只读适配器与显式表清单已启用({len(source_cfg.tables)} 张表)。",
-                                 detail={"adapter": source_cfg.adapter,
-                                         "table_count": len(source_cfg.tables)}))
+                                 f"所有 {len(binding_tables_set)} 张绑定表均已接收 raw 数据。",
+                                 detail={"configured_tables": len(binding_tables_set)}))
         else:
-            checks.append(_check("readonly_whitelist", "fail",
-                                 "只读适配器或显式表清单未满足。",
-                                 detail={"readonly_adapter": readonly,
-                                         "tables_configured": tables_configured}))
+            missing = binding_tables_set - actual_raw_tables
+            checks.append(_check("readonly_whitelist", "warning",
+                                 f"{len(missing)}/{len(binding_tables_set)} 张绑定表缺少 raw 数据。",
+                                 detail={"missing": sorted(missing)}))
 
     # 4. sync / landing facts
     sync = _latest_run(db, source, ("sync", "ingest"))
@@ -226,32 +232,32 @@ def build_validation_report(
         checks.append(_check("sync_execution", "fail", "最近同步或接收运行未成功。",
                              evidence=[_evidence("run", f"运行 #{sync['id']}", f"/api/runs/{sync['id']}")]))
 
-    if source_cfg is None or source_cfg.sink.type == "local":
-        checks.append(_check("landing_and_push", "skipped", "当前为本地落地模式，无独立推送环节。", blocking=False))
-    elif sync is not None and sync["status"] == "ok":
-        checks.append(_check("landing_and_push", "pass", "最近接收运行成功。",
-                             evidence=[_evidence("run", f"运行 #{sync['id']}", f"/api/runs/{sync['id']}")]))
+    # 5. landing_and_push: 检查 ingest 批次证据
+    has_ingest = db.con.execute(
+        "SELECT COUNT(*) FROM d2a_audit_log WHERE action = 'ingest' AND source = ?",
+        (source,)).fetchone()[0] > 0
+    if has_ingest and sync is not None and sync["status"] == "ok":
+        checks.append(_check("landing_and_push", "pass", "ingest 接收证据存在且最近运行成功。"))
+    elif has_ingest:
+        checks.append(_check("landing_and_push", "warning", "存在 ingest 记录但最近运行状态非成功。"))
     else:
-        checks.append(_check("landing_and_push", "fail", "推送模式缺少成功的接收运行。"))
+        checks.append(_check("landing_and_push", "warning",
+                             "未找到 ingest 接收证据，可能为本地直写或尚未推送。",
+                             blocking=False))
 
-    # Raw presence: 逐表存在性 + 可验证的新鲜度
+    # Raw presence: 逐表存在性 + 可验证的新鲜度(复用上文 binding_tables_set)
     actual_raw = set(br.raw_tables(db, source))
 
-    binding_tables = {
-        table for obj in pack.objects for binding in obj.bindings
-        if binding.enabled and binding.source == source for table in binding.source_tables
-    } if pack is not None else set()
+    missing_from_raw = [t for t in binding_tables_set if t not in actual_raw]
 
-    missing_from_raw = [t for t in binding_tables if t not in actual_raw]
-
-    if not binding_tables:
+    if not binding_tables_set:
         checks.append(_check("raw_presence", "skipped",
                              "模板未声明该数据源的 Raw 表。", blocking=False))
     elif missing_from_raw:
         checks.append(_check("raw_presence", "fail",
                              f"平台 binding 依赖 {len(missing_from_raw)} 张表在落地库中缺失 raw 数据: "
                              + ", ".join(sorted(missing_from_raw)),
-                             detail={"binding_tables": sorted(binding_tables),
+                             detail={"binding_tables": sorted(binding_tables_set),
                                      "actual_raw_tables": sorted(actual_raw),
                                      "missing": sorted(missing_from_raw)}))
     else:
@@ -288,16 +294,16 @@ def build_validation_report(
         # 逐表判断
         stale_tables: list[str] = []
         unverified_tables: list[str] = []
-        sync_every_s = (source_cfg.sync_every_seconds() if source_cfg else 1800)
+        sync_every_s = 1800  # 平台侧固定默认 30m,不读中间机配置
         grace_s = max(sync_every_s * 2, 600)
         now = datetime.now()
 
-        for tbl in sorted(binding_tables):
+        for tbl in sorted(binding_tables_set):
             last_dt = per_table_last.get(tbl)
             if last_dt is None:
                 unverified_tables.append(tbl)
             else:
-                next_expected = _next_expected_run(last_dt, source_cfg)
+                next_expected = _next_expected_run(last_dt, None)
                 if next_expected is None:
                     next_expected = last_dt + timedelta(seconds=sync_every_s)
                 if now > next_expected + timedelta(seconds=grace_s):
@@ -319,13 +325,13 @@ def build_validation_report(
                                          "per_table_last": {
                                              t: per_table_last[t].isoformat(timespec="seconds")
                                              for t in per_table_last},
-                                         "windows": source_cfg.windows if source_cfg else [],
-                                         "sync_every": source_cfg.sync_every if source_cfg else "?",
+                                         "windows": [],
+                                         "sync_every": "30m",
                                  }))
         else:
             checks.append(_check("raw_presence", "pass",
-                                 f"平台 binding 依赖的 {len(binding_tables)} 张表 raw 数据均存在且同步新鲜。",
-                                 detail={"table_count": len(binding_tables)}))
+                                 f"平台 binding 依赖的 {len(binding_tables_set)} 张表 raw 数据均存在且同步新鲜。",
+                                 detail={"table_count": len(binding_tables_set)}))
 
     # 7. published snapshot
     if snap is None:
@@ -491,7 +497,7 @@ def build_validation_report(
         "finished_at": finished_at,
         "deployment": {
             "config_loaded": config is not None,
-            "source_configured": source_cfg is not None,
+            "source_configured": False,
             "template_version": pack.version,
         },
         "dataset_version": snap.dataset_version if snap is not None else None,
