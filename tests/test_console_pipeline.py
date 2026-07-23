@@ -47,7 +47,11 @@ def env(tmp_path):
         "  digiwin_e10:\n"
         "    adapter: sqlite_readonly\n"
         f"    path: {src}\n"
-        "    sync_every: 30m\n",
+        "    sync_every: 30m\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n",
         encoding="utf-8")
     return landing, load_config(cfg_file)
 

@@ -41,7 +41,11 @@ def middle_env(tmp_path):
         "  digiwin_e10:\n"
         "    adapter: sqlite_readonly\n"
         f"    path: {src}\n"
-        "    sync_every: 30m\n",
+        "    sync_every: 30m\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: LAST_MODIFIED_DATE\n",
         encoding="utf-8")
     app = create_app(config_path=cfg, token="secret", log_path=tmp_path / "c.log")
     return TestClient(app), cfg

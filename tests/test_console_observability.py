@@ -48,6 +48,10 @@ def _cfg(tmp_path, sink="local", sync_every="30m"):
         "    adapter: sqlite_readonly\n"
         f"    path: {tmp_path / 'src.sqlite'}\n"
         f"    sync_every: {sync_every}\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: UPD\n"
     )
     if sink == "http":
         text += ('    sink: { type: http, url: "http://127.0.0.1:8850",'
