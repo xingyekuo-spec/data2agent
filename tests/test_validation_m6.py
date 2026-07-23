@@ -147,7 +147,7 @@ def test_validation_masking_fails_when_live_probe_returns_plain_sensitive_value(
 
 
 class TestNextExpectedRun:
-    """_next_expected_run 新鲜度计算:窗口感知 + 源隔离 + 多模式覆盖。"""
+    """_next_expected_run 窗口感知计算。"""
 
     def _cfg(self, sync_every="30m", windows=None):
         from data2agent.connect.config import SourceConfig
@@ -161,32 +161,37 @@ class TestNextExpectedRun:
         from data2agent.console.validation import _next_expected_run
         from datetime import datetime
         cfg = self._cfg(sync_every="30m")
-        last = datetime(2026, 7, 23, 10, 0, 0)
-        result = _next_expected_run(last, cfg)
+        result = _next_expected_run(datetime(2026, 7, 23, 10, 0, 0), cfg)
         assert result == datetime(2026, 7, 23, 10, 30, 0)
 
-    def test_window_skips_to_next_opening(self):
+    def test_window_skips_to_opening(self):
         from data2agent.console.validation import _next_expected_run
         from datetime import datetime
         cfg = self._cfg(sync_every="30m", windows=["22:00-06:30"])
-        # 上次 06:20 完成,sync_every=30m 保持 :20/:50 节奏
-        # 下一个窗口内候选是 22:20
-        last = datetime(2026, 7, 23, 6, 20, 0)
-        result = _next_expected_run(last, cfg)
-        assert result.hour == 22
-        assert result.minute == 20
+        # 上次 06:20 → candidate 06:50 → 不在窗口 → 步进到 22:00
+        result = _next_expected_run(datetime(2026, 7, 23, 6, 20, 0), cfg)
+        assert result == datetime(2026, 7, 23, 22, 0, 0)
 
-    def test_window_mid_run_stays_in_window(self):
+    def test_window_mid_run_stays(self):
         from data2agent.console.validation import _next_expected_run
         from datetime import datetime
         cfg = self._cfg(sync_every="30m", windows=["22:00-06:30"])
-        # 上次 23:00 完成,30 分钟后 23:30 仍在窗口内
-        last = datetime(2026, 7, 23, 23, 0, 0)
-        result = _next_expected_run(last, cfg)
+        # 上次 23:00 → candidate 23:30 → 仍在窗口
+        result = _next_expected_run(datetime(2026, 7, 23, 23, 0, 0), cfg)
         assert result == datetime(2026, 7, 23, 23, 30, 0)
 
-    def test_recent_sync_not_stale(self, published_landing):
-        """正常同步后 raw_presence 不应报告陈旧。"""
+    def test_long_sync_every_not_zero_loop(self):
+        from data2agent.console.validation import _next_expected_run
+        from datetime import datetime
+        cfg = self._cfg(sync_every="8d", windows=["22:00-06:30"])
+        # 上次 7/23 08:00(窗口外) → candidate 7/31 08:00 → 不在窗口 → 跳到 22:00
+        result = _next_expected_run(datetime(2026, 7, 23, 8, 0, 0), cfg)
+        assert result == datetime(2026, 7, 31, 22, 0, 0)
+
+class TestRawPresence:
+    """raw_presence 检查:存在性与诚实局限性。"""
+
+    def test_recent_sync_passes(self, published_landing):
         from data2agent.console.validation import build_validation_report
         pack = load_pack(ROOT / "templates")
         run_id = published_landing.start_run(SOURCE, "sync")
@@ -199,16 +204,38 @@ class TestNextExpectedRun:
         checks = {c["check_id"]: c for c in report["checks"]}
         assert checks["raw_presence"]["status"] == "pass"
 
-    def test_expired_sync_reports_stale(self, published_landing):
-        """很久前的同步应报告陈旧。"""
+    def test_single_table_deleted_from_config_still_passes(self, published_landing):
+        """删除单表后其他表继续同步,历史 raw 仍存在 → raw_presence 通过但不保证该表仍在抽取。"""
+        from data2agent.console.validation import build_validation_report
+        pack = load_pack(ROOT / "templates")
+        # 模拟:删除了 CURRENCY,只同步 5 张表,但旧 CURRENCY raw 数据还在
+        run_id = published_landing.start_run(SOURCE, "sync")
+        published_landing.finish_run(run_id, tables=5, rows=100, status="ok")
+
+        report = build_validation_report(
+            published_landing, run_id=run_id, pack=pack, source=SOURCE,
+            config=None, include_mcp_probe=False,
+        )
+        checks = {c["check_id"]: c for c in report["checks"]}
+        # pass 因为所有 binding 表 raw 数据都存在
+        # detail.note 说明单表停止检测需要表级心跳协议
+        assert checks["raw_presence"]["status"] == "pass"
+        assert "note" in checks["raw_presence"]["detail"]
+        assert "表级心跳" in checks["raw_presence"]["detail"]["note"]
+
+    def test_other_source_does_not_affect(self, published_landing):
+        """其他数据源的成功不影响当前源。"""
         from data2agent.console.validation import build_validation_report
         pack = load_pack(ROOT / "templates")
         run_id = published_landing.start_run(SOURCE, "sync")
         published_landing.finish_run(run_id, tables=6, rows=100, status="ok")
-        # finish_run 之后再手动改回 30 天前
+
+        # 另一个 source 注入过期 run
+        other = published_landing.start_run("other_source", "sync")
+        published_landing.finish_run(other, tables=1, rows=1, status="ok")
         published_landing.con.execute(
             "UPDATE d2a_sync_run SET finished_at = ? WHERE id = ?",
-            ("2026-06-23T10:00:00", run_id),
+            ("2020-01-01T00:00:00", other),
         )
         published_landing.con.commit()
 
@@ -217,34 +244,6 @@ class TestNextExpectedRun:
             config=None, include_mcp_probe=False,
         )
         checks = {c["check_id"]: c for c in report["checks"]}
-        assert checks["raw_presence"]["status"] == "warning"
-        published_landing.con.rollback()
-
-
-class TestRawPresenceSourceIsolation:
-    """raw_presence 不应对不同 source 交叉污染。"""
-
-    def test_other_source_run_does_not_make_current_fresh(self, published_landing):
-        from data2agent.console.validation import build_validation_report
-        pack = load_pack(ROOT / "templates")
-        # 给 digiwin_e10 注入一个很久前的 run
-        run_id = published_landing.start_run(SOURCE, "sync")
-        published_landing.finish_run(run_id, tables=6, rows=0, status="ok")
-        published_landing.con.execute(
-            "UPDATE d2a_sync_run SET finished_at = ? WHERE id = ?",
-            ("2020-01-01T00:00:00", run_id),
-        )
-        published_landing.con.commit()
-
-        # 给 other_source 注入一个刚刚的 run
-        other_run = published_landing.start_run("other_source", "sync")
-        published_landing.finish_run(other_run, tables=6, rows=100, status="ok")
-
-        report = build_validation_report(
-            published_landing, run_id=other_run, pack=pack, source=SOURCE,
-            config=None, include_mcp_probe=False,
-        )
-        checks = {c["check_id"]: c for c in report["checks"]}
-        # digiwin_e10 的最近 run 是 2020 年的,应该陈旧
-        assert checks["raw_presence"]["status"] == "warning"
+        # 当前源的 raw 存在,应通过
+        assert checks["raw_presence"]["status"] == "pass"
         published_landing.con.rollback()

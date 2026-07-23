@@ -43,11 +43,12 @@ _CHECK_TITLES = {
 }
 
 
-def _next_expected_run(last_finished: datetime, source_cfg) -> datetime:
+def _next_expected_run(last_finished: datetime, source_cfg) -> datetime | None:
     """计算上次成功运行后下一次预期运行时间,考虑错峰窗口。
 
     无窗口: last_finished + sync_every
-    有窗口: 从 last_finished 开始,找到下一个落在窗口内的时间点
+    有窗口: 找到 >= (last_finished + sync_every) 且落在窗口内的最早时刻
+    无法计算时返回 None
     """
     from ..connect.config import parse_window
     sync_s = source_cfg.sync_every_seconds() if source_cfg else 1800
@@ -56,26 +57,49 @@ def _next_expected_run(last_finished: datetime, source_cfg) -> datetime:
     if not windows:
         return last_finished + timedelta(seconds=sync_s)
 
-    # 有窗口:从 last_finished 开始,按 sync_every 步进直到找到窗口内的时间
     candidate = last_finished + timedelta(seconds=sync_s)
-    # 最多尝试 7 天(防止死循环)
-    for _ in range(7 * 24 * 60 * 60 // max(int(sync_s), 60)):
-        t = candidate.time()
-        in_any = False
+
+    def _in_window(dt: datetime) -> bool:
+        t = dt.time()
         for w in windows:
             start, end = parse_window(w)
             if start <= end:
                 if start <= t < end:
-                    in_any = True
-                    break
+                    return True
             elif t >= start or t < end:
-                in_any = True
-                break
-        if in_any:
-            return candidate
-        candidate += timedelta(seconds=sync_s)
-    # 兜底:返回远超当前的时间(永不陈旧)
-    return datetime.now() + timedelta(days=365)
+                return True
+        return False
+
+    # 收集所有窗口边界(当天分钟数),用于快速跳跃
+    boundaries: set[int] = set()
+    for w in windows:
+        start, end = parse_window(w)
+        boundaries.add(start.hour * 60 + start.minute)
+        boundaries.add(end.hour * 60 + end.minute)
+    boundaries = sorted(boundaries)
+
+    # 搜索最多 366 天
+    day = candidate.date()
+    for _ in range(366):
+        day_start = datetime(day.year, day.month, day.day)
+        # 当天:从 candidate 开始,跳到下一个窗口边界
+        check = max(candidate, day_start)
+        end_of_day = day_start + timedelta(days=1)
+        while check < end_of_day:
+            if _in_window(check):
+                return check
+            # 跳到下一个窗口边界(跳过窗口外的空白区间)
+            minute_of_day = check.hour * 60 + check.minute
+            nxt = end_of_day  # 默认跳到下一天
+            for b in boundaries:
+                if b > minute_of_day:
+                    nxt = day_start + timedelta(minutes=b)
+                    break
+            check = nxt
+        day += timedelta(days=1)
+        candidate = datetime(day.year, day.month, day.day)
+
+    return None
 
 
 def _now() -> str:
@@ -210,7 +234,7 @@ def build_validation_report(
     else:
         checks.append(_check("landing_and_push", "fail", "推送模式缺少成功的接收运行。"))
 
-    # Raw presence: 对比实际 raw 数据与 binding 需求,验证最近同步新鲜度
+    # Raw presence: 对比实际 raw 数据与 binding 需求
     actual_raw = set(br.raw_tables(db, source))
 
     # 平台 binding 需要哪些表
@@ -218,28 +242,6 @@ def build_validation_report(
         table for obj in pack.objects for binding in obj.bindings
         if binding.enabled and binding.source == source for table in binding.tables
     } if pack is not None else set()
-
-    # 运行级新鲜度:使用最近成功 run(覆盖 sync/ingest/增量/全量/推送)
-    last_run = _latest_run(db, source, ("sync", "ingest"))
-    is_stale = False
-    stale_detail = ""
-    if last_run is not None and last_run["status"] == "ok" and last_run["finished_at"]:
-        try:
-            last_dt = datetime.fromisoformat(last_run["finished_at"])
-            # 计算下一次预期运行时间,考虑错峰窗口
-            next_expected = _next_expected_run(last_dt, source_cfg)
-            # 宽限期:至少 10 分钟,至多 sync_every * 2
-            grace_s = max(source_cfg.sync_every_seconds() * 2, 600) if source_cfg else 600
-            if datetime.now() > next_expected + timedelta(seconds=grace_s):
-                is_stale = True
-                delta_min = int((datetime.now() - next_expected).total_seconds() / 60)
-                stale_detail = f"预期 {next_expected.isoformat(timespec='minutes')},已超 {delta_min} 分钟"
-        except (ValueError, TypeError):
-            is_stale = True
-            stale_detail = "无法解析上次运行时间"
-    else:
-        is_stale = True
-        stale_detail = "没有成功的同步运行记录"
 
     missing_from_raw = [t for t in binding_tables if t not in actual_raw]
 
@@ -253,18 +255,16 @@ def build_validation_report(
                              detail={"binding_tables": sorted(binding_tables),
                                      "actual_raw_tables": sorted(actual_raw),
                                      "missing": sorted(missing_from_raw)}))
-    elif is_stale:
-        checks.append(_check("raw_presence", "warning",
-                             f"最近同步已过期: {stale_detail}",
-                             blocking=False,
-                             detail={"last_run_at": last_run["finished_at"] if last_run else None,
-                                     "windows": source_cfg.windows if source_cfg else [],
-                                     "sync_every": source_cfg.sync_every if source_cfg else "?"}))
     else:
+        # 所有 binding 表 raw 数据均存在。运行级时效作为参考信号(非阻断):
+        # 单表级停止或零行推送的精确检测需要表级心跳协议,当前尚未实现。
+        last_run = _latest_run(db, source, ("sync", "ingest"))
+        last_run_at = last_run["finished_at"] if last_run else None
         checks.append(_check("raw_presence", "pass",
-                             f"平台 binding 依赖的 {len(binding_tables)} 张表 raw 数据均存在且同步新鲜。",
+                             f"平台 binding 依赖的 {len(binding_tables)} 张表 raw 数据均存在。",
                              detail={"table_count": len(binding_tables),
-                                     "last_run_at": last_run["finished_at"]}))
+                                     "last_run_at": last_run_at,
+                                     "note": "时效为运行级参考;单表停止或零行推送需表级心跳协议支持"}))
 
     # 7. published snapshot
     if snap is None:
