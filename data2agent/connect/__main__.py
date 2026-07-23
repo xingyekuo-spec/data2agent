@@ -27,10 +27,6 @@ from .reconcile import reconcile
 def _add_common(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--config", required=True, help="connect.yaml 路径(抽取配置唯一来源)")
     sp.add_argument("--source", default="digiwin_e10", help="数据源名")
-    sp.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径(默认值;--config 中的 landing 优先)")
-    sp.add_argument("--templates", default="templates", help="模板包目录")
-    sp.add_argument("--batch-size", type=int, default=5000)
-    sp.add_argument("--rows-per-second", type=int, default=0, help="0 为不限流(参考库);生产必配")
 
 
 def _build(args, ap):

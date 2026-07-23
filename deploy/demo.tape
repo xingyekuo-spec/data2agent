@@ -24,7 +24,7 @@ Type ".venv/bin/python -m data2agent.showroom.seed"
 Enter
 Sleep 2.5s
 
-Type ".venv/bin/python -m data2agent.connect sync --sqlite showroom/e10.sqlite"
+Type ".venv/bin/python -m data2agent.connect sync --config connect.example.yaml"
 Enter
 Sleep 3.5s
 

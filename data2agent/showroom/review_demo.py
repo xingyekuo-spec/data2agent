@@ -6,7 +6,7 @@ query_metrics 查毛利率基线,最后经 propose_action(「说」档)生成接
 卡内每个数字都溯源到具体查询。真 Agent 版可按 docs/design/04-reference-chain.md §4 的场景驱动。
 
 前置:python -m data2agent.showroom.seed && python -m data2agent.connect sync
-      --sqlite showroom/e10.sqlite && python -m data2agent.connect apply
+      --config connect.example.yaml && python -m data2agent.connect apply
 """
 
 from __future__ import annotations

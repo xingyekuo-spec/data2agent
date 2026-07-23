@@ -78,7 +78,7 @@ python -m data2agent.connect status
 `tables` 字段是**抽取范围的唯一事实来源**:
 
 - **`mode: incremental`**:增量抽取,必须同时配置 `watermark` 字段名。每次抽取拉取 `WHERE watermark_col > last_watermark` 的行。
-- **`mode: full_refresh`**:全量刷新,每次抽取替换整表数据。适用于无可靠水位字段的小维表(如 CURRENCY)。
+- **`mode: full_refresh`**:全量读取并幂等 upsert,不动水位。源端已删除的行不会因此消失(物理删除依赖 L2 reconcile)。适用于无可靠水位字段的小维表(如 CURRENCY)。
 - 未在 `tables` 中声明的表不会被抽取。
 - 表清单独立于平台模板维护 —— 中间机只管"抽什么",平台模板只管"怎么映射"。
 

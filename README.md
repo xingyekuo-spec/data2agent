@@ -35,7 +35,7 @@ pip install -e ".[dev,mcp]"
 pytest tests -q                                   # Python 回归测试(mssql 集成测试需 Docker)
 python -m data2agent.metamodel.validate templates # 模板校验
 python -m data2agent.showroom.seed                # 生成 E10-like 参考库 showroom/e10.sqlite
-python -m data2agent.connect sync --sqlite showroom/e10.sqlite   # 抽取:水位增量 → 落地库(只读/白名单/审计)
+python -m data2agent.connect sync --config connect.example.yaml   # 抽取:水位增量 → 落地库(只读/白名单/审计)
 python -m data2agent.connect apply                # 映射:raw_* → 物化对象层 obj_*(隔离区 + 熔断)
 python -m data2agent.connect excel-suggest --file 报价历史.xlsx --object Quotation --out map.yaml
 python -m data2agent.connect excel-import  --file 报价历史.xlsx --map map.yaml   # Excel 导入(确认一次,长期记住)

@@ -175,29 +175,62 @@ def build_validation_report(
     else:
         checks.append(_check("landing_and_push", "fail", "推送模式缺少成功的接收运行。"))
 
-    # Raw presence: compare actual raw data against binding expectations
+    # Raw presence: 对比实际 raw 数据、配置抽取范围与 binding 需求
     actual_raw = set(br.raw_tables(db, source))
 
-    # What platform bindings need
+    # 配置声明要抽取的表(来自平台本地配置,可能与中间机实际不同)
+    config_tables = set(source_cfg.tables.keys()) if source_cfg and source_cfg.tables else set()
+
+    # 平台 binding 需要哪些表
     binding_tables = {
         table for obj in pack.objects for binding in obj.bindings
         if binding.enabled and binding.source == source for table in binding.tables
     } if pack is not None else set()
 
+    # 查询最近各表同步时间
+    sync_freshness: dict[str, str | None] = {}
+    for r in db.con.execute(
+        "SELECT table_name, last_run_at FROM d2a_sync_state WHERE source = ?",
+        (source,)
+    ).fetchall():
+        sync_freshness[r["table_name"]] = r["last_run_at"]
+
     missing_from_raw = [t for t in binding_tables if t not in actual_raw]
+    not_in_config = [t for t in binding_tables if t not in config_tables]
+    stale_tables = [
+        t for t in (binding_tables & actual_raw)
+        if t not in sync_freshness or sync_freshness[t] is None
+    ]
 
     if not binding_tables:
-        checks.append(_check("raw_presence", "skipped", "模板未声明该数据源的 Raw 表。", blocking=False))
+        checks.append(_check("raw_presence", "skipped",
+                             "模板未声明该数据源的 Raw 表。", blocking=False))
     elif missing_from_raw:
         checks.append(_check("raw_presence", "fail",
                              f"平台 binding 依赖 {len(missing_from_raw)} 张表在落地库中缺失 raw 数据: "
                              + ", ".join(sorted(missing_from_raw)),
                              detail={"binding_tables": sorted(binding_tables),
                                      "actual_raw_tables": sorted(actual_raw),
-                                     "missing": sorted(missing_from_raw)}))
+                                     "missing": sorted(missing_from_raw),
+                                     "not_in_config": sorted(not_in_config)}))
+    elif not_in_config:
+        checks.append(_check("raw_presence", "fail",
+                             f"平台 binding 依赖 {len(not_in_config)} 张表不在配置的 tables 中: "
+                             + ", ".join(sorted(not_in_config)),
+                             detail={"binding_tables": sorted(binding_tables),
+                                     "config_tables": sorted(config_tables),
+                                     "not_in_config": sorted(not_in_config),
+                                     "note": "config_tables 来自平台本地配置副本,可能与中间机实际配置不同"}))
+    elif stale_tables:
+        checks.append(_check("raw_presence", "warning",
+                             f"{len(stale_tables)} 张表无同步记录,可能已停止抽取: "
+                             + ", ".join(sorted(stale_tables)),
+                             blocking=False,
+                             detail={"stale_tables": sorted(stale_tables),
+                                     "freshness": sync_freshness}))
     else:
         checks.append(_check("raw_presence", "pass",
-                             f"平台 binding 依赖的 {len(binding_tables)} 张表 raw 数据均存在。",
+                             f"平台 binding 依赖的 {len(binding_tables)} 张表 raw 数据均存在且有同步记录。",
                              detail={"table_count": len(binding_tables)}))
 
     # 7. published snapshot
