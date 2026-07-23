@@ -30,7 +30,7 @@ from ..admin_common.setup_yaml import (
 from ..connect.config import ConnectConfig, SourceConfig, load_config
 from ..connect.landing import LandingStore
 from ..connect.scheduler import build_adapter, run_sync_cycle
-from ..metamodel.loader import load_pack
+
 from .status import build_status
 
 _PKG = Path(__file__).resolve().parent
@@ -111,7 +111,10 @@ def _config_subset(cfg: ConnectConfig) -> dict:
                      "rows_per_second": scfg.rate.rows_per_second},
             "lookback": scfg.lookback,
             "sync_every": scfg.sync_every,
-            "extra_whitelist": scfg.extra_whitelist,
+            "tables": {
+                tbl: {"mode": spec.mode, "watermark": spec.watermark}
+                for tbl, spec in (scfg.tables or {}).items()
+            },
             "sink": {"url": scfg.sink.url,
                      "token_env": scfg.sink.token_env,
                      "token_env_set": _env_set(scfg.sink.token_env)},
@@ -142,9 +145,9 @@ def _sanitize_detail(message: str) -> str:
     return message[:500]
 
 
-def _probe_connection(name: str, scfg: SourceConfig, pack, landing_path: str) -> list[str]:
+def _probe_connection(name: str, scfg: SourceConfig, landing_path: str) -> list[str]:
     landing = LandingStore(landing_path)
-    adapter = build_adapter(name, scfg, pack, landing)
+    adapter = build_adapter(name, scfg, landing)
     tables: list[str] = []
     for tbl in sorted(adapter.whitelist):
         adapter.table_info(tbl)
@@ -359,11 +362,9 @@ def create_app(
         cfg = reload_config()
         started = time.perf_counter()
         try:
-            # load_pack 可能因模板校验失败抛错 —— 须在 try 内,否则未捕获直接 500
-            pack = load_pack(cfg.templates)
             name, scfg = _resolve_source(cfg, body.source)
             with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(_probe_connection, name, scfg, pack, cfg.landing)
+                future = pool.submit(_probe_connection, name, scfg, cfg.landing)
                 tables = future.result(timeout=10.0)
         except FuturesTimeoutError:
             return {"ok": False, "error": "timeout", "detail": "连接测试超过 10 秒"}
@@ -380,12 +381,8 @@ def create_app(
         if body.action != "sync":
             raise HTTPException(400, f"不支持的动作 '{body.action}'")
         cfg = reload_config()
-        try:
-            pack = load_pack(cfg.templates)
-        except Exception as e:
-            raise HTTPException(400, f"模板加载失败:{_sanitize_detail(str(e))}")
         name, scfg = _resolve_source(cfg, body.source)
-        executed = run_sync_cycle(name, scfg, pack, cfg.landing)
+        executed = run_sync_cycle(name, scfg, cfg.landing)
         return {"action": "sync", "source": name, "executed": executed,
                 "overlap_warning": True,
                 "note": "" if executed else "错峰窗口外,未发起(窗口约束同样生效)"}
