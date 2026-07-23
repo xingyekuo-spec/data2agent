@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 _DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -68,15 +68,13 @@ class TableExtractConfig(BaseModel):
     mode: Literal["incremental", "full_refresh"]
     watermark: str | None = None
 
-    @field_validator("watermark")
-    @classmethod
-    def watermark_required_for_incremental(cls, v, info):
-        mode = info.data.get("mode")
-        if mode == "incremental" and not v:
+    @model_validator(mode="after")
+    def watermark_required_for_incremental(self):
+        if self.mode == "incremental" and not self.watermark:
             raise ValueError("incremental 模式必须配置 watermark")
-        if mode == "full_refresh" and v is not None:
+        if self.mode == "full_refresh" and self.watermark is not None:
             raise ValueError("full_refresh 模式不允许配置 watermark")
-        return v
+        return self
 
 
 class SourceConfig(BaseModel):
