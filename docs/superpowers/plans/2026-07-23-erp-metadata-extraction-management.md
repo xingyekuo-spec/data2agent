@@ -2,6 +2,7 @@
 
 > 状态：待实施  
 > 制定日期：2026-07-23  
+> 最近修订：2026-07-24
 > 建议目标版本：v0.5  
 > 前置设计：[中间机独立抽取表配置](../../design/06-middle-table-extraction-config.md)  
 > 本文只定义实施方案，不代表相关功能已经完成。
@@ -132,7 +133,7 @@ sources:
 
 这使 `full_refresh` 成为真正的当前状态快照，源库中已经删除的记录不会长期残留在平台。
 
-### 3.5 三个独立管理页面
+### 3.5 管理页面职责拆分
 
 中间机管理界面调整为：
 
@@ -145,6 +146,56 @@ sources:
 | 日志 | `/logs` | 中间机服务日志 |
 
 连接配置页不再包含抽取表编辑器。
+
+### 3.6 平台端使用独立配置模型
+
+平台端不再复用中间机 `ConnectConfig`，新增只描述平台职责的 `PlatformConfig`。该模型只
+保留 ingest 落地、apply、Console、MCP、认证和平台运行所需字段，不包含：
+
+- ERP DSN、adapter 或数据库连接参数；
+- `sources.*.tables` 抽取计划；
+- 中间机调度、水位和限流配置；
+- 平台直连 ERP 的 sync/reconcile 动作。
+
+平台 ingest 请求仍必须携带 `source`、`schema`、`table`、同步模式和协议批次标识，用于
+数据隔离与落地；删除的是平台配置中的 ERP 连接和抽取能力，不是 ingest 数据来源标识。
+
+不得通过“继续读取 `ConnectConfig`，但忽略 `sources`”实现切分。系统尚未上线，应直接
+删除错误的配置字段和运行入口，避免平台配置继续暗示可以直连 ERP。
+
+### 3.7 元数据发现使用能力协议
+
+新增 `MetadataDiscoverer` 协议，元数据 API 和扫描任务只依赖该协议，不直接判断 adapter
+名称或拼接特定数据库系统表 SQL。首期实现：
+
+- `MssqlMetadataDiscoverer`：生产使用；
+- `SqliteMetadataDiscoverer` 或测试替身：用于协议测试和本地测试。
+
+协议至少提供：
+
+- schema 枚举；
+- 表和视图分页/搜索；
+- 表字段、主键、唯一索引和外键摘要；
+- 候选业务键校验；
+- 候选水位字段校验。
+
+数据库连接由具体 discoverer 或 adapter 内部管理。协议不得接收、返回或向管理层暴露
+原始连接对象。adapter 不支持元数据发现时返回明确的
+`metadata_discovery_unsupported`，不得在 `metadata.py` 中堆叠 adapter 分支。
+
+### 3.8 中间里程碑的运行语义与发布边界
+
+删除 CLI 的 `sync --full` 不等于删除表级 `mode: full_refresh`。表级模式是正式配置能力，
+在整个改造期间都必须保持可运行。
+
+在 M4 原子快照完成前，现有 `full_refresh` 仍是“整表读取并 upsert”的旧落地语义，不能
+保证删除源端已不存在的行。因此：
+
+- `sync --full` 和 `full_sync()` 的删除统一放到 M4，与新快照协议一次完成；
+- M0 至 M3 必须保留表级 `full_refresh` 的现有行为及回归测试；
+- M0 至 M3 只是同一功能分支中的中间提交，不得构建正式包或部署到工厂；
+- 只有 M4 完成删除行、失败回滚、零行表和幂等重放验收后，才允许进入页面联调；
+- v0.5 只发布 M0 至 M7 全部完成后的单一干净切换版本。
 
 ## 4. 目标用户流程
 
@@ -358,6 +409,78 @@ HTTP 推送协议增加快照生命周期：
 
 ## 9. 实施里程碑
 
+### M0：旧配置与随包清单清理
+
+删除或修改：
+
+- 删除 `erp-configs/digiwin_e10.yaml` 和空目录；
+- 删除 `deploy/setup-middle.ps1`、`deploy/setup-platform.ps1`；
+- 删除 `docs/superpowers/plans/2026-07-23-explicit-table-config.md`；
+- 修改 `data2agent/admin_common/setup_yaml.py`；
+- 修改 `data2agent/connect/config.py`；
+- 修改 `data2agent/connect/__main__.py`；
+- 修改依赖旧抽取工具的测试和文档。
+
+任务：
+
+- 删除 ERP profile 常量、定位、加载、复制和完整性检查；
+- 删除 `whitelist_from_bindings`、`extra_whitelist` 的兼容解析和提示；
+- 删除 `migrate-config` CLI 与 `migrate_config_to_tables()`；
+- 删除生产代码中的 `whitelist_from_pack()`、`watermarks_from_pack()`，测试改用显式
+  表配置或 `tests` 内部 fixture；
+- 删除通用配置接口对 `sources.*.tables` 的编辑能力；抽取表只能由后续专用 API 保存；
+- 清理测试和文档中的旧 profile、迁移命令和模板推导入口；
+- 保留表级 `mode: full_refresh`、CLI `sync --full` 和 `full_sync()`，直到 M4 一次完成
+  语义替换和删除。
+
+验收：
+
+- `rg` 无运行时 ERP profile、旧配置字段、迁移命令和模板推导工具；
+- 新安装不再从随包文件生成候选表；
+- 显式表配置仍可分别执行 incremental 和旧语义 full refresh；
+- 针对表级 `full_refresh` 增加回归测试，确认 M0 清理未令其失效；
+- 删除旧 PowerShell 安装脚本后，EXE + 浏览器成为唯一安装入口；
+- Python 和现有核心测试通过；
+- 本里程碑不得独立发布。
+
+### M0-P：平台配置与运行边界切分
+
+新增或修改：
+
+- 新增平台专用配置模型及加载入口；
+- 修改 `data2agent/admin_common/setup_yaml.py`；
+- 修改 `data2agent/console/app.py`；
+- 修改 `data2agent/console/contracts.py`；
+- 修改 `data2agent/ingest/app.py` 的平台配置接入，但保留 ingest 请求中的来源标识；
+- 修改平台便携包生成、启动和完整性检查；
+- 修改 `console-ui/openapi.json`、生成类型和相关前端能力展示；
+- 修改平台 Console、契约、部署和安装测试。
+
+任务：
+
+- 定义 `PlatformConfig` 及严格校验，只接受平台职责字段；
+- 将 Console 和平台启动入口从 `ConnectConfig` 切换到 `PlatformConfig`；
+- 删除平台配置中的 ERP adapter、`D2A_E10_DSN_PLACEHOLDER`、硬编码 ERP 表和
+  `sources`；
+- 删除平台端 `/api/actions/sync`、`/api/actions/reconcile` 和
+  `actions_sync_reconcile`；
+- 删除 Console 直接调用 `run_sync_cycle()`、`run_reconcile_cycle()` 的路径；
+- 平台状态和观测改为读取 ingest/raw/apply 结果，不再读取 ERP source 配置；
+- 更新平台配置生成器、EXE 首次安装、OpenAPI、前端类型、测试和文档；
+- 保持 ingest 请求中的 `source/schema/table` 以及快照/批次标识，避免将配置切分误作
+  数据来源标识删除。
+
+验收：
+
+- 平台配置解析模型中不存在 `sources` 和 ERP 连接字段；
+- 平台包中没有 ERP DSN、抽取表计划和直连 ERP 动作；
+- 平台配置若出现已删除字段会明确拒绝，而不是静默忽略；
+- 中间机是唯一可以发起 ERP 抽取的角色；
+- Console 不再暴露 sync/reconcile 接口或能力标志；
+- ingest 仍可按来源和表正确隔离数据；
+- Python、OpenAPI、前端类型、平台启动和便携包检查通过；
+- 本里程碑不得独立发布。
+
 ### M1：配置契约与连接结果拆分
 
 修改：
@@ -366,14 +489,20 @@ HTTP 推送协议增加快照生命周期：
 - `data2agent/middle_admin/app.py`
 - `data2agent/admin_common/config_edit.py`
 - `data2agent/admin_common/setup_yaml.py`
-- 删除 `erp-configs/digiwin_e10.yaml`
-- 删除所有 ERP profile 加载与便携包复制代码
+- `deploy/build_portable.ps1`
+- `scripts/check_portable_package.py`
+- `connect.example.yaml`
+- `tests/test_home_setup.py`
 
 任务：
 
 - 允许 `tables: {}`；
 - 增加 `schema`、`key_columns`、`schema_fingerprint`、`validated_at`；
 - 新安装不包含任何候选表；
+- `build_middle_connect_yaml()` 生成空 `tables`；
+- 删除便携包中的 `app/erp-configs` 目录创建、复制和完整性检查；
+- 删除示例配置中关于随包 ERP profile 的说明；
+- 删除依赖默认 ERP 表清单的测试，改为验证新安装表清单为空；
 - 新增纯连接测试；
 - 删除旧 `POST /api/test-connection`；
 - 定义配置修订号和原子更新。
@@ -383,6 +512,7 @@ HTTP 推送协议增加快照生命周期：
 - 空表清单可以保存并启动；
 - 连接成功但表未配置时状态明确；
 - 安装包中不存在 `erp-configs/digiwin_e10.yaml`；
+- 平台配置不包含 ERP 表和 ERP 连接占位字段；
 - 配置冲突返回 `409`。
 
 ### M2：SQL Server 元数据发现后端
@@ -390,21 +520,32 @@ HTTP 推送协议增加快照生命周期：
 新增或修改：
 
 - 新增 `data2agent/connect/metadata.py`
+- 新增元数据领域模型、`MetadataDiscoverer` 协议和 discoverer 工厂/能力解析；
 - 修改 `data2agent/connect/adapters/mssql.py`
+- 修改 `data2agent/connect/adapters/sqlite.py` 或新增测试替身；
 - 修改 `data2agent/middle_admin/app.py`
 
 任务：
 
+- 定义与数据库类型无关的 schema、表、字段、键、索引和校验结果模型；
+- 实现 `MetadataDiscoverer` 协议，管理 API 和扫描任务只依赖该协议；
+- 实现 `MssqlMetadataDiscoverer`，SQL Server 系统表查询只存在于该实现中；
+- 实现 SQLite 测试实现或协议测试替身；
+- adapter 不支持发现能力时返回 `metadata_discovery_unsupported`；
 - 实现表、视图、字段、PK、唯一索引和外键查询；
 - 实现进程内扫描任务、TTL 缓存、数量上限和超时；
 - 实现业务键唯一性与 NULL 校验；
 - 实现水位候选和字段类型校验；
+- discoverer 自行管理连接，不向 API、缓存或调用方暴露原始连接对象；
 - 所有异常输出脱敏。
 
 验收：
 
 - 可在没有任何 `tables` 配置时扫描；
+- 元数据 API 测试可替换 discoverer，不依赖真实 SQL Server；
+- `metadata.py` 不按 adapter 名称分支，也不包含 SQL Server 系统表 SQL；
 - 元数据权限不足与连接失败可区分；
+- 不支持发现能力的 adapter 返回稳定错误码；
 - 不保存 ERP 行值；
 - 不创建元数据 SQLite 或其他持久化缓存文件；
 - 进程重启后可以重新扫描并恢复页面能力。
@@ -440,6 +581,8 @@ HTTP 推送协议增加快照生命周期：
 
 修改：
 
+- `data2agent/connect/sync.py`
+- `data2agent/connect/__main__.py`
 - `data2agent/connect/increment.py`
 - `data2agent/connect/sink.py`
 - `data2agent/connect/landing.py`
@@ -452,7 +595,10 @@ HTTP 推送协议增加快照生命周期：
 - 增加 staging raw 表；
 - 支持无主键全量表；
 - 实现批次去重、完成核对、原子发布与失败清理；
-- 增加严格的 `ingest_protocol_version` 校验。
+- 增加严格的 `ingest_protocol_version` 校验；
+- 将表级 `mode: full_refresh` 从旧的全量读取/upsert 切换到快照生命周期；
+- 删除 CLI `sync --full` 和 `full_sync()`，禁止运行时覆盖逐表同步模式；
+- 删除仅服务旧全量 upsert 行为的测试和分支。
 
 验收：
 
@@ -460,7 +606,11 @@ HTTP 推送协议增加快照生命周期：
 - 源表删除行后，下一次全量完成后平台不再保留该行；
 - 同一 snapshot 重放结果不重复；
 - 零行表可正确发布为空表；
-- 无主键表可使用 `full_refresh`。
+- 无主键表可使用 `full_refresh`；
+- CLI 不再接受 `sync --full`，运行模式只能来自逐表配置；
+- 全仓不存在生产 `full_sync()` 调用；
+- M0 至 M3 的旧 full refresh 回归测试替换为快照语义测试；
+- M4 未全部通过前不得进行正式页面联调或制作发布包。
 
 ### M5：中间机页面拆分
 
@@ -489,7 +639,7 @@ HTTP 推送协议增加快照生命周期：
 - 删除抽取表必须二次确认；
 - 页面不显示密码、DSN 或 Token 明文。
 
-### M6：旧实现清理、文档、全链路验收与发布
+### M6：文档与全链路验收
 
 修改：
 
@@ -501,7 +651,7 @@ HTTP 推送协议增加快照生命周期：
 
 任务：
 
-- 删除旧配置字段、迁移命令、旧 API、旧 ingest 协议和相关测试；
+- 再次审计并确认旧配置字段、旧 API、旧 ingest 协议和相关测试均已删除；
 - 首次打开新页面时引导扫描并选择表；
 - 平台与中间机协议版本严格检查；
 - 更新安装包模板和检查脚本；
@@ -514,17 +664,66 @@ HTTP 推送协议增加快照生命周期：
 - 两端版本不兼容时 fail-fast，不产生半份数据；
 - 旧配置格式和旧 ingest 请求均被明确拒绝；
 - Windows 便携包完成端到端验收；
-- CI、Release 构建和安装包检查全部通过。
+- CI 和安装包检查全部通过。
+
+### M7：展厅、Mock、演示资产生产化清理与发布
+
+删除或迁移：
+
+- 将 `data2agent/showroom/seed.py`、`e10_schema.py` 和 `seed_mssql.py` 中仍被测试需要的
+  seed/schema 能力移到 `tests/fixtures/e10`；
+- 将仍有价值的 `review_demo.py` 断言改写成正常测试；没有产品价值的演示渲染逻辑直接
+  删除；
+- 删除产品包中的 `data2agent/showroom`；
+- 删除 `deploy/showroom-connect.yaml`、`deploy/demo.tape` 和根目录演示
+  `docker-compose.yml`；
+- 删除 `deploy/render_hero_svg.py` 等只服务展厅的脚本；
+- 删除前端 Mock 运行模式、MSW handlers、场景切换器和相关依赖；
+- 删除 README、设计文档和开发文档中的展厅/Mock 运行说明；
+- 保留真正的 SQL Server 集成测试 compose，但改为读取 `tests/fixtures`。
+
+任务：
+
+- 删除前先用 `rg` 生成并保存迁移核对清单，至少覆盖 Python import、`python -m`
+  入口、Compose command、配置文件路径、前端环境变量和文档命令；
+- 用明确的测试 fixture 替换生产包内的 showroom import；
+- 逐项更新直接依赖 seed 的 Console、MCP、lineage、mapping、publish、increment、
+  reconcile、dead-stock 和 dataset 测试；
+- 更新 `tests/integration/mssql/docker-compose.yml`，改用测试范围的 MSSQL seed
+  入口，不再执行 `python -m data2agent.showroom.seed_mssql`；
+- 更新 `scripts/smoke_admin_ui.py` 和 `console-ui/scripts/e2e-acceptance.mjs`，改用
+  测试 fixture 或真实 API 准备数据；
+- 删除 `data2agent/mcp_server/__main__.py` 等生产错误信息中的 showroom 启动提示；
+- 删除 `VITE_CONSOLE_MODE=mock`、Mock 水印和场景切换逻辑；
+- 删除只验证 Mock 场景的前端测试，保留真实 API 契约和组件状态测试；
+- 确认 wheel、平台便携包和中间机便携包均不包含展厅或 Mock 代码；
+- 运行完整 Python、前端、SQL Server、Docker、便携包和 Release 检查；
+- 构建同一版本的平台包与中间机包并完成最终发布。
+
+验收：
+
+- `data2agent` 正式 wheel 不包含 `showroom`；
+- 除本实施计划的历史说明外，全仓搜索不存在 `data2agent.showroom`、
+  `showroom-connect.yaml`、`seed_mssql` 或 `VITE_CONSOLE_MODE`；
+- Vue 生产与开发均只使用真实 API，不存在 Mock 模式；
+- 仓库根目录不存在展厅启动入口；
+- 测试 fixture 只位于 `tests` 范围；
+- SQL Server 集成 compose 可独立完成建库、seed、元数据发现和同步测试；
+- CI 与 Release 全部通过；
+- 两个便携包来自同一提交、同一版本和同一 ingest 协议。
 
 ## 10. 测试计划
 
 新增测试建议：
 
+- `tests/fixtures/e10/`：从产品 `showroom` 迁移的测试 schema 和 seed；
+- `tests/test_metadata_discoverer.py`：发现协议、工厂、能力缺失和连接边界；
 - `tests/test_erp_metadata.py`：元数据模型、候选键和水位；
 - `tests/test_middle_metadata_api.py`：扫描 API、权限、脱敏和缓存；
 - `tests/test_middle_extraction_tables.py`：独立表计划 API、修订冲突和原子保存；
 - `tests/test_composite_increment.py`：复合键增量边界；
 - `tests/test_full_refresh_snapshot.py`：全量 staging、发布、失败和重放；
+- `tests/test_platform_config.py`：平台专用配置模型及旧字段拒绝；
 - `tests/integration/mssql/test_metadata_discovery.py`：SQL Server 元数据；
 - `tests/integration/mssql/test_business_keys.py`：配置键覆盖数据库 PK；
 - `tests/integration/mssql/test_snapshot_replace.py`：无键全量替换；
@@ -539,6 +738,19 @@ HTTP 推送协议增加快照生命周期：
 - `tests/test_increment.py`
 - `tests/test_home_setup.py`
 - `tests/test_ui_launcher.py`
+
+showroom 迁移必须额外覆盖当前直接引用它的测试与入口，包括：
+
+- `tests/test_connect.py`、`tests/test_reconcile.py`、`tests/test_sink_ingest.py`；
+- `tests/test_console*.py`、`tests/test_mcp*.py`；
+- `tests/test_lineage*.py`、`tests/test_mapping*.py`；
+- `tests/test_publish*.py`、`tests/test_dead_stock*.py`；
+- `tests/test_build_dataset.py`、`tests/test_entry_dataset_publish.py`；
+- `tests/integration/mssql/docker-compose.yml`；
+- `scripts/smoke_admin_ui.py`、`console-ui/scripts/e2e-acceptance.mjs`。
+
+实施 M7 时以实际 `rg` 结果为准；上述列表是最低覆盖范围，不是允许忽略新增引用的固定
+白名单。
 
 ## 11. 发布策略
 
@@ -577,6 +789,7 @@ HTTP 推送协议增加快照生命周期：
 | `docs/runbook/source-dev.md` | 本地元数据扫描和 SQL Server 集成测试 |
 | `docs/roadmap.md` | 里程碑状态和发布门槛 |
 | `README.md` | 中间机部署流程简述 |
+| 删除 `docs/superpowers/plans/2026-07-23-explicit-table-config.md` | 已完成且与干净切换冲突的旧实施计划 |
 
 ## 13. 发布门槛
 
@@ -590,12 +803,19 @@ HTTP 推送协议增加快照生命周期：
 - 无主键全量表完成跨机推送；
 - `/config`、`/metadata`、`/tables` 职责清晰；
 - 旧配置、旧接口、旧协议及迁移代码已彻底删除；
+- 平台不存在 ERP 直连配置及 sync/reconcile 动作；
+- `PlatformConfig` 不接受或静默忽略 ERP `sources` 配置；
+- 元数据 API 只依赖 `MetadataDiscoverer`，SQL Server 查询封装在对应实现内；
+- M0 至 M3 未产生任何对外发布包，正式版本只包含 M4 快照语义；
+- 正式包不包含 showroom、Mock、演示配置或旧 PowerShell 安装入口；
 - Python、前端/页面、SQL Server 集成、Docker/便携包和 Release 检查全部通过。
 
 ## 14. 推荐执行顺序
 
-严格按 `M1 → M2 → M3 → M4 → M5 → M6` 实施。
+严格按 `M0 → M0-P → M1 → M2 → M3 → M4 → M5 → M6 → M7` 实施。
 
-M2 依赖 M1 的空配置和连接结果契约；M3 依赖 M2 产生的键确认信息；M4 依赖 M3 的
-运行键模型；M5 在 API 契约冻结后开发；M6 负责旧实现清理和正式发布。不得先制作页面再反推
-同步协议，否则会再次出现“界面可配置、运行时不支持”的状态。
+M0 先移除会与新设计竞争的旧事实来源；M0-P 完成平台和中间机职责切分；M2 依赖 M1
+的空配置和连接结果契约；M3 依赖 M2 产生的键确认信息；M4 依赖 M3 的运行键模型，并在
+同一里程碑删除 CLI 全量覆盖入口；M5 在 API 契约冻结后开发；M6 完成功能验收，M7
+完成产品包清理和正式发布。不得先制作页面再反推同步协议，也不得发布 M0 至 M3 的中间
+状态，否则会再次出现“界面可配置、运行时不支持”或“全量读取但不是完整快照”的状态。
