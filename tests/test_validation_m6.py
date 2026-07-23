@@ -7,6 +7,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
+from data2agent.connect.adapters.base import TableInfo
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.dataset_publish import build_dataset
 from data2agent.connect.increment import incremental_sync, watermarks_from_pack
@@ -195,7 +196,12 @@ class TestRawPresence:
         from data2agent.console.validation import build_validation_report
         pack = load_pack(ROOT / "templates")
         run_id = published_landing.start_run(SOURCE, "sync")
-        published_landing.finish_run(run_id, tables=6, rows=100, status="ok")
+        # 为全部 6 张表创建 step 记录
+        tables = ["CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
+        for i, tbl in enumerate(tables):
+            sid = published_landing.add_step(run_id, i + 1, "table", tbl)
+            published_landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
+        published_landing.finish_run(run_id, tables=6, rows=600, status="ok")
 
         report = build_validation_report(
             published_landing, run_id=run_id, pack=pack, source=SOURCE,
@@ -204,46 +210,68 @@ class TestRawPresence:
         checks = {c["check_id"]: c for c in report["checks"]}
         assert checks["raw_presence"]["status"] == "pass"
 
-    def test_single_table_deleted_from_config_still_passes(self, published_landing):
-        """删除单表后其他表继续同步,历史 raw 仍存在 → raw_presence 通过但不保证该表仍在抽取。"""
+    def test_table_without_sync_record_is_unverified(self, tmp_path):
+        """缺少同步记录的表应报告 warning,不能假装正常。"""
         from data2agent.console.validation import build_validation_report
         pack = load_pack(ROOT / "templates")
-        # 模拟:删除了 CURRENCY,只同步 5 张表,但旧 CURRENCY raw 数据还在
-        run_id = published_landing.start_run(SOURCE, "sync")
-        published_landing.finish_run(run_id, tables=5, rows=100, status="ok")
+        landing = LandingStore(tmp_path / "landing.sqlite")
+
+        # 创建一个 run,只为 5 张表写 step(排除 CURRENCY)
+        run_id = landing.start_run(SOURCE, "sync")
+        for i, tbl in enumerate(["CUSTOMER", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]):
+            sid = landing.add_step(run_id, i + 1, "table", tbl)
+            landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
+        landing.finish_run(run_id, tables=5, rows=500, status="ok")
+
+        # 确保 raw 表存在(创建空表)
+        for tbl in ["CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]:
+            landing.ensure_raw_table(SOURCE, TableInfo(tbl, [("id", "int")], ["id"]))
 
         report = build_validation_report(
-            published_landing, run_id=run_id, pack=pack, source=SOURCE,
+            landing, run_id=run_id, pack=pack, source=SOURCE,
             config=None, include_mcp_probe=False,
         )
         checks = {c["check_id"]: c for c in report["checks"]}
-        # pass 因为所有 binding 表 raw 数据都存在
-        # detail.note 说明单表停止检测需要表级心跳协议
-        assert checks["raw_presence"]["status"] == "pass"
-        assert "note" in checks["raw_presence"]["detail"]
-        assert "表级心跳" in checks["raw_presence"]["detail"]["note"]
+        assert checks["raw_presence"]["status"] == "warning"
+        assert "CURRENCY" in checks["raw_presence"]["detail"].get("unverified", [])
+        landing.con.rollback()
 
-    def test_other_source_does_not_affect(self, published_landing):
-        """其他数据源的成功不影响当前源。"""
+    def test_other_source_does_not_pollute(self, tmp_path):
+        """其他数据源的 step 记录不影响当前源的逐表新鲜度。"""
         from data2agent.console.validation import build_validation_report
         pack = load_pack(ROOT / "templates")
-        run_id = published_landing.start_run(SOURCE, "sync")
-        published_landing.finish_run(run_id, tables=6, rows=100, status="ok")
+        landing = LandingStore(tmp_path / "landing.sqlite")
 
-        # 另一个 source 注入过期 run
-        other = published_landing.start_run("other_source", "sync")
-        published_landing.finish_run(other, tables=1, rows=1, status="ok")
-        published_landing.con.execute(
-            "UPDATE d2a_sync_run SET finished_at = ? WHERE id = ?",
-            ("2020-01-01T00:00:00", other),
+        # 为 6 张表创建 raw 空表
+        tables = ["CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
+        for tbl in tables:
+            landing.ensure_raw_table(SOURCE, TableInfo(tbl, [("id", "int")], ["id"]))
+
+        # 当前源:6 张表都有最近 step 记录
+        run_id = landing.start_run(SOURCE, "sync")
+        for i, tbl in enumerate(tables):
+            sid = landing.add_step(run_id, i + 1, "table", tbl)
+            landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
+        landing.finish_run(run_id, tables=6, rows=600, status="ok")
+
+        # 另一个源有同名表但过期
+        other = landing.start_run("other_source", "sync")
+        for i, tbl in enumerate(["CUSTOMER", "CURRENCY"]):
+            sid = landing.add_step(other, i + 1, "table", tbl)
+            landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
+        landing.finish_run(other, tables=2, rows=200, status="ok")
+        # 把 other_source 的 step finished_at 改到过去
+        landing.con.execute(
+            "UPDATE d2a_run_step SET finished_at = '2020-01-01T00:00:00' WHERE run_id = ?",
+            (other,),
         )
-        published_landing.con.commit()
+        landing.con.commit()
 
         report = build_validation_report(
-            published_landing, run_id=run_id, pack=pack, source=SOURCE,
+            landing, run_id=run_id, pack=pack, source=SOURCE,
             config=None, include_mcp_probe=False,
         )
         checks = {c["check_id"]: c for c in report["checks"]}
-        # 当前源的 raw 存在,应通过
+        # 当前源有完整记录 → pass(不被 other_source 污染)
         assert checks["raw_presence"]["status"] == "pass"
-        published_landing.con.rollback()
+        landing.con.rollback()
