@@ -27,10 +27,11 @@ from .sync import whitelist_from_pack
 
 
 def _add_common(sp: argparse.ArgumentParser) -> None:
-    src = sp.add_mutually_exclusive_group(required=True)
+    src = sp.add_mutually_exclusive_group(required=False)
     src.add_argument("--sqlite", help="SQLite 源库路径(开发 / 参考库)")
     src.add_argument("--mssql-dsn-env", help="存放 MSSQL 连接串的环境变量名(凭据不落配置)")
-    sp.add_argument("--source", default="digiwin_e10", help="binding 数据源名(推导白名单)")
+    src.add_argument("--config", help="connect.yaml 路径(使用 tables 配置)")
+    sp.add_argument("--source", default="digiwin_e10", help="数据源名")
     sp.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径")
     sp.add_argument("--templates", default="templates", help="模板包目录")
     sp.add_argument("--batch-size", type=int, default=5000)
@@ -38,14 +39,49 @@ def _add_common(sp: argparse.ArgumentParser) -> None:
 
 
 def _build(args, ap):
-    pack = load_pack(args.templates)
-    whitelist = whitelist_from_pack(pack, args.source)
-    if not whitelist:
-        ap.error(f"模板中没有 source={args.source} 的 binding,白名单为空")
+    """构建适配器、落地库和水位映射。
+
+    返回 (pack_or_none, adapter, landing, watermarks)。
+    --config 模式: pack 为 None, watermarks 来自 tables 配置。
+    旧模式: pack 来自模板, watermarks 来自 binding。
+    """
     landing = LandingStore(args.landing)
     hook = lambda action, sql, rows, ms: landing.log_audit(args.source, action, sql, rows, ms)  # noqa: E731
     kwargs = dict(batch_size=args.batch_size, rows_per_second=args.rows_per_second,
                   audit_hook=hook)
+
+    if getattr(args, 'config', None):
+        from .config import load_config
+        cfg = load_config(args.config)
+        if args.source not in cfg.sources:
+            ap.error(f"配置中没有源 '{args.source}',可用: {sorted(cfg.sources)}")
+        scfg = cfg.sources[args.source]
+        whitelist = scfg.table_whitelist()
+        watermarks = scfg.table_watermarks()
+
+        import os as _os
+        if scfg.adapter == "sqlite_readonly":
+            from .adapters.sqlite import SqliteReadOnlyAdapter
+            path = scfg.path or _os.environ.get(scfg.dsn_env or "", "")
+            adapter = SqliteReadOnlyAdapter(path, whitelist, **kwargs)
+        else:
+            from .adapters.mssql import MssqlReadOnlyAdapter
+            dsn = _os.environ.get(scfg.dsn_env or "", "")
+            if not dsn:
+                ap.error(f"环境变量 {scfg.dsn_env} 为空")
+            adapter = MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
+        return None, adapter, landing, watermarks
+
+    # Legacy mode (no --config): require --sqlite or --mssql-dsn-env
+    if not args.sqlite and not args.mssql_dsn_env:
+        ap.error("需要 --sqlite、--mssql-dsn-env 或 --config")
+
+    pack = load_pack(args.templates)
+    whitelist = whitelist_from_pack(pack, args.source)
+    if not whitelist:
+        ap.error(f"模板中没有 source={args.source} 的 binding,白名单为空")
+    watermarks = watermarks_from_pack(pack, args.source)
+
     if args.sqlite:
         from .adapters.sqlite import SqliteReadOnlyAdapter
         adapter = SqliteReadOnlyAdapter(args.sqlite, whitelist, **kwargs)
@@ -55,7 +91,7 @@ def _build(args, ap):
             ap.error(f"环境变量 {args.mssql_dsn_env} 为空")
         from .adapters.mssql import MssqlReadOnlyAdapter
         adapter = MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
-    return pack, adapter, landing
+    return pack, adapter, landing, watermarks
 
 
 def main() -> int:
@@ -214,12 +250,13 @@ def main() -> int:
     if args.cmd == "apply":
         return _apply_loop(args)
 
-    pack, adapter, landing = _build(args, ap)
+    pack, adapter, landing, watermarks = _build(args, ap)
 
     if args.cmd == "backfill":
-        wm_col = watermarks_from_pack(pack, args.source).get(args.table)
+        wm_col = watermarks.get(args.table)
         if wm_col is None:
-            ap.error(f"表 {args.table} 没有水位声明,无法按区间回补(可用 sync --full)")
+            ap.error(f"表 {args.table} 不在配置的增量表中,无法按区间回补。"
+                     f"增量表: {sorted(watermarks)}")
         info = adapter.table_info(args.table)
         landing.ensure_raw_table(args.source, info)
         import uuid
@@ -232,7 +269,8 @@ def main() -> int:
         return 0
 
     if args.cmd == "sync":
-        watermarks = {} if args.full else watermarks_from_pack(pack, args.source)
+        if args.full:
+            watermarks = {}
         report = incremental_sync(adapter, landing, args.source, watermarks,
                                   lookback_days=args.lookback_days)
         print(f"同步完成:run #{report.run_id},{len(report.tables)} 表,"
@@ -242,8 +280,7 @@ def main() -> int:
             print(f"  - {t.table:<16} {t.rows:>6} 行 / {t.batches} 批  [{t.strategy}]{wm}")
         return 0
 
-    report = reconcile(adapter, landing, args.source,
-                       watermarks_from_pack(pack, args.source), deep=args.deep)
+    report = reconcile(adapter, landing, args.source, watermarks, deep=args.deep)
     mode = "deep" if args.deep else "L1"
     print(f"对账完成({mode}):run #{report.run_id},检查 {len(report.segments)} 段,"
           f"不一致 {len(report.mismatched)} 段,软删 {report.total_soft_deleted} 行")
