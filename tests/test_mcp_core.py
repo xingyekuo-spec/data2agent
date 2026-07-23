@@ -56,7 +56,13 @@ def svc(tmp_path_factory) -> QueryService:
 def test_object_catalog(svc):
     catalog = svc.query_objects()
     names = {o["object"] for o in catalog["objects"]}
-    assert names == {"Customer", "Material", "Quotation", "SalesOrder", "SalesOrderLine"}
+    assert names == {
+        "Customer", "DeadStockAttribution", "DeadStockItem",
+        "DuplicateMaterialCandidate", "EcnChangeEvidence", "Material",
+        "MaterialBomUsage", "MaterialOrderEvidence", "MaterialSubstituteCandidate",
+        "ProductionLossEvidence", "PurchaseOverbuyEvidence", "Quotation",
+        "SalesOrder", "SalesOrderLine", "SpecialConditionEvidence",
+    }
 
 
 def test_query_rows_with_joined_code(svc):
@@ -109,6 +115,7 @@ def test_metric_catalog(svc):
     catalog = svc.query_metrics()
     by_id = {m["metric"]: m for m in catalog["metrics"]}
     assert by_id["gross_margin_rate"]["implemented"] is True
+    assert by_id["substitute_consumable_quantity"]["implemented"] is True
     assert by_id["overdue_receivable_amount"]["implemented"] is False
 
 

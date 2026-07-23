@@ -26,7 +26,6 @@ const {
   historyClearedHint,
 } = storeToRefs(store)
 
-const tab = ref<'objects' | 'metrics' | 'proposal'>('objects')
 const showObjectRawJson = ref(false)
 const showMetricsRawJson = ref(false)
 const expandedEvidence = ref<string | null>(null)
@@ -58,11 +57,55 @@ const proposalForm = reactive({
 
 const evidenceSessionId = computed(() => ensureEvidenceSessionId())
 
-const activeResult = computed(() => {
-  if (tab.value === 'metrics') return metricsQuery.value
-  if (tab.value === 'objects') return objectQuery.value
-  return null
-})
+type McpInterfaceRow = {
+  tool: 'query_objects' | 'query_metrics' | 'propose_action'
+  tier: '看' | '说'
+  mode: string
+  target: string
+  params: string
+  evidence: string
+}
+
+const mcpInterfaces: McpInterfaceRow[] = [
+  {
+    tool: 'query_objects',
+    tier: '看',
+    mode: '只读查询',
+    target: '业务对象 / 对象目录',
+    params: 'object, filters, order_by, desc, limit<=200',
+    evidence: '返回 query_id + result_digest',
+  },
+  {
+    tool: 'query_metrics',
+    tier: '看',
+    mode: '只读指标',
+    target: '经营指标 / 指标目录',
+    params: 'metric, group_by, limit<=200',
+    evidence: '返回 query_id + result_digest',
+  },
+  {
+    tool: 'propose_action',
+    tier: '说',
+    mode: '建议卡',
+    target: '对象动作',
+    params: 'object, action, conclusion, evidence[]',
+    evidence: '引用同 session 查询证据',
+  },
+]
+
+const selectedTool = ref<McpInterfaceRow['tool'] | null>(null)
+
+const selectedInterface = computed(() =>
+  mcpInterfaces.find((item) => item.tool === selectedTool.value) ?? null,
+)
+
+function openInterface(tool: McpInterfaceRow['tool']): void {
+  selectedTool.value = tool
+}
+
+function backToList(): void {
+  selectedTool.value = null
+}
 
 function metaOf(data: Record<string, unknown> | null | undefined): McpQueryMeta | null {
   const meta = data?.meta
@@ -234,214 +277,302 @@ async function onLoadProposalDetail(): Promise<void> {
       </p>
     </div>
 
-    <div class="d2a-card">
-      <el-tabs v-model="tab" data-testid="mcp-tabs">
-        <el-tab-pane label="对象查询" name="objects">
-          <div class="form-grid" data-testid="object-query-form">
-            <label>对象 <input v-model="objectForm.object" data-testid="object-name" /></label>
-            <label>filters(JSON)
-              <textarea v-model="objectForm.filtersJson" rows="3" data-testid="object-filters" />
-            </label>
-            <label>order_by <input v-model="objectForm.order_by" data-testid="object-order-by" /></label>
-            <label class="inline">
-              <input v-model="objectForm.desc" type="checkbox" data-testid="object-desc" /> desc
-            </label>
-            <label>limit
-              <input v-model.number="objectForm.limit" type="number" min="1" max="200" data-testid="object-limit" />
-            </label>
-            <el-button type="primary" data-testid="object-run" @click="onRunObjects">执行查询</el-button>
-          </div>
-          <p v-if="objectRefreshError" class="refresh-warning" data-testid="object-refresh-error">
-            刷新失败({{ reasonLabel(objectRefreshError as McpLabApiError) || objectRefreshError.message }})，保留上次成功结果
-          </p>
-          <LoadingState v-if="objectQuery.status === 'loading'" />
-          <template v-else-if="objectQuery.status === 'error'">
-            <p
-              v-if="reasonLabel(objectQuery.error as McpLabApiError)"
-              class="reason-code"
-              data-testid="object-error-reason"
-            >
-              {{ reasonLabel(objectQuery.error as McpLabApiError) }}
-            </p>
-            <ErrorState
-              :error="objectQuery.error"
-              @retry="onRunObjects"
-            />
+    <div
+      v-if="selectedTool === null"
+      class="d2a-card interface-catalog"
+      data-testid="mcp-interface-catalog"
+    >
+      <div class="interface-catalog__head">
+        <h3>MCP 接口清单</h3>
+        <span data-testid="mcp-interface-count">共 {{ mcpInterfaces.length }} 个</span>
+      </div>
+      <el-table
+        :data="mcpInterfaces"
+        size="small"
+        data-testid="mcp-interface-table"
+      >
+        <el-table-column prop="tool" label="接口" min-width="150" />
+        <el-table-column prop="tier" label="档位" width="72">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.tier === '说' ? 'warning' : 'success'">
+              {{ row.tier }}
+            </el-tag>
           </template>
-          <div v-else-if="objectQuery.status === 'success'" data-testid="object-result">
-            <div class="result-meta" data-testid="object-result-meta">
-              <span>query_id={{ metaOf(objectQuery.data)?.query_id ?? 'null' }}</span>
-              <span>scope={{ metaOf(objectQuery.data)?.evidence_scope ?? '—' }}</span>
-              <span>session={{ shortValue(metaOf(objectQuery.data)?.session_id) }}</span>
-              <span>digest={{ shortValue(metaOf(objectQuery.data)?.result_digest) }}</span>
-              <span>耗时 {{ metaOf(objectQuery.data)?.duration_ms ?? '-' }} ms</span>
-              <span>行数 {{ metaOf(objectQuery.data)?.row_count ?? rowsOf(objectQuery.data).length }}</span>
-              <span data-testid="object-dataset-version">
-                dataset={{ metaOf(objectQuery.data)?.dataset_version ?? '尚未发布' }}
-              </span>
-              <span data-testid="object-template-version">
-                template={{ metaOf(objectQuery.data)?.template_version ?? '—' }}
-              </span>
-            </div>
-            <p v-if="metaOf(objectQuery.data)?.masked_fields?.length" data-testid="object-masked">
-              已脱敏: {{ metaOf(objectQuery.data)?.masked_fields?.join(', ') }}
-            </p>
-            <ul v-if="metaOf(objectQuery.data)?.warnings?.length" data-testid="object-warnings">
-              <li v-for="w in metaOf(objectQuery.data)?.warnings" :key="w">{{ w }}</li>
-            </ul>
-            <EmptyState
-              v-if="rowsOf(objectQuery.data).length === 0"
-              title="查询成功，无行返回"
-            />
-            <el-table
-              v-else
-              :data="rowsOf(objectQuery.data)"
+        </el-table-column>
+        <el-table-column prop="mode" label="能力" min-width="100" />
+        <el-table-column prop="target" label="目标" min-width="150" />
+        <el-table-column prop="params" label="参数" min-width="260" />
+        <el-table-column prop="evidence" label="证据" min-width="190" />
+        <el-table-column label="操作" width="110">
+          <template #default="{ row }">
+            <el-button
               size="small"
-              data-testid="object-rows-table"
+              :data-testid="`open-interface-${row.tool}`"
+              @click="openInterface(row.tool)"
             >
-              <el-table-column
-                v-for="col in Object.keys(rowsOf(objectQuery.data)[0] ?? {})"
-                :key="col"
-                :prop="col"
-                :label="col"
-                min-width="120"
-              />
-            </el-table>
-            <el-button size="small" data-testid="toggle-object-json" @click="showObjectRawJson = !showObjectRawJson">
-              {{ showObjectRawJson ? '隐藏' : '显示' }}原始 JSON
+              查看详情
             </el-button>
-            <pre v-if="showObjectRawJson" data-testid="object-raw-json">{{ JSON.stringify(objectQuery.data, null, 2) }}</pre>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="指标查询" name="metrics">
-          <div class="form-grid" data-testid="metrics-query-form">
-            <label>指标 <input v-model="metricsForm.metric" data-testid="metric-name" /></label>
-            <label>group_by <input v-model="metricsForm.group_by" data-testid="metric-group-by" /></label>
-            <label>limit
-              <input v-model.number="metricsForm.limit" type="number" min="1" max="200" data-testid="metric-limit" />
-            </label>
-            <el-button type="primary" data-testid="metrics-run" @click="onRunMetrics">执行查询</el-button>
-          </div>
-          <p v-if="metricsRefreshError" class="refresh-warning" data-testid="metrics-refresh-error">
-            刷新失败({{ reasonLabel(metricsRefreshError as McpLabApiError) || metricsRefreshError.message }})，保留上次成功结果
-          </p>
-          <LoadingState v-if="metricsQuery.status === 'loading'" />
-          <ErrorState
-            v-else-if="metricsQuery.status === 'error'"
-            :error="metricsQuery.error"
-            @retry="onRunMetrics"
-          />
-          <div v-else-if="metricsQuery.status === 'success'" data-testid="metrics-result">
-            <div class="result-meta" data-testid="metrics-result-meta">
-              <span>query_id={{ metaOf(metricsQuery.data)?.query_id ?? 'null' }}</span>
-              <span>scope={{ metaOf(metricsQuery.data)?.evidence_scope ?? '—' }}</span>
-              <span>session={{ shortValue(metaOf(metricsQuery.data)?.session_id) }}</span>
-              <span>digest={{ shortValue(metaOf(metricsQuery.data)?.result_digest) }}</span>
-              <span>耗时 {{ metaOf(metricsQuery.data)?.duration_ms ?? '-' }} ms</span>
-              <span>行数 {{ metaOf(metricsQuery.data)?.row_count ?? rowsOf(metricsQuery.data).length }}</span>
-              <span data-testid="metrics-dataset-version">
-                dataset={{ metaOf(metricsQuery.data)?.dataset_version ?? '尚未发布' }}
-              </span>
-            </div>
-            <ul v-if="metaOf(metricsQuery.data)?.warnings?.length" data-testid="metrics-warnings">
-              <li v-for="w in metaOf(metricsQuery.data)?.warnings" :key="w">{{ w }}</li>
-            </ul>
-            <EmptyState
-              v-if="rowsOf(metricsQuery.data).length === 0"
-              title="查询成功，无行返回"
-            />
-            <el-table
-              v-else
-              :data="rowsOf(metricsQuery.data)"
-              size="small"
-              data-testid="metrics-rows-table"
-            >
-              <el-table-column
-                v-for="col in Object.keys(rowsOf(metricsQuery.data)[0] ?? {})"
-                :key="col"
-                :prop="col"
-                :label="col"
-                min-width="120"
-              />
-            </el-table>
-            <el-button size="small" data-testid="toggle-metrics-json" @click="showMetricsRawJson = !showMetricsRawJson">
-              {{ showMetricsRawJson ? '隐藏' : '显示' }}原始 JSON
-            </el-button>
-            <pre v-if="showMetricsRawJson" data-testid="metrics-raw-json">{{ JSON.stringify(metricsQuery.data, null, 2) }}</pre>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="建议卡" name="proposal">
-          <div class="form-grid" data-testid="proposal-form">
-            <label>对象 <input v-model="proposalForm.object" data-testid="proposal-object" /></label>
-            <label>动作 <input v-model="proposalForm.action" data-testid="proposal-action" /></label>
-            <label>结论
-              <textarea v-model="proposalForm.conclusion" rows="2" data-testid="proposal-conclusion" />
-            </label>
-            <div
-              v-for="(row, idx) in proposalForm.evidence"
-              :key="idx"
-              class="evidence-row"
-              data-testid="evidence-row"
-            >
-              <label>claim <input v-model="row.claim" :data-testid="`evidence-claim-${idx}`" /></label>
-              <label>query_id
-                <select v-model="row.query_id" :data-testid="`evidence-query-${idx}`">
-                  <option value="">选择当前会话中的持久 query evidence</option>
-                  <option v-for="h in citableHistory" :key="h.query_id" :value="h.query_id">
-                    {{ h.query_id }} · {{ h.tool }} · {{ h.target }} · {{ shortValue(h.result_digest, 6) }}
-                  </option>
-                </select>
-              </label>
-              <p v-if="historyFor(row.query_id)?.result_digest" class="muted">
-                digest={{ shortValue(historyFor(row.query_id)?.result_digest, 10) }}
-              </p>
-              <el-button size="small" @click="removeEvidenceRow(idx)">删除</el-button>
-            </div>
-            <el-button size="small" data-testid="evidence-add" @click="addEvidenceRow">添加 evidence</el-button>
-            <el-button type="primary" data-testid="proposal-run" @click="onRunProposal">生成建议卡</el-button>
-            <p class="muted" data-testid="no-execute-hint">本页不提供执行建议或写回控件。</p>
-          </div>
-          <p v-if="proposalRefreshError" class="refresh-warning" data-testid="proposal-refresh-error">
-            {{ reasonLabel(proposalRefreshError as McpLabApiError) || proposalRefreshError.message }}
-          </p>
-          <LoadingState v-if="proposal.status === 'loading'" />
-          <ErrorState
-            v-else-if="proposal.status === 'error'"
-            :error="proposal.error"
-            @retry="onRunProposal"
-          />
-          <div v-else-if="proposal.status === 'success'" class="proposal-card" data-testid="proposal-result">
-            <h3>{{ proposal.data.conclusion }}</h3>
-            <p>档位: {{ proposal.data.tier }} · {{ proposal.data.action_desc }}</p>
-            <p data-testid="proposal-summary-meta">
-              proposal_id={{ proposal.data.proposal_id }} · session={{ shortValue(proposal.data.session_id) }} ·
-              dataset={{ proposal.data.dataset_version ?? '—' }}
-            </p>
-            <p data-testid="proposal-governance">{{ proposal.data.governance }}</p>
-            <ul v-if="proposal.data.caveats?.length" data-testid="proposal-caveats">
-              <li v-for="c in proposal.data.caveats" :key="c">{{ c }}</li>
-            </ul>
-            <div
-              v-for="ev in proposal.data.evidence"
-              :key="ev.query.query_id + ev.claim"
-              class="evidence-item"
-              data-testid="proposal-evidence-item"
-            >
-              <button type="button" @click="toggleEvidence(ev.query.query_id)">
-                {{ ev.claim }} ({{ ev.query.query_id }}) · {{ shortValue(ev.query.result_digest, 8) }}
-              </button>
-              <div v-if="expandedEvidence === ev.query.query_id" data-testid="evidence-expand">
-                <pre>{{ prettyJson(evidenceSnapshot(ev)) }}</pre>
-              </div>
-            </div>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
 
-    <div class="d2a-card" data-testid="evidence-detail-panel">
+    <section
+      v-else
+      class="d2a-card interface-detail"
+      data-testid="mcp-interface-detail"
+    >
+      <div class="interface-detail__head">
+        <el-button size="small" data-testid="back-to-interface-list" @click="backToList">返回列表</el-button>
+        <div>
+          <h3>{{ selectedInterface?.tool }}</h3>
+          <p>{{ selectedInterface?.mode }} · {{ selectedInterface?.target }}</p>
+        </div>
+      </div>
+      <dl class="interface-detail__meta">
+        <div>
+          <dt>档位</dt>
+          <dd>{{ selectedInterface?.tier }}</dd>
+        </div>
+        <div>
+          <dt>参数</dt>
+          <dd>{{ selectedInterface?.params }}</dd>
+        </div>
+        <div>
+          <dt>证据</dt>
+          <dd>{{ selectedInterface?.evidence }}</dd>
+        </div>
+      </dl>
+    </section>
+
+    <section
+      v-if="selectedTool === 'query_objects'"
+      class="d2a-card interface-panel"
+      data-testid="object-interface-panel"
+    >
+      <div class="interface-panel__head">
+        <h3>query_objects</h3>
+        <p>对象查询 · 不带 object 返回对象目录</p>
+      </div>
+      <div class="form-grid" data-testid="object-query-form">
+        <label>对象 <input v-model="objectForm.object" data-testid="object-name" /></label>
+        <label>filters(JSON)
+          <textarea v-model="objectForm.filtersJson" rows="3" data-testid="object-filters" />
+        </label>
+        <label>order_by <input v-model="objectForm.order_by" data-testid="object-order-by" /></label>
+        <label class="inline">
+          <input v-model="objectForm.desc" type="checkbox" data-testid="object-desc" /> desc
+        </label>
+        <label>limit
+          <input v-model.number="objectForm.limit" type="number" min="1" max="200" data-testid="object-limit" />
+        </label>
+        <el-button type="primary" data-testid="object-run" @click="onRunObjects">执行查询</el-button>
+      </div>
+      <p v-if="objectRefreshError" class="refresh-warning" data-testid="object-refresh-error">
+        刷新失败({{ reasonLabel(objectRefreshError as McpLabApiError) || objectRefreshError.message }})，保留上次成功结果
+      </p>
+      <LoadingState v-if="objectQuery.status === 'loading'" />
+      <template v-else-if="objectQuery.status === 'error'">
+        <p
+          v-if="reasonLabel(objectQuery.error as McpLabApiError)"
+          class="reason-code"
+          data-testid="object-error-reason"
+        >
+          {{ reasonLabel(objectQuery.error as McpLabApiError) }}
+        </p>
+        <ErrorState
+          :error="objectQuery.error"
+          @retry="onRunObjects"
+        />
+      </template>
+      <div v-else-if="objectQuery.status === 'success'" data-testid="object-result">
+        <div class="result-meta" data-testid="object-result-meta">
+          <span>query_id={{ metaOf(objectQuery.data)?.query_id ?? 'null' }}</span>
+          <span>scope={{ metaOf(objectQuery.data)?.evidence_scope ?? '—' }}</span>
+          <span>session={{ shortValue(metaOf(objectQuery.data)?.session_id) }}</span>
+          <span>digest={{ shortValue(metaOf(objectQuery.data)?.result_digest) }}</span>
+          <span>耗时 {{ metaOf(objectQuery.data)?.duration_ms ?? '-' }} ms</span>
+          <span>行数 {{ metaOf(objectQuery.data)?.row_count ?? rowsOf(objectQuery.data).length }}</span>
+          <span data-testid="object-dataset-version">
+            dataset={{ metaOf(objectQuery.data)?.dataset_version ?? '尚未发布' }}
+          </span>
+          <span data-testid="object-template-version">
+            template={{ metaOf(objectQuery.data)?.template_version ?? '—' }}
+          </span>
+        </div>
+        <p v-if="metaOf(objectQuery.data)?.masked_fields?.length" data-testid="object-masked">
+          已脱敏: {{ metaOf(objectQuery.data)?.masked_fields?.join(', ') }}
+        </p>
+        <ul v-if="metaOf(objectQuery.data)?.warnings?.length" data-testid="object-warnings">
+          <li v-for="w in metaOf(objectQuery.data)?.warnings" :key="w">{{ w }}</li>
+        </ul>
+        <EmptyState
+          v-if="rowsOf(objectQuery.data).length === 0"
+          title="查询成功，无行返回"
+        />
+        <el-table
+          v-else
+          :data="rowsOf(objectQuery.data)"
+          size="small"
+          data-testid="object-rows-table"
+        >
+          <el-table-column
+            v-for="col in Object.keys(rowsOf(objectQuery.data)[0] ?? {})"
+            :key="col"
+            :prop="col"
+            :label="col"
+            min-width="120"
+          />
+        </el-table>
+        <el-button size="small" data-testid="toggle-object-json" @click="showObjectRawJson = !showObjectRawJson">
+          {{ showObjectRawJson ? '隐藏' : '显示' }}原始 JSON
+        </el-button>
+        <pre v-if="showObjectRawJson" data-testid="object-raw-json">{{ JSON.stringify(objectQuery.data, null, 2) }}</pre>
+      </div>
+    </section>
+
+    <section
+      v-if="selectedTool === 'query_metrics'"
+      class="d2a-card interface-panel"
+      data-testid="metrics-interface-panel"
+    >
+      <div class="interface-panel__head">
+        <h3>query_metrics</h3>
+        <p>指标查询 · 不带 metric 返回指标目录</p>
+      </div>
+      <div class="form-grid" data-testid="metrics-query-form">
+        <label>指标 <input v-model="metricsForm.metric" data-testid="metric-name" /></label>
+        <label>group_by <input v-model="metricsForm.group_by" data-testid="metric-group-by" /></label>
+        <label>limit
+          <input v-model.number="metricsForm.limit" type="number" min="1" max="200" data-testid="metric-limit" />
+        </label>
+        <el-button type="primary" data-testid="metrics-run" @click="onRunMetrics">执行查询</el-button>
+      </div>
+      <p v-if="metricsRefreshError" class="refresh-warning" data-testid="metrics-refresh-error">
+        刷新失败({{ reasonLabel(metricsRefreshError as McpLabApiError) || metricsRefreshError.message }})，保留上次成功结果
+      </p>
+      <LoadingState v-if="metricsQuery.status === 'loading'" />
+      <ErrorState
+        v-else-if="metricsQuery.status === 'error'"
+        :error="metricsQuery.error"
+        @retry="onRunMetrics"
+      />
+      <div v-else-if="metricsQuery.status === 'success'" data-testid="metrics-result">
+        <div class="result-meta" data-testid="metrics-result-meta">
+          <span>query_id={{ metaOf(metricsQuery.data)?.query_id ?? 'null' }}</span>
+          <span>scope={{ metaOf(metricsQuery.data)?.evidence_scope ?? '—' }}</span>
+          <span>session={{ shortValue(metaOf(metricsQuery.data)?.session_id) }}</span>
+          <span>digest={{ shortValue(metaOf(metricsQuery.data)?.result_digest) }}</span>
+          <span>耗时 {{ metaOf(metricsQuery.data)?.duration_ms ?? '-' }} ms</span>
+          <span>行数 {{ metaOf(metricsQuery.data)?.row_count ?? rowsOf(metricsQuery.data).length }}</span>
+          <span data-testid="metrics-dataset-version">
+            dataset={{ metaOf(metricsQuery.data)?.dataset_version ?? '尚未发布' }}
+          </span>
+        </div>
+        <ul v-if="metaOf(metricsQuery.data)?.warnings?.length" data-testid="metrics-warnings">
+          <li v-for="w in metaOf(metricsQuery.data)?.warnings" :key="w">{{ w }}</li>
+        </ul>
+        <EmptyState
+          v-if="rowsOf(metricsQuery.data).length === 0"
+          title="查询成功，无行返回"
+        />
+        <el-table
+          v-else
+          :data="rowsOf(metricsQuery.data)"
+          size="small"
+          data-testid="metrics-rows-table"
+        >
+          <el-table-column
+            v-for="col in Object.keys(rowsOf(metricsQuery.data)[0] ?? {})"
+            :key="col"
+            :prop="col"
+            :label="col"
+            min-width="120"
+          />
+        </el-table>
+        <el-button size="small" data-testid="toggle-metrics-json" @click="showMetricsRawJson = !showMetricsRawJson">
+          {{ showMetricsRawJson ? '隐藏' : '显示' }}原始 JSON
+        </el-button>
+        <pre v-if="showMetricsRawJson" data-testid="metrics-raw-json">{{ JSON.stringify(metricsQuery.data, null, 2) }}</pre>
+      </div>
+    </section>
+
+    <section
+      v-if="selectedTool === 'propose_action'"
+      class="d2a-card interface-panel"
+      data-testid="proposal-interface-panel"
+    >
+      <div class="interface-panel__head">
+        <h3>propose_action</h3>
+        <p>说档建议卡 · 引用同一 session 的 query evidence</p>
+      </div>
+      <div class="form-grid" data-testid="proposal-form">
+        <label>对象 <input v-model="proposalForm.object" data-testid="proposal-object" /></label>
+        <label>动作 <input v-model="proposalForm.action" data-testid="proposal-action" /></label>
+        <label>结论
+          <textarea v-model="proposalForm.conclusion" rows="2" data-testid="proposal-conclusion" />
+        </label>
+        <div
+          v-for="(row, idx) in proposalForm.evidence"
+          :key="idx"
+          class="evidence-row"
+          data-testid="evidence-row"
+        >
+          <label>claim <input v-model="row.claim" :data-testid="`evidence-claim-${idx}`" /></label>
+          <label>query_id
+            <select v-model="row.query_id" :data-testid="`evidence-query-${idx}`">
+              <option value="">选择当前会话中的持久 query evidence</option>
+              <option v-for="h in citableHistory" :key="h.query_id" :value="h.query_id">
+                {{ h.query_id }} · {{ h.tool }} · {{ h.target }} · {{ shortValue(h.result_digest, 6) }}
+              </option>
+            </select>
+          </label>
+          <p v-if="historyFor(row.query_id)?.result_digest" class="muted">
+            digest={{ shortValue(historyFor(row.query_id)?.result_digest, 10) }}
+          </p>
+          <el-button size="small" @click="removeEvidenceRow(idx)">删除</el-button>
+        </div>
+        <el-button size="small" data-testid="evidence-add" @click="addEvidenceRow">添加 evidence</el-button>
+        <el-button type="primary" data-testid="proposal-run" @click="onRunProposal">生成建议卡</el-button>
+        <p class="muted" data-testid="no-execute-hint">本页不提供执行建议或写回控件。</p>
+      </div>
+      <p v-if="proposalRefreshError" class="refresh-warning" data-testid="proposal-refresh-error">
+        {{ reasonLabel(proposalRefreshError as McpLabApiError) || proposalRefreshError.message }}
+      </p>
+      <LoadingState v-if="proposal.status === 'loading'" />
+      <ErrorState
+        v-else-if="proposal.status === 'error'"
+        :error="proposal.error"
+        @retry="onRunProposal"
+      />
+      <div v-else-if="proposal.status === 'success'" class="proposal-card" data-testid="proposal-result">
+        <h3>{{ proposal.data.conclusion }}</h3>
+        <p>档位: {{ proposal.data.tier }} · {{ proposal.data.action_desc }}</p>
+        <p data-testid="proposal-summary-meta">
+          proposal_id={{ proposal.data.proposal_id }} · session={{ shortValue(proposal.data.session_id) }} ·
+          dataset={{ proposal.data.dataset_version ?? '—' }}
+        </p>
+        <p data-testid="proposal-governance">{{ proposal.data.governance }}</p>
+        <ul v-if="proposal.data.caveats?.length" data-testid="proposal-caveats">
+          <li v-for="c in proposal.data.caveats" :key="c">{{ c }}</li>
+        </ul>
+        <div
+          v-for="ev in proposal.data.evidence"
+          :key="ev.query.query_id + ev.claim"
+          class="evidence-item"
+          data-testid="proposal-evidence-item"
+        >
+          <button type="button" @click="toggleEvidence(ev.query.query_id)">
+            {{ ev.claim }} ({{ ev.query.query_id }}) · {{ shortValue(ev.query.result_digest, 8) }}
+          </button>
+          <div v-if="expandedEvidence === ev.query.query_id" data-testid="evidence-expand">
+            <pre>{{ prettyJson(evidenceSnapshot(ev)) }}</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div v-if="selectedTool !== null" class="d2a-card" data-testid="evidence-detail-panel">
       <h3>持久 Evidence 详情</h3>
       <div class="form-grid">
         <label>query_id
@@ -472,9 +603,6 @@ async function onLoadProposalDetail(): Promise<void> {
 {{ prettyJson(proposalDetail.data) }}</pre>
       </div>
     </div>
-
-    <!-- keep unused activeResult referenced for future shared pane -->
-    <span v-show="false">{{ activeResult?.status }}</span>
   </section>
 </template>
 
@@ -492,6 +620,63 @@ async function onLoadProposalDetail(): Promise<void> {
 .scope-banner__hint {
   margin-top: 8px !important;
   color: var(--el-color-warning);
+}
+.interface-catalog__head,
+.interface-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.interface-catalog__head h3,
+.interface-panel__head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.interface-catalog__head span,
+.interface-panel__head p {
+  margin: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+.interface-detail__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+.interface-detail__head h3,
+.interface-detail__head p {
+  margin: 0;
+}
+.interface-detail__head p {
+  margin-top: 4px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+.interface-detail__meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0 0;
+}
+.interface-detail__meta div {
+  padding: 10px 12px;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+}
+.interface-detail__meta dt {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.interface-detail__meta dd {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+.interface-panel {
+  display: grid;
+  gap: 12px;
 }
 .form-grid {
   display: grid;

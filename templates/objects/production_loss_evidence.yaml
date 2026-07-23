@@ -1,0 +1,62 @@
+object: ProductionLossEvidence
+display_name: 生产超额领料证据
+description: 按工单和物料预计算的标准需求、领退料、允许损耗及超额领料结果
+domain: 生产
+source_of_truth: 数据平台呆滞库存 R5 预计算结果（来源：鼎捷 E10 工单、领料和 BOM）
+keys: [plant_id, mo_no, item_code]
+properties:
+  - { name: plant_id, type: string, desc: 工厂编码 }
+  - { name: mo_no, type: string, desc: 制造工单号 }
+  - { name: item_code, type: string, desc: 品号编码 }
+  - { name: mo_status, type: string, desc: 工单状态 }
+  - { name: output_basis_qty, type: decimal, desc: 产量计算基数 }
+  - { name: qty_per, type: decimal, desc: 标准单位用量 }
+  - { name: denominator, type: decimal, desc: 用量底数 }
+  - { name: allowed_loss_rate, type: decimal, desc: 允许损耗率 }
+  - { name: fixed_loss_qty, type: decimal, desc: 固定允许损耗量 }
+  - { name: issued_qty, type: decimal, desc: 累计领料量 }
+  - { name: returned_qty, type: decimal, desc: 累计退料量 }
+  - { name: net_issued_qty, type: decimal, desc: 净领料量 }
+  - { name: standard_required_qty, type: decimal, desc: 标准需求量 }
+  - { name: allowed_issue_qty, type: decimal, desc: 允许领料量 }
+  - { name: excess_issue_qty, type: decimal, desc: 超额领料量 }
+  - { name: trace_type, type: enum, enum_values: [indirect], desc: 库存到工单的追溯方式 }
+  - { name: calculation_status, type: enum, enum_values: [ready, provisional, unknown], desc: 计算状态 }
+  - { name: related_department, type: string, desc: 关联生产部门，不等同于责任认定 }
+  - { name: related_employee, type: string, desc: 关联生产经办人，不等同于责任认定, sensitive: true }
+  - { name: warnings, type: text, desc: 结构化警示 JSON }
+  - { name: as_of_date, type: date, desc: 数据快照日 }
+  - { name: calculation_version, type: string, desc: 计算版本 }
+bindings:
+  - source: digiwin_e10
+    tables: [D2A_PRODUCTION_LOSS_EVIDENCE, D2A_DEAD_STOCK_ITEM, ITEM, MO, MO_D, MO_ISSUED_SETS, BOM_D]
+    materializer: dead_stock_attribution_v1
+    status: draft
+    key_map:
+      plant_id: D2A_PRODUCTION_LOSS_EVIDENCE.plant_id
+      mo_no: D2A_PRODUCTION_LOSS_EVIDENCE.mo_no
+      item_code: D2A_PRODUCTION_LOSS_EVIDENCE.item_code
+    field_map:
+      plant_id: D2A_PRODUCTION_LOSS_EVIDENCE.plant_id
+      mo_no: D2A_PRODUCTION_LOSS_EVIDENCE.mo_no
+      item_code: D2A_PRODUCTION_LOSS_EVIDENCE.item_code
+      mo_status: D2A_PRODUCTION_LOSS_EVIDENCE.mo_status
+      output_basis_qty: D2A_PRODUCTION_LOSS_EVIDENCE.output_basis_qty
+      qty_per: D2A_PRODUCTION_LOSS_EVIDENCE.qty_per
+      denominator: D2A_PRODUCTION_LOSS_EVIDENCE.denominator
+      allowed_loss_rate: D2A_PRODUCTION_LOSS_EVIDENCE.allowed_loss_rate
+      fixed_loss_qty: D2A_PRODUCTION_LOSS_EVIDENCE.fixed_loss_qty
+      issued_qty: D2A_PRODUCTION_LOSS_EVIDENCE.issued_qty
+      returned_qty: D2A_PRODUCTION_LOSS_EVIDENCE.returned_qty
+      net_issued_qty: D2A_PRODUCTION_LOSS_EVIDENCE.net_issued_qty
+      standard_required_qty: D2A_PRODUCTION_LOSS_EVIDENCE.standard_required_qty
+      allowed_issue_qty: D2A_PRODUCTION_LOSS_EVIDENCE.allowed_issue_qty
+      excess_issue_qty: D2A_PRODUCTION_LOSS_EVIDENCE.excess_issue_qty
+      trace_type: D2A_PRODUCTION_LOSS_EVIDENCE.trace_type
+      calculation_status: D2A_PRODUCTION_LOSS_EVIDENCE.calculation_status
+      related_department: D2A_PRODUCTION_LOSS_EVIDENCE.related_department
+      related_employee: D2A_PRODUCTION_LOSS_EVIDENCE.related_employee
+      warnings: D2A_PRODUCTION_LOSS_EVIDENCE.warnings
+      as_of_date: D2A_PRODUCTION_LOSS_EVIDENCE.as_of_date
+      calculation_version: D2A_PRODUCTION_LOSS_EVIDENCE.calculation_version
+    notes: M2 R5。未结案工单保留 provisional，不生成 R5 归因标签。

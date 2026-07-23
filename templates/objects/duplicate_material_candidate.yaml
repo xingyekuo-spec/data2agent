@@ -1,0 +1,39 @@
+object: DuplicateMaterialCandidate
+display_name: 重复物料候选
+description: 基于品号规格规范化精确匹配识别的低置信重复料候选
+domain: 供应
+source_of_truth: 数据平台基于 ITEM.ITEM_SPECIFICATION 的预计算结果
+keys: [item_code, candidate_item_code]
+properties:
+  - { name: item_code, type: string, desc: 呆滞品号编码 }
+  - { name: candidate_item_code, type: string, desc: 同规格候选品号编码 }
+  - { name: item_name, type: string, desc: 呆滞品名 }
+  - { name: candidate_item_name, type: string, desc: 候选品名 }
+  - { name: normalized_specification, type: string, desc: 规范化规格文本 }
+  - { name: match_method, type: enum, enum_values: [normalized_exact_specification], desc: 匹配方式 }
+  - { name: trace_type, type: enum, enum_values: [indirect], desc: 库存到候选的追溯方式 }
+  - { name: calculation_status, type: enum, enum_values: [candidate], desc: 计算状态 }
+  - { name: warnings, type: text, desc: 结构化警示 JSON }
+  - { name: as_of_date, type: date, desc: 数据快照日 }
+  - { name: calculation_version, type: string, desc: 计算版本 }
+bindings:
+  - source: digiwin_e10
+    tables: [D2A_DUPLICATE_MATERIAL_CANDIDATE, D2A_DEAD_STOCK_ITEM, ITEM]
+    materializer: dead_stock_attribution_v3
+    status: draft
+    key_map:
+      item_code: D2A_DUPLICATE_MATERIAL_CANDIDATE.item_code
+      candidate_item_code: D2A_DUPLICATE_MATERIAL_CANDIDATE.candidate_item_code
+    field_map:
+      item_code: D2A_DUPLICATE_MATERIAL_CANDIDATE.item_code
+      candidate_item_code: D2A_DUPLICATE_MATERIAL_CANDIDATE.candidate_item_code
+      item_name: D2A_DUPLICATE_MATERIAL_CANDIDATE.item_name
+      candidate_item_name: D2A_DUPLICATE_MATERIAL_CANDIDATE.candidate_item_name
+      normalized_specification: D2A_DUPLICATE_MATERIAL_CANDIDATE.normalized_specification
+      match_method: D2A_DUPLICATE_MATERIAL_CANDIDATE.match_method
+      trace_type: D2A_DUPLICATE_MATERIAL_CANDIDATE.trace_type
+      calculation_status: D2A_DUPLICATE_MATERIAL_CANDIDATE.calculation_status
+      warnings: D2A_DUPLICATE_MATERIAL_CANDIDATE.warnings
+      as_of_date: D2A_DUPLICATE_MATERIAL_CANDIDATE.as_of_date
+      calculation_version: D2A_DUPLICATE_MATERIAL_CANDIDATE.calculation_version
+    notes: R6 低置信候选，仅证明规格字段相同，不证明可替代或责任归因。

@@ -67,6 +67,117 @@ ORDER BY {order}
 LIMIT ?
 """
 
+_DEAD_STOCK_AMOUNT_SQL = """
+SELECT {dim} AS "group",
+       ROUND(SUM(d.dead_stock_amount), 2) AS value,
+       COUNT(DISTINCT d.item_code) AS item_count
+FROM {DeadStockItem} d
+WHERE d.determination_status = 'dead_stock'
+GROUP BY "group"
+ORDER BY {order}
+LIMIT ?
+"""
+
+_DEAD_STOCK_QUANTITY_SQL = """
+SELECT {dim} AS "group",
+       ROUND(SUM(d.inventory_qty), 4) AS value,
+       COUNT(DISTINCT d.item_code) AS item_count
+FROM {DeadStockItem} d
+WHERE d.determination_status = 'dead_stock'
+GROUP BY "group"
+ORDER BY {order}
+LIMIT ?
+"""
+
+_DEAD_STOCK_ITEM_COUNT_SQL = """
+SELECT {dim} AS "group",
+       COUNT(DISTINCT d.item_code) AS value,
+       COUNT(DISTINCT d.warehouse_code) AS warehouse_count
+FROM {DeadStockItem} d
+WHERE d.determination_status = 'dead_stock'
+GROUP BY "group"
+ORDER BY {order}
+LIMIT ?
+"""
+
+_ATTRIBUTION_COVERAGE_SQL = """
+WITH dead AS (
+  SELECT d.plant_id, d.warehouse_code, d.item_code
+  FROM {DeadStockItem} d
+  WHERE d.determination_status = 'dead_stock'
+), attributed AS (
+  SELECT DISTINCT plant_id, warehouse_code, item_code
+  FROM {DeadStockAttribution}
+)
+SELECT {dim} AS "group",
+       ROUND(1.0 * COUNT(DISTINCT CASE WHEN a.item_code IS NOT NULL THEN d.item_code END)
+                 / NULLIF(COUNT(DISTINCT d.item_code), 0), 4) AS value,
+       COUNT(DISTINCT d.item_code) AS dead_stock_item_count,
+       COUNT(DISTINCT CASE WHEN a.item_code IS NOT NULL THEN d.item_code END) AS attributed_item_count
+FROM dead d
+LEFT JOIN attributed a ON a.plant_id = d.plant_id
+                       AND a.warehouse_code = d.warehouse_code
+                       AND a.item_code = d.item_code
+GROUP BY "group"
+ORDER BY {order}
+LIMIT ?
+"""
+
+_ATTRIBUTION_DISTRIBUTION_SQL = """
+SELECT {dim} AS "group",
+       COUNT(DISTINCT a.item_code) AS value,
+       ROUND(SUM(d.dead_stock_amount), 2) AS attributed_dead_stock_amount,
+       COUNT(*) AS attribution_count
+FROM {DeadStockAttribution} a
+JOIN {DeadStockItem} d ON d.plant_id = a.plant_id
+                       AND d.warehouse_code = a.warehouse_code
+                       AND d.item_code = a.item_code
+WHERE d.determination_status = 'dead_stock'
+GROUP BY "group"
+ORDER BY {order}
+LIMIT ?
+"""
+
+_SUBSTITUTE_CONSUMABLE_SQL = """
+SELECT {dim} AS "group",
+       ROUND(SUM(s.potential_consume_qty), 4) AS value,
+       COUNT(*) AS candidate_count
+FROM {MaterialSubstituteCandidate} s
+WHERE s.candidate_type = 'bom_consumption'
+  AND s.calculation_status = 'candidate'
+GROUP BY "group"
+ORDER BY {order}
+LIMIT ?
+"""
+
+_DEAD_STOCK_DIMS = {
+    "工厂": "d.plant_id",
+    "仓库": "d.warehouse_code",
+    "物料类型": "d.material_type",
+    "账龄段": (
+        "CASE "
+        "WHEN d.dead_stock_days <= 180 THEN '91-180天' "
+        "WHEN d.dead_stock_days <= 365 THEN '181-365天' "
+        "ELSE '365天以上' END"
+    ),
+}
+
+_ATTRIBUTION_COVERAGE_DIMS = {
+    "工厂": "d.plant_id",
+}
+
+_ATTRIBUTION_DISTRIBUTION_DIMS = {
+    "工厂": "a.plant_id",
+    "根因": "a.root_cause",
+    "置信度等级": "a.confidence_level",
+}
+
+_SUBSTITUTE_CONSUMABLE_DIMS = {
+    "来源工厂": "s.source_plant_id",
+    "目标工厂": "s.target_plant_id",
+    "物料": "s.item_code",
+}
+
 
 def registry(source: str) -> dict[str, MetricImpl | None]:
     """指标 id -> 实现;None 表示口径已定义但依赖对象未覆盖。
@@ -95,6 +206,48 @@ def registry(source: str) -> dict[str, MetricImpl | None]:
             default_dim="月",
             unit="小时(均值)",
             sql=_RESPONSE_SQL,
+        ),
+        "dead_stock_amount": MetricImpl(
+            depends_on=frozenset({"DeadStockItem"}),
+            dims=_DEAD_STOCK_DIMS,
+            default_dim="工厂",
+            unit="CNY",
+            sql=_DEAD_STOCK_AMOUNT_SQL,
+        ),
+        "dead_stock_quantity": MetricImpl(
+            depends_on=frozenset({"DeadStockItem"}),
+            dims=_DEAD_STOCK_DIMS,
+            default_dim="工厂",
+            unit="数量(物料原始单位混合,仅适合按同类/单位进一步分析)",
+            sql=_DEAD_STOCK_QUANTITY_SQL,
+        ),
+        "dead_stock_item_count": MetricImpl(
+            depends_on=frozenset({"DeadStockItem"}),
+            dims=_DEAD_STOCK_DIMS,
+            default_dim="工厂",
+            unit="品号数",
+            sql=_DEAD_STOCK_ITEM_COUNT_SQL,
+        ),
+        "attribution_coverage_rate": MetricImpl(
+            depends_on=frozenset({"DeadStockItem", "DeadStockAttribution"}),
+            dims=_ATTRIBUTION_COVERAGE_DIMS,
+            default_dim="工厂",
+            unit="比率(0-1)",
+            sql=_ATTRIBUTION_COVERAGE_SQL,
+        ),
+        "attribution_distribution": MetricImpl(
+            depends_on=frozenset({"DeadStockItem", "DeadStockAttribution"}),
+            dims=_ATTRIBUTION_DISTRIBUTION_DIMS,
+            default_dim="根因",
+            unit="品号数（金额为多标签重复口径）",
+            sql=_ATTRIBUTION_DISTRIBUTION_SQL,
+        ),
+        "substitute_consumable_quantity": MetricImpl(
+            depends_on=frozenset({"MaterialSubstituteCandidate"}),
+            dims=_SUBSTITUTE_CONSUMABLE_DIMS,
+            default_dim="来源工厂",
+            unit="数量(物料原始单位混合,仅适合按同类/单位进一步分析)",
+            sql=_SUBSTITUTE_CONSUMABLE_SQL,
         ),
         # 依赖应收 / 回款对象,不在首批对象内;口径定义保留于 templates/metrics
         "overdue_receivable_amount": None,

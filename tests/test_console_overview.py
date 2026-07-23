@@ -28,7 +28,12 @@ from data2agent.showroom.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
-ALL_OBJECTS = ["Customer", "Material", "Quotation", "SalesOrder", "SalesOrderLine"]
+ALL_OBJECTS = [
+    "Customer", "DeadStockAttribution", "DeadStockItem", "DuplicateMaterialCandidate",
+    "EcnChangeEvidence", "Material", "MaterialBomUsage", "MaterialOrderEvidence",
+    "MaterialSubstituteCandidate", "ProductionLossEvidence", "PurchaseOverbuyEvidence",
+    "Quotation", "SalesOrder", "SalesOrderLine", "SpecialConditionEvidence",
+]
 
 
 @pytest.fixture()
@@ -95,8 +100,8 @@ def test_overview_real_aggregation(env):
     s = body.summary
     assert s.raw_rows is not None and s.raw_rows > 0
     assert s.object_rows is not None and s.object_rows > 0
-    assert s.materialized_objects == 5
-    assert s.template_objects == 5
+    assert s.materialized_objects == 15
+    assert s.template_objects == 15
     assert s.quarantine_pending == 0
     assert s.last_run_at is not None and s.last_run_at.tzinfo is not None
     assert s.data_updated_at is not None
@@ -106,7 +111,7 @@ def test_overview_real_aggregation(env):
     assert body.versions.dataset is not None
     assert body.versions.object == body.versions.dataset
     # binding:当前模板全部 draft → info 告警,且 mapping 不显示为 healthy
-    assert body.binding_summary.draft == 10
+    assert body.binding_summary.draft == 20
     kinds = {a.id for a in body.alerts}
     assert "binding-draft" in kinds
     # 最近运行带类型;趋势桶 <= 24 且时间有序

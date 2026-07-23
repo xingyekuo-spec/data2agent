@@ -44,7 +44,15 @@ def _adapter(source_db, pack, landing=None, **kw):
 
 def test_whitelist_derived_from_bindings(pack):
     assert whitelist_from_pack(pack, SOURCE) == {
-        "CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"}
+        "CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D",
+        "INV_COST_BAL", "INV_UNIT_COST", "INV_RECEIPT",
+        "SALES_ISSUE", "SALES_ISSUE_D", "MO_ISSUED_SETS",
+        "PURCHASE_ORDER", "PURCHASE_ORDER_D", "PURCHASE_ORDER_SD",
+        "PURCHASE_ORDER_SD1", "PURCHASE_ORDER_SSD", "PURCHASE_ARRIVAL_D",
+        "SUPPLIER_PURCHASE", "MO", "MO_D", "BOM_D",
+        "SALES_ORDER_DOC", "SALES_ORDER_DOC_D", "SALES_ORDER_DOC_SD", "PO_REQ_SOURCE",
+        "ECN", "ECN_D", "ECN_SD", "ECN_TASK",
+    }
 
 
 def test_whitelist_enforced(source_db, pack):

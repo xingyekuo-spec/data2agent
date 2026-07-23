@@ -1,0 +1,63 @@
+object: DeadStockItem
+display_name: 呆滞库存明细
+description: 按工厂、仓库和品号预计算的库存账龄、金额及呆滞判定；口径仍待现场核对
+domain: 供应
+source_of_truth: 数据平台呆滞库存预计算结果（来源：鼎捷 E10 库存与出库记录）
+keys: [plant_id, warehouse_code, item_code]
+properties:
+  - { name: item_code, type: string, desc: 品号编码 }
+  - { name: plant_id, type: string, desc: 工厂编码 }
+  - { name: warehouse_code, type: string, desc: 仓库编码 }
+  - { name: item_name, type: string, desc: 品名 }
+  - { name: specification, type: text, desc: 规格 }
+  - { name: material_type, type: string, desc: 物料类型 }
+  - { name: inventory_qty, type: decimal, desc: 当前库存数量 }
+  - { name: unit_cost, type: money, desc: 单位成本(CNY), sensitive: true }
+  - { name: dead_stock_amount, type: money, desc: 库存金额(CNY), sensitive: true }
+  - { name: last_issue_date, type: date, desc: 最后销售出库或生产领用日期 }
+  - { name: first_stock_in_date, type: date, desc: 首次入库日期 }
+  - { name: age_anchor_date, type: date, desc: 账龄起算日期 }
+  - { name: dead_stock_days, type: int, desc: 呆滞天数 }
+  - { name: threshold_days, type: int, desc: 当前物料类型呆滞阈值 }
+  - name: determination_status
+    type: enum
+    enum_values: [dead_stock, active, unknown]
+    desc: 呆滞判定状态
+  - name: inventory_status
+    type: enum
+    enum_values: [usable, frozen, pending_inspection, scrapped, unknown]
+    desc: 库存物理状态
+  - { name: as_of_date, type: date, desc: 计算快照日期 }
+  - { name: calculation_version, type: string, desc: 计算口径版本 }
+bindings:
+  - source: digiwin_e10
+    tables: [D2A_DEAD_STOCK_ITEM, ITEM, INV_COST_BAL, INV_UNIT_COST, INV_RECEIPT, SALES_ISSUE, SALES_ISSUE_D, MO_ISSUED_SETS]
+    materializer: dead_stock_item_v1
+    status: draft
+    key_map:
+      plant_id: D2A_DEAD_STOCK_ITEM.plant_id
+      warehouse_code: D2A_DEAD_STOCK_ITEM.warehouse_code
+      item_code: D2A_DEAD_STOCK_ITEM.item_code
+    field_map:
+      item_code: D2A_DEAD_STOCK_ITEM.item_code
+      plant_id: D2A_DEAD_STOCK_ITEM.plant_id
+      warehouse_code: D2A_DEAD_STOCK_ITEM.warehouse_code
+      item_name: D2A_DEAD_STOCK_ITEM.item_name
+      specification: D2A_DEAD_STOCK_ITEM.specification
+      material_type: D2A_DEAD_STOCK_ITEM.material_type
+      inventory_qty: D2A_DEAD_STOCK_ITEM.inventory_qty
+      unit_cost: D2A_DEAD_STOCK_ITEM.unit_cost
+      dead_stock_amount: D2A_DEAD_STOCK_ITEM.dead_stock_amount
+      last_issue_date: D2A_DEAD_STOCK_ITEM.last_issue_date
+      first_stock_in_date: D2A_DEAD_STOCK_ITEM.first_stock_in_date
+      age_anchor_date: D2A_DEAD_STOCK_ITEM.age_anchor_date
+      dead_stock_days: D2A_DEAD_STOCK_ITEM.dead_stock_days
+      threshold_days: D2A_DEAD_STOCK_ITEM.threshold_days
+      determination_status: D2A_DEAD_STOCK_ITEM.determination_status
+      inventory_status: D2A_DEAD_STOCK_ITEM.inventory_status
+      as_of_date: D2A_DEAD_STOCK_ITEM.as_of_date
+      calculation_version: D2A_DEAD_STOCK_ITEM.calculation_version
+    notes: >-
+      M1 参考实现。D2A_DEAD_STOCK_ITEM 是数据平台内部结果表，不从 ERP 抽取；
+      其余 tables 是 materializer 的只读输入。真实 E10 表形、其他出库类型、
+      库存状态和物料阈值需现场核对后才可置为 verified。

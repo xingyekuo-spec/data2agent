@@ -118,8 +118,11 @@ def test_e10_bindings_match_schema():
             if b.source != "digiwin_e10":
                 continue
             checked += 1
-            for t in b.tables:
+            for t in b.source_tables:
                 assert t in TABLES, f"{obj.object}: binding 表 {t} 不在模拟表形中"
+            if b.materializer:
+                # 内部结果表由 materializer 生成，不属于 ERP 参考表形。
+                continue
             refs = list(b.key_map.values()) + list(b.field_map.values()) + ([b.watermark] if b.watermark else [])
             for ref in refs:
                 matches = token.findall(ref)
@@ -133,7 +136,7 @@ def test_e10_bindings_match_schema():
                     for col in rule.when:
                         assert col in columns[anchor], \
                             f"{obj.object}.{prop}: 派生条件引用了锚表 {anchor} 不存在的列 {col}"
-    assert checked == 5, "五个首批对象都应有 digiwin_e10 binding"
+    assert checked == 15, "十五个对象都应有 digiwin_e10 binding"
 
 
 def test_dict_markdown_covers_all_tables():

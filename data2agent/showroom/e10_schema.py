@@ -64,6 +64,56 @@ TABLES: dict[str, tuple[str, list[Column]]] = {
             ("STANDARD_COST", "NUMERIC", "标准成本(CNY,敏感)"),
         ]),
     ),
+    "INV_COST_BAL": (
+        "存货成本余额",
+        _table([
+            ("ITEM_ID", "INTEGER", "品号(外键 → ITEM.Id)"),
+            ("PLANT_ID", "TEXT", "工厂编码"),
+            ("WAREHOUSE_CODE", "TEXT", "仓库编码"),
+            ("INVENTORY_QTY", "NUMERIC", "即时库存数量"),
+            ("INVENTORY_STATUS", "TEXT", "库存状态:usable / frozen / pending_inspection / scrapped"),
+        ]),
+    ),
+    "INV_UNIT_COST": (
+        "存货单位成本",
+        _table([
+            ("ITEM_ID", "INTEGER", "品号(外键 → ITEM.Id)"),
+            ("UNIT_COST", "NUMERIC", "单位成本(CNY)"),
+        ]),
+    ),
+    "INV_RECEIPT": (
+        "存货入库记录",
+        _table([
+            ("ITEM_ID", "INTEGER", "品号(外键 → ITEM.Id)"),
+            ("RECEIPT_DATE", "TEXT", "入库日期"),
+            ("RECEIPT_QTY", "NUMERIC", "入库数量"),
+        ]),
+    ),
+    "SALES_ISSUE": (
+        "销售出库单",
+        _table([
+            ("DOC_NO", "TEXT", "销货出库单号"),
+            ("DOC_DATE", "TEXT", "出库日期"),
+        ]),
+    ),
+    "SALES_ISSUE_D": (
+        "销售出库单明细",
+        _table([
+            ("SALES_ISSUE_ID", "INTEGER", "销货出库单(外键 → SALES_ISSUE.Id)"),
+            ("ITEM_ID", "INTEGER", "品号(外键 → ITEM.Id)"),
+            ("ISSUED_QTY", "NUMERIC", "出库数量"),
+        ]),
+    ),
+    "MO_ISSUED_SETS": (
+        "工单领料状况",
+        _table([
+            ("MO_ID", "INTEGER", "制造工单(外键 → MO.Id)"),
+            ("ITEM_ID", "INTEGER", "品号(外键 → ITEM.Id)"),
+            ("ISSUE_DATE", "TEXT", "领料日期"),
+            ("ISSUED_QTY", "NUMERIC", "领料数量"),
+            ("RETURNED_QTY", "NUMERIC", "退料数量"),
+        ]),
+    ),
     "QUOTATION": (
         "报价单(参考库简化为单头 + 主要品号,真实 E10 含单身)",
         _table([
@@ -110,6 +160,202 @@ TABLES: dict[str, tuple[str, list[Column]]] = {
             ("AMOUNT", "NUMERIC", "金额(= 数量 × 单价)"),
             ("PLAN_DELIVERY_DATE", "TEXT", "预交日"),
             ("SHIPPED_QUANTITY", "NUMERIC", "已出货数量"),
+        ]),
+    ),
+    "PURCHASE_ORDER": (
+        "采购订单单头",
+        _table([
+            ("DOC_NO", "TEXT", "采购单号(业务键)"),
+            ("DOC_DATE", "TEXT", "采购单日期"),
+            ("SUPPLIER_ID", "TEXT", "供应商标识"),
+            ("Owner_Dept", "TEXT", "关联采购部门"),
+            ("Owner_Emp", "TEXT", "关联采购经办人"),
+            ("APPROVE_STATUS", "TEXT", "审核状态"),
+        ]),
+    ),
+    "PURCHASE_ORDER_D": (
+        "采购订单单身",
+        _table([
+            ("PURCHASE_ORDER_ID", "INTEGER", "采购订单单头(外键 → PURCHASE_ORDER.Id)"),
+            ("SEQUENCE_NUMBER", "INTEGER", "采购单行号"),
+            ("ITEM_ID", "INTEGER", "品号(外键 → ITEM.Id)"),
+            ("PURCHASE_QTY", "NUMERIC", "实际采购数量"),
+            ("PRICE", "NUMERIC", "采购单价"),
+            ("BUSINESS_QTY", "NUMERIC", "业务数量"),
+        ]),
+    ),
+    "PURCHASE_ORDER_SD": (
+        "采购订单子单身",
+        _table([
+            ("PURCHASE_ORDER_D_ID", "INTEGER", "采购订单单身(外键 → PURCHASE_ORDER_D.Id)"),
+            ("PLANT_ID", "TEXT", "收货工厂"),
+            ("WAREHOUSE_ID", "TEXT", "收货仓库"),
+            ("PLAN_ARRIVAL_DATE", "TEXT", "预到货日期"),
+        ]),
+    ),
+    "PURCHASE_ORDER_SD1": (
+        "采购订单子单身1",
+        _table([
+            ("PURCHASE_ORDER_SD_ID", "INTEGER", "采购订单子单身(外键 → PURCHASE_ORDER_SD.Id)"),
+            ("RECEIPT_CLOSE", "TEXT", "入库结束码"),
+            ("RECEIPTED_QTY", "NUMERIC", "已入库数量"),
+        ]),
+    ),
+    "PURCHASE_ORDER_SSD": (
+        "采购订单孙单身",
+        _table([
+            ("PURCHASE_ORDER_SD1_ID", "INTEGER", "采购订单子单身1(外键 → PURCHASE_ORDER_SD1.Id)"),
+            ("DEMAND_NO", "TEXT", "参考需求单号"),
+            ("DEMAND_QTY", "NUMERIC", "原始需求量"),
+            ("PURCHASED_QTY", "NUMERIC", "已采数量"),
+            ("ARRIVED_QTY", "NUMERIC", "已到货数量"),
+            ("RECEIPTED_QTY", "NUMERIC", "已入库数量"),
+            ("LOCKED_FLAG", "TEXT", "供需锁定标记"),
+        ]),
+    ),
+    "PURCHASE_ARRIVAL_D": (
+        "采购到货单明细",
+        _table([
+            ("PURCHASE_ORDER_D_ID", "INTEGER", "采购订单单身(外键 → PURCHASE_ORDER_D.Id)"),
+            ("ITEM_ID", "INTEGER", "品号(外键 → ITEM.Id)"),
+            ("RECEIPTED_BUSINESS_QTY", "NUMERIC", "已收货业务数量"),
+            ("RETURNED_BUSINESS_QTY", "NUMERIC", "已退货业务数量"),
+            ("MO_ID", "INTEGER", "关联制造工单(外键 → MO.Id,可空)"),
+        ]),
+    ),
+    "SUPPLIER_PURCHASE": (
+        "供应商采购信息",
+        _table([
+            ("SUPPLIER_ID", "TEXT", "供应商标识"),
+            ("ITEM_ID", "INTEGER", "品号(外键 → ITEM.Id)"),
+            ("MOQ", "NUMERIC", "最小起订量"),
+            ("LEAD_TIME", "INTEGER", "采购提前期(天)"),
+            ("MIN_ORDER_QTY", "NUMERIC", "最小订购量"),
+        ]),
+    ),
+    "MO": (
+        "制造工单",
+        _table([
+            ("DOC_NO", "TEXT", "制造工单号(业务键)"),
+            ("DOC_DATE", "TEXT", "开单日期"),
+            ("ITEM_ID", "INTEGER", "产出品号(外键 → ITEM.Id)"),
+            ("PLANT_ID", "TEXT", "生产工厂"),
+            ("Owner_Dept", "TEXT", "关联生产部门"),
+            ("Owner_Emp", "TEXT", "关联生产经办人"),
+            ("PLAN_QTY", "NUMERIC", "预计产量"),
+            ("COMPLETED_QTY", "NUMERIC", "完成产量"),
+            ("STATUS", "TEXT", "工单状态:closed / open"),
+        ]),
+    ),
+    "MO_D": (
+        "制造工单单身",
+        _table([
+            ("MO_ID", "INTEGER", "制造工单(外键 → MO.Id)"),
+            ("ITEM_ID", "INTEGER", "领用物料(外键 → ITEM.Id)"),
+            ("QTY_PER", "NUMERIC", "标准单位用量"),
+            ("REPLACE_ITEM", "TEXT", "替代料标记"),
+        ]),
+    ),
+    "BOM_D": (
+        "BOM 产出品信息档",
+        _table([
+            ("PARENT_ITEM_ID", "INTEGER", "主件品号(外键 → ITEM.Id)"),
+            ("SUB_ITEM_FEATURE_ID", "INTEGER", "元件品号(外键 → ITEM.Id)"),
+            ("QTY_PER", "NUMERIC", "组成用量"),
+            ("DENOMINATOR", "NUMERIC", "底数"),
+            ("FIXED_LOSS_RATE", "NUMERIC", "固定损耗率"),
+            ("DYNAMIC_LOSS_RATE", "NUMERIC", "变动损耗率"),
+            ("ISSUE_OVERRUN_RATE", "NUMERIC", "允许超领率"),
+            ("REMARK", "TEXT", "结构化使用限制说明"),
+        ]),
+    ),
+    "SALES_ORDER_DOC": (
+        "销售订单",
+        _table([
+            ("DOC_NO", "TEXT", "销售订单号(业务键)"),
+            ("DOC_DATE", "TEXT", "订单日期"),
+            ("CUSTOMER_ID", "INTEGER", "客户(外键 → CUSTOMER.Id)"),
+            ("Owner_Dept", "TEXT", "关联销售部门"),
+            ("Owner_Emp", "TEXT", "关联销售经办人"),
+            ("ApproveStatus", "TEXT", "订单状态:有效 / 已取消 / 已减量"),
+        ]),
+    ),
+    "SALES_ORDER_DOC_D": (
+        "销售订单明细",
+        _table([
+            ("SALES_ORDER_DOC_ID", "INTEGER", "销售订单(外键 → SALES_ORDER_DOC.Id)"),
+            ("SEQUENCE_NUMBER", "INTEGER", "订单行号"),
+            ("ITEM_ID", "INTEGER", "品号(外键 → ITEM.Id)"),
+            ("QTY_PER", "NUMERIC", "需求数量"),
+            ("BUSINESS_QTY", "NUMERIC", "有效业务数量"),
+            ("PRICE", "NUMERIC", "单价"),
+        ]),
+    ),
+    "SALES_ORDER_DOC_SD": (
+        "销售订单发货计划",
+        _table([
+            ("SALES_ORDER_DOC_D_ID", "INTEGER", "销售订单明细(外键 → SALES_ORDER_DOC_D.Id)"),
+            ("PLAN_QTY", "NUMERIC", "计划发货数量"),
+            ("PLAN_SHIP_DATE", "TEXT", "计划出货日期"),
+            ("SHIPPED_QTY", "NUMERIC", "实际出货数量"),
+        ]),
+    ),
+    "PO_REQ_SOURCE": (
+        "采购订单需求来源",
+        _table([
+            ("PURCHASE_ORDER_SD1_ID", "INTEGER", "采购订单子单身1(外键 → PURCHASE_ORDER_SD1.Id)"),
+            ("DEMAND_NO", "TEXT", "来源需求单号"),
+            ("DEMAND_QTY", "NUMERIC", "来源需求数量"),
+            ("PURCHASED_QTY", "NUMERIC", "已采数量"),
+            ("PURCHASE_SEQUENCE", "INTEGER", "采购序号"),
+        ]),
+    ),
+    "ECN": (
+        "工程变更信息",
+        _table([
+            ("DOC_NO", "TEXT", "工程变更单号(业务键)"),
+            ("DOC_DATE", "TEXT", "变更日期"),
+            ("Owner_Dept", "TEXT", "关联设计部门"),
+            ("Owner_Emp", "TEXT", "关联设计经办人"),
+            ("REASON_DESC", "TEXT", "变更原因说明"),
+            ("CONTENT", "TEXT", "变更范围"),
+            ("REASON_ID", "TEXT", "变更原因代码"),
+        ]),
+    ),
+    "ECN_D": (
+        "工程变更信息单身",
+        _table([
+            ("ECN_ID", "INTEGER", "工程变更单(外键 → ECN.Id)"),
+            ("PARENT_ITEM_ID", "INTEGER", "新主件品号(外键 → ITEM.Id)"),
+            ("ORIGINAL_PARENT_ITEM_ID", "INTEGER", "旧主件品号(外键 → ITEM.Id)"),
+            ("CHANGE_TYPE", "TEXT", "变更类型"),
+            ("VERSION_TIMES", "INTEGER", "版次"),
+        ]),
+    ),
+    "ECN_SD": (
+        "工程变更信息子单身",
+        _table([
+            ("ECN_D_ID", "INTEGER", "工程变更单身(外键 → ECN_D.Id)"),
+            ("SUB_ITEM_FEATURE_ID", "INTEGER", "新元件品号(外键 → ITEM.Id)"),
+            ("ORIGINAL_SUB_ITEM_FEATURE_ID", "INTEGER", "旧元件品号(外键 → ITEM.Id)"),
+            ("CHANGE_TYPE", "TEXT", "变更类型"),
+            ("HANDLE", "TEXT", "处置方式，如 replace / run-out"),
+            ("QTY_PER", "NUMERIC", "新元件组成用量"),
+            ("EFFECTIVE_DATE", "TEXT", "生效日期"),
+            ("EXPIRY_DATE", "TEXT", "失效日期"),
+            ("REMARK", "TEXT", "备注"),
+        ]),
+    ),
+    "ECN_TASK": (
+        "工程变更部门工作",
+        _table([
+            ("ECN_ID", "INTEGER", "工程变更单(外键 → ECN.Id)"),
+            ("DEPARTMENT_ID", "TEXT", "关联部门"),
+            ("PERSON_ID", "TEXT", "关联经办人"),
+            ("DESCRIPTION", "TEXT", "工作说明"),
+            ("START_DATE", "TEXT", "开始日期"),
+            ("PLAN_DATE", "TEXT", "预计完成日"),
+            ("ACTUAL_DATE", "TEXT", "实际完成日"),
         ]),
     ),
 }

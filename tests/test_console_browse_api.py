@@ -211,7 +211,7 @@ def test_raw_unexpected_failure_is_audited_without_leak(env, monkeypatch):
 def test_objects_catalog_and_rows(env):
     client = _client(env)
     items = client.get("/api/objects", headers=_auth()).json()
-    assert len(items) == 5
+    assert len(items) == 15
     customer = next(i for i in items if i["object"] == "Customer")
     assert customer["rows"] == 24 and customer["searchable"] is True
     r = client.get("/api/objects/Customer", headers=_auth())

@@ -45,6 +45,7 @@ from data2agent.metamodel.versioning import (
     object_layer_fully_published,
     parse_object_manifest,
 )
+from data2agent.scenarios.materializers import materialize_bindings
 
 logger = logging.getLogger(__name__)
 
@@ -895,6 +896,23 @@ def build_dataset(
                 reason_code="empty_field_map",
                 error=f"{tpl.object}: 启用 binding 缺少 field_map",
             )
+
+    try:
+        materialize_bindings(store, source, (binding for _, binding in members))
+    except Exception as e:
+        summary, error_id = _safe_error(f"materializer: {e}")
+        return BuildDatasetResult(
+            source=source,
+            dataset_version=None,
+            previous_dataset_version=None,
+            status=None,
+            ready=False,
+            published=False,
+            outcome="failed",
+            reason_code="materializer_failed",
+            error=summary,
+            error_id=error_id,
+        )
 
     conflict = _recover_stale_building(store, source)
     if conflict:

@@ -3195,6 +3195,8 @@ export interface components {
              * @default 0
              */
             quarantine_pending: number;
+            /** Relations */
+            relations?: components["schemas"]["TemplateRelation"][];
             /** Source Of Truth */
             source_of_truth: string;
             /** Warnings */
@@ -3217,6 +3219,17 @@ export interface components {
             sensitive: boolean;
             /** Type */
             type: string;
+        };
+        /** TemplateRelation */
+        TemplateRelation: {
+            /** Cardinality */
+            cardinality: string;
+            /** Desc */
+            desc?: string | null;
+            /** Name */
+            name: string;
+            /** Target */
+            target: string;
         };
         /** ValidationCheckResponse */
         ValidationCheckResponse: {

@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { NAV_GROUPS, NAV_ITEMS, createAppRouter, routes } from './index'
 
 describe('router', () => {
-  it('9 个主页面 + 配置/日志 + 首次配置隐藏路由', () => {
-    expect(NAV_ITEMS).toHaveLength(11)
-    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(11)
-    expect(routes.filter((r) => r.name)).toHaveLength(12)
+  it('11 个主页面 + 配置/日志 + 首次配置隐藏路由', () => {
+    expect(NAV_ITEMS).toHaveLength(13)
+    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(13)
+    expect(routes.filter((r) => r.name)).toHaveLength(14)
   })
 
   it('菜单分组遵循规格:运维监控 / 数据管理 / Agent / 系统', () => {
@@ -16,7 +16,7 @@ describe('router', () => {
       'Agent',
       '系统',
     ])
-    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([5, 3, 1, 2])
+    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([5, 4, 2, 2])
   })
 
   it('路径与规格一致:MCP Lab 固定 /mcp', () => {
@@ -30,7 +30,9 @@ describe('router', () => {
       '/audit',
       '/data',
       '/quarantine',
+      '/object-graph',
       '/templates',
+      '/dead-stock',
       '/mcp',
       '/settings',
       '/logs',

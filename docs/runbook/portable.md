@@ -37,6 +37,9 @@
 
 按 [push-validation.md](push-validation.md) 执行链路验收。
 
+外部 Agent 通过 HTTP MCP 接入时,按 [mcp-http-agent-integration.md](mcp-http-agent-integration.md)
+配置平台地址、Token 和工具调用流程。
+
 ## 5. 文件位置
 
 解压目录内:

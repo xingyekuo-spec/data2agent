@@ -15,7 +15,9 @@ const viewComponents = {
   audit: () => import('@/views/AuditView.vue'),
   data: () => import('@/views/DataView.vue'),
   quarantine: () => import('@/views/QuarantineView.vue'),
+  'object-graph': () => import('@/views/ObjectGraphView.vue'),
   templates: () => import('@/views/TemplatesView.vue'),
+  'dead-stock-validation': () => import('@/views/DeadStockValidationView.vue'),
   'mcp-lab': () => import('@/views/McpLabView.vue'),
   logs: () => import('@/views/LogsView.vue'),
   settings: () => import('@/views/SettingsView.vue'),
@@ -39,8 +41,7 @@ export interface NavGroup {
 }
 
 /**
- * 菜单结构(设计规格 §3.3,两级:分组标题 + 页面项):
- * 8 个主页面 + 只读「配置」。
+ * 菜单结构(设计规格 §3.3,两级:分组标题 + 页面项)。
  */
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
@@ -58,12 +59,16 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { name: 'data', path: '/data', title: '数据浏览' },
       { name: 'quarantine', path: '/quarantine', title: '隔离区' },
+      { name: 'object-graph', path: '/object-graph', title: '对象关系' },
       { name: 'templates', path: '/templates', title: '模板' },
     ],
   },
   {
     title: 'Agent',
-    items: [{ name: 'mcp-lab', path: '/mcp', title: 'MCP Lab' }],
+    items: [
+      { name: 'dead-stock-validation', path: '/dead-stock', title: '呆滞验证' },
+      { name: 'mcp-lab', path: '/mcp', title: 'MCP Lab' },
+    ],
   },
   {
     title: '系统',

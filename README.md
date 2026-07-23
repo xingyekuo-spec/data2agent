@@ -30,23 +30,16 @@
 
 ## 开发者本地快速开始
 
+完整源码开发运行步骤见 [docs/runbook/source-dev.md](docs/runbook/source-dev.md)。
+
 ```bash
-pip install -e ".[dev,mcp]"
+pip install -e ".[dev,mcp,console,ingest,connect,middle_admin,excel]"
 pytest tests -q                                   # Python 回归测试(mssql 集成测试需 Docker)
 python -m data2agent.metamodel.validate templates # 模板校验
 python -m data2agent.showroom.seed                # 生成 E10-like 参考库 showroom/e10.sqlite
 python -m data2agent.connect sync --sqlite showroom/e10.sqlite   # 抽取:水位增量 → 落地库(只读/白名单/审计)
 python -m data2agent.connect apply                # 映射:raw_* → 物化对象层 obj_*(隔离区 + 熔断)
-python -m data2agent.connect excel-suggest --file 报价历史.xlsx --object Quotation --out map.yaml
-python -m data2agent.connect excel-import  --file 报价历史.xlsx --map map.yaml   # Excel 导入(确认一次,长期记住)
-python -m data2agent.mcp_server                   # MCP Server 读对象层(stdio,只读 + 默认脱敏)
-python -m data2agent.showroom.review_demo         # 接单评审参考链:终端直出建议卡(离线)
-python -m data2agent.console --config connect.example.yaml   # 运维控制台 http://127.0.0.1:8849
-
-docker compose up --build   # 回归验收链:SQL Server 参考源 + 抽取常驻 + MCP(HTTP :8848)+ 运维控制台(:8849)
-# 冒烟:docker compose exec connector python -m data2agent.showroom.review_demo --db /data/factory.sqlite
-# 接入 Claude Code 试玩(本机版):
-#   claude mcp add d2a-factory -- .venv/bin/python -m data2agent.mcp_server
+python -m data2agent.console --landing landing/factory.sqlite --templates templates
 ```
 
 ## 设计文档
