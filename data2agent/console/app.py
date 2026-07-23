@@ -188,15 +188,20 @@ _AUDIT_SQL_BUDGET = 4096
 _PKG = Path(__file__).resolve().parent
 _REPO_ROOT = _PKG.parent.parent
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
+_VUE_MODULE_MEDIA_TYPES = {
+    ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8",
+    ".wasm": "application/wasm",
+}
 
 _VUE_MISSING_HTML = """<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>Vue Console 未安装</title></head>
 <body style="font-family:system-ui,sans-serif;max-width:40rem;margin:3rem auto;line-height:1.5">
 <h1>控制台未安装或未构建</h1>
-<p><code>/v1</code> 需要 Vue Console 的构建产物（<code>console-ui/dist</code>）。</p>
+<p>平台首页需要 Vue Console 的构建产物（<code>console-ui/dist</code>）。</p>
 <p>开发可用 Vite；源码/便携包/Docker 需先执行 <code>cd console-ui &amp;&amp; npm run build</code>，
 或设置环境变量 <code>D2A_VUE_DIST</code> 指向含 <code>index.html</code> 的目录。</p>
-<p>平台管理入口已统一为 Vue Console：<a href="/v1/">/v1/</a></p>
+<p>平台管理入口已统一为 Vue Console：<a href="/">/</a></p>
 </body></html>
 """
 
@@ -684,7 +689,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 return
             if path == "/api/config" and request.method == "GET":
                 return
-            raise HTTPException(409, "尚未完成首次配置,请打开 /v1/setup")
+            raise HTTPException(409, "尚未完成首次配置,请打开 /setup")
 
         tok = state["token"]
         if not tok:
@@ -1285,23 +1290,23 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     @app.get("/")
     def index():
-        return RedirectResponse("/v1/setup" if needs_setup() else "/v1/", status_code=302)
+        if vue_dist is None:
+            return _vue_missing()
+        if needs_setup():
+            return RedirectResponse("/setup", status_code=302)
+        return FileResponse(vue_dist / "index.html")
 
     @app.get("/config", include_in_schema=False)
     def legacy_config_page():
-        return RedirectResponse("/v1/setup" if needs_setup() else "/v1/settings", status_code=302)
-
-    @app.get("/logs", include_in_schema=False)
-    def legacy_logs_page():
-        return RedirectResponse("/v1/logs", status_code=302)
+        return RedirectResponse("/setup" if needs_setup() else "/settings", status_code=302)
 
     @app.get("/debug", include_in_schema=False)
     def legacy_debug_page():
-        return RedirectResponse("/v1/mcp", status_code=302)
+        return RedirectResponse("/mcp", status_code=302)
 
     @app.get("/v0", include_in_schema=False)
     def legacy_v0():
-        return RedirectResponse("/v1/", status_code=302)
+        return RedirectResponse("/", status_code=302)
 
     # ---- 首次配置 ----
 
@@ -3881,9 +3886,18 @@ def create_app(landing: str | None = None, templates: str = "templates",
     async def _html_gate(request: Request, call_next):
         if request.url.path.startswith("/api"):
             return await call_next(request)
-        return await call_next(request)
+        response = await call_next(request)
+        # Portable Windows environments may inherit a registry MIME mapping that
+        # labels .js as text/plain.  Browsers then reject Vue ES modules before
+        # the application can load.  Keep module asset types deterministic.
+        if request.url.path.startswith("/assets/"):
+            media_type = _VUE_MODULE_MEDIA_TYPES.get(
+                Path(request.url.path).suffix.lower())
+            if media_type and response.status_code == 200:
+                response.headers["content-type"] = media_type
+        return response
 
-    # ---- M6: Vue Console /v1 静态挂载与 SPA fallback ----
+    # ---- Vue Console 根路径静态挂载与 SPA fallback ----
     vue_dist = resolve_vue_dist()
     app.state.vue_dist = vue_dist
 
@@ -3893,20 +3907,25 @@ def create_app(landing: str | None = None, templates: str = "templates",
     if vue_dist is not None:
         assets_dir = vue_dist / "assets"
         if assets_dir.is_dir():
-            app.mount("/v1/assets", StaticFiles(directory=assets_dir), name="vue-assets")
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="vue-assets")
 
     @app.get("/v1", include_in_schema=False)
     @app.get("/v1/", include_in_schema=False)
-    def vue_console_index():
-        if vue_dist is None:
-            return _vue_missing()
-        return FileResponse(vue_dist / "index.html")
+    def legacy_v1_index():
+        return RedirectResponse("/setup" if needs_setup() else "/", status_code=302)
 
     @app.get("/v1/{full_path:path}", include_in_schema=False)
+    def legacy_v1_spa(full_path: str, request: Request):
+        target = f"/{full_path}"
+        if request.url.query:
+            target += f"?{request.url.query}"
+        return RedirectResponse(target, status_code=302)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
     def vue_console_spa(full_path: str):
         if vue_dist is None:
             return _vue_missing()
-        # 已由 StaticFiles 处理 /v1/assets/*;其余文件或 SPA 回退
+        # 已由 StaticFiles 处理 /assets/*;其余文件或 SPA 回退
         candidate = (vue_dist / full_path).resolve()
         try:
             candidate.relative_to(vue_dist.resolve())

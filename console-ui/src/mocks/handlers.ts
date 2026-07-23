@@ -23,7 +23,7 @@ type QuarantineRecord = components['schemas']['QuarantineRecord']
  * 未匹配请求策略:
  * - /api/* 未声明 handler → 抛错(Mock 必须显式声明,禁止静默穿透);
  * - 非 API 请求(Vite dev 模块 / 静态资源 / HMR)→ 返回 undefined 放行到真实
- *   网络。worker scope 是 /v1/,Vite dev 也在 /v1/src/ 下加载模块,一刀切抛错
+ *   网络。worker scope 是 /,Vite dev 也在 /src/ 下加载模块,一刀切抛错
  *   会把动态 import 打断(500),导致路由无法挂载。
  */
 export function strictUnhandledRequest(request: Request): void {

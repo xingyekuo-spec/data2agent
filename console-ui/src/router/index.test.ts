@@ -48,14 +48,14 @@ describe('router', () => {
     }
   })
 
-  it('/v1/mcp 直接访问到达 MCP Lab,不被兜底重定向', async () => {
+  it('/mcp 直接访问到达 MCP Lab,不被兜底重定向', async () => {
     const router = createAppRouter(createMemoryHistory())
     await router.push('/mcp')
     expect(router.currentRoute.value.name).toBe('mcp-lab')
   })
 
-  it('路由 base 取自构建注入的 BASE_URL(生产为 /v1/,由构建产物检查兜底)', async () => {
-    // 单测环境 BASE_URL 恒为 '/',无法在此断言 /v1/;
+  it('路由 base 取自构建注入的 BASE_URL(生产为 /,由构建产物检查兜底)', async () => {
+    // 单测环境 BASE_URL 恒为 '/',与生产配置一致;
     // 生产 base 的证据见 scripts/check-dist.mjs(CI 在 npm run build 后执行)
     const router = createAppRouter(createMemoryHistory())
     await router.push('/pipeline')

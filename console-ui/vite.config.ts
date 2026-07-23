@@ -2,12 +2,12 @@ import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-// base 固定 /v1/:开发(dev)与生产(build)一致,Vue Console 由 FastAPI 挂载于 /v1。
+// base 固定 /:开发(dev)与生产(build)一致,Vue Console 由 FastAPI 挂载于根路径。
 // 开发代理把 /api 转发到本机控制台(:8849),前端一律同源相对路径,无双前缀。
 export default defineConfig(({ command }) => {
   const isBuild = command === 'build'
   return {
-    base: '/v1/',
+    base: '/',
     plugins: [vue()],
     resolve: {
       alias: [

@@ -44,9 +44,10 @@ def _check_platform_entry(portable: Path) -> None:
     if not app_py.is_file():
         _fail("installed platform console module missing")
     app_code = app_py.read_text(encoding="utf-8")
-    expected_redirect = 'return RedirectResponse("/v1/setup" if needs_setup() else "/v1/", status_code=302)'
-    if expected_redirect not in app_code:
-        _fail("installed platform wheel does not redirect root to Vue Console")
+    if 'app.mount("/assets", StaticFiles(directory=assets_dir), name="vue-assets")' not in app_code:
+        _fail("installed platform wheel does not mount root Vue assets")
+    if 'def legacy_v1_index()' not in app_code:
+        _fail("installed platform wheel does not retain /v1 compatibility redirect")
 
 
 def main() -> int:

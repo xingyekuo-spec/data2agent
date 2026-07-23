@@ -8,31 +8,30 @@
 
 | 界面 | 部署位置 | 路径 | 用途 |
 | --- | --- | --- | --- |
-| Vue Console | 数据平台 `:8849` | `/v1/` | 首次配置、配置编辑、日志、监控、数据验证、MCP Lab、字段血缘、一键验收 |
+| Vue Console | 数据平台 `:8849` | `/` | 首次配置、配置编辑、日志、监控、数据验证、MCP Lab、字段血缘、一键验收 |
 | middle_admin | 中间服务器 `:8851` | `/` `/config` `/logs` | 中间机 ERP 连接、平台 URL、connector 状态与日志 |
 
 平台端不再提供 Jinja 管理页和 v0 内嵌页。旧平台路径会重定向:
 
 | 旧路径 | 新位置 |
 | --- | --- |
-| `/` | `/v1/` 或首次配置时 `/v1/setup` |
-| `/config` | `/v1/settings` 或首次配置时 `/v1/setup` |
-| `/logs` | `/v1/logs` |
-| `/debug` | `/v1/mcp` |
-| `/v0` | `/v1/` |
+| `/config` | `/settings` 或首次配置时 `/setup` |
+| `/debug` | `/mcp` |
+| `/v0` | `/` |
+| `/v1/*` | 保留兼容跳转到对应根路径 |
 
 ## 2. 平台路由
 
 ```text
 platform console(:8849)
-  ├─ /v1/          Vue Console
-  ├─ /v1/setup    首次配置
-  ├─ /v1/settings 配置编辑
-  ├─ /v1/logs     日志
+  ├─ /             Vue Console
+  ├─ /setup        首次配置
+  ├─ /settings     配置编辑
+  ├─ /logs         日志
   └─ /api/*       统一管理 API
 ```
 
-Vue 生产 base 固定为 `/v1/`;便携包必须包含 `app/console-ui/dist`。
+Vue 生产 base 固定为 `/`;便携包必须包含 `app/console-ui/dist`。
 
 ## 3. Vue Console 页面
 
@@ -113,7 +112,7 @@ python scripts/export_console_openapi.py --check console-ui/openapi.json
 - release workflow 在组装平台便携包前执行 `npm ci && npm run build`;
 - `deploy/build_portable.ps1 -Role platform` 要求 `console-ui/dist/index.html` 存在,并复制到
   `app/console-ui/dist`;
-- Vue dist 缺失时 `/v1/` 返回明确错误页,不回落到另一套平台管理页面。
+- Vue dist 缺失时 `/` 返回明确错误页,不回落到另一套平台管理页面。
 
 ## 7. 中间机管理界面(middle_admin)
 
@@ -149,6 +148,6 @@ middle_admin(`:8851`)提供中间服务器本机配置入口,核心功能:
 现场运行使用便携包:
 
 ```text
-d2a-portable-platform-<版本>.zip → 解压 → 双击 data2agent.exe → 打开 /v1/setup
+d2a-portable-platform-<版本>.zip → 解压 → 双击 data2agent.exe → 打开 /setup
 d2a-portable-middle-<版本>.zip   → 解压 → 双击 data2agent.exe → 打开中间机管理界面
 ```

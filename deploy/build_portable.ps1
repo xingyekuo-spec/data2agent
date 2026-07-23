@@ -117,7 +117,7 @@ Copy-Item -Recurse -Force (Join-Path $root 'templates\*') (Join-Path $portable '
 Write-Step 'Copy ERP extraction profiles -> app/erp-configs'
 Copy-Item -Recurse -Force (Join-Path $root 'erp-configs\*') (Join-Path $portable 'app\erp-configs')
 
-# --- 4b. Vue Console dist (platform; required for /v1) ----------------------
+# --- 4b. Vue Console dist (platform; required for /) ------------------------
 if ($Role -eq 'platform') {
     $vueDist = Join-Path $root 'console-ui\dist'
     $vueIndex = Join-Path $vueDist 'index.html'
@@ -136,7 +136,7 @@ if ($Role -eq 'platform') {
 # --- 5. README (single entry: data2agent.exe, added by release / -LauncherExe) ---
 Write-Step 'Write README.txt'
 $v1Note = if ($Role -eq 'platform') {
-    "  5. Vue Console: open http://127.0.0.1:8849/v1/ (requires app\console-ui\dist)."
+    "  5. Vue Console: open http://127.0.0.1:8849/ (requires app\console-ui\dist)."
 } else { '' }
 $readme = @"
 data2agent portable ($Role) $Version

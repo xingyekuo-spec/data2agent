@@ -6,6 +6,7 @@ M6-T01:先冻结 OpenAPI/模型语义;运行时长生命周期服务与 gateway 
 from __future__ import annotations
 
 from datetime import date
+import mimetypes
 from pathlib import Path
 
 import pytest
@@ -549,6 +550,23 @@ def test_resolve_vue_dist_under_portable_home(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "data2agent.console.app._REPO_ROOT", tmp_path / "not-a-repo")
     assert resolve_vue_dist() == dist.resolve()
+
+
+def test_vue_module_assets_do_not_depend_on_system_mime_mapping(tmp_path, monkeypatch):
+    """便携版即使 Windows 将 .js 映射为 text/plain，也必须返回模块 MIME。"""
+    dist = tmp_path / "vue-dist"
+    assets = dist / "assets"
+    assets.mkdir(parents=True)
+    (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+    (assets / "index.js").write_text("export {};", encoding="utf-8")
+    monkeypatch.setenv("D2A_VUE_DIST", str(dist))
+    monkeypatch.setitem(mimetypes.types_map, ".js", "text/plain")
+
+    client = TestClient(create_app(str(tmp_path / "landing.sqlite"), ROOT / "templates"))
+    response = client.get("/assets/index.js")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/javascript")
 
 
 # ---- M6-T03 / T04: 查询 API 与 proposal gateway ----

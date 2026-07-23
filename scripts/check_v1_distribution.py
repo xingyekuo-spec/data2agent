@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""检查 Vue /v1 分发就绪:dist 存在性、index 资源引用、FastAPI 挂载行为。"""
+"""检查 Vue 根路径分发就绪:dist 存在性、index 资源引用、FastAPI 挂载行为。"""
 
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ def check_dist_files(dist: Path) -> list[str]:
     if not index.is_file():
         return [f"missing {index}"]
     html = index.read_text(encoding="utf-8")
-    refs = re.findall(r'(?:src|href)="(/v1/[^"]+)"', html)
+    refs = re.findall(r'(?:src|href)="(/assets/[^"]+)"', html)
     if not refs:
-        errors.append("index.html 未引用 /v1/ 资源")
+        errors.append("index.html 未引用 /assets/ 资源")
     for ref in refs:
-        rel = ref.removeprefix("/v1/")
+        rel = ref.removeprefix("/")
         path = dist / rel
         if not path.is_file():
             errors.append(f"missing asset {path} (from {ref})")
@@ -51,25 +51,25 @@ def check_fastapi_mount(dist: Path | None) -> list[str]:
         app = create_app(str(landing), str(ROOT / "templates"))
         client = TestClient(app)
         if dist is not None:
-            for path in ("/v1/", "/v1/mcp"):
+            for path in ("/", "/mcp"):
                 r = client.get(path)
                 if r.status_code != 200:
                     errors.append(f"{path} expected 200, got {r.status_code}")
-            root = client.get("/", follow_redirects=False)
-            if root.status_code != 302 or root.headers.get("location") != "/v1/":
-                errors.append("/ should redirect to /v1/")
+            legacy = client.get("/v1/mcp", follow_redirects=False)
+            if legacy.status_code != 302 or legacy.headers.get("location") != "/mcp":
+                errors.append("/v1/mcp should redirect to /mcp")
             v0 = client.get("/v0", follow_redirects=False)
-            if v0.status_code != 302 or v0.headers.get("location") != "/v1/":
-                errors.append("/v0 should redirect to /v1/")
+            if v0.status_code != 302 or v0.headers.get("location") != "/":
+                errors.append("/v0 should redirect to /")
         else:
-            r = client.get("/v1/")
+            r = client.get("/")
             if r.status_code != 503:
-                errors.append(f"missing dist: /v1/ expected 503, got {r.status_code}")
+                errors.append(f"missing dist: / expected 503, got {r.status_code}")
             if "未安装" not in r.text and "未构建" not in r.text:
                 errors.append("missing dist page should diagnose 未安装/未构建")
             v0 = client.get("/v0", follow_redirects=False)
-            if v0.status_code != 302 or v0.headers.get("location") != "/v1/":
-                errors.append("/v0 should redirect to /v1/ when /v1 missing")
+            if v0.status_code != 302 or v0.headers.get("location") != "/":
+                errors.append("/v0 should redirect to / when dist missing")
     return errors
 
 
@@ -96,11 +96,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         errors.append(f"dist 不存在: {args.dist}(可先 npm run build,或传 --allow-missing)")
     if errors:
-        print("FAIL: /v1 distribution checks")
+        print("FAIL: root distribution checks")
         for e in errors:
             print(f"  - {e}")
         return 1
-    print("OK: /v1 distribution checks passed")
+    print("OK: root distribution checks passed")
     return 0
 
 

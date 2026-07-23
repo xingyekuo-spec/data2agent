@@ -1,6 +1,6 @@
 """入口:python -m data2agent.console [--home C:\\d2a] [--config platform.yaml]
 
-推荐现场:仅传 --home,无配置时浏览器打开 /v1/setup 完成首次配置。
+推荐现场:仅传 --home,无配置时浏览器打开 /setup 完成首次配置。
 Token:--token / 环境变量 / home/config/secrets.env 中的 D2A_CONSOLE_TOKEN。
 """
 
@@ -96,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     mode = "首次配置模式" if (home and not home.platform_yaml.is_file()) else (
         "完整模式" if config else "只读模式")
-    print(f"运维控制台:http://{args.host}:{args.port}/v1/"
+    print(f"运维控制台:http://{args.host}:{args.port}/"
           f"({mode};"
           f"{'Token 认证已启用' if token else '未启用认证,内网部署建议配 D2A_CONSOLE_TOKEN'})")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

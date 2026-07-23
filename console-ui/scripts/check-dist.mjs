@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 生产构建产物检查(npm run build 之后执行):
-// 1. dist/index.html 资源引用必须以 /v1/ 开头(生产 base 固定);
+// 1. dist/index.html 资源引用必须以 /assets/ 开头(生产 base 固定为 /);
 // 2. 产物不得引用运行时 CDN;
 // 3. 产物不得携带任何 Mock 痕迹:扫描 dist 全部文件,命中 MSW worker、
 //    fixture 数据或场景标记即失败(生产构建通过 vite alias 排除 mocks,
@@ -18,8 +18,8 @@ if (local.length === 0) {
   process.exit(1)
 }
 for (const url of local) {
-  if (!url.startsWith('/v1/')) {
-    console.error(`FAIL: 资源引用未以 /v1/ 开头: ${url}`)
+  if (!url.startsWith('/assets/')) {
+    console.error(`FAIL: 资源引用未以 /assets/ 开头: ${url}`)
     process.exit(1)
   }
   if (/cdn\.|unpkg|jsdelivr|googleapis/.test(url)) {
@@ -68,5 +68,5 @@ for (const file of walk(dist)) {
 }
 
 console.log(
-  `OK: dist 产物 base=/v1/、无 CDN、无 Mock 痕迹(扫描 ${scanned} 个文件,${local.length} 个资源引用)`,
+  `OK: dist 产物 base=/、无 CDN、无 Mock 痕迹(扫描 ${scanned} 个文件,${local.length} 个资源引用)`,
 )

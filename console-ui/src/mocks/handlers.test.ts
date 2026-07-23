@@ -147,13 +147,13 @@ describe('mock handlers', () => {
       strictUnhandledRequest(new Request('http://localhost:5174/api/not-declared')),
     ).toThrow('MSW 未匹配的 API 请求')
 
-    // 回归:Vite dev 在 /v1/src 下加载模块,worker 拦截后必须放行,
+    // 回归:Vite dev 在 /src 下加载模块,worker 拦截后必须放行,
     // 否则动态 import 被打断、路由无法挂载(本次事故根因)
     expect(() =>
-      strictUnhandledRequest(new Request('http://localhost:5174/v1/src/views/DashboardView.vue')),
+      strictUnhandledRequest(new Request('http://localhost:5174/src/views/DashboardView.vue')),
     ).not.toThrow()
     expect(() =>
-      strictUnhandledRequest(new Request('http://localhost:5174/v1/assets/index.js')),
+      strictUnhandledRequest(new Request('http://localhost:5174/assets/index.js')),
     ).not.toThrow()
   })
 })

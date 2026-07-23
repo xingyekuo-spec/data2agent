@@ -56,7 +56,7 @@ D2A_MCP_TOKEN=<MCP_TOKEN> python -m data2agent.mcp_server \
 8848
 ```
 
-MCP Token 在平台首次配置 `/v1/setup` 中填写或生成。
+MCP Token 在平台首次配置 `/setup` 中填写或生成。
 
 ## 3. 外部 Agent 连接信息
 

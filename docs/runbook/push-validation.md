@@ -26,7 +26,7 @@ ERP → 中间服务器 → 数据平台
 
 1. 解压 `d2a-portable-platform-<版本>.zip`。
 2. 双击 `data2agent.exe`。
-3. 浏览器打开 `/v1/setup`。
+3. 浏览器打开 `/setup`。
 4. 填写:
    - ingest Token
    - 管理 Token

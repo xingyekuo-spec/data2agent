@@ -22,7 +22,7 @@
 
 1. 数据平台解压 `d2a-portable-platform-<版本>.zip`。
 2. 数据平台双击 `data2agent.exe`。
-3. 浏览器打开 `/v1/setup`,填写 ingest Token、管理 Token、MCP Token。
+3. 浏览器打开 `/setup`,填写 ingest Token、管理 Token、MCP Token。
 4. 中间服务器安装 ODBC Driver 18 for SQL Server。
 5. 中间服务器解压 `d2a-portable-middle-<版本>.zip`。
 6. 中间服务器双击 `data2agent.exe`。

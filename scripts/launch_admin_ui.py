@@ -398,12 +398,11 @@ def ensure_landing_db(python: Path, landing: Path, *, home: Path,
 def admin_url(host: str, port: int, configured: bool, *, role: str) -> str:
     """Return the canonical UI route for the installed role.
 
-    Platform is Vue-only.  Do not rely on the root compatibility redirect here:
-    a portable launcher must never open an old root page from a stale service.
+    Platform is Vue-only.  The root path is the canonical console entry.
     """
     base = f"http://{host}:{port}"
     if role == "platform":
-        return base + ("/v1/" if configured else "/v1/setup")
+        return base + ("/" if configured else "/setup")
     return base + "/" + ("" if configured else "config")
 
 

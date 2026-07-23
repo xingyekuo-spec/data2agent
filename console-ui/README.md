@@ -3,7 +3,7 @@
 data2agent 的日常监控与数据验证主界面,已覆盖 v0.2 可观察与 v0.3 可验证能力。
 Vue 3 + Vite + TypeScript + Element Plus + Pinia + Vue Router。
 
-> 安装/配置/故障恢复仍由 Jinja2 管理页(`/` 与 `/v0`)承担;本工程挂载在 `/v1`。
+> 平台安装、配置和故障恢复均由本 Vue Console 提供;生产环境挂载在根路径 `/`。
 
 ## 环境要求
 
@@ -17,7 +17,7 @@ npm run dev        # 开发服务,默认 MOCK 模式:后端不启动也能完整
 npm run dev:real   # 连接本机真实控制台 http://127.0.0.1:8849(/api 代理)
 ```
 
-开发服务地址:<http://localhost:5173/v1/>。MOCK 模式下右下角有场景切换面板,
+开发服务地址:<http://localhost:5173/>。MOCK 模式下右下角有场景切换面板,
 顶栏持续显示大写 `MOCK` 标识;REAL 不加载 MSW。
 
 ## 环境模式
@@ -65,9 +65,9 @@ npm run lint         # ESLint(核心代码禁止显式 any)
 npm run typecheck    # vue-tsc(含生成类型编译期校验 src/types/api.compile-check.ts)
 npm run test         # Vitest + jsdom(MSW node server,不依赖已启动的后端)
 npm run test:e2e     # Playwright 浏览器验收(Mock 场景 + Real 临时 SQLite/后端)
-npm run build        # 生产构建:默认 REAL,base=/v1/
+npm run build        # 生产构建:默认 REAL,base=/
 npm run preview      # 预览构建产物
-node scripts/check-dist.mjs   # 产物检查:base=/v1/、无 CDN、全量产物无 Mock 痕迹
+node scripts/check-dist.mjs   # 产物检查:base=/、无 CDN、全量产物无 Mock 痕迹
 ```
 
 `test:e2e` 的 Real 部分需要 Python 后端(默认 `../.venv/bin/python`,可用

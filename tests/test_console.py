@@ -55,8 +55,8 @@ def test_readonly_mode_views_and_blocked_actions(env):
     landing, _ = env
     client = TestClient(create_app(landing.db_path, ROOT / "templates"))
     r = client.get("/", follow_redirects=False)
-    assert r.status_code == 302
-    assert r.headers["location"] == "/v1/"
+    assert r.status_code == 200
+    assert "text/html" in r.headers["content-type"]
 
     o = client.get("/api/overview").json()
     assert o["readonly"] is True
@@ -120,7 +120,7 @@ def test_window_blocks_console_actions(env, tmp_path):
 def test_token_auth(env):
     landing, _ = env
     client = TestClient(create_app(landing.db_path, ROOT / "templates", token="s3cret"))
-    assert client.get("/", follow_redirects=False).headers["location"] == "/v1/"
+    assert client.get("/", follow_redirects=False).status_code == 200
     assert client.get("/api/overview").status_code == 401
     ok = client.get("/api/overview", headers={"Authorization": "Bearer s3cret"})
     assert ok.status_code == 200
@@ -160,15 +160,15 @@ def test_config_validate_without_save(env):
     assert cfg_file.read_text(encoding="utf-8") == before
 
 
-def test_legacy_html_routes_redirect_to_vue(env):
+def test_legacy_html_routes_redirect_to_root_vue(env):
     landing, _ = env
     client = TestClient(create_app(landing.db_path, ROOT / "templates"))
     expected = {
-        "/": "/v1/",
-        "/config": "/v1/settings",
-        "/logs": "/v1/logs",
-        "/debug": "/v1/mcp",
-        "/v0": "/v1/",
+        "/config": "/settings",
+        "/debug": "/mcp",
+        "/v0": "/",
+        "/v1/": "/",
+        "/v1/mcp": "/mcp",
     }
     for path, location in expected.items():
         r = client.get(path, follow_redirects=False)

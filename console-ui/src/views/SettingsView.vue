@@ -123,7 +123,7 @@ onMounted(() => {
         <EmptyState
           v-if="needsSetup"
           title="尚未完成首次配置"
-          hint="请打开 /v1/setup 完成平台首次配置"
+          hint="请打开 /setup 完成平台首次配置"
         />
         <el-form
           v-else

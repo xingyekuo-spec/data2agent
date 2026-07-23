@@ -17,7 +17,7 @@ mssql-sim     SQL Server 容器,init 脚本灌入 E10-like 表形 + seed 数据(
    ▼ 抽取(connect,走 mssql_readonly 适配器,窗口/限流/审计全开)
 landing-sqlite SQLite 落地库(raw_* + 物化对象表)
    ├─ mcp     MCP 网关(streamable HTTP :8848) → 参考脚本或 Agent 编排
-   └─ console Vue Console(:8849 `/v1/`)
+   └─ console Vue Console(:8849 `/`)
 ```
 
 本机快速版是 `seed → connect sync → connect apply → MCP`;源库和落地库均为 SQLite。
@@ -77,7 +77,7 @@ Mock 不得生成正式验收结论;参考链也不等于生产安全验证。
 
 ### 5.2 必验页面
 
-1. `/v1` 总览显示 ERP→抽取→推送/落地→映射→对象→MCP 节点;
+1. `/` 总览显示 ERP→抽取→推送/落地→映射→对象→MCP 节点;
 2. 运行详情能展开表、水位、批次、输入输出与错误;
 3. raw/object 浏览返回真实 seed 样本,有分页和敏感标识;
 4. 模板页展示 5 个对象、binding draft 和字段映射;

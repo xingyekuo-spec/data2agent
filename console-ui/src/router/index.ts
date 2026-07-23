@@ -99,7 +99,7 @@ export const routes: RouteRecordRaw[] = [
 
 export function createAppRouter(history?: RouterHistory): Router {
   const router = createRouter({
-    // BASE_URL 固定 /v1/(vite.config.ts);直接访问深链接与菜单激活一致
+    // BASE_URL 固定 /(vite.config.ts);直接访问深链接与菜单激活一致
     history: history ?? createWebHistory(import.meta.env.BASE_URL),
     routes,
   })

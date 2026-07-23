@@ -183,9 +183,9 @@ async function runMock(browser) {
   console.log('\n== Part A: Mock 模式验收 ==')
   const dev = startProc('npm', ['run', 'dev', '--', '--port', String(MOCK_PORT), '--strictPort'], 'mock-dev', resolve('.'))
   try {
-    await waitFor(`http://localhost:${MOCK_PORT}/v1/`)
+    await waitFor(`http://localhost:${MOCK_PORT}/`)
     const page = await browser.newPage()
-    await page.goto(`http://localhost:${MOCK_PORT}/v1/`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${MOCK_PORT}/`, { waitUntil: 'networkidle' })
 
     // 仪表盘 healthy:30 秒判断要素齐全
     expect((await waitText(page, '[data-testid="topbar-title"]')).includes('仪表盘'), '顶栏显示当前页面标题')
@@ -242,20 +242,20 @@ async function runMock(browser) {
     expect((await page.textContent('[data-testid="steps-table"]')).includes('CUSTOMER'), 'M4:step 含目标表')
     expect((await page.textContent('body')).includes('2026-07-17 08:30:00'), 'M4:step 含水位证据')
     // URL 恢复:深链重新打开同一 run
-    await page.goto(`http://localhost:${MOCK_PORT}/v1/runs?run_id=42`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${MOCK_PORT}/runs?run_id=42`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="run-detail-drawer"]').waitFor({ state: 'visible' })
     expect(true, 'M4:run_id 深链自动打开详情')
     // 审计与数据页
-    await page.goto(`http://localhost:${MOCK_PORT}/v1/audit`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${MOCK_PORT}/audit`, { waitUntil: 'networkidle' })
     expect((await page.locator('[data-testid="sql-table"]').count()) === 1, 'M4:SQL 审计表可见')
     expect((await page.locator('[data-testid="sql-full"]').count()) === 0, 'M4:SQL 默认折叠(全文不展开)')
-    await page.goto(`http://localhost:${MOCK_PORT}/v1/data`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${MOCK_PORT}/data`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="browse-CUSTOMER"]').click()
     await page.locator('[data-testid="raw-table"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="raw-table"]')).includes('***'), 'M4:raw 敏感列脱敏')
 
     // M2:数据集 tab —— 待发布/已发布状态、发布与回滚交互、对象版本
-    await page.goto(`http://localhost:${MOCK_PORT}/v1/data?tab=datasets`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${MOCK_PORT}/data?tab=datasets`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="datasets-table"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="datasets-table"]')).includes('待发布'), 'M2:候选显示待发布')
     expect((await page.textContent('[data-testid="datasets-table"]')).includes('已发布'), 'M2:当前 published 可见')
@@ -274,7 +274,7 @@ async function runMock(browser) {
       'M2:stage-only/apply 结果含 published=false')
 
     // M5:MCP Lab Mock —— 查询表单、会话证据、建议卡入口,无写回控件
-    await page.goto(`http://localhost:${MOCK_PORT}/v1/mcp`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${MOCK_PORT}/mcp`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="mcp-lab-page"]').waitFor({ state: 'visible' })
     expect((await page.locator('[data-testid="feature-placeholder"]').count()) === 0,
       'M6:MCP Lab 不再是占位页')
@@ -326,9 +326,9 @@ async function runReal(browser) {
   )
   const dev = startProc('npm', ['run', 'dev:real', '--', '--port', String(REAL_UI_PORT), '--strictPort'], 'real-dev', resolve('.'))
   try {
-    await waitFor(`http://localhost:${REAL_UI_PORT}/v1/`)
+    await waitFor(`http://localhost:${REAL_UI_PORT}/`)
     const page = await browser.newPage()
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/`, { waitUntil: 'networkidle' })
 
     expect((await waitText(page, '[data-testid="env-badge"]')) === 'REAL', '顶栏显示 REAL 标识')
     expect((await page.locator('[data-testid="scenario-switcher"]').count()) === 0, 'REAL 无场景切换面板')
@@ -357,7 +357,7 @@ async function runReal(browser) {
     expect((await rows.count()) >= 5, 'Real:运行列表含 sync/apply/reconcile/ingest/legacy')
     const runTypes = ['sync', 'apply', 'reconcile', 'ingest']
     for (const runType of runTypes) {
-      await page.goto(`http://localhost:${REAL_UI_PORT}/v1/runs?type=${runType}`, { waitUntil: 'networkidle' })
+      await page.goto(`http://localhost:${REAL_UI_PORT}/runs?type=${runType}`, { waitUntil: 'networkidle' })
       await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
       await page.locator('[data-testid="runs-table"] tbody tr').first().click()
       await page.locator('[data-testid="steps-table"]').waitFor({ state: 'visible' })
@@ -365,7 +365,7 @@ async function runReal(browser) {
         `Real:${runType} 运行有结构化 step`)
       await page.locator('.el-drawer__close-btn').click()
     }
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/runs`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/runs`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
     const legacyRow = page.locator('[data-testid="runs-table"] tbody tr', { hasText: '类型未知' })
     await legacyRow.first().click()
@@ -374,7 +374,7 @@ async function runReal(browser) {
     await page.locator('.el-drawer__close-btn').click()
 
     // M4 Real:SQL 筛选、raw 拒绝审计、注入搜索与业务副作用
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/audit?tab=sql&source=${SOURCE}&action=read`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/audit?tab=sql&source=${SOURCE}&action=read`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="sql-table"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="sql-table"]')).includes('read'),
       'Real:SQL 审计 action 筛选生效')
@@ -384,7 +384,7 @@ async function runReal(browser) {
       `http://localhost:${CONSOLE_PORT}/api/data/raw/${SOURCE}/CUSTOMER`,
     )
     expect(deniedRaw.status() === 401, 'Real:raw 无 token 请求被拒绝')
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/audit?tab=access&allowed=false`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/audit?tab=access&allowed=false`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="access-table"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="access-table"]')).includes('unauthorized'),
       'Real:raw 拒绝请求进入访问审计')
@@ -716,7 +716,7 @@ else:
       'M5:浏览模板不改变 raw 表')
 
     // M5-12: 浏览隔离页与模板页 UI(须在 API retry 清空隔离之前,否则可能合法空态)
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/quarantine`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/quarantine`, { waitUntil: 'networkidle' })
     await page.waitForTimeout(2000)
     const qPageText = await page.textContent('body')
     expect(qPageText.includes('隔离') || qPageText.includes('Quarantine'),
@@ -726,7 +726,7 @@ else:
     expect(hasGroupsTable > 0 || hasRecordsTable > 0,
       'M5:隔离页含分组表或记录表')
 
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/templates`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/templates`, { waitUntil: 'networkidle' })
     await page.waitForTimeout(2000)
     const tplPageText = await page.textContent('body')
     expect(tplPageText.includes('模板') || tplPageText.includes('Template'),
@@ -800,7 +800,7 @@ else:
       'e2e-retry-ui: 验证 UI retry 流',
       { CUSTOMER_CODE: 'RETRY-UI-001', CUSTOMER_NAME: 'Retry UI Test' },
     )
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/quarantine`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/quarantine`, { waitUntil: 'networkidle' })
     await page.waitForTimeout(2000)
     // 查找 Customer 分组的 retry 按钮
     const retryBtn = page.locator('[data-testid="retry-Customer"]')
@@ -907,15 +907,15 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
       `M5:serving_state 均为合法值(含 ${new Set(allStates).size} 种)`)
 
     // M5-13: 回归——M4 运行/审计/数据页仍可用
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/runs`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/runs`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
     expect(true, 'M5:回归-M4 运行列表可用')
 
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/audit?tab=sql`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/audit?tab=sql`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="sql-table"]').waitFor({ state: 'visible' })
     expect(true, 'M5:回归-M4 SQL 审计可用')
 
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/data`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/data`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="raw-catalog"]').waitFor({ state: 'visible' })
     expect(true, 'M5:回归-M4 数据浏览可用')
 
@@ -923,7 +923,7 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
     const v0Chk = await page.request.get(`http://localhost:${CONSOLE_PORT}/v0`)
     expect(v0Chk.status() === 200, 'M5:回归-/v0 200')
     // 管道页仍可用
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="stat-grid"]').waitFor({ state: 'visible' })
     expect(true, 'M5:回归-M3 仪表盘可用')
 
@@ -969,21 +969,21 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
     expect(typeof proposalBody.governance === 'string' && proposalBody.governance.includes('未执行'),
       'M5:Real proposal 含说档治理文案')
 
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/mcp`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/mcp`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="mcp-lab-page"]').waitFor({ state: 'visible' })
     expect((await page.locator('[data-testid="mcp-scope-banner"]').count()) === 1,
       'M5:Real MCP Lab 页可访问')
 
     // 八页面冒烟
     for (const [path, testid] of [
-      ['/v1/', 'stat-grid'],
-      ['/v1/pipeline', 'pipeline-flow'],
-      ['/v1/runs', 'runs-table'],
-      ['/v1/audit', 'sql-table'],
-      ['/v1/data', 'raw-catalog'],
-      ['/v1/quarantine', 'quarantine-refresh'],
-      ['/v1/templates', 'tpl-item-Customer'],
-      ['/v1/mcp', 'mcp-lab-page'],
+      ['/', 'stat-grid'],
+      ['/pipeline', 'pipeline-flow'],
+      ['/runs', 'runs-table'],
+      ['/audit', 'sql-table'],
+      ['/data', 'raw-catalog'],
+      ['/quarantine', 'quarantine-refresh'],
+      ['/templates', 'tpl-item-Customer'],
+      ['/mcp', 'mcp-lab-page'],
     ]) {
       await page.goto(`http://localhost:${REAL_UI_PORT}${path}`, { waitUntil: 'networkidle' })
       await page.waitForTimeout(800)
@@ -992,7 +992,7 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
     }
 
     // Settings 只读辅助页(不计入八主页面)
-    await page.goto(`http://localhost:${REAL_UI_PORT}/v1/settings`, { waitUntil: 'networkidle' })
+    await page.goto(`http://localhost:${REAL_UI_PORT}/settings`, { waitUntil: 'networkidle' })
     await page.waitForTimeout(800)
     expect((await page.locator('[data-testid="config-view"]').count()) === 1,
       'M6:Settings 只读配置可见')

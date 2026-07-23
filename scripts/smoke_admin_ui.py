@@ -142,11 +142,10 @@ def smoke_console(cfg: Path, log_dir: Path) -> None:
     h = {"Authorization": f"Bearer {token}"}
 
     redirects = {
-        "/": "/v1/",
-        "/config": "/v1/settings",
-        "/logs": "/v1/logs",
-        "/debug": "/v1/mcp",
-        "/v0": "/v1/",
+        "/config": "/settings",
+        "/debug": "/mcp",
+        "/v0": "/",
+        "/v1/": "/",
     }
     for path, location in redirects.items():
         r = client.get(path, headers=h, follow_redirects=False)

@@ -10,7 +10,7 @@ v0.3.0 适合在工厂做受控、只读的影子试运行:系统与现有业务
 
 已完成:
 
-- Vue Console `/v1`: Dashboard、Pipeline、Runs、Audit、Data、Quarantine、Templates、MCP Lab、Settings 和 Validation 页面。
+- Vue Console `/`: Dashboard、Pipeline、Runs、Audit、Data、Quarantine、Templates、MCP Lab、Settings 和 Validation 页面。
 - 类型化管理 API、OpenAPI 快照和生成式 TypeScript 客户端。
 - raw/object 浏览:服务端分页、脱敏、访问审计,并能诚实表达 unknown、stale 和错误状态。
 - 数据集与对象版本元数据、不可变对象版本表、数据集原子发布和回滚到上一稳定版本。

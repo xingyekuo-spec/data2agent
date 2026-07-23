@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""完整多阶段 Docker 镜像的 /v1 分发证据检查。
+"""完整多阶段 Docker 镜像的根路径分发证据检查。
 
 默认执行:
   1. docker build -f deploy/runner.Dockerfile
   2. 记录 image id
-  3. 在容器内确认 dist 与 FastAPI /v1、/v1/mcp、hashed asset 返回 200
+  3. 在容器内确认 dist 与 FastAPI /、/mcp、hashed asset 返回 200
 
 用法:
   python scripts/check_docker_v1_distribution.py
@@ -33,14 +33,14 @@ dist = resolve_vue_dist()
 assert dist is not None, "resolve_vue_dist returned None"
 assert (dist / "index.html").is_file(), f"missing {dist}/index.html"
 html = (dist / "index.html").read_text(encoding="utf-8")
-refs = re.findall(r'(?:src|href)="(/v1/[^"]+)"', html)
-assert refs, "index.html has no /v1/ asset refs"
+refs = re.findall(r'(?:src|href)="(/assets/[^"]+)"', html)
+assert refs, "index.html has no /assets/ refs"
 os.environ["D2A_VUE_DIST"] = str(dist)
 landing = Path(tempfile.mkdtemp()) / "landing.sqlite"
 landing.touch()
 app = create_app(str(landing), "templates")
 client = TestClient(app)
-for path in ("/v1/", "/v1/mcp", *refs[:3]):
+for path in ("/", "/mcp", *refs[:3]):
     r = client.get(path)
     print(f"OK {path} -> {r.status_code} ({len(r.content)} bytes)")
     assert r.status_code == 200, (path, r.status_code)
@@ -114,10 +114,10 @@ def main(argv: list[str] | None = None) -> int:
         args.image,
         "python", "-c", _INNER_CHECK,
     ]
-    print("+ docker run … python -c <inner /v1 check>", flush=True)
+    print("+ docker run … python -c <inner root check>", flush=True)
     result = subprocess.run(cmd, check=False)
     if result.returncode != 0:
-        print("FAIL: container /v1 check", file=sys.stderr)
+        print("FAIL: container root check", file=sys.stderr)
         return result.returncode or 1
 
     evidence = {
