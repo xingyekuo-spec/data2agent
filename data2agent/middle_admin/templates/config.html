@@ -23,6 +23,16 @@
   .section-title{font-size:13px;color:#51606f;margin:18px 0 10px;padding-top:8px;
                  border-top:1px solid #e8edf2}
   .section-title:first-of-type{border-top:0;margin-top:0;padding-top:0}
+  .tables-list{width:100%;border-collapse:collapse;margin-top:4px}
+  .tables-list th{text-align:left;font-size:12px;color:#51606f;padding:6px 8px;border-bottom:1px solid #d0d7de;background:#f6f8fa}
+  .tables-list td{padding:4px 8px;border-bottom:1px solid #e8edf2;vertical-align:middle}
+  .tables-list input[type=text],.tables-list select{width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px}
+  .tables-list select{background:#fff}
+  .text-btn{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 6px}
+  .text-btn.danger{color:#b42318}
+  .text-btn.danger:hover{text-decoration:underline}
+  .add-table-row{margin-top:8px;display:flex;gap:6px;align-items:center}
+  .add-table-row input[type=text]{width:220px}
 </style>
 
 <div id="setup-banner" class="banner warn" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
@@ -147,11 +157,41 @@
       inputHtml + '<span class="field-hint">' + hint + '</span></label>';
   }
 
+  function makeTableRow(name, mode, watermark) {
+    var isIncr = mode === 'incremental';
+    var wmStyle = isIncr ? '' : 'display:none;';
+    return '<tr class="table-row"><td>' +
+      '<input type="text" class="table-name" value="' + esc(name) + '" placeholder="表名"></td>' +
+      '<td><select class="table-mode">' +
+        '<option value="incremental"' + (isIncr ? ' selected' : '') + '>增量(按水位)</option>' +
+        '<option value="full_refresh"' + (!isIncr ? ' selected' : '') + '>全量刷新</option>' +
+      '</select></td>' +
+      '<td><input type="text" class="table-watermark" value="' + esc(watermark || '') +
+        '" placeholder="水位列名" style="' + wmStyle + '"></td>' +
+      '<td><button type="button" class="text-btn danger delete-row-btn">删除</button></td></tr>';
+  }
+
+  function renderTableEditor(tables) {
+    var rows = '';
+    Object.keys(tables || {}).forEach(function (name) {
+      var t = tables[name] || {};
+      rows += makeTableRow(name, t.mode || 'incremental', t.watermark || '');
+    });
+    return '<p class="section-title">抽取表配置</p>' +
+      '<p class="card-lead">管理要同步的表：选择增量（需水位列）或全量刷新模式。保存后重启抽取进程生效。</p>' +
+      '<table class="tables-list"><thead><tr>' +
+        '<th>表名</th><th>同步模式</th><th>水位字段</th><th></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<div class="add-table-row">' +
+        '<input type="text" class="new-table-name" placeholder="输入新表名..." style="width:220px">' +
+        '<button type="button" class="add-table-btn">添加表</button>' +
+      '</div>';
+  }
+
   function renderSource(name, src) {
     var w = (src.windows || []).join(', ');
     var rate = src.rate || {};
     var sink = src.sink || {};
-    var extra = (src.extra_whitelist || []).join(', ');
     var dsnOk = src.dsn_env_set ? '已配置' : '未配置';
     var tokOk = sink.token_env_set ? '已配置' : '未配置';
     return '<div class="source-block" data-source="' + esc(name) + '">' +
@@ -166,9 +206,7 @@
       field('回看窗口',
         '增量抽取时往回多看多久，避免漏数。例：<code>3d</code>=3 天。',
         '<input type="text" data-key="lookback" value="' + esc(src.lookback || '') + '">') +
-      field('额外抽取表（可空）',
-        '在模板白名单之外额外要抽的表名，英文逗号分隔。一般保持为空。',
-        '<input type="text" data-key="extra_whitelist" value="' + esc(extra) + '">') +
+      renderTableEditor(src.tables) +
       field('每批行数',
         '单次查询最多取多少行。过大可能占 ERP 资源，过小则轮次变多。',
         '<input type="number" data-key="rate.batch_size" value="' + esc(rate.batch_size != null ? rate.batch_size : '') + '">') +
@@ -183,6 +221,40 @@
       ' — ' + tokOk + '</p>' +
       '</div>';
   }
+
+  // event delegation: add table, delete row, toggle watermark on mode change
+  sourcesEl.addEventListener('click', function (ev) {
+    var t = ev.target;
+    if (t.classList.contains('add-table-btn')) {
+      var editor = t.closest('.source-block');
+      var nameInput = editor.querySelector('.new-table-name');
+      var name = nameInput.value.trim();
+      if (!name) { alert('请输入表名'); return; }
+      var existing = Array.from(editor.querySelectorAll('.table-name')).map(function (el) {
+        return el.value.trim();
+      });
+      if (existing.includes(name)) { alert('表名 "' + name + '" 已存在'); return; }
+      var tbody = editor.querySelector('.tables-list tbody');
+      var row = document.createElement('tr');
+      row.className = 'table-row';
+      row.innerHTML = makeTableRow(name, 'incremental', '');
+      tbody.appendChild(row);
+      nameInput.value = '';
+      return;
+    }
+    if (t.classList.contains('delete-row-btn')) {
+      var row = t.closest('tr');
+      if (row) row.remove();
+      return;
+    }
+  });
+  sourcesEl.addEventListener('change', function (ev) {
+    if (ev.target.classList.contains('table-mode')) {
+      var row = ev.target.closest('tr');
+      var wmInput = row.querySelector('.table-watermark');
+      if (wmInput) wmInput.style.display = ev.target.value === 'incremental' ? '' : 'none';
+    }
+  });
 
   function loadDaily() {
     fetch('/api/config', {headers: authHeaders()})
@@ -232,7 +304,7 @@
       block.querySelectorAll('[data-key]').forEach(function (inp) {
         var key = inp.getAttribute('data-key');
         var val = inp.value;
-        if (key === 'windows' || key === 'extra_whitelist') {
+        if (key === 'windows') {
           src[key] = val ? val.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [];
         } else if (key.indexOf('rate.') === 0) {
           src.rate[key.slice(5)] = val === '' ? null : Number(val);
@@ -242,8 +314,39 @@
           src[key] = val;
         }
       });
+      // collect tables from editor
+      var tablesEditor = block.querySelector('.tables-list');
+      if (tablesEditor) {
+        var tables = {};
+        tablesEditor.querySelectorAll('.table-row').forEach(function (row) {
+          var tblName = row.querySelector('.table-name');
+          var tblMode = row.querySelector('.table-mode');
+          var tblWm = row.querySelector('.table-watermark');
+          var tn = tblName ? tblName.value.trim() : '';
+          if (!tn) return;
+          var mode = tblMode ? tblMode.value : 'incremental';
+          var wm = tblWm ? tblWm.value.trim() || null : null;
+          tables[tn] = {mode: mode, watermark: wm};
+        });
+        src.tables = tables;
+      }
       sources[name] = src;
     });
+    // validate: incremental tables must have watermark
+    var validationErrors = [];
+    Object.keys(sources).forEach(function (srcName) {
+      var tables = sources[srcName].tables || {};
+      Object.keys(tables).forEach(function (tn) {
+        var t = tables[tn];
+        if (t.mode === 'incremental' && !t.watermark) {
+          validationErrors.push('数据源 "' + srcName + '" 中的表 "' + tn + '" 为增量模式但未填写水位字段');
+        }
+      });
+    });
+    if (validationErrors.length > 0) {
+      document.getElementById('config-errors').textContent = validationErrors.join('; ');
+      return;
+    }
     var body = {
       templates: document.getElementById('cfg-templates').value,
       landing: document.getElementById('cfg-landing').value,
