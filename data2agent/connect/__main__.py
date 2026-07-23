@@ -124,6 +124,10 @@ def main() -> int:
     xi.add_argument("--landing", default="landing/factory.sqlite")
     xi.add_argument("--templates", default="templates")
 
+    mp = sub.add_parser("migrate-config", help="迁移旧配置:whitelist_from_bindings → tables")
+    mp.add_argument("--config", required=True, help="connect.yaml 路径")
+    mp.add_argument("--dry-run", action="store_true", help="仅预览,不写入")
+
     args = ap.parse_args()
 
     if args.cmd == "excel-suggest":
@@ -165,6 +169,40 @@ def main() -> int:
         from .config import load_config
         from .scheduler import serve
         serve(load_config(args.config), once=args.once)
+        return 0
+
+    if args.cmd == "migrate-config":
+        from .sync import migrate_config_to_tables
+        if args.dry_run:
+            import yaml
+            from pathlib import Path
+            data = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
+            pk = load_pack(data.get("templates", "templates"))
+            for src_name, sdata in (data.get("sources") or {}).items():
+                wfb = sdata.get("whitelist_from_bindings", True)
+                extra = set(sdata.get("extra_whitelist", []))
+                ts = set()
+                if wfb:
+                    ts |= {t for o in pk.objects for b in o.bindings
+                           if b.source == src_name and b.enabled for t in b.tables}
+                ts |= extra
+                try:
+                    wm = watermarks_from_pack(pk, src_name)
+                except Exception:
+                    wm = {}
+                print(f"[{src_name}] 将生成 {len(ts)} 张表的 tables 配置:")
+                for tbl in sorted(ts):
+                    w = wm.get(tbl)
+                    mode = f"incremental (watermark: {w})" if w else "full_refresh"
+                    print(f"  {tbl}: {mode}")
+            return 0
+        bak_path, result = migrate_config_to_tables(args.config)
+        print(f"备份已保存到: {bak_path}")
+        for src, tables in result.items():
+            print(f"[{src}] 已生成 {len(tables)} 张表:")
+            for t in tables:
+                print(f"  - {t}")
+        print("迁移完成。请检查新配置后重启服务。")
         return 0
 
     if args.cmd == "status":
