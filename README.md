@@ -34,7 +34,9 @@
 
 ```bash
 pip install -e ".[dev,mcp,console,ingest,connect,middle_admin,excel]"
-pytest tests -q                                   # Python 回归测试(mssql 集成测试需 Docker)
+python scripts/verify.py quick                    # 日常:按 Git 变更选择测试
+python scripts/verify.py module erp               # 模块完成:ERP/抽取回归
+python scripts/verify.py full                     # 合并前:完整回归(含前端与 E2E)
 python -m data2agent.metamodel.validate templates # 模板校验
 python -m data2agent.showroom.seed                # 生成 E10-like 参考库 showroom/e10.sqlite
 python -m data2agent.connect sync --config connect.example.yaml   # 抽取:水位增量 → 落地库(只读/白名单/审计)

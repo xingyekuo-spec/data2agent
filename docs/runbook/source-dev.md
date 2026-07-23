@@ -6,7 +6,7 @@
 
 | # | 确认项 |
 | --- | --- |
-| 1 | Python 3.10+ 已安装 |
+| 1 | Python 3.11+ 已安装 |
 | 2 | `pip install -e ".[dev,mcp]"` 已执行 |
 | 3 | 参考 seed 已生成:`python -m data2agent.showroom.seed` |
 | 4 | (可选) Docker 已安装,用于 SQL Server 集成测试 |
@@ -58,9 +58,6 @@ python -c "from data2agent.connect.config import load_config; load_config('conne
 
 # 单次抽取(增量)
 python -m data2agent.connect sync --config connect.yaml
-
-# 全量重抽
-python -m data2agent.connect sync --config connect.yaml --full
 
 # 常驻调度;--once 立即跑一轮后退出
 python -m data2agent.connect serve --config connect.yaml --once
@@ -120,3 +117,29 @@ dsn_env: D2A_E10_DSN
 ```
 
 ODBC 连接串通过环境变量注入,绝不写入配置文件。
+
+## 7. 分层回归测试
+
+安装开发依赖后,统一从仓库根目录运行:
+
+```bash
+# 每次修复后:读取工作区相对 HEAD 的变更并选择受影响测试
+python scripts/verify.py quick
+
+# 功能完成后:运行对应模块回归
+python scripts/verify.py module erp
+python scripts/verify.py module console
+
+# 合并前:Python 与前端质量检查并行,随后并行运行 Mock/Real E2E
+python scripts/verify.py full
+
+# 发布前:完整回归 + Docker 分发检查 + MSSQL 集成测试
+python scripts/verify.py release
+```
+
+`quick --base origin/main` 可覆盖当前分支相对 `origin/main` 的已提交和未提交改动。
+文档改动不会触发应用测试;未知配置或公共代码改动会自动回退到完整检查。
+
+Python 测试按 `unit`、`contract`、`integration`、`slow` 分类。完整 Python
+套件默认通过 `pytest-xdist` 并行执行;资源受限时可设置
+`D2A_PYTEST_WORKERS=2`。失败后可使用 `python -m pytest --lf -q` 只重跑上次失败项。
