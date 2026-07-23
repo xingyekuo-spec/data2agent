@@ -29,7 +29,7 @@ CHECK_ORDER = (
 _CHECK_TITLES = {
     "service_reachable": "服务与落地库可读",
     "source_connectivity": "数据源连接配置",
-    "readonly_whitelist": "只读适配器与白名单",
+    "readonly_whitelist": "只读适配器与显式表清单",
     "sync_execution": "同步执行记录",
     "landing_and_push": "落地与推送摘要",
     "raw_presence": "Raw 表存在性",
@@ -144,13 +144,17 @@ def build_validation_report(
         checks.append(_check("readonly_whitelist", "skipped", "未加载对应数据源配置。", blocking=False))
     else:
         readonly = source_cfg.adapter in ("sqlite_readonly", "mssql_readonly")
-        whitelisted = source_cfg.whitelist_from_bindings
-        if readonly and whitelisted:
-            checks.append(_check("readonly_whitelist", "pass", "只读适配器与模板白名单已启用。",
-                                 detail={"adapter": source_cfg.adapter, "whitelist_from_bindings": True}))
+        tables_configured = source_cfg.tables is not None and len(source_cfg.tables) > 0
+        if readonly and tables_configured:
+            checks.append(_check("readonly_whitelist", "pass",
+                                 f"只读适配器与显式表清单已启用({len(source_cfg.tables)} 张表)。",
+                                 detail={"adapter": source_cfg.adapter,
+                                         "table_count": len(source_cfg.tables)}))
         else:
-            checks.append(_check("readonly_whitelist", "fail", "只读适配器或模板白名单未满足。",
-                                 detail={"readonly_adapter": readonly, "whitelist_from_bindings": whitelisted}))
+            checks.append(_check("readonly_whitelist", "fail",
+                                 "只读适配器或显式表清单未满足。",
+                                 detail={"readonly_adapter": readonly,
+                                         "tables_configured": tables_configured}))
 
     # 4. sync / landing facts
     sync = _latest_run(db, source, ("sync", "ingest"))
@@ -171,20 +175,40 @@ def build_validation_report(
     else:
         checks.append(_check("landing_and_push", "fail", "推送模式缺少成功的接收运行。"))
 
-    expected_raw = sorted({
+    # Raw presence: compare config tables vs actual raw tables
+    config_tables = set(source_cfg.tables.keys()) if source_cfg and source_cfg.tables else set()
+
+    # Also check what platform bindings expect
+    binding_tables = {
         table for obj in pack.objects for binding in obj.bindings
         if binding.enabled and binding.source == source for table in binding.tables
-    })
+    } if pack is not None else set()
+
     actual_raw = set(br.raw_tables(db, source))
-    missing_raw = [table for table in expected_raw if table not in actual_raw]
-    if not expected_raw:
-        checks.append(_check("raw_presence", "skipped", "模板未声明该数据源的 Raw 表。", blocking=False))
-    elif missing_raw:
-        checks.append(_check("raw_presence", "fail", "部分模板白名单 Raw 表缺失。",
-                             detail={"expected_count": len(expected_raw), "missing_count": len(missing_raw)}))
+    missing_config = [t for t in config_tables if t not in actual_raw]
+    missing_binding = [t for t in binding_tables if t not in config_tables]
+
+    if missing_config:
+        checks.append(_check("raw_presence", "fail",
+                             f"部分配置表在落地库中缺失 raw 数据: {', '.join(sorted(missing_config))}",
+                             detail={"configured": sorted(config_tables),
+                                     "missing": sorted(missing_config)}))
+    elif not config_tables:
+        checks.append(_check("raw_presence", "skipped",
+                             "未配置显式表清单。", blocking=False))
     else:
-        checks.append(_check("raw_presence", "pass", "模板白名单 Raw 表均存在。",
-                             detail={"table_count": len(expected_raw)}))
+        checks.append(_check("raw_presence", "pass",
+                             f"配置的 {len(config_tables)} 张表 raw 数据均存在。",
+                             detail={"table_count": len(config_tables)}))
+
+    if missing_binding:
+        checks.append(_check("raw_presence", "warning",
+                             f"平台 binding 依赖 {len(missing_binding)} 张表不在中间机配置中: "
+                             + ", ".join(sorted(missing_binding)),
+                             blocking=False,
+                             detail={"binding_tables": sorted(binding_tables),
+                                     "config_tables": sorted(config_tables),
+                                     "missing": sorted(missing_binding)}))
 
     # 7. published snapshot
     if snap is None:
@@ -327,7 +351,11 @@ def build_validation_report(
         checks.append(_check("cross_surface_consistency", "pass", "Console 模板、已发布数据集和对象快照版本一致。",
                              detail={"dataset_version": snap.dataset_version, "template_version": snap.template_version}))
 
-    assert tuple(c["check_id"] for c in checks) == CHECK_ORDER
+    seen_ids = []
+    for c in checks:
+        if c["check_id"] not in seen_ids:
+            seen_ids.append(c["check_id"])
+    assert tuple(seen_ids) == CHECK_ORDER
     overall = _overall(checks)
     finished_at = _now()
     summary = {
