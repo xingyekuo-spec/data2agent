@@ -76,7 +76,7 @@ def _seed_published(
 
 
 class TestTemplatesList:
-    """GET /api/templates -- 对象模板全部 5 个对象。"""
+    """GET /api/templates -- 对象模板全部 6 个对象。"""
 
     @pytest.fixture()
     def db(self, tmp_path):
@@ -117,16 +117,22 @@ class TestTemplatesList:
 
         return landing
 
-    def test_returns_all_5_objects(self, db):
-        """模板端点返回全部 5 个对象模板。"""
+    def test_returns_all_15_objects(self, db):
+        """模板端点返回全部 15 个对象模板。"""
         client = _client(db)
         r = client.get("/api/templates")
         assert r.status_code == 200
         body = r.json()
         assert isinstance(body, list)
-        assert len(body) == 5
+        assert len(body) == 15
         names = {o["object"] for o in body}
-        assert names == {"Customer", "Material", "Quotation", "SalesOrder", "SalesOrderLine"}
+        assert names == {
+            "Customer", "DeadStockAttribution", "DeadStockItem",
+            "DuplicateMaterialCandidate", "EcnChangeEvidence", "Material",
+            "MaterialBomUsage", "MaterialOrderEvidence", "MaterialSubstituteCandidate",
+            "ProductionLossEvidence", "PurchaseOverbuyEvidence", "Quotation",
+            "SalesOrder", "SalesOrderLine", "SpecialConditionEvidence",
+        }
 
     def test_contract_validation(self, db):
         """返回值通过 TemplateObject 契约校验。"""
@@ -134,6 +140,20 @@ class TestTemplatesList:
         body = client.get("/api/templates").json()
         for obj in body:
             TemplateObject.model_validate(obj)
+
+    def test_relations_are_exposed_for_object_graph(self, db):
+        """模板端点透出 relations，前端可直接生成对象关系图。"""
+        client = _client(db)
+        body = client.get("/api/templates").json()
+        attr = next(o for o in body if o["object"] == "DeadStockAttribution")
+        relation_names = {r["name"] for r in attr["relations"]}
+        assert {
+            "purchase_evidence", "production_evidence", "order_evidence",
+            "ecn_evidence", "special_condition_evidence", "duplicate_material_candidates",
+        } <= relation_names
+        purchase = next(r for r in attr["relations"] if r["name"] == "purchase_evidence")
+        assert purchase["target"] == "PurchaseOverbuyEvidence"
+        assert purchase["cardinality"] == "0..1"
 
     # -- properties --
 
@@ -355,23 +375,28 @@ class TestTemplatesList:
 
 
 class TestTemplatesMetrics:
-    """GET /api/templates/metrics -- 全部 3 个指标。"""
+    """GET /api/templates/metrics -- 全部 9 个指标。"""
 
     @pytest.fixture()
     def db(self, tmp_path):
         landing = LandingStore(tmp_path / "landing.sqlite")
         return landing
 
-    def test_returns_all_3_metrics(self, db):
-        """指标端点返回全部 3 个指标定义。"""
+    def test_returns_all_9_metrics(self, db):
+        """指标端点返回全部 9 个指标定义。"""
         client = _client(db)
         r = client.get("/api/templates/metrics")
         assert r.status_code == 200
         body = r.json()
         assert isinstance(body, list)
-        assert len(body) == 3
+        assert len(body) == 9
         ids = {m["metric"] for m in body}
-        assert ids == {"gross_margin_rate", "quote_response_hours", "overdue_receivable_amount"}
+        assert ids == {
+            "gross_margin_rate", "quote_response_hours", "overdue_receivable_amount",
+            "dead_stock_amount", "dead_stock_quantity", "dead_stock_item_count",
+            "attribution_coverage_rate", "attribution_distribution",
+            "substitute_consumable_quantity",
+        }
 
     def test_contract_validation(self, db):
         """返回值通过 TemplateMetric 契约校验。"""

@@ -56,7 +56,9 @@ def test_audit_array_shape_total_header_and_id(env):
     body = r.json()
     assert isinstance(body, list)
     assert body and "id" in body[0] and "ts" in body[0]
-    assert int(r.headers["X-Total-Count"]) == len(body)
+    total = int(r.headers["X-Total-Count"])
+    assert total >= len(body)
+    assert len(body) == min(total, 50)  # 默认审计页大小
 
 
 def test_audit_filters(env):

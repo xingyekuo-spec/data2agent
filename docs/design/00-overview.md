@@ -88,6 +88,7 @@ MCP 网关“看/说”档、管理界面、E10-like 参考数据链、Vue Conso
 - [03 MCP 网关](03-mcp-gateway.md) —— lite 现状 + 治理档位演进
 - [04 参考数据链](04-reference-chain.md) —— 测试资产、拓扑与参考链
 - [05 运维控制台](05-console.md) —— 平台 Vue Console 与中间机管理入口
+- [07 呆滞库存 MCP](07-dead-stock-mcp.md) —— 呆滞库存对象、指标、确定性口径与验收边界
 - [路线图](../roadmap.md) —— 当前 v0.3.0 状态与 v0.4 可试点计划
 - 现场 runbook:[便携包](../runbook/portable.md) · [推送验收](../runbook/push-validation.md)
 - [E10 参考表字典](../dict/digiwin_e10.md) —— 生成文件,勿手改

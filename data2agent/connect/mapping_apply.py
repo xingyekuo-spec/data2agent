@@ -31,6 +31,7 @@ from .mapping_transform import (
     transform_object_rows,
     would_trip_breaker,
 )
+from data2agent.scenarios.materializers import materialize_bindings
 
 _TYPE_SQL = {"int": "INTEGER", "decimal": "REAL", "money": "REAL", "bool": "INTEGER"}
 
@@ -296,6 +297,23 @@ def apply_objects(landing: LandingStore, pack: TemplatePack, source: str,
     report = ApplyReport(source=source)
     run_id = landing.start_run(source, "apply")
     aborted_msgs = []
+    try:
+        materialize_bindings(
+            landing,
+            source,
+            (
+                binding
+                for tpl in pack.objects
+                for binding in tpl.bindings
+                if binding.source == source and binding.enabled
+            ),
+        )
+    except Exception as e:
+        landing.finish_run(
+            run_id, tables=0, rows=0, status="failed",
+            detail="场景预计算失败",
+        )
+        raise RuntimeError("场景预计算失败") from e
     for ordinal, tpl in enumerate(pack.objects, start=1):
         step_id: int | None = None
         build_table = make_build_table(source, tpl.object, uuid.uuid4().hex[:12])

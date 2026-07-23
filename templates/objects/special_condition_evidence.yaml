@@ -1,0 +1,48 @@
+object: SpecialConditionEvidence
+display_name: 特殊使用条件证据
+description: 基于 BOM 结构化备注识别的低置信特殊使用条件候选
+domain: 供应
+source_of_truth: 数据平台基于 BOM_D.REMARK 的预计算结果
+keys: [plant_id, item_code, parent_item_code]
+properties:
+  - { name: plant_id, type: string, desc: 工厂编码 }
+  - { name: item_code, type: string, desc: 呆滞品号编码 }
+  - { name: parent_item_code, type: string, desc: 主件品号编码 }
+  - { name: parent_item_name, type: string, desc: 主件品名 }
+  - { name: restriction_type, type: enum, enum_values: [bom_remark_keyword], desc: 限制识别方式 }
+  - { name: restriction_text, type: text, desc: BOM 备注中的限制说明 }
+  - { name: qty_per, type: decimal, desc: 组成用量 }
+  - { name: denominator, type: decimal, desc: 底数 }
+  - { name: trace_type, type: enum, enum_values: [indirect], desc: 库存到 BOM 的追溯方式 }
+  - { name: calculation_status, type: enum, enum_values: [candidate], desc: 计算状态 }
+  - { name: related_department, type: string, desc: 关联部门，不等同于责任认定 }
+  - { name: related_employee, type: string, desc: 关联经办人，不等同于责任认定, sensitive: true }
+  - { name: warnings, type: text, desc: 结构化警示 JSON }
+  - { name: as_of_date, type: date, desc: 数据快照日 }
+  - { name: calculation_version, type: string, desc: 计算版本 }
+bindings:
+  - source: digiwin_e10
+    tables: [D2A_SPECIAL_CONDITION_EVIDENCE]
+    materializer: dead_stock_attribution_v3
+    status: draft
+    key_map:
+      plant_id: D2A_SPECIAL_CONDITION_EVIDENCE.plant_id
+      item_code: D2A_SPECIAL_CONDITION_EVIDENCE.item_code
+      parent_item_code: D2A_SPECIAL_CONDITION_EVIDENCE.parent_item_code
+    field_map:
+      plant_id: D2A_SPECIAL_CONDITION_EVIDENCE.plant_id
+      item_code: D2A_SPECIAL_CONDITION_EVIDENCE.item_code
+      parent_item_code: D2A_SPECIAL_CONDITION_EVIDENCE.parent_item_code
+      parent_item_name: D2A_SPECIAL_CONDITION_EVIDENCE.parent_item_name
+      restriction_type: D2A_SPECIAL_CONDITION_EVIDENCE.restriction_type
+      restriction_text: D2A_SPECIAL_CONDITION_EVIDENCE.restriction_text
+      qty_per: D2A_SPECIAL_CONDITION_EVIDENCE.qty_per
+      denominator: D2A_SPECIAL_CONDITION_EVIDENCE.denominator
+      trace_type: D2A_SPECIAL_CONDITION_EVIDENCE.trace_type
+      calculation_status: D2A_SPECIAL_CONDITION_EVIDENCE.calculation_status
+      related_department: D2A_SPECIAL_CONDITION_EVIDENCE.related_department
+      related_employee: D2A_SPECIAL_CONDITION_EVIDENCE.related_employee
+      warnings: D2A_SPECIAL_CONDITION_EVIDENCE.warnings
+      as_of_date: D2A_SPECIAL_CONDITION_EVIDENCE.as_of_date
+      calculation_version: D2A_SPECIAL_CONDITION_EVIDENCE.calculation_version
+    notes: R4 所需 BOM 与物料关联字段尚未核对，当前不生成候选。

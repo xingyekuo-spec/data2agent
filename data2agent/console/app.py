@@ -3610,6 +3610,13 @@ def create_app(landing: str | None = None, templates: str = "templates",
                         "derived": derived,
                     })
 
+                relations = [{
+                    "name": r.name,
+                    "target": r.target,
+                    "cardinality": r.cardinality,
+                    "desc": r.desc,
+                } for r in tpl.relations]
+
                 # -- materialized lookup (published snapshot only) --
                 st = stats.get(tpl.object, {})
                 if st.get("error"):
@@ -3669,6 +3676,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     "domain": tpl.domain,
                     "keys": tpl.keys,
                     "properties": properties,
+                    "relations": relations,
                     "bindings": bindings,
                     "source_of_truth": tpl.source_of_truth,
                     "knowledge_refs": tpl.knowledge_refs,

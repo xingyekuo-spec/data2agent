@@ -1,0 +1,59 @@
+object: DeadStockAttribution
+display_name: 呆滞库存归因
+description: 每个呆滞库存项可命中的规则型归因标签及其可追溯证据
+domain: 供应
+source_of_truth: 数据平台呆滞库存归因预计算结果（R1、R2/R2M、R3、R4、R5、R6）
+keys: [plant_id, warehouse_code, item_code, root_cause, evidence_id]
+properties:
+  - { name: plant_id, type: string, desc: 工厂编码 }
+  - { name: warehouse_code, type: string, desc: 仓库编码 }
+  - { name: item_code, type: string, desc: 品号编码 }
+  - { name: root_cause, type: enum, enum_values: [R1, R2, R2M, R3, R4, R5, R6], desc: 根因标签 }
+  - { name: evidence_id, type: string, desc: 关联采购行或工单的业务标识 }
+  - { name: confidence, type: decimal, desc: 规则置信度 }
+  - { name: confidence_level, type: enum, enum_values: [HIGH, MEDIUM, LOW], desc: 置信度等级 }
+  - { name: rule_version, type: string, desc: 规则版本 }
+  - { name: trace_type, type: enum, enum_values: [indirect], desc: 库存到证据的追溯方式 }
+  - { name: evidence_object, type: enum, enum_values: [MaterialOrderEvidence, PurchaseOverbuyEvidence, ProductionLossEvidence, EcnChangeEvidence, SpecialConditionEvidence, DuplicateMaterialCandidate], desc: 证据对象 }
+  - { name: evidence_summary, type: text, desc: 结构化证据 JSON }
+  - { name: related_department, type: string, desc: 关联部门，不等同于责任认定 }
+  - { name: related_employee, type: string, desc: 关联经办人，不等同于责任认定, sensitive: true }
+  - { name: warnings, type: text, desc: 结构化警示 JSON }
+  - { name: as_of_date, type: date, desc: 数据快照日 }
+  - { name: calculation_version, type: string, desc: 计算版本 }
+relations:
+  - { name: order_evidence, target: MaterialOrderEvidence, cardinality: "0..1", desc: R1 订单取消/减量证据 }
+  - { name: purchase_evidence, target: PurchaseOverbuyEvidence, cardinality: "0..1", desc: R2/R2M 采购超采证据 }
+  - { name: production_evidence, target: ProductionLossEvidence, cardinality: "0..1", desc: R5 生产超额领料证据 }
+  - { name: ecn_evidence, target: EcnChangeEvidence, cardinality: "0..1", desc: R3 ECN 变更证据 }
+  - { name: special_condition_evidence, target: SpecialConditionEvidence, cardinality: "0..1", desc: R4 特殊使用条件证据 }
+  - { name: duplicate_material_candidates, target: DuplicateMaterialCandidate, cardinality: "0..n", desc: R6 重复料候选 }
+bindings:
+  - source: digiwin_e10
+    tables: [D2A_DEAD_STOCK_ATTRIBUTION]
+    materializer: dead_stock_attribution_v3
+    status: draft
+    key_map:
+      plant_id: D2A_DEAD_STOCK_ATTRIBUTION.plant_id
+      warehouse_code: D2A_DEAD_STOCK_ATTRIBUTION.warehouse_code
+      item_code: D2A_DEAD_STOCK_ATTRIBUTION.item_code
+      root_cause: D2A_DEAD_STOCK_ATTRIBUTION.root_cause
+      evidence_id: D2A_DEAD_STOCK_ATTRIBUTION.evidence_id
+    field_map:
+      plant_id: D2A_DEAD_STOCK_ATTRIBUTION.plant_id
+      warehouse_code: D2A_DEAD_STOCK_ATTRIBUTION.warehouse_code
+      item_code: D2A_DEAD_STOCK_ATTRIBUTION.item_code
+      root_cause: D2A_DEAD_STOCK_ATTRIBUTION.root_cause
+      evidence_id: D2A_DEAD_STOCK_ATTRIBUTION.evidence_id
+      confidence: D2A_DEAD_STOCK_ATTRIBUTION.confidence
+      confidence_level: D2A_DEAD_STOCK_ATTRIBUTION.confidence_level
+      rule_version: D2A_DEAD_STOCK_ATTRIBUTION.rule_version
+      trace_type: D2A_DEAD_STOCK_ATTRIBUTION.trace_type
+      evidence_object: D2A_DEAD_STOCK_ATTRIBUTION.evidence_object
+      evidence_summary: D2A_DEAD_STOCK_ATTRIBUTION.evidence_summary
+      related_department: D2A_DEAD_STOCK_ATTRIBUTION.related_department
+      related_employee: D2A_DEAD_STOCK_ATTRIBUTION.related_employee
+      warnings: D2A_DEAD_STOCK_ATTRIBUTION.warnings
+      as_of_date: D2A_DEAD_STOCK_ATTRIBUTION.as_of_date
+      calculation_version: D2A_DEAD_STOCK_ATTRIBUTION.calculation_version
+    notes: 原始表和字段已核对，但单据关联、主数据映射与业务口径未核对；当前不生成归因标签。

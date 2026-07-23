@@ -6137,6 +6137,13 @@
             "title": "Quarantine Pending",
             "type": "integer"
           },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/TemplateRelation"
+            },
+            "title": "Relations",
+            "type": "array"
+          },
           "source_of_truth": {
             "title": "Source Of Truth",
             "type": "string"
@@ -6210,6 +6217,40 @@
           "type"
         ],
         "title": "TemplateProperty",
+        "type": "object"
+      },
+      "TemplateRelation": {
+        "properties": {
+          "cardinality": {
+            "title": "Cardinality",
+            "type": "string"
+          },
+          "desc": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Desc"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "target",
+          "cardinality"
+        ],
+        "title": "TemplateRelation",
         "type": "object"
       },
       "ValidationCheckResponse": {

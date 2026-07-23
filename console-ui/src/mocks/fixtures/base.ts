@@ -418,6 +418,7 @@ const baseTemplates: TemplateObject[] = [
     ],
     source_of_truth: 'digiwin_e10',
     quarantine_pending: 0,
+    relations: [],
     bindings: [
       {
         source: 'digiwin_e10',
@@ -456,6 +457,9 @@ const baseTemplates: TemplateObject[] = [
     ],
     source_of_truth: 'digiwin_e10',
     quarantine_pending: 0,
+    relations: [
+      { name: 'customer', target: 'Customer', cardinality: '1', desc: '订单客户' },
+    ],
     bindings: [
       {
         source: 'digiwin_e10',
@@ -496,6 +500,10 @@ const baseTemplates: TemplateObject[] = [
     source_of_truth: 'digiwin_e10',
     quarantine_pending: 3,
     knowledge_refs: ['https://wiki.internal/报价流程SOP', 'https://wiki.internal/客户信用政策'],
+    relations: [
+      { name: 'customer', target: 'Customer', cardinality: '1', desc: '报价客户' },
+      { name: 'material', target: 'Material', cardinality: '0..1', desc: '报价物料' },
+    ],
     bindings: [
       {
         source: 'digiwin_e10',
@@ -571,6 +579,7 @@ const baseTemplates: TemplateObject[] = [
     ],
     source_of_truth: 'digiwin_e10',
     quarantine_pending: 0,
+    relations: [],
     bindings: [
       {
         source: 'digiwin_e10',

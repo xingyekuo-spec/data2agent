@@ -841,6 +841,13 @@ class TemplateBinding(BaseModel):
     derived: dict[str, DerivedField] = Field(default_factory=dict)
 
 
+class TemplateRelation(BaseModel):
+    name: str
+    target: str
+    cardinality: str
+    desc: str | None = None
+
+
 class TemplateObject(BaseModel):
     object: str
     display_name: str
@@ -848,6 +855,7 @@ class TemplateObject(BaseModel):
     domain: str | None = None
     keys: list[str]
     properties: list[TemplateProperty]
+    relations: list[TemplateRelation] = Field(default_factory=list)
     bindings: list[TemplateBinding]
     # ---- M5 追加 ----
     source_of_truth: str

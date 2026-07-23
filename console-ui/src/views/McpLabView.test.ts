@@ -13,6 +13,12 @@ vi.mock('@/api/services', () => ({
 
 import { getProposalDetail, getQueryEvidenceDetail, postMcpCall, postProposal } from '@/api/services'
 
+async function openDetail(wrapper: ReturnType<typeof mount>, tool: string): Promise<void> {
+  await flushPromises()
+  await wrapper.find(`[data-testid="open-interface-${tool}"]`).trigger('click')
+  await flushPromises()
+}
+
 describe('McpLabView', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -22,12 +28,20 @@ describe('McpLabView', () => {
     vi.mocked(getProposalDetail).mockReset()
   })
 
-  it('shows process scope banner and no execute/write controls', () => {
+  it('shows process scope banner and no execute/write controls', async () => {
     const w = mount(McpLabView, {
       global: { plugins: [createPinia(), ElementPlus] },
     })
+    await flushPromises()
     expect(w.find('[data-testid="mcp-scope-banner"]').text()).toContain('标签页 session')
-    expect(w.find('[data-testid="no-execute-hint"]').text()).toContain('不提供执行建议')
+    expect(w.find('[data-testid="mcp-interface-count"]').text()).toContain('共 3 个')
+    expect(w.find('[data-testid="mcp-interface-table"]').text()).toContain('query_objects')
+    expect(w.find('[data-testid="mcp-interface-table"]').text()).toContain('query_metrics')
+    expect(w.find('[data-testid="mcp-interface-table"]').text()).toContain('propose_action')
+    expect(w.find('[data-testid="object-interface-panel"]').exists()).toBe(false)
+    expect(w.find('[data-testid="metrics-interface-panel"]').exists()).toBe(false)
+    expect(w.find('[data-testid="proposal-interface-panel"]').exists()).toBe(false)
+    expect(w.find('[data-testid="evidence-detail-panel"]').exists()).toBe(false)
     expect(w.findAll('button').some((b) => b.text() === '执行建议')).toBe(false)
     expect(w.find('[data-testid="feature-placeholder"]').exists()).toBe(false)
     expect(w.find('[data-testid="evidence-session-id"]').text()).toContain('d2a_session_')
@@ -66,6 +80,7 @@ describe('McpLabView', () => {
     const w = mount(McpLabView, {
       global: { plugins: [pinia, ElementPlus] },
     })
+    await openDetail(w, 'query_objects')
     await w.find('[data-testid="object-run"]').trigger('click')
     await flushPromises()
     expect(w.find('[data-testid="object-result"]').exists()).toBe(true)
@@ -95,6 +110,7 @@ describe('McpLabView', () => {
     const w = mount(McpLabView, {
       global: { plugins: [pinia, ElementPlus] },
     })
+    await openDetail(w, 'query_objects')
     await w.find('[data-testid="object-run"]').trigger('click')
     await flushPromises()
     expect(w.find('[data-testid="object-result"]').exists()).toBe(false)
@@ -131,6 +147,7 @@ describe('McpLabView', () => {
     const w = mount(McpLabView, {
       global: { plugins: [pinia, ElementPlus] },
     })
+    await openDetail(w, 'query_objects')
     await w.find('[data-testid="object-run"]').trigger('click')
     await flushPromises()
     expect(w.find('[data-testid="object-result"]').exists()).toBe(true)
@@ -169,7 +186,7 @@ describe('McpLabView', () => {
     const w = mount(McpLabView, {
       global: { plugins: [pinia, ElementPlus] },
     })
-    // Element Plus tabs keep panes mounted; click metrics run directly
+    await openDetail(w, 'query_metrics')
     await w.find('[data-testid="metrics-run"]').trigger('click')
     await flushPromises()
     expect(w.find('[data-testid="metrics-result"]').exists()).toBe(true)
@@ -287,12 +304,12 @@ describe('McpLabView', () => {
     const w = mount(McpLabView, {
       global: { plugins: [pinia, ElementPlus] },
     })
+    await openDetail(w, 'query_objects')
     await w.find('[data-testid="object-run"]').trigger('click')
     await flushPromises()
-    await w.find('[role="tab"][aria-controls]').trigger('click')
-    const proposalTab = w.findAll('[role="tab"]').find((node) => node.text().includes('建议卡'))
-    await proposalTab?.trigger('click')
+    await w.find('[data-testid="back-to-interface-list"]').trigger('click')
     await flushPromises()
+    await openDetail(w, 'propose_action')
     await w.find('[data-testid="evidence-claim-0"]').setValue('可见')
     await w.find('[data-testid="evidence-query-0"]').setValue('qry_111111111111111111111111')
     await w.find('[data-testid="proposal-run"]').trigger('click')

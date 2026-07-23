@@ -1,0 +1,63 @@
+object: PurchaseOverbuyEvidence
+display_name: 采购超采证据
+description: 按采购单行预计算的需求、净收货、MOQ 及强制/人工超采结果
+domain: 供应
+source_of_truth: 数据平台呆滞库存 R2/R2M 预计算结果（来源：鼎捷 E10 采购与到货记录）
+keys: [plant_id, po_no, po_line_no, item_code]
+properties:
+  - { name: plant_id, type: string, desc: 工厂编码 }
+  - { name: po_no, type: string, desc: 采购单号 }
+  - { name: po_line_no, type: string, desc: 采购单行号 }
+  - { name: item_code, type: string, desc: 品号编码 }
+  - { name: supplier_id, type: string, desc: 供应商标识 }
+  - { name: po_date, type: date, desc: 采购单日期 }
+  - { name: demand_qty, type: decimal, desc: 可追溯有效需求量 }
+  - { name: net_received_qty, type: decimal, desc: 净收货量（到货减退货） }
+  - { name: purchase_qty, type: decimal, desc: 采购单数量 }
+  - { name: moq, type: decimal, desc: 最小起订量 }
+  - { name: actual_excess_qty, type: decimal, desc: 实际超出需求量 }
+  - { name: planned_moq_excess_qty, type: decimal, desc: MOQ 向上取整产生的计划超额 }
+  - { name: moq_forced_excess_qty, type: decimal, desc: MOQ 强制超采量 }
+  - { name: manual_excess_qty, type: decimal, desc: 人工超采量 }
+  - { name: inventory_qty, type: decimal, desc: 当前呆滞库存数量 }
+  - { name: trace_type, type: enum, enum_values: [indirect], desc: 库存到采购单的追溯方式 }
+  - { name: calculation_status, type: enum, enum_values: [ready, unknown], desc: 计算状态 }
+  - { name: related_department, type: string, desc: 关联采购部门，不等同于责任认定 }
+  - { name: related_employee, type: string, desc: 关联采购经办人，不等同于责任认定, sensitive: true }
+  - { name: warnings, type: text, desc: 结构化警示 JSON }
+  - { name: as_of_date, type: date, desc: 数据快照日 }
+  - { name: calculation_version, type: string, desc: 计算版本 }
+bindings:
+  - source: digiwin_e10
+    tables: [D2A_PURCHASE_OVERBUY_EVIDENCE]
+    materializer: dead_stock_attribution_v1
+    status: draft
+    key_map:
+      plant_id: D2A_PURCHASE_OVERBUY_EVIDENCE.plant_id
+      po_no: D2A_PURCHASE_OVERBUY_EVIDENCE.po_no
+      po_line_no: D2A_PURCHASE_OVERBUY_EVIDENCE.po_line_no
+      item_code: D2A_PURCHASE_OVERBUY_EVIDENCE.item_code
+    field_map:
+      plant_id: D2A_PURCHASE_OVERBUY_EVIDENCE.plant_id
+      po_no: D2A_PURCHASE_OVERBUY_EVIDENCE.po_no
+      po_line_no: D2A_PURCHASE_OVERBUY_EVIDENCE.po_line_no
+      item_code: D2A_PURCHASE_OVERBUY_EVIDENCE.item_code
+      supplier_id: D2A_PURCHASE_OVERBUY_EVIDENCE.supplier_id
+      po_date: D2A_PURCHASE_OVERBUY_EVIDENCE.po_date
+      demand_qty: D2A_PURCHASE_OVERBUY_EVIDENCE.demand_qty
+      net_received_qty: D2A_PURCHASE_OVERBUY_EVIDENCE.net_received_qty
+      purchase_qty: D2A_PURCHASE_OVERBUY_EVIDENCE.purchase_qty
+      moq: D2A_PURCHASE_OVERBUY_EVIDENCE.moq
+      actual_excess_qty: D2A_PURCHASE_OVERBUY_EVIDENCE.actual_excess_qty
+      planned_moq_excess_qty: D2A_PURCHASE_OVERBUY_EVIDENCE.planned_moq_excess_qty
+      moq_forced_excess_qty: D2A_PURCHASE_OVERBUY_EVIDENCE.moq_forced_excess_qty
+      manual_excess_qty: D2A_PURCHASE_OVERBUY_EVIDENCE.manual_excess_qty
+      inventory_qty: D2A_PURCHASE_OVERBUY_EVIDENCE.inventory_qty
+      trace_type: D2A_PURCHASE_OVERBUY_EVIDENCE.trace_type
+      calculation_status: D2A_PURCHASE_OVERBUY_EVIDENCE.calculation_status
+      related_department: D2A_PURCHASE_OVERBUY_EVIDENCE.related_department
+      related_employee: D2A_PURCHASE_OVERBUY_EVIDENCE.related_employee
+      warnings: D2A_PURCHASE_OVERBUY_EVIDENCE.warnings
+      as_of_date: D2A_PURCHASE_OVERBUY_EVIDENCE.as_of_date
+      calculation_version: D2A_PURCHASE_OVERBUY_EVIDENCE.calculation_version
+    notes: R2/R2M 所需主键、外键和 MOQ 字段尚未核对，当前不生成证据。

@@ -153,7 +153,7 @@ def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
     # 取"从现在起 2~3 小时后"的窗口:任何时刻跑测试都必然在窗口外(含跨零点)
     t2, t3 = datetime.now() + timedelta(hours=2), datetime.now() + timedelta(hours=3)
 
-    # 六张基线表
+        # 六张基线表加上已核对的呆滞库存输入表
     baseline_tables = {
         "CUSTOMER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
         "CURRENCY": {"mode": "full_refresh"},
@@ -161,6 +161,7 @@ def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
         "QUOTATION": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
         "SALES_ORDER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
         "SALES_ORDER_D": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+        "ITEM_WAREHOUSE": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
     }
 
     scfg = SourceConfig(adapter="sqlite_readonly", path=str(src),
@@ -206,10 +207,13 @@ def test_serve_once(env, pack, tmp_path):
         "      SALES_ORDER:\n"
         "        mode: incremental\n"
         "        watermark: LAST_MODIFIED_DATE\n"
-        "      SALES_ORDER_D:\n"
-        "        mode: incremental\n"
-        "        watermark: LAST_MODIFIED_DATE\n"
-        "    reconcile_at: \"05:30\"\n",
+            "      SALES_ORDER_D:\n"
+            "        mode: incremental\n"
+            "        watermark: LAST_MODIFIED_DATE\n"
+            "      ITEM_WAREHOUSE:\n"
+            "        mode: incremental\n"
+            "        watermark: LAST_MODIFIED_DATE\n"
+            "    reconcile_at: \"05:30\"\n",
         encoding="utf-8")
     serve(load_config(cfg_file), once=True)
     landing = LandingStore(tmp_path / "serve_landing.sqlite")

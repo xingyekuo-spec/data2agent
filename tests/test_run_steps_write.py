@@ -206,7 +206,8 @@ def test_reconcile_repair_error_closes_step(landing_synced, pack, monkeypatch):
         reconcile(src_adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
     (run_id,) = landing.con.execute(
         "SELECT MAX(id) FROM d2a_sync_run WHERE run_type = 'reconcile'").fetchone()
-    step = landing.steps_for_run(run_id)[0]
+    step = next(step for step in landing.steps_for_run(run_id)
+                if step["target"].startswith("CURRENCY:"))
     assert step["status"] == "failed"
     assert step["finished_at"] is not None
     assert "repair boom" in step["error"]

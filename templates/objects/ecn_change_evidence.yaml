@@ -1,0 +1,49 @@
+object: EcnChangeEvidence
+display_name: ECN 变更证据
+description: 按 ECN 变更行预计算的旧料替换、新料生效和处置方式证据
+domain: 产品
+source_of_truth: 数据平台呆滞库存 R3 预计算结果（来源：鼎捷 E10 ECN 变更与任务记录）
+keys: [plant_id, ecn_no, item_code, replacement_item_code]
+properties:
+  - { name: plant_id, type: string, desc: 工厂编码 }
+  - { name: ecn_no, type: string, desc: 工程变更单号 }
+  - { name: item_code, type: string, desc: 被替换的旧料品号 }
+  - { name: replacement_item_code, type: string, desc: 已生效的新料品号 }
+  - { name: ecn_date, type: date, desc: 变更日期 }
+  - { name: effective_date, type: date, desc: 生效日期 }
+  - { name: handle, type: string, desc: ECN 处置方式 }
+  - { name: reason_desc, type: text, desc: 变更原因说明 }
+  - { name: trace_type, type: enum, enum_values: [indirect], desc: 库存到 ECN 的追溯方式 }
+  - { name: calculation_status, type: enum, enum_values: [ready], desc: 计算状态 }
+  - { name: related_department, type: string, desc: 关联设计部门，不等同于责任认定 }
+  - { name: related_employee, type: string, desc: 关联设计经办人，不等同于责任认定, sensitive: true }
+  - { name: warnings, type: text, desc: 结构化警示 JSON }
+  - { name: as_of_date, type: date, desc: 数据快照日 }
+  - { name: calculation_version, type: string, desc: 计算版本 }
+bindings:
+  - source: digiwin_e10
+    tables: [D2A_ECN_CHANGE_EVIDENCE]
+    materializer: dead_stock_attribution_v2
+    status: draft
+    key_map:
+      plant_id: D2A_ECN_CHANGE_EVIDENCE.plant_id
+      ecn_no: D2A_ECN_CHANGE_EVIDENCE.ecn_no
+      item_code: D2A_ECN_CHANGE_EVIDENCE.item_code
+      replacement_item_code: D2A_ECN_CHANGE_EVIDENCE.replacement_item_code
+    field_map:
+      plant_id: D2A_ECN_CHANGE_EVIDENCE.plant_id
+      ecn_no: D2A_ECN_CHANGE_EVIDENCE.ecn_no
+      item_code: D2A_ECN_CHANGE_EVIDENCE.item_code
+      replacement_item_code: D2A_ECN_CHANGE_EVIDENCE.replacement_item_code
+      ecn_date: D2A_ECN_CHANGE_EVIDENCE.ecn_date
+      effective_date: D2A_ECN_CHANGE_EVIDENCE.effective_date
+      handle: D2A_ECN_CHANGE_EVIDENCE.handle
+      reason_desc: D2A_ECN_CHANGE_EVIDENCE.reason_desc
+      trace_type: D2A_ECN_CHANGE_EVIDENCE.trace_type
+      calculation_status: D2A_ECN_CHANGE_EVIDENCE.calculation_status
+      related_department: D2A_ECN_CHANGE_EVIDENCE.related_department
+      related_employee: D2A_ECN_CHANGE_EVIDENCE.related_employee
+      warnings: D2A_ECN_CHANGE_EVIDENCE.warnings
+      as_of_date: D2A_ECN_CHANGE_EVIDENCE.as_of_date
+      calculation_version: D2A_ECN_CHANGE_EVIDENCE.calculation_version
+    notes: R3 所需 ECN 单头/单身与物料关联字段尚未核对，当前不生成证据。

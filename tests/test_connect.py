@@ -46,7 +46,9 @@ def _adapter(source_db, whitelist=None, landing=None, **kw):
 # 单元测试:whitelist_from_pack() 工具函数(非生产路径,新配置用 tables 字段)
 def test_whitelist_derived_from_bindings(pack):
     assert whitelist_from_pack(pack, SOURCE) == {
-        "CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"}
+        "CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D",
+        "ITEM_WAREHOUSE",
+    }
 
 
 def test_whitelist_enforced(source_db):

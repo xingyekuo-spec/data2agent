@@ -1,0 +1,54 @@
+metrics:
+  - metric: dead_stock_amount
+    display_name: 呆滞库存金额
+    status: draft
+    formula: determination_status=dead_stock 的 inventory_qty × unit_cost 合计
+    grain: [快照日, 工厂, 仓库, 物料类型]
+    dimensions: [工厂, 仓库, 物料类型, 账龄段]
+    caveats: M1 仅使用销售出库和生产领用；其他出库类型及库存状态口径待现场核对
+    freshness_sla: T+1
+
+  - metric: dead_stock_quantity
+    display_name: 呆滞库存数量
+    status: draft
+    formula: determination_status=dead_stock 的 inventory_qty 合计
+    grain: [快照日, 工厂, 仓库, 物料类型]
+    dimensions: [工厂, 仓库, 物料类型, 账龄段]
+    caveats: 仅统计 usable 库存；冻结、待检和报废库存保留为 unknown
+    freshness_sla: T+1
+
+  - metric: dead_stock_item_count
+    display_name: 呆滞品号数
+    status: draft
+    formula: determination_status=dead_stock 的品号去重数
+    grain: [快照日, 工厂, 仓库, 物料类型]
+    dimensions: [工厂, 仓库, 物料类型, 账龄段]
+    caveats: 同一品号在多个仓库存在时按当前 group_by 的粒度统计
+    freshness_sla: T+1
+
+  - metric: attribution_coverage_rate
+    display_name: 呆滞归因覆盖率
+    status: draft
+    formula: 至少一个有效 R1/R2/R2M/R3/R5 标签的呆滞品号数 / 呆滞品号数
+    grain: [快照日, 工厂]
+    dimensions: [工厂]
+    caveats: 多仓同品号按工厂去重；仅统计 calculation_status=ready 的规则结果
+    freshness_sla: T+1
+
+  - metric: attribution_distribution
+    display_name: 呆滞归因分布
+    status: draft
+    formula: 按根因标签统计命中的呆滞品号数和对应库存金额
+    grain: [快照日, 工厂, 根因, 置信度等级]
+    dimensions: [工厂, 根因, 置信度等级]
+    caveats: 一个品号可命中多个标签，因此不同根因的金额不可直接相加为总呆滞金额
+    freshness_sla: T+1
+
+  - metric: substitute_consumable_quantity
+    display_name: 呆滞库存潜在可消耗数量
+    status: draft
+    formula: MaterialSubstituteCandidate 中 candidate_type=bom_consumption 的 potential_consume_qty 合计
+    grain: [快照日, 来源工厂, 目标工厂, 物料]
+    dimensions: [来源工厂, 目标工厂, 物料]
+    caveats: 仅表示当前 BOM 与未结案工单存在潜在消耗场景，不代表已确认可替代或可调拨
+    freshness_sla: T+1

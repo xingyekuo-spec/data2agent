@@ -291,6 +291,251 @@ def _orders(rng: random.Random, asof: date, quotations: list[dict], customers: l
     return headers, lines
 
 
+def _stock_history(rng: random.Random, asof: date, items: list[dict]) -> dict[str, list[dict]]:
+    """为呆滞库存 M1 构造库存、入库和出库/领料事实。"""
+    balances: list[dict] = []
+    warehouses: list[dict] = []
+    costs: list[dict] = []
+    receipts: list[dict] = []
+    sales_headers: list[dict] = []
+    sales_lines: list[dict] = []
+    production_issues: list[dict] = []
+    snapshot_at = datetime.combine(asof, time(23, 0, 0))
+    sales_id = sales_line_id = production_id = 0
+
+    for index, item in enumerate(items, start=1):
+        receipt_day = asof - timedelta(days=180 + (index % 140))
+        receipt_at = _worktime(rng, receipt_day)
+        qty = float((index % 9 + 1) * (500 if item["CATEGORY_CODE"] in {"RAW", "LURE"} else 50))
+        status = "frozen" if index % 17 == 0 else "usable"
+        unit_cost = round(float(item["STANDARD_COST"]) * (0.96 + (index % 5) * 0.02), 2)
+
+        balances.append({
+            "Id": index, "ITEM_ID": item["Id"], "PLANT_ID": "P01",
+            "WAREHOUSE_CODE": "W01", "INVENTORY_QTY": qty,
+            "INVENTORY_STATUS": status,
+            **_audit(rng, receipt_at, snapshot_at),
+        })
+        costs.append({
+            "Id": index, "ITEM_ID": item["Id"], "UNIT_COST": unit_cost,
+            **_audit(rng, receipt_at, snapshot_at),
+        })
+        receipts.append({
+            "Id": index, "ITEM_ID": item["Id"], "RECEIPT_DATE": _d(receipt_day),
+            "RECEIPT_QTY": qty * 2,
+            **_audit(rng, receipt_at),
+        })
+
+        issue_day = None if index % 11 == 0 else asof - timedelta(
+            days=135 if index % 5 == 0 else 20 + (index % 30),
+        )
+        if issue_day is not None:
+            issue_at = _worktime(rng, issue_day)
+            if item["CATEGORY_CODE"] in {"RAW", "ACC"}:
+                production_id += 1
+                production_issues.append({
+                    "Id": production_id, "MO_ID": None, "ITEM_ID": item["Id"], "ISSUE_DATE": _d(issue_day),
+                    "ISSUED_QTY": qty / 2, "RETURNED_QTY": 0,
+                    **_audit(rng, issue_at),
+                })
+            else:
+                sales_id += 1
+                sales_line_id += 1
+                sales_headers.append({
+                    "Id": sales_id, "DOC_NO": f"SI{issue_day:%y%m}-{sales_id:03d}",
+                    "DOC_DATE": _d(issue_day), **_audit(rng, issue_at),
+                })
+                sales_lines.append({
+                    "Id": sales_line_id, "SALES_ISSUE_ID": sales_id, "ITEM_ID": item["Id"],
+                    "ISSUED_QTY": qty / 2, **_audit(rng, issue_at),
+                })
+        warehouses.append({
+            "Id": index, "ITEM_ID": item["Id"], "WAREHOUSE_ID": "W01",
+            "INVENTORY_QTY": qty,
+            "LAST_ISSUE_DATE": _d(issue_day) if issue_day is not None else None,
+            "LAST_RECEIPT_DATE": _d(receipt_day), "SAFE_STOCK": qty * 0.1,
+            **_audit(rng, receipt_at, snapshot_at),
+        })
+
+    return {
+        "INV_COST_BAL": balances,
+        "ITEM_WAREHOUSE": warehouses,
+        "INV_UNIT_COST": costs,
+        "INV_RECEIPT": receipts,
+        "SALES_ISSUE": sales_headers,
+        "SALES_ISSUE_D": sales_lines,
+        "MO_ISSUED_SETS": production_issues,
+    }
+
+
+def _m2_history(rng: random.Random, asof: date, items: list[dict], stock: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """构造可命中 R2、R2M、R5 的采购与生产证据链。"""
+    dead_items = [item for index, item in enumerate(items, start=1)
+                  if index % 5 == 0 and index % 17 != 0]
+    purchases = dead_items[:3]
+    po_rows: list[dict] = []
+    po_lines: list[dict] = []
+    po_sd_rows: list[dict] = []
+    po_sd1_rows: list[dict] = []
+    po_ssd_rows: list[dict] = []
+    arrival_rows: list[dict] = []
+    supplier_rows: list[dict] = []
+    base_day = asof - timedelta(days=160)
+
+    # (需求, MOQ, 净收货): 第一条仅 R2,第二条仅 R2M,第三条同时命中。
+    quantities = [(200.0, 500.0, 500.0), (100.0, 100.0, 400.0), (300.0, 500.0, 800.0)]
+    for ident, (item, (demand, moq, received)) in enumerate(zip(purchases, quantities), start=1):
+        created = _worktime(rng, base_day + timedelta(days=ident))
+        po_rows.append({
+            "Id": ident, "DOC_NO": f"PO{base_day:%y%m}-{ident:03d}", "DOC_DATE": _d(base_day),
+            "SUPPLIER_ID": f"SUP-{ident:03d}", "Owner_Dept": "采购部",
+            "Owner_Emp": f"BUYER-{ident:03d}", "APPROVE_STATUS": "approved",
+            **_audit(rng, created),
+        })
+        po_lines.append({
+            "Id": ident, "PURCHASE_ORDER_ID": ident, "SEQUENCE_NUMBER": 1,
+            "ITEM_ID": item["Id"], "PURCHASE_QTY": received, "PRICE": item["STANDARD_COST"],
+            "BUSINESS_QTY": received, **_audit(rng, created),
+        })
+        po_sd_rows.append({
+            "Id": ident, "PURCHASE_ORDER_D_ID": ident, "PLANT_ID": "P01",
+            "WAREHOUSE_ID": "W01", "PLAN_ARRIVAL_DATE": _d(base_day + timedelta(days=12)),
+            **_audit(rng, created),
+        })
+        po_sd1_rows.append({
+            "Id": ident, "PURCHASE_ORDER_SD_ID": ident, "RECEIPT_CLOSE": "Y",
+            "RECEIPTED_QTY": received, **_audit(rng, created),
+        })
+        po_ssd_rows.append({
+            "Id": ident, "PURCHASE_ORDER_SD1_ID": ident, "DEMAND_NO": f"DEM-{ident:03d}",
+            "DEMAND_QTY": demand, "PURCHASED_QTY": received, "ARRIVED_QTY": received,
+            "RECEIPTED_QTY": received, "LOCKED_FLAG": "Y", **_audit(rng, created),
+        })
+        arrival_rows.append({
+            "Id": ident, "PURCHASE_ORDER_D_ID": ident, "ITEM_ID": item["Id"],
+            "RECEIPTED_BUSINESS_QTY": received + 20, "RETURNED_BUSINESS_QTY": 20,
+            "MO_ID": None, **_audit(rng, created),
+        })
+        supplier_rows.append({
+            "Id": ident, "SUPPLIER_ID": f"SUP-{ident:03d}", "ITEM_ID": item["Id"],
+            "MOQ": moq, "LEAD_TIME": 30, "MIN_ORDER_QTY": moq, **_audit(rng, created),
+        })
+
+    # 一张已结案工单命中 R5；另一张未结案工单保留 provisional 作为降级样本。
+    production_items = dead_items[:2]
+    mo_rows: list[dict] = []
+    mo_lines: list[dict] = []
+    bom_rows: list[dict] = []
+    existing_issue_id = max((r["Id"] for r in stock["MO_ISSUED_SETS"]), default=0)
+    production_issues: list[dict] = []
+    finished_goods = [i for i in items if i["Id"] not in {x["Id"] for x in production_items}]
+    for ident, item in enumerate(production_items, start=1):
+        mo_id = ident
+        parent = finished_goods[ident - 1]
+        closed = ident == 1
+        created = _worktime(rng, base_day + timedelta(days=20 + ident))
+        output_qty = 100.0
+        mo_rows.append({
+            "Id": mo_id, "DOC_NO": f"MO{base_day:%y%m}-{ident:03d}", "DOC_DATE": _d(base_day),
+            "ITEM_ID": parent["Id"], "PLANT_ID": "P01", "Owner_Dept": "生产部",
+            "Owner_Emp": f"PROD-{ident:03d}", "PLAN_QTY": output_qty,
+            "COMPLETED_QTY": output_qty if closed else 60.0,
+            "STATUS": "closed" if closed else "open", **_audit(rng, created),
+        })
+        mo_lines.append({
+            "Id": ident, "MO_ID": mo_id, "ITEM_ID": item["Id"], "QTY_PER": 2.0,
+            "REPLACE_ITEM": "N", **_audit(rng, created),
+        })
+        bom_rows.append({
+            "Id": ident, "PARENT_ITEM_ID": parent["Id"], "SUB_ITEM_FEATURE_ID": item["Id"],
+            "QTY_PER": 2.0, "DENOMINATOR": 1.0, "FIXED_LOSS_RATE": 0.02,
+            "DYNAMIC_LOSS_RATE": 0.01, "ISSUE_OVERRUN_RATE": 0.02,
+            "REMARK": "仅适用高端定制机型" if ident == 1 else None,
+            **_audit(rng, created),
+        })
+        existing_issue_id += 1
+        production_issues.append({
+            "Id": existing_issue_id, "MO_ID": mo_id, "ITEM_ID": item["Id"],
+            "ISSUE_DATE": _d(asof - timedelta(days=135)),
+            "ISSUED_QTY": 230.0 if closed else 220.0, "RETURNED_QTY": 10.0,
+            **_audit(rng, created),
+        })
+
+    return {
+        "PURCHASE_ORDER": po_rows, "PURCHASE_ORDER_D": po_lines,
+        "PURCHASE_ORDER_SD": po_sd_rows, "PURCHASE_ORDER_SD1": po_sd1_rows,
+        "PURCHASE_ORDER_SSD": po_ssd_rows, "PURCHASE_ARRIVAL_D": arrival_rows,
+        "SUPPLIER_PURCHASE": supplier_rows, "MO": mo_rows, "MO_D": mo_lines,
+        "BOM_D": bom_rows, "MO_ISSUED_SETS": stock["MO_ISSUED_SETS"] + production_issues,
+    }
+
+
+def _m3_history(rng: random.Random, asof: date, items: list[dict]) -> dict[str, list[dict]]:
+    """构造可命中 R1 与 R3、并覆盖 run-out 排除规则的证据链。"""
+    dead_items = [item for index, item in enumerate(items, start=1)
+                  if index % 5 == 0 and index % 17 != 0]
+    cancelled, ecn_old, run_out_old = dead_items[:3]
+    new_items = [item for item in items if item["Id"] not in {cancelled["Id"], ecn_old["Id"], run_out_old["Id"]}]
+    base_day = asof - timedelta(days=120)
+    created = _worktime(rng, base_day)
+    sales_headers = [{
+        "Id": 1, "DOC_NO": "SO-CANCEL-001", "DOC_DATE": _d(base_day),
+        "CUSTOMER_ID": 1, "Owner_Dept": "销售部", "Owner_Emp": "SALES-001",
+        "ApproveStatus": "已取消", **_audit(rng, created, _worktime(rng, base_day + timedelta(days=20))),
+    }]
+    sales_lines = [{
+        "Id": 1, "SALES_ORDER_DOC_ID": 1, "SEQUENCE_NUMBER": 1,
+        "ITEM_ID": cancelled["Id"], "QTY_PER": 200.0, "BUSINESS_QTY": 200.0,
+        "PRICE": cancelled["STANDARD_COST"] * 1.3, **_audit(rng, created),
+    }]
+    sales_plans = [{
+        "Id": 1, "SALES_ORDER_DOC_D_ID": 1, "PLAN_QTY": 200.0,
+        "PLAN_SHIP_DATE": _d(base_day + timedelta(days=15)), "SHIPPED_QTY": 0.0,
+        **_audit(rng, created),
+    }]
+    req_source = [{
+        "Id": 1, "PURCHASE_ORDER_SD1_ID": 1, "DEMAND_NO": "SO-CANCEL-001",
+        "DEMAND_QTY": 200.0, "PURCHASED_QTY": 500.0, "PURCHASE_SEQUENCE": 1,
+        **_audit(rng, created),
+    }]
+
+    ecn_rows, ecn_lines, ecn_sub_lines, ecn_tasks = [], [], [], []
+    for ident, (old, new, handle) in enumerate(
+        [(ecn_old, new_items[0], "replace"), (run_out_old, new_items[1], "run-out")], start=1,
+    ):
+        changed = base_day + timedelta(days=ident * 3)
+        event_at = _worktime(rng, changed)
+        ecn_rows.append({
+            "Id": ident, "DOC_NO": f"ECN-{changed:%Y}-{ident:03d}", "DOC_DATE": _d(changed),
+            "Owner_Dept": "设计部", "Owner_Emp": f"DESIGN-{ident:03d}",
+            "REASON_DESC": "材料替代", "CONTENT": "版本升级", "REASON_ID": "MAT-REPLACE",
+            **_audit(rng, event_at),
+        })
+        ecn_lines.append({
+            "Id": ident, "ECN_ID": ident, "PARENT_ITEM_ID": new["Id"],
+            "ORIGINAL_PARENT_ITEM_ID": old["Id"], "CHANGE_TYPE": "replace",
+            "VERSION_TIMES": ident, **_audit(rng, event_at),
+        })
+        ecn_sub_lines.append({
+            "Id": ident, "ECN_D_ID": ident, "SUB_ITEM_FEATURE_ID": new["Id"],
+            "ORIGINAL_SUB_ITEM_FEATURE_ID": old["Id"], "CHANGE_TYPE": "replace",
+            "HANDLE": handle, "QTY_PER": 1.0,
+            "EFFECTIVE_DATE": _d(changed + timedelta(days=5)), "EXPIRY_DATE": None,
+            "REMARK": None, **_audit(rng, event_at),
+        })
+        ecn_tasks.append({
+            "Id": ident, "ECN_ID": ident, "DEPARTMENT_ID": "设计部", "PERSON_ID": f"TASK-{ident:03d}",
+            "DESCRIPTION": "变更执行", "START_DATE": _d(changed),
+            "PLAN_DATE": _d(changed + timedelta(days=7)), "ACTUAL_DATE": _d(changed + timedelta(days=6)),
+            **_audit(rng, event_at),
+        })
+    return {
+        "SALES_ORDER_DOC": sales_headers, "SALES_ORDER_DOC_D": sales_lines,
+        "SALES_ORDER_DOC_SD": sales_plans, "PO_REQ_SOURCE": req_source,
+        "ECN": ecn_rows, "ECN_D": ecn_lines, "ECN_SD": ecn_sub_lines, "ECN_TASK": ecn_tasks,
+    }
+
+
 def build(seed: int, asof: date) -> dict[str, list[dict]]:
     rng = random.Random(seed)
     currencies = _currencies(rng)
@@ -298,11 +543,19 @@ def build(seed: int, asof: date) -> dict[str, list[dict]]:
     cur_code = {v: k for k, v in cur_id.items()}
     customers = _customers(rng, cur_id)
     items = _items(rng)
+    dead_items = [item for index, item in enumerate(items, start=1)
+                  if index % 5 == 0 and index % 17 != 0]
+    if len(dead_items) >= 1 and len(items) >= 6:
+        items[5]["ITEM_SPECIFICATION"] = dead_items[0]["ITEM_SPECIFICATION"]
     quotations = _quotations(rng, asof, customers, items, cur_code)
     orders, order_lines = _orders(rng, asof, quotations, customers, items, cur_code)
+    stock_history = _stock_history(rng, asof, items)
+    m2_history = _m2_history(rng, asof, items, stock_history)
+    m3_history = _m3_history(rng, asof, items)
     return {
         "CURRENCY": currencies, "CUSTOMER": customers, "ITEM": items,
         "QUOTATION": quotations, "SALES_ORDER": orders, "SALES_ORDER_D": order_lines,
+        **stock_history, **m2_history, **m3_history,
     }
 
 

@@ -89,12 +89,25 @@ class SourceBinding(BaseModel):
     field_map: dict[str, str] = {}     # 属性 -> 源字段/表达式
     derived: dict[str, DerivedField] = {}  # 属性 -> 决策表(锚表列驱动)
     watermark: Optional[str] = None    # 增量水位字段
+    materializer: Optional[str] = None  # 场景预计算器;D2A_* 为内部结果表
     notes: str = ""
 
     @property
     def enabled(self) -> bool:
         """禁用的 binding 不参与抽取 / 映射 / 查询。"""
         return self.status != "disabled"
+
+    @property
+    def source_tables(self) -> list[str]:
+        """真正需要从源系统抽取的表。
+
+        materializer binding 中的 D2A_* 表都是数据平台内部结果表，不能进入
+        ERP 适配器白名单；其余表是预计算器的只读输入。M2 可以读取 M1
+        的结果表，因此内部表不只会出现在 tables[0]。
+        """
+        if not self.materializer:
+            return self.tables
+        return [table for table in self.tables if not table.startswith("D2A_")]
 
 
 class ObjectTemplate(BaseModel):
