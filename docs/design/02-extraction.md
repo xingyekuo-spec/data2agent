@@ -53,7 +53,7 @@ class SourceAdapter(Protocol):
 **安全强制(适配器层内实现,不可绕过)**:
 
 1. **只读**:只允许 SELECT;连接串要求只读账号,MSSQL 加 `ApplicationIntent=ReadOnly`;任何非 SELECT 语句直接抛异常;
-2. **白名单**:默认由模板 binding 的 `tables` 自动推导(元模型再次作为唯一事实来源),配置可追加 `extra_whitelist`;白名单外的表名一律拒绝;
+2. **表白名单**:由 `connect.yaml` 每源的 `tables` 字段显式声明抽取表及策略(`mode` / `watermark`);未声明表名一律拒绝;
 3. **限流**:`batch_size`(默认 5000)+ `rows_per_second` 节流 + 语句超时;
 4. **审计**:发往源库的每一条 SQL 记入 `d2a_audit_log`(语句、行数、耗时、批次号)。
 
@@ -89,8 +89,8 @@ since = high_water - lookback          # 回看窗口,默认 3 天,吸收迟到�
 规则:
 
 - 水位**只在落地事务提交后前进**,且只前进不后退;任何批次失败,水位停在原地,下轮重来(upsert 幂等);
-- 无可靠水位字段的表(小维表如 CURRENCY):走全量刷新 —— 由 binding 有无 `watermark` 声明**自动推导**,无独立配置项(元模型仍是唯一事实来源;不可靠水位应从 binding 移除 `watermark`,而非加配置覆盖);
-- 水位字段语义(是"修改时间"还是"审核时间")属现场核对项,binding `watermark` 为准。
+- 无可靠水位字段的表(小维表如 CURRENCY):走全量刷新 —— 由 `connect.yaml` 每表的 `mode: full_refresh` 显式声明;增量表须同时配置 `watermark` 字段名;
+- 水位字段语义(是"修改时间"还是"审核时间")属现场核对项,以 `connect.yaml` 每表配置的 `watermark` 为准。
 
 ## 6. 分段对账(reconcile.py)
 
@@ -164,17 +164,36 @@ sources:
   digiwin_e10:
     adapter: mssql_readonly         # 开发 / 参考库:sqlite_readonly + path
     dsn_env: D2A_E10_DSN            # 凭据只从环境变量读,绝不落配置文件/仓库
-    whitelist_from_bindings: true
-    extra_whitelist: []
+
+    # 抽取表与同步策略(独立于模板维护,只修改这里即可控制 ERP 抽取范围)
+    tables:
+      CUSTOMER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      CURRENCY:
+        mode: full_refresh
+      ITEM:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      QUOTATION:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER_D:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+
     windows: ["22:00-06:30"]
     rate: { batch_size: 5000, rows_per_second: 2000 }
     lookback: 3d
     sync_every: 30m                 # 窗口内的同步节奏
     reconcile_at: "05:30"           # 每日 L1 对账
-    apply_after_sync: true          # 同步后自动物化对象层
+    apply_after_sync: true          # 同步后自动物化对象层(sink=http 时忽略)
 ```
 
-每表策略无需配置:有 `binding.watermark` 声明 → 水位增量;没有 → full_refresh(自动推导,元模型仍是唯一事实来源)。示例见仓库根 `connect.example.yaml`。
+每表策略在 `tables` 字段中显式声明(`mode: incremental` + `watermark` 或 `mode: full_refresh`),无需额外配置项。示例见仓库根 `connect.example.yaml`。
 
 ## 10. 安全机制与试点门槛
 
@@ -183,7 +202,7 @@ sources:
 | 承诺 | 机制 | 层 |
 | --- | --- | --- |
 | 只读账号 | 仅 SELECT + ReadOnly intent,非 SELECT 抛异常 | 适配器 |
-| 白名单表 | binding 推导 + 白名单外拒绝 | 适配器 |
+| 白名单表 | tables 字段显式声明 + 未声明拒绝 | 适配器 |
 | 限时 | 错峰窗口硬约束,越界批次边界暂停 | 调度 |
 | 限流 | batch_size + rows_per_second + 语句超时 | 适配器 |
 | 全部可审计 | d2a_audit_log 逐条 SQL + d2a_sync_run 逐轮汇总 | 全层 |

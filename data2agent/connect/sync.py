@@ -93,6 +93,12 @@ def migrate_config_to_tables(
     result: dict[str, list[str]] = {}
 
     for src_name, sdata in sources.items():
+        # Skip sources that already have tables and no old fields
+        has_old = "whitelist_from_bindings" in sdata or "extra_whitelist" in sdata
+        if "tables" in sdata and not has_old:
+            result[src_name] = sorted(sdata["tables"].keys())
+            continue
+
         wfb = sdata.pop("whitelist_from_bindings", True)
         extra = set(sdata.pop("extra_whitelist", []))
 
@@ -106,10 +112,7 @@ def migrate_config_to_tables(
             }
         tables_set |= extra
 
-        try:
-            wm_map = watermarks_from_pack(pack, src_name)
-        except Exception:
-            wm_map = {}
+        wm_map = watermarks_from_pack(pack, src_name)
 
         new_tables: dict[str, dict[str, str]] = {}
         for tbl in sorted(tables_set):

@@ -45,11 +45,6 @@ def _build(args, ap):
     --config 模式: pack 为 None, watermarks 来自 tables 配置。
     旧模式: pack 来自模板, watermarks 来自 binding。
     """
-    landing = LandingStore(args.landing)
-    hook = lambda action, sql, rows, ms: landing.log_audit(args.source, action, sql, rows, ms)  # noqa: E731
-    kwargs = dict(batch_size=args.batch_size, rows_per_second=args.rows_per_second,
-                  audit_hook=hook)
-
     if getattr(args, 'config', None):
         from .config import load_config
         cfg = load_config(args.config)
@@ -58,6 +53,12 @@ def _build(args, ap):
         scfg = cfg.sources[args.source]
         whitelist = scfg.table_whitelist()
         watermarks = scfg.table_watermarks()
+
+        landing = LandingStore(cfg.landing)
+        hook = lambda action, sql, rows, ms: landing.log_audit(args.source, action, sql, rows, ms)  # noqa: E731
+        kwargs = dict(batch_size=scfg.rate.batch_size,
+                      rows_per_second=scfg.rate.rows_per_second,
+                      audit_hook=hook)
 
         import os as _os
         if scfg.adapter == "sqlite_readonly":
@@ -74,7 +75,12 @@ def _build(args, ap):
 
     # Legacy mode (no --config): require --sqlite or --mssql-dsn-env
     if not args.sqlite and not args.mssql_dsn_env:
-        ap.error("需要 --sqlite、--mssql-dsn-env 或 --config")
+        ap.error("需要 --config connect.yaml 或 --sqlite/--mssql-dsn-env(开发用)")
+
+    landing = LandingStore(args.landing)
+    hook = lambda action, sql, rows, ms: landing.log_audit(args.source, action, sql, rows, ms)  # noqa: E731
+    kwargs = dict(batch_size=args.batch_size, rows_per_second=args.rows_per_second,
+                  audit_hook=hook)
 
     pack = load_pack(args.templates)
     whitelist = whitelist_from_pack(pack, args.source)

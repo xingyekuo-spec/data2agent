@@ -29,6 +29,10 @@ class TestTableExtractConfig:
         with pytest.raises(ValueError):
             TableExtractConfig(mode="incremental", watermark="X", enabled=True)
 
+    def test_rejects_bad_watermark_identifier(self):
+        with pytest.raises(ValueError, match="非法水位列名"):
+            TableExtractConfig(mode="incremental", watermark="1bad_column")
+
 
 class TestSourceConfigTables:
     def test_whitelist_from_tables(self):

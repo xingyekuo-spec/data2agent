@@ -145,14 +145,31 @@ def _sanitize_detail(message: str) -> str:
     return message[:500]
 
 
-def _probe_connection(name: str, scfg: SourceConfig, landing_path: str) -> list[str]:
+def _probe_connection(name: str, scfg: SourceConfig, landing_path: str) -> dict:
+    """连接测试:验证表存在、主键和水位列。返回 {表名: {ok, pk_ok, wm_ok, error}}。"""
     landing = LandingStore(landing_path)
     adapter = build_adapter(name, scfg, landing)
-    tables: list[str] = []
+    results: dict[str, dict] = {}
     for tbl in sorted(adapter.whitelist):
-        adapter.table_info(tbl)
-        tables.append(tbl)
-    return tables
+        try:
+            info = adapter.table_info(tbl)
+            spec = (scfg.tables or {}).get(tbl)
+            pk_ok = bool(info.pk)
+            wm_ok = True
+            wm_error = None
+            if spec and spec.mode == "incremental" and spec.watermark:
+                cols_lower = {c.lower() for c in info.columns}
+                if spec.watermark.lower() not in cols_lower:
+                    wm_ok = False
+                    wm_error = f"水位列 {spec.watermark} 不存在于表 {tbl}"
+            results[tbl] = {
+                "ok": True, "pk_ok": pk_ok, "wm_ok": wm_ok,
+                "wm_error": wm_error,
+                "error": None if pk_ok else "缺少主键(增量引擎要求)",
+            }
+        except Exception as e:
+            results[tbl] = {"ok": False, "error": str(e)[:200]}
+    return results
 
 
 def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict[str, str]]]:
@@ -365,14 +382,23 @@ def create_app(
             name, scfg = _resolve_source(cfg, body.source)
             with ThreadPoolExecutor(max_workers=1) as pool:
                 future = pool.submit(_probe_connection, name, scfg, cfg.landing)
-                tables = future.result(timeout=10.0)
+                results = future.result(timeout=10.0)
         except FuturesTimeoutError:
             return {"ok": False, "error": "timeout", "detail": "连接测试超过 10 秒"}
         except Exception as e:
             return {"ok": False, "error": type(e).__name__,
                     "detail": _sanitize_detail(str(e))}
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        return {"ok": True, "elapsed_ms": elapsed_ms, "tables": tables}
+        tables_ok = sum(1 for r in results.values() if r.get("ok"))
+        tables_with_pk = sum(1 for r in results.values() if r.get("pk_ok"))
+        tables_with_wm = sum(1 for r in results.values() if r.get("wm_ok"))
+        return {"ok": True, "elapsed_ms": elapsed_ms,
+                "tables": sorted(results.keys()),
+                "table_count": len(results),
+                "tables_ok": tables_ok,
+                "tables_with_pk": tables_with_pk,
+                "tables_with_wm": tables_with_wm,
+                "results": results}
 
     @api.post("/actions/trigger")
     def trigger_action(body: TriggerBody) -> dict:

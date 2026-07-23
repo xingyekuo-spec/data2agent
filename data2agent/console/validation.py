@@ -178,7 +178,6 @@ def build_validation_report(
     # Raw presence: compare config tables vs actual raw tables
     config_tables = set(source_cfg.tables.keys()) if source_cfg and source_cfg.tables else set()
 
-    # Also check what platform bindings expect
     binding_tables = {
         table for obj in pack.objects for binding in obj.bindings
         if binding.enabled and binding.source == source for table in binding.tables
@@ -192,7 +191,15 @@ def build_validation_report(
         checks.append(_check("raw_presence", "fail",
                              f"部分配置表在落地库中缺失 raw 数据: {', '.join(sorted(missing_config))}",
                              detail={"configured": sorted(config_tables),
-                                     "missing": sorted(missing_config)}))
+                                     "missing": sorted(missing_config),
+                                     "binding_missing_from_config": sorted(missing_binding)}))
+    elif missing_binding:
+        checks.append(_check("raw_presence", "fail",
+                             f"平台 binding 依赖 {len(missing_binding)} 张表不在中间机配置中: "
+                             + ", ".join(sorted(missing_binding)),
+                             detail={"binding_tables": sorted(binding_tables),
+                                     "config_tables": sorted(config_tables),
+                                     "missing_from_config": sorted(missing_binding)}))
     elif not config_tables:
         checks.append(_check("raw_presence", "skipped",
                              "未配置显式表清单。", blocking=False))
@@ -200,15 +207,6 @@ def build_validation_report(
         checks.append(_check("raw_presence", "pass",
                              f"配置的 {len(config_tables)} 张表 raw 数据均存在。",
                              detail={"table_count": len(config_tables)}))
-
-    if missing_binding:
-        checks.append(_check("raw_presence", "warning",
-                             f"平台 binding 依赖 {len(missing_binding)} 张表不在中间机配置中: "
-                             + ", ".join(sorted(missing_binding)),
-                             blocking=False,
-                             detail={"binding_tables": sorted(binding_tables),
-                                     "config_tables": sorted(config_tables),
-                                     "missing": sorted(missing_binding)}))
 
     # 7. published snapshot
     if snap is None:

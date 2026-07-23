@@ -74,6 +74,9 @@ class TableExtractConfig(BaseModel):
             raise ValueError("incremental 模式必须配置 watermark")
         if self.mode == "full_refresh" and self.watermark is not None:
             raise ValueError("full_refresh 模式不允许配置 watermark")
+        if self.watermark is not None:
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", self.watermark):
+                raise ValueError(f"非法水位列名 '{self.watermark}'(须为 SQL 标识符)")
         return self
 
 

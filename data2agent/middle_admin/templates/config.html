@@ -252,7 +252,13 @@
     if (ev.target.classList.contains('table-mode')) {
       var row = ev.target.closest('tr');
       var wmInput = row.querySelector('.table-watermark');
-      if (wmInput) wmInput.style.display = ev.target.value === 'incremental' ? '' : 'none';
+      if (wmInput) {
+        var newMode = ev.target.value;
+        wmInput.style.display = newMode === 'incremental' ? '' : 'none';
+        if (newMode === 'full_refresh') {
+          wmInput.value = '';
+        }
+      }
     }
   });
 
@@ -326,7 +332,13 @@
           if (!tn) return;
           var mode = tblMode ? tblMode.value : 'incremental';
           var wm = tblWm ? tblWm.value.trim() || null : null;
-          tables[tn] = {mode: mode, watermark: wm};
+          if (mode === 'incremental' && wm) {
+            tables[tn] = {mode: mode, watermark: wm};
+          } else if (mode === 'full_refresh') {
+            tables[tn] = {mode: mode};
+          } else {
+            tables[tn] = {mode: mode, watermark: wm};
+          }
         });
         src.tables = tables;
       }

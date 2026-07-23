@@ -55,7 +55,7 @@ def build_sink(scfg: SourceConfig, landing: LandingStore):
 
 
 def run_sync_cycle(name: str, scfg: SourceConfig,
-                   landing_path: str) -> bool:
+                   landing_path: str, templates: str = "templates") -> bool:
     """一轮 sync(+apply)。返回是否实际执行(窗口外为 False)。"""
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip source=%s reason=窗口外 windows=%s", name, scfg.windows)
@@ -74,7 +74,7 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
     # sink=http: raw 已推给平台,映射在平台侧跑,不在中间 apply
     if scfg.apply_after_sync and not report.paused and scfg.sink.type == "local":
         from ..metamodel.loader import load_pack as _load_pack
-        pack = _load_pack("templates")  # local apply 仍需模板
+        pack = _load_pack(templates)  # local apply 仍需模板
         apply_report = build_dataset(landing, pack, name, auto_publish=True)
         log.info(
             "apply source=%s objects=%s quarantined=%s aborted=%s "
@@ -108,7 +108,7 @@ def serve(cfg: ConnectConfig, once: bool = False) -> None:
 
     if once:
         for name, scfg in cfg.sources.items():
-            run_sync_cycle(name, scfg, cfg.landing)
+            run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
             if scfg.reconcile_at is not None:
                 run_reconcile_cycle(name, scfg, cfg.landing)
         return
@@ -121,7 +121,7 @@ def serve(cfg: ConnectConfig, once: bool = False) -> None:
     for name, scfg in cfg.sources.items():
         scheduler.add_job(
             run_sync_cycle, IntervalTrigger(seconds=scfg.sync_every_seconds()),
-            args=(name, scfg, cfg.landing), id=f"sync:{name}",
+            args=(name, scfg, cfg.landing, cfg.templates), id=f"sync:{name}",
             max_instances=1, coalesce=True,
             next_run_time=datetime.now())
         if scfg.reconcile_at:
