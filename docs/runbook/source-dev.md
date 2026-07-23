@@ -53,8 +53,8 @@ sources:
 ## 3. CLI 命令
 
 ```bash
-# 验证配置(测试连接、验证 PK 和 watermark 列)
-python -m data2agent.connect test --config connect.yaml
+# 验证配置可加载(结构校验)
+python -m data2agent.connect migrate-config --config connect.yaml --dry-run
 
 # 单次抽取(增量)
 python -m data2agent.connect sync --config connect.yaml
@@ -62,20 +62,16 @@ python -m data2agent.connect sync --config connect.yaml
 # 全量重抽
 python -m data2agent.connect sync --config connect.yaml --full
 
-# 映射:raw_* → 物化对象层
-python -m data2agent.connect apply --config connect.yaml
-
-# 常驻调度(窗口内定时抽取 + 自动 apply)
-python -m data2agent.connect serve --config connect.yaml
-
-# 验证配置后立即运行一轮(调试用)
+# 常驻调度(窗口内定时抽取);--once 立即跑一轮后退出
 python -m data2agent.connect serve --config connect.yaml --once
 
-# 查看同步状态
-python -m data2agent.connect status --config connect.yaml
+# 查看同步状态(水位 / 最近运行 / 隔离区概览)
+python -m data2agent.connect status
 ```
 
-`--config` 默认值为 `connect.yaml`(当前目录)。多源或多环境时通过 `--config` 指定不同配置文件。
+`serve` 常驻模式启动后按 `sync_every` 周期调度;修改 `connect.yaml` 需重启服务才能生效。
+
+`apply` 命令用于平台侧(拆机部署);中间机 local 模式下 `apply_after_sync: true` 会在同步后自动执行。
 
 ## 4. 抽取表管理
 

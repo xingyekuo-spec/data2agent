@@ -158,12 +158,14 @@ def _probe_connection(name: str, scfg: SourceConfig, landing_path: str) -> dict:
             wm_ok = True
             wm_error = None
             if spec and spec.mode == "incremental" and spec.watermark:
-                cols_lower = {c.lower() for c in info.columns}
+                cols_lower = {name.casefold() for name, _ in info.columns}
                 if spec.watermark.lower() not in cols_lower:
                     wm_ok = False
                     wm_error = f"水位列 {spec.watermark} 不存在于表 {tbl}"
             results[tbl] = {
-                "ok": True, "pk_ok": pk_ok, "wm_ok": wm_ok,
+                "ok": pk_ok and wm_ok,
+                "pk_ok": pk_ok,
+                "wm_ok": wm_ok,
                 "wm_error": wm_error,
                 "error": None if pk_ok else "缺少主键(增量引擎要求)",
             }
@@ -392,7 +394,11 @@ def create_app(
         tables_ok = sum(1 for r in results.values() if r.get("ok"))
         tables_with_pk = sum(1 for r in results.values() if r.get("pk_ok"))
         tables_with_wm = sum(1 for r in results.values() if r.get("wm_ok"))
-        return {"ok": True, "elapsed_ms": elapsed_ms,
+        all_ok = all(r.get("ok", False) for r in results.values())
+        all_pk = all(r.get("pk_ok", False) for r in results.values())
+        all_wm = all(r.get("wm_ok", True) for r in results.values())
+        ok = all_ok and all_pk and all_wm
+        return {"ok": ok, "elapsed_ms": elapsed_ms,
                 "tables": sorted(results.keys()),
                 "table_count": len(results),
                 "tables_ok": tables_ok,
@@ -408,7 +414,7 @@ def create_app(
             raise HTTPException(400, f"不支持的动作 '{body.action}'")
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
-        executed = run_sync_cycle(name, scfg, cfg.landing)
+        executed = run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
         return {"action": "sync", "source": name, "executed": executed,
                 "overlap_warning": True,
                 "note": "" if executed else "错峰窗口外,未发起(窗口约束同样生效)"}

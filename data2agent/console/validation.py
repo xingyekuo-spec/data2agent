@@ -199,7 +199,8 @@ def build_validation_report(
                              + ", ".join(sorted(missing_binding)),
                              detail={"binding_tables": sorted(binding_tables),
                                      "config_tables": sorted(config_tables),
-                                     "missing_from_config": sorted(missing_binding)}))
+                                     "missing_from_config": sorted(missing_binding),
+                                     "note": "config_tables 来自平台本地配置副本,可能与中间机实际配置不同"}))
     elif not config_tables:
         checks.append(_check("raw_presence", "skipped",
                              "未配置显式表清单。", blocking=False))

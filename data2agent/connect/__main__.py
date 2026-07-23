@@ -277,10 +277,18 @@ def main() -> int:
     if args.cmd == "sync":
         if args.full:
             watermarks = {}
+        lookback = args.lookback_days
+        landing_display = args.landing
+        if getattr(args, 'config', None):
+            from .config import load_config
+            cfg = load_config(args.config)
+            scfg = cfg.sources[args.source]
+            lookback = scfg.lookback_days()
+            landing_display = cfg.landing
         report = incremental_sync(adapter, landing, args.source, watermarks,
-                                  lookback_days=args.lookback_days)
+                                  lookback_days=lookback)
         print(f"同步完成:run #{report.run_id},{len(report.tables)} 表,"
-              f"共 {report.total_rows} 行 → {args.landing}")
+              f"共 {report.total_rows} 行 → {landing_display}")
         for t in report.tables:
             wm = f"  水位 → {t.high_water}" if t.high_water else ""
             print(f"  - {t.table:<16} {t.rows:>6} 行 / {t.batches} 批  [{t.strategy}]{wm}")
