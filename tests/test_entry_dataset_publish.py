@@ -128,6 +128,7 @@ def test_scheduler_auto_publishes_after_sync(synced, pack):
                             "QUOTATION": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
                             "SALES_ORDER": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
                             "SALES_ORDER_D": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
+                            "ITEM_WAREHOUSE": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
                         })
     assert sched.run_sync_cycle(SOURCE, scfg, landing2.db_path) is True
     pub = landing2.get_published_dataset(SOURCE)

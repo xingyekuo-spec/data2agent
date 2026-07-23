@@ -76,14 +76,21 @@ def _get_lineage_token(
     return row["object_key_hash"]
 
 
+def _lineage_object(landing: LandingStore, dataset_version: str):
+    """选择有实际字段血缘的对象，不能假定对象目录排序。"""
+    return next(
+        obj for obj in landing.list_object_versions(dataset_version)
+        if obj.lineage_field_count > 0
+    )
+
+
 # ---- 成功查询 -------------------------------------------------------------------
 
 
 def test_lineage_available(published_env, pack):
     """published 数据集的 lineage 查询返回 available 和完整字段。"""
     landing, client, ds = published_env
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     tpl = next(t for t in pack.objects if t.object == obj.object)
     token = _get_lineage_token(landing, ds, obj.object)
 
@@ -107,8 +114,7 @@ def test_lineage_available(published_env, pack):
 def test_lineage_field_structure(published_env, pack):
     """每个字段有 property/display_name/state/steps/inputs。"""
     landing, client, ds = published_env
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     token = _get_lineage_token(landing, ds, obj.object)
 
     r = client.get(
@@ -128,8 +134,7 @@ def test_lineage_field_structure(published_env, pack):
 def test_lineage_property_filter(published_env, pack):
     """property 参数只返回指定字段。"""
     landing, client, ds = published_env
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     tpl = next(t for t in pack.objects if t.object == obj.object)
     token = _get_lineage_token(landing, ds, obj.object)
     prop = tpl.properties[0].name
@@ -173,8 +178,7 @@ def test_lineage_object_not_found(published_env):
 def test_lineage_field_not_found(published_env, pack):
     """不存在的属性过滤 → 404 field_not_found。"""
     landing, client, ds = published_env
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     token = _get_lineage_token(landing, ds, obj.object)
 
     r = client.get(
@@ -189,8 +193,7 @@ def test_lineage_field_not_found(published_env, pack):
 def test_lineage_record_not_found(published_env, pack):
     """合法 token 但无对应记录 → 404 record_not_found。"""
     landing, client, ds = published_env
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     fake_token = "f" * 64
 
     r = client.get(
@@ -203,8 +206,7 @@ def test_lineage_record_not_found(published_env, pack):
 def test_lineage_unauthorized(published_env):
     """错误 Bearer → 401 unauthorized。"""
     landing, client, ds = published_env
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     token = _get_lineage_token(landing, ds, obj.object)
 
     r = client.get(
@@ -218,8 +220,7 @@ def test_lineage_unauthorized(published_env):
 def test_lineage_no_bearer(published_env):
     """无 Bearer → 401。"""
     landing, client, ds = published_env
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     token = _get_lineage_token(landing, ds, obj.object)
 
     r = client.get(f"/api/objects/{obj.object}/{token}/lineage")
@@ -268,8 +269,7 @@ def test_lineage_sensitive_masked(published_env, pack):
 def test_lineage_access_audit(published_env):
     """成功查询写入访问审计。"""
     landing, client, ds = published_env
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     token = _get_lineage_token(landing, ds, obj.object)
 
     before = landing.con.execute(
@@ -294,8 +294,7 @@ def test_lineage_access_audit(published_env):
 def test_lineage_version_consistency(published_env, pack):
     """响应版本与 published snapshot 完全一致。"""
     landing, client, ds = published_env
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     token = _get_lineage_token(landing, ds, obj.object)
 
     r = client.get(
@@ -323,8 +322,7 @@ def test_lineage_field_set_mismatch_returns_409(tmp_path, pack):
     assert result.outcome == "ok"
     ds = result.dataset_version
 
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     tpl = next(t for t in pack.objects if t.object == obj.object)
 
     sample = landing.con.execute(

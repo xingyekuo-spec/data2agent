@@ -45,6 +45,13 @@ def landing(tmp_path, pack) -> LandingStore:
     return store
 
 
+def _lineage_object(landing: LandingStore, dataset_version: str) -> ObjectVersionRecord:
+    return next(
+        obj for obj in landing.list_object_versions(dataset_version)
+        if obj.lineage_field_count > 0
+    )
+
+
 def _total_lineage(store: LandingStore, dataset_version: str) -> int:
     (n,) = store.con.execute(
         "SELECT COUNT(*) FROM d2a_field_lineage WHERE dataset_version = ?",
@@ -77,8 +84,7 @@ def test_publish_blocks_incomplete_lineage(landing, pack):
     ds = result.dataset_version
 
     # 人为删除部分 lineage 节点制造不完整
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     landing.con.execute(
         "DELETE FROM d2a_field_lineage_input "
         "WHERE dataset_version = ? AND object = ? AND property = ("

@@ -46,6 +46,13 @@ def landing(tmp_path, pack) -> LandingStore:
     return store
 
 
+def _lineage_object(landing: LandingStore, dataset_version: str):
+    return next(
+        obj for obj in landing.list_object_versions(dataset_version)
+        if obj.lineage_field_count > 0
+    )
+
+
 def _total_lineage(store: LandingStore, ds: str) -> int:
     (n,) = store.con.execute(
         "SELECT COUNT(*) FROM d2a_field_lineage WHERE dataset_version = ?",
@@ -105,8 +112,7 @@ def test_corrupt_lineage_blocks_publish(landing, pack):
     ds = result.dataset_version
 
     # 删除部分节点(先删 input 再删 node)但不更新元数据 → 不一致
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     # 暂时禁用 immutability trigger 以模拟损坏
     landing.con.execute("DROP TRIGGER IF EXISTS trg_d2a_field_lineage_no_update")
     landing.con.execute(
@@ -186,8 +192,7 @@ def test_rollback_lineage_readable(landing, pack):
     assert published.dataset_version == ds1
 
     # 可以查询 lineage 节点
-    objs = landing.list_object_versions(ds1)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds1)
     sample = landing.con.execute(
         "SELECT DISTINCT object_key_hash FROM d2a_field_lineage "
         "WHERE dataset_version = ? AND object = ? LIMIT 1",
@@ -311,8 +316,7 @@ def test_lineage_write_failure_rolls_back_candidate(landing, pack):
     assert result.outcome == "ok"
     ds = result.dataset_version
 
-    objs = landing.list_object_versions(ds)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds)
     assert obj.build_table is not None
 
     # 候选表存在
@@ -344,6 +348,9 @@ def test_lineage_version_hash_batch_consistency(landing, pack):
             "WHERE dataset_version = ? AND object = ?",
             (ds, obj.object),
         ).fetchall()
+        if obj.lineage_field_count == 0:
+            assert rows == []
+            continue
         assert len(rows) == 1, (
             f"{obj.object}: 期望 1 组版本身份,实际 {len(rows)}"
         )

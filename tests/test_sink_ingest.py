@@ -21,7 +21,7 @@ from data2agent.showroom.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
-TABLES = ["CURRENCY", "CUSTOMER", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
+TABLES = ["CURRENCY", "CUSTOMER", "ITEM", "ITEM_WAREHOUSE", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
 
 
 @pytest.fixture(scope="module")

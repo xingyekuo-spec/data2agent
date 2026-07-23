@@ -239,7 +239,7 @@ def build_validation_report(
 
     binding_tables = {
         table for obj in pack.objects for binding in obj.bindings
-        if binding.enabled and binding.source == source for table in binding.tables
+        if binding.enabled and binding.source == source for table in binding.source_tables
     } if pack is not None else set()
 
     missing_from_raw = [t for t in binding_tables if t not in actual_raw]

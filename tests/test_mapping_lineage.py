@@ -47,6 +47,13 @@ def landing(tmp_path, pack) -> LandingStore:
     return store
 
 
+def _lineage_object(landing: LandingStore, dataset_version: str) -> ObjectVersionRecord:
+    return next(
+        obj for obj in landing.list_object_versions(dataset_version)
+        if obj.lineage_field_count > 0
+    )
+
+
 # ---- build_dataset 产出 lineage ------------------------------------------------
 
 
@@ -64,7 +71,7 @@ def test_build_dataset_writes_lineage(landing, pack):
         assert obj.status == "built"
         assert obj.lineage_schema_version == 1
         assert obj.lineage_field_count is not None
-        assert obj.lineage_field_count > 0
+        assert obj.lineage_field_count >= 0
 
         # 完整性:field_count == row_count × 模板属性数
         tpl = next(t for t in pack.objects if t.object == obj.object)
@@ -82,8 +89,7 @@ def test_build_dataset_lineage_bound_to_version(landing, pack):
     ds_version = result.dataset_version
     assert ds_version is not None
 
-    objs = landing.list_object_versions(ds_version)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds_version)
 
     rows = landing.con.execute(
         "SELECT * FROM d2a_field_lineage "
@@ -130,8 +136,7 @@ def test_build_dataset_lineage_key_hash_queryable(landing, pack):
     ds_version = result.dataset_version
     assert ds_version is not None
 
-    objs = landing.list_object_versions(ds_version)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds_version)
     tpl = next(t for t in pack.objects if t.object == obj.object)
 
     # 从 lineage 自身取一个 key_hash(避免 SQLite 类型亲和性差异)
@@ -291,8 +296,7 @@ def test_lineage_result_matches_candidate(landing, pack):
     ds_version = result.dataset_version
     assert ds_version is not None
 
-    objs = landing.list_object_versions(ds_version)
-    obj = objs[0]
+    obj = _lineage_object(landing, ds_version)
     tpl = next(t for t in pack.objects if t.object == obj.object)
 
     # 从 lineage 取一个 key_hash 和对应的 key_json

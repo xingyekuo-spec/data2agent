@@ -196,12 +196,12 @@ class TestRawPresence:
         from data2agent.console.validation import build_validation_report
         pack = load_pack(ROOT / "templates")
         run_id = published_landing.start_run(SOURCE, "sync")
-        # 为全部 6 张表创建 step 记录
-        tables = ["CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
+        # 为全部抽取表创建 step 记录
+        tables = ["CUSTOMER", "CURRENCY", "ITEM", "ITEM_WAREHOUSE", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
         for i, tbl in enumerate(tables):
             sid = published_landing.add_step(run_id, i + 1, "table", tbl)
             published_landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
-        published_landing.finish_run(run_id, tables=6, rows=600, status="ok")
+        published_landing.finish_run(run_id, tables=7, rows=700, status="ok")
 
         report = build_validation_report(
             published_landing, run_id=run_id, pack=pack, source=SOURCE,
@@ -218,15 +218,15 @@ class TestRawPresence:
 
         # CUSTOMER 无记录；CURRENCY 有过期记录，二者都必须在同一报告中出现。
         run_id = landing.start_run(SOURCE, "sync")
-        for i, tbl in enumerate(["ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]):
+        for i, tbl in enumerate(["ITEM", "ITEM_WAREHOUSE", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]):
             sid = landing.add_step(run_id, i + 1, "table", tbl)
             landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
-        landing.add_step(run_id, 5, "table", "CURRENCY", status="ok",
+        landing.add_step(run_id, 6, "table", "CURRENCY", status="ok",
                          finished_at="2020-01-01T00:00:00")
-        landing.finish_run(run_id, tables=5, rows=500, status="ok")
+        landing.finish_run(run_id, tables=6, rows=600, status="ok")
 
         # 确保 raw 表存在(创建空表)
-        for tbl in ["CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]:
+        for tbl in ["CUSTOMER", "CURRENCY", "ITEM", "ITEM_WAREHOUSE", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]:
             landing.ensure_raw_table(SOURCE, TableInfo(tbl, [("id", "int")], ["id"]))
 
         report = build_validation_report(
@@ -245,17 +245,17 @@ class TestRawPresence:
         pack = load_pack(ROOT / "templates")
         landing = LandingStore(tmp_path / "landing.sqlite")
 
-        # 为 6 张表创建 raw 空表
-        tables = ["CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
+        # 为全部抽取表创建 raw 空表
+        tables = ["CUSTOMER", "CURRENCY", "ITEM", "ITEM_WAREHOUSE", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]
         for tbl in tables:
             landing.ensure_raw_table(SOURCE, TableInfo(tbl, [("id", "int")], ["id"]))
 
-        # 当前源:6 张表都有最近 step 记录
+        # 当前源的全部抽取表都有最近 step 记录
         run_id = landing.start_run(SOURCE, "sync")
         for i, tbl in enumerate(tables):
             sid = landing.add_step(run_id, i + 1, "table", tbl)
             landing.update_step(sid, status="ok", rows_in=100, rows_out=100)
-        landing.finish_run(run_id, tables=6, rows=600, status="ok")
+        landing.finish_run(run_id, tables=7, rows=700, status="ok")
 
         # 另一个源有同名表但过期
         other = landing.start_run("other_source", "sync")
