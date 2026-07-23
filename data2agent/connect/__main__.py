@@ -1,13 +1,14 @@
 """抽取 CLI:python -m data2agent.connect {sync|reconcile|apply|backfill|serve|status|quarantine}
 
-sync       默认水位增量(binding.watermark 推导,无水位表 full_refresh),--full 强制全量
-reconcile  分段对账 L1(--deep 全段 L2 修复);抓物理删除与不动水位的原地改动
+sync       --config connect.yaml [--source name] [--full];抽取范围/水位策略来自 tables 配置
+reconcile  --config connect.yaml [--deep] 分段对账 L1;抓物理删除与不动水位的原地改动
 apply      映射应用:raw_* → 数据集候选并默认发布(隔离区 + 熔断);
            --stage-only 只构建候选;--every N 秒常驻循环(拆机部署平台侧)
-backfill   指定表的水位区间重抽(upsert 幂等,不动水位)
-serve      按 connect.yaml 调度常驻(错峰窗口硬约束;--once 立即各跑一轮)
+backfill   --config connect.yaml --table T --from F --to T(upsert 幂等,不动水位)
+serve      --config connect.yaml [--once] 按 connect.yaml 调度常驻(错峰窗口硬约束)
 status     水位 / 最近运行 / 隔离区概览
 quarantine list 查看隔离明细;retry 修复后完整重建数据集并自动发布
+migrate-config --config connect.yaml [--dry-run] 迁移旧配置到显式 tables
 excel-suggest 读 Excel/CSV 表头,生成 列→属性 映射建议(人工确认一次)
 excel-import  按映射文件导入报价历史到落地库(之后 apply 物化)
 """

@@ -152,7 +152,7 @@ transform(map/join/derived) / result_value / extract_batch_id / map_batch_id
 ## 8. 调度与运行(scheduler.py + __main__.py)
 
 - apscheduler 按源调度;**错峰窗口**(如 `windows: ["22:00-06:30"]`)硬约束:窗口外不发起,运行中越界则在批次边界优雅暂停、下窗口续跑(水位机制天然支持断点);
-- CLI(`python -m data2agent.connect`):`sync`(`--source` / `--full` / `--lookback-days` + 源连接参数)/ `apply` / `backfill --table --from --to` / `reconcile [--deep]` / `serve [--once]`(常驻调度,`--once` 立即各跑一轮后退出,验证配置用)/ `status` / `quarantine list|retry` / `excel-suggest` / `excel-import`;
+- CLI(`python -m data2agent.connect`):`sync --config <connect.yaml> [--source <name>] [--full]`(抽取范围/策略来自 tables 配置)/ `apply` / `backfill --config ... --table --from --to` / `reconcile --config ... [--deep]` / `serve --config ... [--once]`(常驻调度)/ `status` / `quarantine list|retry` / `migrate-config --config ... [--dry-run]` / `excel-suggest` / `excel-import`;
 - 每轮汇总进 `d2a_sync_run`(起止、行数、隔离数、对账结果),结构化日志输出。
 
 ## 9. 配置(connect.yaml)
