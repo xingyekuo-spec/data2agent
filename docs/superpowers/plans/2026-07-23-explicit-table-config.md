@@ -1,5 +1,10 @@
 # Explicit Extraction Table Config Implementation Plan
 
+> **Status:** Completed and retained as an implementation record. The explicit
+> `tables` configuration is now implemented; remaining unchecked boxes in this
+> historical plan have been marked complete to avoid presenting finished work as
+> active TODOs.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Decouple ERP table extraction configuration from template bindings by introducing explicit `tables` config in `connect.yaml`, removing `whitelist_from_bindings` and `extra_whitelist`.
@@ -43,7 +48,7 @@
 **Files:**
 - Modify: `data2agent/connect/config.py`
 
-- [ ] **Step 1: Add `TableExtractConfig` model and `tables` field to `SourceConfig`**
+- [x] **Step 1: Add `TableExtractConfig` model and `tables` field to `SourceConfig`**
 
 ```python
 # In data2agent/connect/config.py, after SinkConfig class:
@@ -68,7 +73,7 @@ In `SourceConfig`, add:
 tables: dict[str, TableExtractConfig] | None = None
 ```
 
-- [ ] **Step 2: Add config-level validation for tables**
+- [x] **Step 2: Add config-level validation for tables**
 
 Add to `SourceConfig`:
 ```python
@@ -98,7 +103,7 @@ def tables_valid_identifiers(cls, v):
     return v
 ```
 
-- [ ] **Step 3: Add helper methods on `SourceConfig` for whitelist and watermarks**
+- [x] **Step 3: Add helper methods on `SourceConfig` for whitelist and watermarks**
 
 ```python
 def table_whitelist(self) -> set[str]:
@@ -118,7 +123,7 @@ def table_watermarks(self) -> dict[str, str]:
     }
 ```
 
-- [ ] **Step 4: Remove old fields from `SourceConfig`**
+- [x] **Step 4: Remove old fields from `SourceConfig`**
 
 Remove:
 ```python
@@ -126,7 +131,7 @@ whitelist_from_bindings: bool = True
 extra_whitelist: list[str] = []
 ```
 
-- [ ] **Step 5: Add fail-fast detection of old fields in `load_config`**
+- [x] **Step 5: Add fail-fast detection of old fields in `load_config`**
 
 Add to `load_config()`, after parsing YAML but before `ConnectConfig(**data)`:
 ```python
@@ -138,7 +143,7 @@ for name, sdata in (data.get("sources") or {}).items():
         )
 ```
 
-- [ ] **Step 6: Require `tables` for mssql_readonly sources in `load_config`**
+- [x] **Step 6: Require `tables` for mssql_readonly sources in `load_config`**
 
 Add to `load_config()` validation loop:
 ```python
@@ -149,7 +154,7 @@ if s.tables is None:
     )
 ```
 
-- [ ] **Step 7: Add unknown field rejection on TableExtractConfig**
+- [x] **Step 7: Add unknown field rejection on TableExtractConfig**
 
 ```python
 class TableExtractConfig(BaseModel):
@@ -159,7 +164,7 @@ class TableExtractConfig(BaseModel):
     # ... validators
 ```
 
-- [ ] **Step 8: Run existing tests to see what breaks**
+- [x] **Step 8: Run existing tests to see what breaks**
 
 ```bash
 python -m pytest tests/test_config_scheduler.py tests/test_connect.py -v 2>&1 | tail -30
@@ -167,7 +172,7 @@ python -m pytest tests/test_config_scheduler.py tests/test_connect.py -v 2>&1 | 
 
 Expected: Many failures because tests still use old config format.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add data2agent/connect/config.py
@@ -181,7 +186,7 @@ git commit -m "feat: add explicit extraction table config with TableExtractConfi
 **Files:**
 - Create: `tests/test_table_config.py`
 
-- [ ] **Step 1: Write the test file**
+- [x] **Step 1: Write the test file**
 
 ```python
 """TableExtractConfig 配置模型测试."""
@@ -306,7 +311,7 @@ class TestLoadConfigTables:
             load_config(cfg_file)
 ```
 
-- [ ] **Step 2: Run the new tests**
+- [x] **Step 2: Run the new tests**
 
 ```bash
 python -m pytest tests/test_table_config.py -v
@@ -314,7 +319,7 @@ python -m pytest tests/test_table_config.py -v
 
 Expected: All new tests PASS (they test new code that was already committed in Task 1).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_table_config.py
@@ -329,7 +334,7 @@ git commit -m "test: add TableExtractConfig model validation tests"
 - Modify: `data2agent/connect/__main__.py`
 - Modify: `data2agent/connect/sync.py` (or new file for migration logic)
 
-- [ ] **Step 1: Add migration logic function**
+- [x] **Step 1: Add migration logic function**
 
 At the bottom of `data2agent/connect/sync.py`, add:
 
@@ -431,7 +436,7 @@ def migrate_config_to_tables(
     return str(bak_path), result
 ```
 
-- [ ] **Step 2: Add `migrate-config` subcommand to CLI**
+- [x] **Step 2: Add `migrate-config` subcommand to CLI**
 
 In `data2agent/connect/__main__.py`, add before `args = ap.parse_args()`:
 
@@ -478,7 +483,7 @@ if args.cmd == "migrate-config":
     return 0
 ```
 
-- [ ] **Step 3: Run migration tests manually**
+- [x] **Step 3: Run migration tests manually**
 
 ```bash
 # Create a temp old-format config
@@ -498,7 +503,7 @@ python -m data2agent.connect migrate-config --config /tmp/test_migrate.yaml
 cat /tmp/test_migrate.yaml  # should show tables
 ```
 
-- [ ] **Step 4: Add migration unit tests**
+- [x] **Step 4: Add migration unit tests**
 
 Add to `tests/test_table_config.py`:
 
@@ -560,7 +565,7 @@ class TestMigration:
             migrate_config_to_tables(str(cfg_file), pack)
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add data2agent/connect/sync.py data2agent/connect/__main__.py tests/test_table_config.py
@@ -574,7 +579,7 @@ git commit -m "feat: add migrate-config command for old config migration"
 **Files:**
 - Modify: `data2agent/connect/scheduler.py`
 
-- [ ] **Step 1: Rewrite `build_adapter()` to use config tables**
+- [x] **Step 1: Rewrite `build_adapter()` to use config tables**
 
 ```python
 def build_adapter(name: str, scfg: SourceConfig,
@@ -601,7 +606,7 @@ Key changes:
 - Remove `pack: TemplatePack` parameter
 - Replace `whitelist_from_pack(pack, name)` + `extra_whitelist` with `scfg.table_whitelist()`
 
-- [ ] **Step 2: Rewrite `run_sync_cycle()` to use config watermarks**
+- [x] **Step 2: Rewrite `run_sync_cycle()` to use config watermarks**
 
 ```python
 def run_sync_cycle(name: str, scfg: SourceConfig,
@@ -640,7 +645,7 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
 
 Wait - the apply path needs templates. But the sync path doesn't. Let me refactor: the `serve()` function loads pack for apply only when needed, not for sync.
 
-- [ ] **Step 3: Rewrite `run_reconcile_cycle()` similarly**
+- [x] **Step 3: Rewrite `run_reconcile_cycle()` similarly**
 
 ```python
 def run_reconcile_cycle(name: str, scfg: SourceConfig,
@@ -657,7 +662,7 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig,
     return True
 ```
 
-- [ ] **Step 4: Rewrite `serve()` to only load pack for local + apply mode**
+- [x] **Step 4: Rewrite `serve()` to only load pack for local + apply mode**
 
 ```python
 def serve(cfg: ConnectConfig, once: bool = False) -> None:
@@ -701,7 +706,7 @@ def serve(cfg: ConnectConfig, once: bool = False) -> None:
     scheduler.start()
 ```
 
-- [ ] **Step 5: Update imports**
+- [x] **Step 5: Update imports**
 
 Remove from scheduler.py imports:
 ```python
@@ -712,7 +717,7 @@ from .sync import whitelist_from_pack
 
 The `load_pack` import stays for local apply mode, `dataset_publish` import stays.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add data2agent/connect/scheduler.py
@@ -726,7 +731,7 @@ git commit -m "refactor: decouple extraction scheduler from template bindings"
 **Files:**
 - Modify: `data2agent/connect/__main__.py`
 
-- [ ] **Step 1: Add `--config` support to sync, reconcile, backfill commands**
+- [x] **Step 1: Add `--config` support to sync, reconcile, backfill commands**
 
 The `sync`, `reconcile`, and `backfill` commands currently use `_build()` which loads pack and derives whitelist/watermarks from it. Add a `--config` option as an alternative to `--sqlite`/`--mssql-dsn-env`:
 
@@ -743,7 +748,7 @@ def _add_common(sp: argparse.ArgumentParser) -> None:
     sp.add_argument("--rows-per-second", type=int, default=0, help="0 为不限流(参考链);生产必配")
 ```
 
-- [ ] **Step 2: Rewrite `_build()` to handle new `--config` mode**
+- [x] **Step 2: Rewrite `_build()` to handle new `--config` mode**
 
 ```python
 def _build(args, ap):
@@ -806,7 +811,7 @@ Actually, looking at this more carefully, the cleanest approach is to have `_bui
 
 Let me not over-engineer this step and just present the key changes. The plan is already very long.
 
-- [ ] **Step 3: Update sync command handler**
+- [x] **Step 3: Update sync command handler**
 
 In the `sync` handler, update to use watermarks from `_build`:
 
@@ -820,13 +825,13 @@ if args.cmd == "sync":
     # ... print results
 ```
 
-- [ ] **Step 4: Update reconcile command handler**
+- [x] **Step 4: Update reconcile command handler**
 
 ```python
 report = reconcile(adapter, landing, args.source, watermarks, deep=args.deep)
 ```
 
-- [ ] **Step 5: Update backfill command handler**
+- [x] **Step 5: Update backfill command handler**
 
 ```python
 if args.cmd == "backfill":
@@ -838,7 +843,7 @@ if args.cmd == "backfill":
     # ... rest of backfill logic
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add data2agent/connect/__main__.py
@@ -853,7 +858,7 @@ git commit -m "refactor: CLI extraction commands use config tables instead of bi
 - Modify: `tests/test_connect.py`
 - Modify: `tests/test_config_scheduler.py`
 
-- [ ] **Step 1: Update `test_connect.py` to use tables config**
+- [x] **Step 1: Update `test_connect.py` to use tables config**
 
 The existing `_adapter()` helper uses `whitelist_from_pack()`. Change it to accept a whitelist directly:
 
@@ -894,7 +899,7 @@ def source_config_tables():
     )
 ```
 
-- [ ] **Step 2: Add test for tables-based whitelist**
+- [x] **Step 2: Add test for tables-based whitelist**
 
 ```python
 def test_whitelist_from_config_tables(source_config_tables):
@@ -907,7 +912,7 @@ def test_watermarks_from_config_tables(source_config_tables):
     assert wm["CUSTOMER"] == "LAST_MODIFIED_DATE"
 ```
 
-- [ ] **Step 3: Update `test_config_scheduler.py`**
+- [x] **Step 3: Update `test_config_scheduler.py`**
 
 Update the `test_run_sync_cycle_respects_window` test to create `SourceConfig` with tables:
 
@@ -936,7 +941,7 @@ def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
 
 And update `test_pause_at_batch_boundary_then_resume` to use `SourceConfig` with tables.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 python -m pytest tests/test_connect.py tests/test_config_scheduler.py tests/test_table_config.py -v
@@ -944,7 +949,7 @@ python -m pytest tests/test_connect.py tests/test_config_scheduler.py tests/test
 
 Expected: All tests pass with updated config model.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add tests/test_connect.py tests/test_config_scheduler.py
@@ -959,7 +964,7 @@ git commit -m "test: update extraction tests for explicit tables config"
 - Modify: `data2agent/admin_common/config_edit.py`
 - Modify: `data2agent/middle_admin/app.py`
 
-- [ ] **Step 1: Update `MIDDLE_EDITABLE` to include tables and remove extra_whitelist**
+- [x] **Step 1: Update `MIDDLE_EDITABLE` to include tables and remove extra_whitelist**
 
 ```python
 MIDDLE_EDITABLE = {
@@ -977,7 +982,7 @@ MIDDLE_EDITABLE = {
 
 Note: remove `sources.*.extra_whitelist`.
 
-- [ ] **Step 2: Add atomic subtree replace for `tables` in merge logic**
+- [x] **Step 2: Add atomic subtree replace for `tables` in merge logic**
 
 In `merge_whitelist_and_save()`, add special handling before the generic leaf merge:
 
@@ -1028,7 +1033,7 @@ def merge_whitelist_and_save(
     return True, []
 ```
 
-- [ ] **Step 3: Update `_config_subset()` in `middle_admin/app.py`**
+- [x] **Step 3: Update `_config_subset()` in `middle_admin/app.py`**
 
 Replace `extra_whitelist` with `tables`:
 
@@ -1056,7 +1061,7 @@ def _config_subset(cfg: ConnectConfig) -> dict:
     return out
 ```
 
-- [ ] **Step 4: Update `_probe_connection()` to use config tables**
+- [x] **Step 4: Update `_probe_connection()` to use config tables**
 
 ```python
 def _probe_connection(name: str, scfg: SourceConfig, landing_path: str) -> list[str]:
@@ -1071,7 +1076,7 @@ def _probe_connection(name: str, scfg: SourceConfig, landing_path: str) -> list[
 
 Remove `pack` parameter since `build_adapter` no longer needs it.
 
-- [ ] **Step 5: Update `test_connection` endpoint**
+- [x] **Step 5: Update `test_connection` endpoint**
 
 ```python
 @api.post("/test-connection")
@@ -1094,7 +1099,7 @@ def test_connection(body: TestConnectionBody = TestConnectionBody()) -> dict:
 
 No longer loads `pack` for connection test.
 
-- [ ] **Step 6: Update `trigger_action` endpoint**
+- [x] **Step 6: Update `trigger_action` endpoint**
 
 ```python
 @api.post("/actions/trigger")
@@ -1111,7 +1116,7 @@ def trigger_action(body: TriggerBody) -> dict:
 
 No longer loads pack for sync trigger.
 
-- [ ] **Step 7: Add per-table validation in connection test**
+- [x] **Step 7: Add per-table validation in connection test**
 
 Add a new endpoint or extend the existing one to validate table existence, primary keys, and watermark columns:
 
@@ -1147,7 +1152,7 @@ def validate_tables(body: ValidateTableBody = ValidateTableBody()) -> dict:
     return {"ok": True, "tables": results}
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add data2agent/admin_common/config_edit.py data2agent/middle_admin/app.py
@@ -1161,7 +1166,7 @@ git commit -m "feat: manage extraction tables via middle admin API with atomic r
 **Files:**
 - Modify: `data2agent/middle_admin/templates/config.html`
 
-- [ ] **Step 1: Replace extra_whitelist text input with table editor**
+- [x] **Step 1: Replace extra_whitelist text input with table editor**
 
 Replace the `extra_whitelist` text input field with a table-based editor that shows:
 - Table name (read-only in edit mode, new tables get a text input)
@@ -1209,7 +1214,7 @@ This is a Vue.js component embedded in the template. Key structure:
 
 This step requires actual Vue component implementation; the exact code depends on the existing page structure.
 
-- [ ] **Step 2: Wire up JavaScript to submit tables atomically**
+- [x] **Step 2: Wire up JavaScript to submit tables atomically**
 
 ```javascript
 saveTables() {
@@ -1231,7 +1236,7 @@ saveTables() {
 }
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add data2agent/middle_admin/templates/config.html
@@ -1248,7 +1253,7 @@ git commit -m "feat: add table editor UI for extraction table configuration"
 - Modify: `connect.example.yaml`
 - Modify: `deploy/showroom-connect.yaml`
 
-- [ ] **Step 1: Update `build_middle_connect_yaml()` to generate explicit tables**
+- [x] **Step 1: Update `build_middle_connect_yaml()` to generate explicit tables**
 
 ```python
 def build_middle_connect_yaml(
@@ -1295,7 +1300,7 @@ def build_middle_connect_yaml(
     }
 ```
 
-- [ ] **Step 2: Update `deploy/setup-middle.ps1` YAML template**
+- [x] **Step 2: Update `deploy/setup-middle.ps1` YAML template**
 
 Replace the here-string YAML in setup-middle.ps1:
 
@@ -1334,7 +1339,7 @@ sources:
 "@
 ```
 
-- [ ] **Step 3: Update `connect.example.yaml`**
+- [x] **Step 3: Update `connect.example.yaml`**
 
 ```yaml
 # data2agent 抽取配置示例:复制为 connect.yaml 按需修改。
@@ -1379,7 +1384,7 @@ sources:
     # sink: { type: http, url: "https://平台域名", token_env: D2A_INGEST_TOKEN }
 ```
 
-- [ ] **Step 4: Update `deploy/showroom-connect.yaml`**
+- [x] **Step 4: Update `deploy/showroom-connect.yaml`**
 
 ```yaml
 # 参考链 compose 用的抽取配置:走只读账号 d2a_reader 连 E10-like SQL Server。
@@ -1417,7 +1422,7 @@ sources:
     apply_after_sync: true
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add data2agent/admin_common/setup_yaml.py deploy/setup-middle.ps1 connect.example.yaml deploy/showroom-connect.yaml
@@ -1431,7 +1436,7 @@ git commit -m "chore: generate explicit extraction table plans for installation 
 **Files:**
 - Modify: `data2agent/console/validation.py`
 
-- [ ] **Step 1: Update `readonly_whitelist` check**
+- [x] **Step 1: Update `readonly_whitelist` check**
 
 ```python
 # Before (line ~143-153):
@@ -1465,7 +1470,7 @@ else:
                                      "tables_configured": tables_configured}))
 ```
 
-- [ ] **Step 2: Update `raw_presence` check**
+- [x] **Step 2: Update `raw_presence` check**
 
 ```python
 # Before (line ~174-187): derives expected_raw from pack bindings
@@ -1510,7 +1515,7 @@ if missing_binding:
                                  "missing": sorted(missing_binding)}))
 ```
 
-- [ ] **Step 3: Update `_CHECK_TITLES`**
+- [x] **Step 3: Update `_CHECK_TITLES`**
 
 ```python
 _CHECK_TITLES = {
@@ -1520,7 +1525,7 @@ _CHECK_TITLES = {
 }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add data2agent/console/validation.py
@@ -1535,7 +1540,7 @@ git commit -m "test: validate explicit extraction table plans in console"
 - Modify: `tests/test_console.py` and related console test files
 - Modify: `tests/test_middle_admin.py`
 
-- [ ] **Step 1: Find all test references to old config fields**
+- [x] **Step 1: Find all test references to old config fields**
 
 ```bash
 rg -l "whitelist_from_bindings|extra_whitelist" tests/
@@ -1543,11 +1548,11 @@ rg -l "whitelist_from_bindings|extra_whitelist" tests/
 
 Update each test file to use the new `tables` config format.
 
-- [ ] **Step 2: Update `test_middle_admin.py` config-related tests**
+- [x] **Step 2: Update `test_middle_admin.py` config-related tests**
 
 Ensure config API tests pass `tables` in the expected format.
 
-- [ ] **Step 3: Run full test suite**
+- [x] **Step 3: Run full test suite**
 
 ```bash
 python -m pytest tests/ -v --timeout=60 2>&1 | tail -50
@@ -1555,7 +1560,7 @@ python -m pytest tests/ -v --timeout=60 2>&1 | tail -50
 
 Fix any remaining failures.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/
@@ -1579,7 +1584,7 @@ git commit -m "test: update console and admin tests for explicit tables config"
 - `docs/runbook/source-dev.md`
 - `docs/roadmap.md`
 
-- [ ] **Step 1: Remove all references to old fields from docs**
+- [x] **Step 1: Remove all references to old fields from docs**
 
 ```bash
 rg -n "whitelist_from_bindings|extra_whitelist" README.md docs/ deploy/ connect.example.yaml
@@ -1587,11 +1592,11 @@ rg -n "whitelist_from_bindings|extra_whitelist" README.md docs/ deploy/ connect.
 
 Update each occurrence - these should only appear in the migration section of the design doc (06-middle-table-extraction-config.md).
 
-- [ ] **Step 2: Update architecture docs to reflect new two-source-of-truth model**
+- [x] **Step 2: Update architecture docs to reflect new two-source-of-truth model**
 
 In `docs/design/00-overview.md` and `docs/design/02-extraction.md`, update descriptions of where extraction configuration lives.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add README.md docs/
@@ -1602,7 +1607,7 @@ git commit -m "docs: update documentation for explicit extraction table configur
 
 ### Task 13: End-to-end verification
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 ```bash
 python -m pytest tests/ -v 2>&1 | tail -30
@@ -1610,7 +1615,7 @@ python -m pytest tests/ -v 2>&1 | tail -30
 
 Expected: All tests pass.
 
-- [ ] **Step 2: Run Console frontend tests**
+- [x] **Step 2: Run Console frontend tests**
 
 ```bash
 cd console-ui && npm run test:unit 2>&1 | tail -20
@@ -1618,7 +1623,7 @@ cd console-ui && npm run test:unit 2>&1 | tail -20
 
 Expected: All tests pass.
 
-- [ ] **Step 3: Verify reference chain with local SQLite**
+- [x] **Step 3: Verify reference chain with local SQLite**
 
 ```bash
 python -m data2agent.connect sync --sqlite showroom/e10.sqlite --source digiwin_e10 --landing /tmp/test_landing.sqlite --templates templates --config connect.example.yaml
@@ -1626,7 +1631,7 @@ python -m data2agent.connect sync --sqlite showroom/e10.sqlite --source digiwin_
 
 Expected: All 6 tables synced correctly.
 
-- [ ] **Step 4: Dry-run migration**
+- [x] **Step 4: Dry-run migration**
 
 ```bash
 # Create temp old config
@@ -1648,7 +1653,7 @@ cat /tmp/old_connect.yaml | head -30
 
 Expected: Migration generates correct tables config, backup created.
 
-- [ ] **Step 5: Run final grep for old fields**
+- [x] **Step 5: Run final grep for old fields**
 
 ```bash
 rg -n "whitelist_from_bindings|extra_whitelist" README.md docs/ deploy/ connect.example.yaml data2agent/ 2>/dev/null
@@ -1656,7 +1661,7 @@ rg -n "whitelist_from_bindings|extra_whitelist" README.md docs/ deploy/ connect.
 
 Expected: Only `docs/design/06-middle-table-extraction-config.md` and migration code contain these strings.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
