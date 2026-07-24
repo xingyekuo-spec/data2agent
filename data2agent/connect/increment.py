@@ -1,10 +1,10 @@
 """水位增量引擎:回看窗口、水位状态机、按表策略编排。
 
-协议(docs/design/02-extraction.md §5):
+协议(docs/design/02-extraction.md §5 + M4 快照):
 - since = high_water - lookback,含边界;upsert 幂等使重叠安全;
 - 水位/复合键游标只在批次成功后前进,且只前进不后退;
-- 无水位声明的表(小维表如 CURRENCY)走 full_refresh;
-- 首轮(无状态)= 全表按水位序扫描,顺便建立水位;
+- 无水位声明的表(mode=full_refresh)走快照 staging → 原子发布;
+- 首轮增量(无状态)= 全表按水位序扫描,顺便建立水位;
 - 运行键优先使用配置 key_columns,否则使用数据库主键(支持复合键);
 - 中断后续传使用持久化复合键游标边界。
 """
@@ -47,14 +47,17 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                      should_continue: Optional[Callable[[], bool]] = None,
                      sink: Optional[Sink] = None,
                      key_columns: dict[str, list[str]] | None = None) -> SyncReport:
-    """sink:raw 落地出口(§12.3)。默认 LocalSink(landing)=写本地库(同机 / 开发);
-    Pattern A 传 HttpPushSink,raw 推给平台、landing 只留水位 / 审计 / 运行状态。
+    """sink:raw 落地出口。默认 LocalSink(landing)。
     key_columns:表名 → 配置运行键,覆盖数据库主键。
-    should_continue:批次边界的优雅暂停钩子(错峰窗口越界时返回 False)。
+    无水位的表按 full_refresh 快照协议落地。
     """
     watermarks = watermarks or {}
     key_columns = key_columns or {}
     sink = sink or LocalSink(landing)
+    ensure_proto = getattr(sink, "ensure_protocol", None)
+    if callable(ensure_proto):
+        ensure_proto()
+
     report = SyncReport(source=source, run_id=landing.start_run(source, "sync"))
     current_step: int | None = None
     try:
@@ -66,22 +69,28 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
             ordinal += 1
             current_step = landing.add_step(report.run_id, ordinal, "table", raw_info.name)
             wm_col = watermarks.get(raw_info.name)
+            is_full = wm_col is None
+            mode = "full_refresh" if is_full else "incremental"
             info = resolve_runtime_keys(
-                raw_info, key_columns.get(raw_info.name), require_keys=True)
-            adapter.validate_runtime_keys(info)
+                raw_info, key_columns.get(raw_info.name),
+                require_keys=not is_full)
+            if info.pk:
+                adapter.validate_runtime_keys(info)
             landing.log_audit(
                 source, "runtime_keys",
-                f"table={info.name} source={info.key_source} columns={','.join(info.pk)}",
+                f"table={info.name} source={info.key_source} mode={mode} "
+                f"columns={','.join(info.pk) if info.pk else '(none)'}",
                 0, 0.0)
 
-            sink.ensure_table(source, info)
-            batch_id = uuid.uuid4().hex[:12]
+            snapshot_id = uuid.uuid4().hex[:16] if is_full else None
+            table_batch_id = uuid.uuid4().hex[:12]
+            sink.begin_table(source, info, mode=mode, snapshot_id=snapshot_id)
 
             since = None
             resume_after = None
             high_water = None
             strategy = "full_refresh"
-            if wm_col is not None:
+            if not is_full:
                 cursor = landing.get_sync_cursor(source, info.name)
                 if cursor is None:
                     strategy, since, high_water = "initial", None, None
@@ -89,7 +98,6 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     cur_w, cur_k = cursor
                     high_water = str(cur_w) if cur_w is not None else None
                     if cur_k is not None:
-                        # 中断后续传:从持久化复合键边界继续
                         strategy = "resume"
                         resume_after = (cur_w, *cur_k)
                     else:
@@ -98,45 +106,64 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
 
             rows = batches = 0
             max_wm = high_water
-            last_cursor_keys: list | None = None
             interrupted = False
-            for batch in adapter.read_increment(
-                info, since=since, watermark_col=wm_col, resume_after=resume_after,
-            ):
-                if should_continue and not should_continue():
-                    interrupted = True
+            try:
+                for batch in adapter.read_increment(
+                    info, since=since, watermark_col=wm_col, resume_after=resume_after,
+                ):
+                    if should_continue and not should_continue():
+                        interrupted = True
+                        break
+                    batch_id = (f"{table_batch_id}-{batches}" if is_full
+                                else table_batch_id)
+                    rows += sink.write(
+                        source, info, batch, batch_id,
+                        mode=mode, snapshot_id=snapshot_id)
+                    batches += 1
+                    if wm_col:
+                        last = batch[-1]
+                        last_wm = last[wm_col]
+                        last_cursor_keys = [last[k] for k in info.pk]
+                        landing.set_sync_cursor(
+                            source, info.name, wm_col, last_wm, last_cursor_keys,
+                            table_batch_id)
+                        seen = str(last_wm)
+                        if max_wm is None or seen > max_wm:
+                            max_wm = seen
+                if interrupted:
+                    if is_full:
+                        sink.abort_table(
+                            source, info, mode=mode, snapshot_id=snapshot_id)
+                    landing.update_step(current_step, status="paused",
+                                        rows_in=rows, rows_out=rows,
+                                        batch_id=table_batch_id)
+                    report.paused = True
                     break
-                rows += sink.write(source, info, batch, batch_id)
-                batches += 1
-                if wm_col:
-                    last = batch[-1]
-                    last_wm = last[wm_col]
-                    last_cursor_keys = [last[k] for k in info.pk]
-                    # 每批成功后原子推进持久化游标(稳定边界)
-                    landing.set_sync_cursor(
-                        source, info.name, wm_col, last_wm, last_cursor_keys, batch_id)
-                    seen = str(last_wm)
-                    if max_wm is None or seen > max_wm:
-                        max_wm = seen
-            if interrupted:
-                landing.update_step(current_step, status="paused",
-                                    rows_in=rows, rows_out=rows, batch_id=batch_id)
-                report.paused = True
-                break
-            sink.complete_table(source, info, batch_id, rows, batches)
+                sink.complete_table(
+                    source, info, table_batch_id, rows, batches,
+                    mode=mode, snapshot_id=snapshot_id)
+            except Exception:
+                if is_full:
+                    try:
+                        sink.abort_table(
+                            source, info, mode=mode, snapshot_id=snapshot_id)
+                    except Exception:
+                        pass
+                raise
+
             if wm_col:
-                # 整表完成:游标推进为(水位, None)
                 landing.set_sync_cursor(
-                    source, info.name, wm_col, max_wm, None, batch_id, force=True)
+                    source, info.name, wm_col, max_wm, None, table_batch_id,
+                    force=True)
             landing.update_step(
                 current_step, status="ok", rows_in=rows, rows_out=rows,
-                batch_id=batch_id,
+                batch_id=table_batch_id,
                 watermark_before=(json.dumps(high_water)
                                   if high_water is not None else None),
                 watermark_after=(json.dumps(max_wm)
                                  if max_wm is not None else None))
             current_step = None
-            report.tables.append(TableReport(info.name, rows, batches, batch_id,
+            report.tables.append(TableReport(info.name, rows, batches, table_batch_id,
                                              strategy=strategy, high_water=max_wm))
     except Exception as e:
         if current_step is not None:

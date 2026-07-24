@@ -488,11 +488,48 @@ BEFORE DELETE ON d2a_validation_check
 BEGIN
   SELECT RAISE(ABORT, 'validation check is immutable');
 END;
+CREATE TABLE IF NOT EXISTS d2a_snapshot (
+    source TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    snapshot_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('open', 'published', 'failed')),
+    staging_table TEXT NOT NULL,
+    expected_rows INTEGER,
+    expected_batches INTEGER,
+    created_at TEXT NOT NULL,
+    published_at TEXT,
+    PRIMARY KEY (source, table_name, snapshot_id)
+);
+CREATE TABLE IF NOT EXISTS d2a_snapshot_batch (
+    source TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    snapshot_id TEXT NOT NULL,
+    batch_id TEXT NOT NULL,
+    rows INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('ok')),
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (source, table_name, snapshot_id, batch_id)
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_snapshot_status
+    ON d2a_snapshot (source, table_name, status);
 """
 
 
 def raw_table_name(source: str, table: str) -> str:
     return f"raw_{source}__{table}"
+
+
+def _safe_snapshot_id(snapshot_id: str) -> str:
+    text = (snapshot_id or "").strip()
+    if not text or not all(c.isalnum() or c in "-_" for c in text):
+        raise ValueError(f"非法 snapshot_id '{snapshot_id}'(仅允许字母数字-_ )")
+    if len(text) > 64:
+        raise ValueError("snapshot_id 过长(最多 64)")
+    return text
+
+
+def staging_raw_table_name(source: str, table: str, snapshot_id: str) -> str:
+    return f"{raw_table_name(source, table)}__snap_{_safe_snapshot_id(snapshot_id)}"
 
 
 def normalize_value(v):
@@ -831,28 +868,39 @@ class LandingStore:
         pk = [r[1] for r in sorted(rows, key=lambda x: x[5]) if r[5] > 0]
         return pk or None
 
-    def ensure_raw_table(self, source: str, info: TableInfo) -> None:
-        if not info.pk:
+    def ensure_raw_table(self, source: str, info: TableInfo, *,
+                        allow_empty_pk: bool = False) -> None:
+        if not info.pk and not allow_empty_pk:
             raise ValueError(
                 f"{info.name}: 源表无主键,无法幂等 upsert;"
                 "请在 binding notes 标注并走全量替换策略(E2)")
         existing_pk = self.raw_table_primary_key(source, info.name)
         if existing_pk is None:
-            self._create_raw_table(source, info)
-            return
+            if not self.raw_table_exists(source, info.name):
+                self._create_raw_table(source, info)
+                return
+            # 无 PK 声明的已存在表(全量快照发布结果)
+            if not info.pk:
+                return
+            existing_pk = []
         if existing_pk == list(info.pk):
             return
         # 运行键变更:受控重建(先校验新键在现有数据上唯一)
         self._rebuild_raw_table_for_pk_change(source, info, existing_pk)
 
-    def _create_raw_table(self, source: str, info: TableInfo) -> None:
+    def _create_raw_table(self, source: str, info: TableInfo,
+                          table_name: str | None = None) -> None:
+        name = table_name or raw_table_name(source, info.name)
         cols = ",\n".join(
             [f'    "{c}" {_TYPE_SQL[t]}' for c, t in info.columns]
             + [f'    "{c}" {t}' for c, t in _META_COLS])
-        pk = ", ".join(f'"{k}"' for k in info.pk)
-        self.con.execute(
-            f'CREATE TABLE IF NOT EXISTS "{raw_table_name(source, info.name)}" '
-            f"(\n{cols},\n    PRIMARY KEY ({pk})\n)")
+        if info.pk:
+            pk = ", ".join(f'"{k}"' for k in info.pk)
+            ddl = (f'CREATE TABLE IF NOT EXISTS "{name}" '
+                   f"(\n{cols},\n    PRIMARY KEY ({pk})\n)")
+        else:
+            ddl = f'CREATE TABLE IF NOT EXISTS "{name}" (\n{cols}\n)'
+        self.con.execute(ddl)
         self.con.commit()
 
     def _rebuild_raw_table_for_pk_change(
@@ -904,7 +952,17 @@ class LandingStore:
     def upsert_rows(self, source: str, info: TableInfo, rows: list[dict], batch_id: str) -> int:
         if not rows:
             return 0
+        if not info.pk:
+            raise ValueError(f"{info.name}: upsert 需要运行键")
         table = raw_table_name(source, info.name)
+        return self._write_rows_into(table, info, rows, batch_id, upsert=True)
+
+    def _write_rows_into(
+        self, table: str, info: TableInfo, rows: list[dict], batch_id: str, *,
+        upsert: bool,
+    ) -> int:
+        if not rows:
+            return 0
         cols = [c for c, _ in info.columns]
         extracted_at = _now()
         normalized = [{c: normalize_value(r.get(c)) for c in cols} for r in rows]
@@ -916,15 +974,182 @@ class LandingStore:
         all_cols = cols + ["_d2a_batch_id", "_d2a_extracted_at", "_d2a_row_hash"]
         col_sql = ", ".join(f'"{c}"' for c in all_cols)
         val_sql = ", ".join(f":{c}" for c in all_cols)
-        pk_sql = ", ".join(f'"{k}"' for k in info.pk)
-        update_sql = ", ".join(
-            f'"{c}" = excluded."{c}"' for c in all_cols) + ', "_d2a_deleted_at" = NULL'
-        self.con.executemany(
-            f'INSERT INTO "{table}" ({col_sql}) VALUES ({val_sql}) '
-            f"ON CONFLICT ({pk_sql}) DO UPDATE SET {update_sql}",
-            payload)
+        if upsert and info.pk:
+            pk_sql = ", ".join(f'"{k}"' for k in info.pk)
+            update_sql = ", ".join(
+                f'"{c}" = excluded."{c}"' for c in all_cols) + ', "_d2a_deleted_at" = NULL'
+            sql = (f'INSERT INTO "{table}" ({col_sql}) VALUES ({val_sql}) '
+                   f"ON CONFLICT ({pk_sql}) DO UPDATE SET {update_sql}")
+        else:
+            sql = f'INSERT INTO "{table}" ({col_sql}) VALUES ({val_sql})'
+        self.con.executemany(sql, payload)
         self.con.commit()
         return len(rows)
+
+    # ---- 全量快照 staging / 原子发布 ----
+
+    def begin_snapshot(self, source: str, info: TableInfo, snapshot_id: str) -> dict:
+        """创建或恢复 open 状态的 snapshot staging 表。"""
+        sid = _safe_snapshot_id(snapshot_id)
+        staging = staging_raw_table_name(source, info.name, sid)
+        row = self.con.execute(
+            "SELECT status, staging_table FROM d2a_snapshot "
+            "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
+            (source, info.name, sid)).fetchone()
+        if row is not None and row["status"] == "published":
+            return {
+                "snapshot_id": sid, "status": "published",
+                "staging_table": row["staging_table"], "duplicate": True,
+            }
+        if row is not None and row["status"] == "open":
+            # 恢复:staging 表必须仍在
+            exists = self.con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (row["staging_table"],)).fetchone()
+            if exists:
+                return {
+                    "snapshot_id": sid, "status": "open",
+                    "staging_table": row["staging_table"], "duplicate": True,
+                }
+        # 新建或重建
+        self.con.execute(f'DROP TABLE IF EXISTS "{staging}"')
+        self._create_raw_table(source, info, table_name=staging)
+        now = _now()
+        self.con.execute(
+            "INSERT INTO d2a_snapshot "
+            "(source, table_name, snapshot_id, status, staging_table, created_at) "
+            "VALUES (?, ?, ?, 'open', ?, ?) "
+            "ON CONFLICT (source, table_name, snapshot_id) DO UPDATE SET "
+            "status = 'open', staging_table = excluded.staging_table, "
+            "expected_rows = NULL, expected_batches = NULL, published_at = NULL, "
+            "created_at = excluded.created_at",
+            (source, info.name, sid, staging, now))
+        self.con.execute(
+            "DELETE FROM d2a_snapshot_batch "
+            "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
+            (source, info.name, sid))
+        self.con.commit()
+        return {"snapshot_id": sid, "status": "open",
+                "staging_table": staging, "duplicate": False}
+
+    def write_snapshot_batch(
+        self, source: str, info: TableInfo, snapshot_id: str,
+        batch_id: str, rows: list[dict],
+    ) -> dict:
+        """写入 staging;同一 snapshot_id+batch_id 幂等去重。"""
+        sid = _safe_snapshot_id(snapshot_id)
+        snap = self.con.execute(
+            "SELECT status, staging_table FROM d2a_snapshot "
+            "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
+            (source, info.name, sid)).fetchone()
+        if snap is None or snap["status"] != "open":
+            raise ValueError(
+                f"{info.name}: snapshot '{sid}' 未 begin 或已关闭(status="
+                f"{None if snap is None else snap['status']})")
+        existing = self.con.execute(
+            "SELECT rows FROM d2a_snapshot_batch "
+            "WHERE source = ? AND table_name = ? AND snapshot_id = ? AND batch_id = ?",
+            (source, info.name, sid, batch_id)).fetchone()
+        if existing is not None:
+            return {"ingested": existing["rows"], "duplicate": True,
+                    "batch_id": batch_id, "snapshot_id": sid}
+        staging = snap["staging_table"]
+        n = self._write_rows_into(
+            staging, info, rows, batch_id, upsert=bool(info.pk))
+        self.con.execute(
+            "INSERT INTO d2a_snapshot_batch "
+            "(source, table_name, snapshot_id, batch_id, rows, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, 'ok', ?)",
+            (source, info.name, sid, batch_id, n, _now()))
+        self.con.commit()
+        return {"ingested": n, "duplicate": False,
+                "batch_id": batch_id, "snapshot_id": sid}
+
+    def complete_snapshot(
+        self, source: str, info: TableInfo, snapshot_id: str,
+        expected_rows: int, expected_batches: int,
+    ) -> dict:
+        """核对批次数/行数后原子发布 staging → 当前 raw 表。"""
+        sid = _safe_snapshot_id(snapshot_id)
+        snap = self.con.execute(
+            "SELECT * FROM d2a_snapshot "
+            "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
+            (source, info.name, sid)).fetchone()
+        if snap is None:
+            raise ValueError(f"{info.name}: snapshot '{sid}' 不存在")
+        if snap["status"] == "published":
+            return {
+                "completed": True, "duplicate": True, "snapshot_id": sid,
+                "rows": snap["expected_rows"], "batches": snap["expected_batches"],
+            }
+        if snap["status"] != "open":
+            raise ValueError(f"{info.name}: snapshot '{sid}' 状态为 {snap['status']}")
+
+        (batch_count, row_sum) = self.con.execute(
+            "SELECT COUNT(*), COALESCE(SUM(rows), 0) FROM d2a_snapshot_batch "
+            "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
+            (source, info.name, sid)).fetchone()
+        staging = snap["staging_table"]
+        (actual,) = self.con.execute(f'SELECT COUNT(*) FROM "{staging}"').fetchone()
+        if batch_count != expected_batches:
+            raise ValueError(
+                f"{info.name}: snapshot 批次数不符: got {batch_count}, "
+                f"want {expected_batches}")
+        if row_sum != expected_rows or actual != expected_rows:
+            raise ValueError(
+                f"{info.name}: snapshot 行数不符: batches_sum={row_sum}, "
+                f"staging={actual}, want={expected_rows}")
+
+        live = raw_table_name(source, info.name)
+        backup = f"{live}__prev"
+        try:
+            self.con.execute("BEGIN IMMEDIATE")
+            self.con.execute(f'DROP TABLE IF EXISTS "{backup}"')
+            live_exists = self.con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (live,)).fetchone()
+            if live_exists:
+                self.con.execute(f'ALTER TABLE "{live}" RENAME TO "{backup}"')
+            self.con.execute(f'ALTER TABLE "{staging}" RENAME TO "{live}"')
+            self.con.execute(f'DROP TABLE IF EXISTS "{backup}"')
+            now = _now()
+            self.con.execute(
+                "UPDATE d2a_snapshot SET status = 'published', "
+                "expected_rows = ?, expected_batches = ?, published_at = ?, "
+                "staging_table = ? "
+                "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
+                (expected_rows, expected_batches, now, live,
+                 source, info.name, sid))
+            self.con.commit()
+        except Exception:
+            self.con.rollback()
+            raise
+        self.log_audit(
+            source, "snapshot_publish",
+            f"table={info.name} snapshot={sid} rows={expected_rows}",
+            expected_rows, 0.0)
+        return {
+            "completed": True, "duplicate": False, "snapshot_id": sid,
+            "rows": expected_rows, "batches": expected_batches,
+        }
+
+    def abort_snapshot(self, source: str, table: str, snapshot_id: str) -> None:
+        """失败清理:丢弃 staging,保留当前 raw。"""
+        sid = _safe_snapshot_id(snapshot_id)
+        snap = self.con.execute(
+            "SELECT status, staging_table FROM d2a_snapshot "
+            "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
+            (source, table, sid)).fetchone()
+        if snap is None or snap["status"] == "published":
+            return
+        staging = snap["staging_table"]
+        if staging != raw_table_name(source, table):
+            self.con.execute(f'DROP TABLE IF EXISTS "{staging}"')
+        self.con.execute(
+            "UPDATE d2a_snapshot SET status = 'failed' "
+            "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
+            (source, table, sid))
+        self.con.commit()
 
     def count(self, source: str, table: str, active_only: bool = False) -> int:
         where = " WHERE _d2a_deleted_at IS NULL" if active_only else ""

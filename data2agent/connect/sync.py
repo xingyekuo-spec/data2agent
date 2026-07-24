@@ -1,11 +1,8 @@
-"""同步报告结构与全量入口;增量编排见 increment.py。"""
+"""同步报告结构;编排见 increment.py。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
-from .adapters.base import SourceAdapter
-from .landing import LandingStore
 
 
 @dataclass
@@ -28,10 +25,3 @@ class SyncReport:
     @property
     def total_rows(self) -> int:
         return sum(t.rows for t in self.tables)
-
-
-def full_sync(adapter: SourceAdapter, landing: LandingStore, source: str) -> SyncReport:
-    """全量同步 = 所有表按 full_refresh 策略的增量编排(不建立水位)。"""
-    from .increment import incremental_sync
-
-    return incremental_sync(adapter, landing, source, watermarks={})

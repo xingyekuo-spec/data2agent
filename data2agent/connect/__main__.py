@@ -1,6 +1,6 @@
 """抽取 CLI:python -m data2agent.connect {sync|reconcile|apply|backfill|serve|status|quarantine}
 
-sync       --config connect.yaml [--source name] [--full];抽取范围/水位策略来自 tables 配置
+sync       --config connect.yaml [--source name];抽取范围/模式来自 tables 配置
 reconcile  --config connect.yaml [--deep] 分段对账 L1;抓物理删除与不动水位的原地改动
 apply      映射应用:raw_* → 数据集候选并默认发布(隔离区 + 熔断);
            --stage-only 只构建候选;--every N 秒常驻循环(拆机部署平台侧)
@@ -66,9 +66,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="data2agent 抽取(只读:增量 / 全量 / 对账)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    sp = sub.add_parser("sync", help="同步到落地库(默认水位增量)")
+    sp = sub.add_parser("sync", help="同步到落地库(按 tables.*.mode:增量或全量快照)")
     _add_common(sp)
-    sp.add_argument("--full", action="store_true", help="强制全量(忽略水位,不建立状态)")
 
     rp = sub.add_parser("reconcile", help="分段对账(L1;--deep 全段修复)")
     _add_common(rp)
@@ -198,8 +197,6 @@ def main() -> int:
         return 0
 
     if args.cmd == "sync":
-        if args.full:
-            watermarks = {}
         report = incremental_sync(
             adapter, landing, args.source, watermarks,
             lookback_days=scfg.lookback_days(),
