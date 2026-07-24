@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createPinia, type Pinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setScenario } from '@/mocks/scenario'
+import { setScenario } from '@/test/scenario'
 import { useOverviewStore } from '@/stores/overview'
 import { usePipelineStore } from '@/stores/pipeline'
 import DashboardView from './DashboardView.vue'
@@ -112,8 +112,8 @@ describe('DashboardView(M3)', () => {
   })
 
   it('服务健康:首次加载 services 失败时显示查询失败(不是空白)', async () => {
-    const { HttpResponse, http } = await import('msw')
-    const { server } = await import('@/test/setup')
+    const { HttpResponse, http } = await import('@/test/http')
+    const { server } = await import('@/test/fetch-stub')
     server.use(
       http.get('*/api/services', () =>
         HttpResponse.json({ detail: 'probe boom' }, { status: 500 })),
@@ -126,9 +126,9 @@ describe('DashboardView(M3)', () => {
   })
 
   it('recent/trend 查询失败:显示不可检测而不是空数据', async () => {
-    const { HttpResponse, http } = await import('msw')
-    const { server } = await import('@/test/setup')
-    const { baseFixture } = await import('@/mocks/fixtures/base')
+    const { HttpResponse, http } = await import('@/test/http')
+    const { server } = await import('@/test/fetch-stub')
+    const { baseFixture } = await import('@/test/fixtures/base')
     server.use(
       http.get('*/api/overview', () =>
         new HttpResponse(

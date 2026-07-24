@@ -1,6 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setScenario } from '@/mocks/scenario'
+import { setScenario } from '@/test/scenario'
 import { usePipelineStore } from './pipeline'
 
 describe('pipeline store', () => {

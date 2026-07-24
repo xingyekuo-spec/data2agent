@@ -55,7 +55,7 @@
 表.字段 (map 源值→对象值 / 源值→对象值)     编码翻译:筛选时自动反向映射,源码值不出网
 ```
 
-join 与 map 可组合,顺序固定为先 join 后 map。**文法故意窄**:等值 join(仅 Id 主键)、等值 map,不支持表达式计算 —— 避免 YAML 里长出一门临时查询语言。文法扩展须同步:解析器、`build_select`、本节、binding 一致性测试(`tests/test_showroom.py::test_e10_bindings_match_schema`)。
+join 与 map 可组合,顺序固定为先 join 后 map。**文法故意窄**:等值 join(仅 Id 主键)、等值 map,不支持表达式计算 —— 避免 YAML 里长出一门临时查询语言。文法扩展须同步:解析器、`build_select`、本节、E10 fixture binding 一致性测试(`tests/test_e10_fixtures.py::test_e10_bindings_match_schema`)。
 
 ### 3.1.1 派生决策表(derived)
 

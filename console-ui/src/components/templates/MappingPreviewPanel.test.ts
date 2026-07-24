@@ -4,7 +4,7 @@
  */
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
-import { HttpResponse, http } from 'msw'
+import { HttpResponse, http } from '@/test/http'
 import { createPinia, type Pinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import MappingPreviewPanel from './MappingPreviewPanel.vue'
@@ -14,9 +14,9 @@ import {
   mappingPreviewEmpty,
   mappingPreviewUnauthorized,
   mappingPreviewDraftInvalid,
-} from '@/mocks/fixtures/mapping-preview'
-import { setScenario } from '@/mocks/scenario'
-import { server } from '@/test/setup'
+} from '@/test/fixtures/mapping-preview'
+import { setScenario } from '@/test/scenario'
+import { server } from '@/test/fetch-stub'
 import type { components } from '@/types/api'
 
 type TemplateBinding = components['schemas']['TemplateBinding']

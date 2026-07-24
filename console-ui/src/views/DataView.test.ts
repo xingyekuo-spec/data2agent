@@ -1,14 +1,14 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
-import { HttpResponse, http } from 'msw'
+import { HttpResponse, http } from '@/test/http'
 import { createPinia, type Pinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setScenario } from '@/mocks/scenario'
+import { setScenario } from '@/test/scenario'
 import { createAppRouter } from '@/router'
-import { server } from '@/test/setup'
+import { server } from '@/test/fetch-stub'
 import DataView from './DataView.vue'
-import { baseFixture } from '@/mocks/fixtures/base'
+import { baseFixture } from '@/test/fixtures/base'
 
 async function mountView(): Promise<ReturnType<typeof mount>> {
   const pinia: Pinia = createPinia()

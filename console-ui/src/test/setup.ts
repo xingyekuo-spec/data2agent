@@ -1,7 +1,6 @@
-import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, vi } from 'vitest'
-import { buildHandlers, strictUnhandledRequest } from '@/mocks/handlers'
-import { setScenario } from '@/mocks/scenario'
+import { installFetchStub, server } from './fetch-stub'
+import { setScenario } from './scenario'
 
 // jsdom 无 canvas:全局 mock ECharts(真实渲染由浏览器验收覆盖)
 vi.mock('echarts/core', () => ({
@@ -23,12 +22,12 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     ResizeObserverStub as unknown as typeof globalThis.ResizeObserver
 }
 
-const server = setupServer(...buildHandlers())
-
 export { server }
 
+let uninstallFetch: (() => void) | undefined
+
 beforeAll(() => {
-  server.listen({ onUnhandledRequest: strictUnhandledRequest })
+  uninstallFetch = installFetchStub()
 })
 
 afterEach(() => {
@@ -39,5 +38,6 @@ afterEach(() => {
 })
 
 afterAll(() => {
+  uninstallFetch?.()
   server.close()
 })

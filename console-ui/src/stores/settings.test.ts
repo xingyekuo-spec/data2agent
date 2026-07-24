@@ -1,7 +1,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { ensureEvidenceSessionId, setToken } from '@/api/client'
-import { setScenario } from '@/mocks/scenario'
+import { setScenario } from '@/test/scenario'
 import { useMcpLabStore } from './mcpLab'
 import { useOverviewStore } from './overview'
 import { useSessionStore } from './session'

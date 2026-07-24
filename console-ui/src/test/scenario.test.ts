@@ -29,6 +29,6 @@ describe('scenario registry', () => {
   })
 
   it('拒绝未知场景', () => {
-    expect(() => setScenario('nope' as never)).toThrow('未知 Mock 场景')
+    expect(() => setScenario('nope' as never)).toThrow('未知测试场景')
   })
 })

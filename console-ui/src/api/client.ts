@@ -1,6 +1,5 @@
 /**
- * 唯一 API 客户端:Mock(MSW 拦截 fetch)与 Real(真实 /api)共用,
- * 保证路径、请求体、错误处理与响应解析在三种模式下一致。
+ * 唯一 API 客户端:开发/生产均走真实 /api;Vitest 通过 fetch stub 拦截同源请求。
  *
  * baseUrl 取当前源(浏览器为页面源,jsdom 为测试源),等价于同源空字符串且
  * 在 Node/undici 下也能构造 Request;路径一律 /api 开头,不产生 /api/api 双前缀。

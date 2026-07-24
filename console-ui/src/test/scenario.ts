@@ -1,10 +1,8 @@
 /**
- * Vitest 用场景注册表与运行时切换(测试 stub,非产品 Mock 模式)。
- * 每个场景对应 fixtures/ 下同形的一份 typed fixture。
+ * Vitest 场景注册表:按 id 切换 typed fixture,驱动 fetch stub。
  */
-import { scenarioEpoch } from '@/config/scenario-epoch'
-import { applyCircuitBrokenFixture } from './fixtures/apply-circuit-broken'
 import type { ScenarioFixture } from './fixtures/base'
+import { applyCircuitBrokenFixture } from './fixtures/apply-circuit-broken'
 import { draftGovernanceFixture } from './fixtures/draft-governance'
 import { emptyInstallFixture } from './fixtures/empty-install'
 import { healthyFixture } from './fixtures/healthy'
@@ -40,7 +38,6 @@ export interface ScenarioMeta {
   description: string
 }
 
-/** Mock 场景矩阵(M2 必备 10 + M3 Preview 专用) */
 export const SCENARIOS: readonly ScenarioMeta[] = [
   { id: 'healthy', label: '全链路正常', description: '服务可达、最近运行成功、无隔离' },
   { id: 'empty-install', label: '首次安装', description: '没有数据:空集合 / 从未运行' },
@@ -98,11 +95,9 @@ export function getScenario(): ScenarioId {
 
 export function setScenario(id: ScenarioId): void {
   if (!SCENARIO_IDS.includes(id)) {
-    throw new Error(`未知 Mock 场景: ${id}`)
+    throw new Error(`未知测试场景: ${id}`)
   }
   current = id
-  // 通知 AppLayout 重挂载当前视图,触发 onMounted 重新请求
-  scenarioEpoch.value += 1
   for (const fn of listeners) {
     fn(id)
   }

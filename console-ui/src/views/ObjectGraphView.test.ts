@@ -3,7 +3,7 @@ import ElementPlus from 'element-plus'
 import { createPinia, type Pinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setScenario } from '@/mocks/scenario'
+import { setScenario } from '@/test/scenario'
 import { createAppRouter } from '@/router'
 import ObjectGraphView from './ObjectGraphView.vue'
 

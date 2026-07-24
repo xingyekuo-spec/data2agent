@@ -1,13 +1,13 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
-import { HttpResponse, http } from 'msw'
+import { HttpResponse, http } from '@/test/http'
 import { createPinia, type Pinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { baseFixture } from '@/mocks/fixtures/base'
-import { setScenario } from '@/mocks/scenario'
+import { baseFixture } from '@/test/fixtures/base'
+import { setScenario } from '@/test/scenario'
 import { createAppRouter } from '@/router'
-import { server } from '@/test/setup'
+import { server } from '@/test/fetch-stub'
 import RunsView from './RunsView.vue'
 
 async function mountView(query: Record<string, string> = {}): Promise<{

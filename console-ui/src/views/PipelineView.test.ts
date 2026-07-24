@@ -2,7 +2,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createPinia, type Pinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setScenario } from '@/mocks/scenario'
+import { setScenario } from '@/test/scenario'
 import { usePipelineStore } from '@/stores/pipeline'
 import PipelineView from './PipelineView.vue'
 

@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { call } from '@/api/services'
 import { client } from '@/api/client'
-import { strictUnhandledRequest } from './handlers'
+import { strictUnhandledRequest } from './api-handlers'
 import { getScenario, setScenario } from './scenario'
 
 /**
- * handlers 行为测试:经 test/setup.ts 的 MSW node server 拦截真实 client 请求。
+ * handlers 行为测试:经 test/setup.ts 的 fetch stub 拦截真实 client 请求。
  * 每个场景至少覆盖一处关键断言(M2 计划 §6)。
  */
-describe('mock handlers', () => {
+describe('api handlers', () => {
   afterEach(() => setScenario('healthy'))
 
   it('healthy:总览 200,返回来源与对象', async () => {
@@ -133,7 +133,7 @@ describe('mock handlers', () => {
   it('/api/* 未匹配即抛错;Vite 模块等非 API 请求放行不抛错', () => {
     expect(() =>
       strictUnhandledRequest(new Request('http://localhost:5174/api/not-declared')),
-    ).toThrow('MSW 未匹配的 API 请求')
+    ).toThrow('未匹配的 API 请求')
 
     // 回归:Vite dev 在 /src 下加载模块,worker 拦截后必须放行,
     // 否则动态 import 被打断、路由无法挂载(本次事故根因)

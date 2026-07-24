@@ -1,8 +1,8 @@
-import { HttpResponse, http } from 'msw'
+import { HttpResponse, http } from '@/test/http'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { setScenario } from '@/mocks/scenario'
-import { server } from '@/test/setup'
+import { setScenario } from '@/test/scenario'
+import { server } from '@/test/fetch-stub'
 import { useOverviewStore } from './overview'
 
 const OVERVIEW_MINIMAL = {

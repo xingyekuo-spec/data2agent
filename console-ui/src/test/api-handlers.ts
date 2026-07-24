@@ -1,14 +1,12 @@
 /**
- * MSW handlers:按当前场景返回 typed fixture。
+ * 测试 API handlers:按当前场景返回 typed fixture(无 MSW)。
  *
- * - token-invalid / unknown-error 是传输级场景:对所有 /api/* 短路 401 / 500,
- *   不返回任何业务数据;
- * - 未匹配请求由 worker/server 的 onUnhandledRequest: 'error' 拒绝,
- *   不允许静默穿透到真实网络。
+ * - token-invalid / unknown-error 是传输级场景:对所有 /api/* 短路 401 / 500;
+ * - 未匹配的 /api/* 由 fetch stub 拒绝,禁止静默穿透。
  */
-import { http, HttpResponse, type HttpHandler } from 'msw'
 import type { HttpError, ScenarioFixture } from './fixtures/base'
 import { lineageAvailable } from './fixtures/lineage'
+import { HttpResponse, http, type StubHandler } from './http'
 import { getScenario, scenarioFixtures } from './scenario'
 import type { components } from '@/types/api'
 
@@ -19,18 +17,11 @@ type RawDataPageResponse = components['schemas']['RawDataPageResponse']
 type ObjectRowsPageResponse = components['schemas']['ObjectRowsPageResponse']
 type QuarantineRecord = components['schemas']['QuarantineRecord']
 
-/**
- * 未匹配请求策略:
- * - /api/* 未声明 handler → 抛错(Mock 必须显式声明,禁止静默穿透);
- * - 非 API 请求(Vite dev 模块 / 静态资源 / HMR)→ 返回 undefined 放行到真实
- *   网络。worker scope 是 /,Vite dev 也在 /src/ 下加载模块,一刀切抛错
- *   会把动态 import 打断(500),导致路由无法挂载。
- */
 export function strictUnhandledRequest(request: Request): void {
   const { pathname } = new URL(request.url)
   if (pathname.startsWith('/api/')) {
     throw new Error(
-      `MSW 未匹配的 API 请求: ${request.method} ${request.url}(必须为 Mock 显式声明 handler)`,
+      `未匹配的 API 请求: ${request.method} ${request.url}(测试 stub 必须显式声明 handler)`,
     )
   }
 }
@@ -40,21 +31,21 @@ export function strictUnhandledRequest(request: Request): void {
  *  不用 HttpResponse.json:其 JsonBodyType 要求索引签名,与生成接口类型摩擦,
  *  会迫使调用处写 as;JSON.stringify 输出等价且无类型逃逸。
  */
-function json<T>(body: T, status = 200, headers: Record<string, string> = {}): HttpResponse<string> {
+function json<T>(body: T, status = 200, headers: Record<string, string> = {}): HttpResponse {
   return new HttpResponse(JSON.stringify(body), {
     status,
     headers: { 'Content-Type': 'application/json', ...headers },
   })
 }
 
-function transportFailure(): HttpResponse<string> | null {
+function transportFailure(): HttpResponse | null {
   const id = getScenario()
   if (id === 'token-invalid') {
-    const body: HttpError = { detail: '需要有效的管理界面登录密码(Mock: token-invalid)' }
+    const body: HttpError = { detail: '需要有效的管理界面登录密码(stub: token-invalid)' }
     return json(body, 401)
   }
   if (id === 'unknown-error') {
-    const body: HttpError = { detail: '未处理异常(Mock: unknown-error)' }
+    const body: HttpError = { detail: '未处理异常(stub: unknown-error)' }
     return json(body, 500)
   }
   return null
@@ -85,11 +76,11 @@ function validationReport(runId = 9001) {
     report_schema_version: 1, run_id: runId, source: 'digiwin_e10', overall_status: 'warning',
     started_at: now, finished_at: now,
     deployment: { config_loaded: true, source_configured: true, template_version: 'v0.3' },
-    dataset_version: 'ds_mock_001', template_version: 'v0.3',
+    dataset_version: 'ds_stub_001', template_version: 'v0.3',
     summary: { check_count: 13, pass_count: 10, warning_count: 1, fail_count: 0, skipped_count: 1 },
     checks: items.map(([check_id, title, status]) => ({
       check_id, title, status, blocking: status !== 'skipped',
-      summary: status === 'warning' ? '存在草稿映射，结果不应被视作已核验。' : 'Mock 验收检查完成。',
+      summary: status === 'warning' ? '存在草稿映射，结果不应被视作已核验。' : 'stub 验收检查完成。',
       started_at: now, finished_at: now, detail: {}, evidence: [],
     })),
   }
@@ -98,7 +89,7 @@ function validationReport(runId = 9001) {
 function respond<T>(
   body: (fixture: ScenarioFixture) => T,
   extraHeaders?: (fixture: ScenarioFixture) => Record<string, string>,
-): HttpResponse<string> {
+): HttpResponse {
   const fail = transportFailure()
   if (fail) {
     return fail
@@ -214,7 +205,7 @@ function quarantineList(fixture: ScenarioFixture, request: Request): { items: Qu
 }
 
 /** M5: check Bearer auth for quarantine detail (simplified: checks Authorization header presence) */
-function authCheck(request: Request): HttpResponse<string> | null {
+function authCheck(request: Request): HttpResponse | null {
   const auth = request.headers.get('Authorization')
   if (!auth || !auth.startsWith('Bearer ')) {
     const body: HttpError = { detail: '缺少或无效的 Bearer Token' }
@@ -223,7 +214,7 @@ function authCheck(request: Request): HttpResponse<string> | null {
   return null
 }
 
-export function buildHandlers(): HttpHandler[] {
+export function buildHandlers(): StubHandler[] {
   return [
     http.get('*/api/setup/status', () => respond((f) => f.setupStatus)),
     http.get('*/api/overview', () => respond((f) => f.overview)),
@@ -296,7 +287,7 @@ export function buildHandlers(): HttpHandler[] {
       return json({
         ok: true,
         restart_required: true,
-        message: '配置已写入(Mock)',
+        message: '配置已写入(stub)',
         mcp_token_generated: !String(body.mcp_token ?? '').trim(),
       })
     }),
@@ -312,7 +303,7 @@ export function buildHandlers(): HttpHandler[] {
       }
       const fixture = scenarioFixtures[getScenario()]
       if (params.source !== fixture.rawData.source || params.table !== fixture.rawData.table) {
-        const body: HttpError = { detail: `Mock raw 资源不存在: ${params.source}/${params.table}` }
+        const body: HttpError = { detail: `stub raw 资源不存在: ${params.source}/${params.table}` }
         return json(body, 404)
       }
       return json(dataPage(fixture.rawData, request))
@@ -325,7 +316,7 @@ export function buildHandlers(): HttpHandler[] {
       }
       const fixture = scenarioFixtures[getScenario()]
       if (params.object !== fixture.objectRows.object) {
-        const body: HttpError = { detail: `Mock object 资源不存在: ${params.object}` }
+        const body: HttpError = { detail: `stub object 资源不存在: ${params.object}` }
         return json(body, 404)
       }
       return json(dataPage(fixture.objectRows, request))
@@ -522,7 +513,7 @@ export function buildHandlers(): HttpHandler[] {
           {
             status: 401,
             reason_code: 'unauthorized',
-            detail: '需要有效的管理界面登录密码(Mock: token-invalid)',
+            detail: '需要有效的管理界面登录密码(stub: token-invalid)',
             error_id: null,
           },
           401,
@@ -533,8 +524,8 @@ export function buildHandlers(): HttpHandler[] {
           {
             status: 500,
             reason_code: 'preview_failed',
-            detail: '未处理异常(Mock: unknown-error)',
-            error_id: 'err-preview-mock',
+            detail: '未处理异常(stub: unknown-error)',
+            error_id: 'err-preview-stub',
           },
           500,
         )

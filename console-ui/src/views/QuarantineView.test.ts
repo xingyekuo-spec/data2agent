@@ -5,15 +5,15 @@
  */
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
-import { HttpResponse, http } from 'msw'
+import { HttpResponse, http } from '@/test/http'
 import { createPinia, type Pinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { baseFixture } from '@/mocks/fixtures/base'
-import { quarantinePendingFixture } from '@/mocks/fixtures/quarantine-pending'
-import { setScenario } from '@/mocks/scenario'
+import { baseFixture } from '@/test/fixtures/base'
+import { quarantinePendingFixture } from '@/test/fixtures/quarantine-pending'
+import { setScenario } from '@/test/scenario'
 import { createAppRouter } from '@/router'
-import { server } from '@/test/setup'
+import { server } from '@/test/fetch-stub'
 import QuarantineView from './QuarantineView.vue'
 
 // Mock ElMessageBox.confirm so dialog interactions resolve in tests.
