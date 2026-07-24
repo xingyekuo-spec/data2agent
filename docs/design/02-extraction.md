@@ -1,6 +1,6 @@
 # 02 · 抽取框架(详设)
 
-> 状态:设计修订 r0.7(2026-07-22)· 实现目录:`data2agent/connect/` + `data2agent/ingest/` · 当前:E1–E5 + E6a 推送 sink + v0.3 原子发布、映射 Preview、字段血缘与验收报告已实现;v0.4 批次回执/E6b/TLS 门槛待建
+> 状态:设计修订 r0.8(2026-07-24)· 实现目录:`data2agent/connect/` + `data2agent/ingest/` · 当前:E1–E5 + E6a 推送 sink + v0.3 原子发布、映射 Preview、字段血缘已实现;v0.5 ERP 元数据发现、配置业务键、复合键增量、`full_refresh` 快照原子替换与中间机 `/metadata` `/tables` 已落地;v0.4 批次回执/E6b/TLS 门槛待建
 > 上层基线:[路线图](../roadmap.md)
 
 ## 1. 目标与非目标
@@ -20,9 +20,10 @@
 ```
 SourceAdapter(mssql / sqlite / api_poll / excel)      ── 只读、白名单、限流、审计
    │ read_increment(table, since, lookback) → 行批次
+   │ （full_refresh: 快照 staging → 原子发布，删除行从 raw 消失）
    ▼
-Landing 原样落地(raw_{source}__{table},按源主键 upsert)
-   │                          ├─ increment:水位状态机
+Landing 原样落地(raw_{source}__{table})
+   │                          ├─ increment:水位 + 配置/复合运行键 keyset
    │                          ├─ reconcile:分段对账(L1/L2)
    ▼                          └─ quarantine:隔离区
 mapping_apply:binding → 候选物化表 objv_<opaque>_* → 数据集原子发布(见 §7.2)
@@ -34,6 +35,7 @@ MCP / Console / 指标在同一读事务内解析 PublishedDatasetSnapshot(不�
 
 > 上图是**逻辑管道**(与部署位置无关)。现场的**物理部署**会把它拆到"中间服务器 + 数据平台"两台机器上 —— 见 §12 部署拓扑。
 
+运行键优先级:配置 `key_columns`(可覆盖数据库 PK,支持复合键) → 否则数据库主键。无键且未配置 `key_columns` 时增量失败;`full_refresh` 可无主键,经快照协议整表替换。
 ## 3. 适配器层(adapters/)
 
 ```python
@@ -89,9 +91,9 @@ since = high_water - lookback          # 回看窗口,默认 3 天,吸收迟到�
 规则:
 
 - 水位**只在落地事务提交后前进**,且只前进不后退;任何批次失败,水位停在原地,下轮重来(upsert 幂等);
-- 无可靠水位字段的表(小维表如 CURRENCY):走全量刷新 —— 由 `connect.yaml` 每表的 `mode: full_refresh` 显式声明;增量表须同时配置 `watermark` 字段名;
+- 无可靠水位字段的表(小维表如 CURRENCY):走全量快照替换 —— 由 `connect.yaml` 每表的 `mode: full_refresh` 显式声明;增量表须同时配置 `watermark` 字段名,并建议现场确认 `key_columns`;
+- `full_refresh` 经 staging 表写入后原子发布到 raw,源端已删除行不会残留;失败则 abort staging,保留上一完整快照;
 - 水位字段语义(是"修改时间"还是"审核时间")属现场核对项,以 `connect.yaml` 每表配置的 `watermark` 为准。
-
 ## 6. 分段对账(reconcile.py)
 
 水位增量抓不住两类漂移:源侧物理删除、不更新水位的原地改动。对账按水位分段(默认自然月)两档:
@@ -152,7 +154,7 @@ transform(map/join/derived) / result_value / extract_batch_id / map_batch_id
 ## 8. 调度与运行(scheduler.py + __main__.py)
 
 - apscheduler 按源调度;**错峰窗口**(如 `windows: ["22:00-06:30"]`)硬约束:窗口外不发起,运行中越界则在批次边界优雅暂停、下窗口续跑(水位机制天然支持断点);
-- CLI(`python -m data2agent.connect`):`sync --config <connect.yaml> [--source <name>] [--full]`(抽取范围/策略来自 tables 配置)/ `apply` / `backfill --config ... --table --from --to` / `reconcile --config ... [--deep]` / `serve --config ... [--once]`(常驻调度)/ `status` / `quarantine list|retry` / `migrate-config --config ... [--dry-run]` / `excel-suggest` / `excel-import`;
+- CLI(`python -m data2agent.connect`):`sync --config <connect.yaml> [--source <name>]`(抽取范围/策略仅来自 `tables`,不再接受 `--full`)/ `apply` / `backfill --config ... --table --from --to` / `reconcile --config ... [--deep]` / `serve --config ... [--once]`(常驻调度)/ `status` / `quarantine list|retry` / `excel-suggest` / `excel-import`;已删除 `migrate-config` 与 CLI 全量覆盖入口;
 - 每轮汇总进 `d2a_sync_run`(起止、行数、隔离数、对账结果),结构化日志输出。
 
 ## 9. 配置(connect.yaml)
@@ -165,13 +167,15 @@ sources:
     adapter: mssql_readonly         # 开发 / 参考库:sqlite_readonly + path
     dsn_env: D2A_E10_DSN            # 凭据只从环境变量读,绝不落配置文件/仓库
 
-    # 抽取表与同步策略(独立于模板维护,只修改这里即可控制 ERP 抽取范围)
+    # 抽取表与同步策略。新安装默认 tables: {};现场经中间机 /metadata 扫描选表后写入。
+    # key_columns 可选,覆盖数据库 PK;incremental 必须 watermark;full_refresh 禁止 watermark。
     tables:
       CUSTOMER:
         mode: incremental
         watermark: LAST_MODIFIED_DATE
+        key_columns: [CUSTOMER_CODE]   # 可选:配置业务键
       CURRENCY:
-        mode: full_refresh
+        mode: full_refresh             # 快照原子替换
       ITEM:
         mode: incremental
         watermark: LAST_MODIFIED_DATE
@@ -184,7 +188,7 @@ sources:
       SALES_ORDER_D:
         mode: incremental
         watermark: LAST_MODIFIED_DATE
-
+        key_columns: [DOC_NO, SEQ]     # 可选:复合键
     windows: ["22:00-06:30"]
     rate: { batch_size: 5000, rows_per_second: 2000 }
     lookback: 3d

@@ -7,13 +7,14 @@
 | # | 确认项 |
 | --- | --- |
 | 1 | Python 3.11+ 已安装 |
-| 2 | `pip install -e ".[dev,mcp]"` 已执行 |
-| 3 | 参考 seed 已生成:`python -m data2agent.showroom.seed` |
+| 2 | `pip install -e ".[dev,mcp,console,ingest,connect,middle_admin,excel]"` 已执行 |
+| 3 | 参考 seed 已生成:`python -m data2agent.showroom.seed`（测试资产；非产品运行模式） |
 | 4 | (可选) Docker 已安装,用于 SQL Server 集成测试 |
 
 ## 2. connect.yaml 最小配置
 
-复制仓库根 `connect.example.yaml` 为 `connect.yaml`,按需修改。以下为本地 SQLite 参考库的最小配置:
+复制仓库根 `connect.example.yaml` 为 `connect.yaml`。生产新安装默认 `tables: {}`。
+本地参考链可显式列出基线表:
 
 ```yaml
 templates: templates
@@ -23,6 +24,7 @@ sources:
   digiwin_e10:
     adapter: sqlite_readonly
     path: showroom/e10.sqlite
+    # 生产: adapter: mssql_readonly + dsn_env: D2A_E10_DSN
 
     tables:
       CUSTOMER:
@@ -56,7 +58,7 @@ sources:
 # 验证配置可加载
 python -c "from data2agent.connect.config import load_config; load_config('connect.yaml'); print('OK')"
 
-# 单次抽取(增量)
+# 单次抽取(策略来自 tables;无 --full)
 python -m data2agent.connect sync --config connect.yaml
 
 # 常驻调度;--once 立即跑一轮后退出
@@ -66,80 +68,59 @@ python -m data2agent.connect serve --config connect.yaml --once
 python -m data2agent.connect status
 ```
 
-`serve` 常驻后按 `sync_every` 周期调度。修改 `connect.yaml` 后需重启服务才能生效 —— 当前版本不会自动感知配置变化。
+`serve` 常驻后按 `sync_every` 周期调度。修改 `connect.yaml` 后需重启服务才能生效。
 
-`apply` 命令用于平台侧映射阶段(拆机部署);中间机 local 模式下 `apply_after_sync: true` 会在同步后自动执行。
+## 4. 抽取表与元数据
 
-## 4. 抽取表管理
+- **唯一事实来源**:`tables`。未声明的表不会被抽取。
+- **`mode: incremental`**:必须 `watermark`；可选 `key_columns`（覆盖 DB PK，支持复合键）。
+- **`mode: full_refresh`**:快照 staging → 原子发布；禁止 `watermark`；源端删除行会从 raw 消失。
+- **中间机 UI**:`/config` 只管连接；`/metadata` 扫描选表；`/tables` 确认并保存。
+- 本地也可用 middle_admin 对 sqlite 配置做页面冒烟（见 `scripts/smoke_admin_ui.py`）。
 
-`tables` 字段是**抽取范围的唯一事实来源**:
+## 5. 本地元数据扫描
 
-- **`mode: incremental`**:增量抽取,必须同时配置 `watermark` 字段名。每次抽取拉取 `WHERE watermark_col > last_watermark` 的行。
-- **`mode: full_refresh`**:全量读取并幂等 upsert,不动水位。源端已删除的行不会因此消失(物理删除依赖 L2 reconcile)。适用于无可靠水位字段的小维表(如 CURRENCY)。
-- 未在 `tables` 中声明的表不会被抽取。
-- 表清单独立于平台模板维护 —— 中间机只管"抽什么",平台模板只管"怎么映射"。
+```bash
+# 单元/API 测试（不依赖真实 SQL Server）
+.venv/bin/python -m pytest tests/test_metadata_discoverer.py tests/test_middle_metadata_api.py -q
 
-## 5. HTTP 推送模式
+# 真实 SQL Server（需 compose）
+cd tests/integration/mssql
+# 见该目录 docker-compose.yml 头注释设置 D2A_IT_MSSQL_DSN
+.venv/bin/python -m pytest tests/integration/mssql/ -q
+```
 
-中间服务器推送到数据平台的模式(Pattern A):
+门控环境变量未设置时，MSSQL 集成测试自动 skip。
+
+## 6. HTTP 推送模式
 
 ```yaml
 sources:
   digiwin_e10:
-    # ... 同上的 adapter / tables 配置 ...
-    sink: { type: http, url: "https://平台域名", token_env: D2A_INGEST_TOKEN }
-    apply_after_sync: false   # HTTP 推送模式下忽略,由平台侧负责 apply
+    sink: { type: http, url: "http://127.0.0.1:8850", token_env: D2A_INGEST_TOKEN }
+    apply_after_sync: false
 ```
 
-HTTP 推送模式下:
-- 中间机不执行 `apply`,只负责抽取 → 推送 raw 数据;
-- 平台侧接收后在本地执行物化映射;
-- 每张表的全部数据批次确认后，中间机会额外发送表完成事件；即使本轮为零行也会创建空 Raw 表并记录完成时间。平台 Validation 以该事件判断表级新鲜度，单个数据批次不代表整表完成;
-- 中间机不需要 `templates` 目录(模板在平台侧维护),但 `templates` 字段在 `connect.yaml` 顶层仍建议填写以支持本地 `validate` 命令。
+同步前中间机会校验平台 `ingest_protocol_version`（当前为 `"2"`），不一致立即失败。
 
-## 6. 常见问题
+## 7. 常见问题
 
 **Q: 新增抽取表后是否需要重启?**
-需要。当前版本 `serve` 不会自动感知 `connect.yaml` 变更，需重启服务才能加载新配置。手动模式直接运行 `sync` 即可。
+需要。当前版本 `serve` 不会自动感知 `connect.yaml` 变更。
 
 **Q: 删除 tables 中的表会导致数据丢失吗?**
-不会。已落地的 raw 数据保留在 landing 库中,只是后续不再抽取该表。
+不会。已落地的 raw 保留，只是后续不再抽取该表。
 
-**Q: 如何确认 watermark 字段是否正确?**
-API 连接测试（`/api/test-connection`）会逐表验证 watermark 列是否存在。字段语义（修改时间 vs 审核时间）属现场核对项，参考字典中的字段名仅为参考形状。
+**Q: 如何确认 watermark / 业务键?**
+在 `/tables` 保存前会做现场校验；也可调用
+`POST /api/extraction-tables/validate`。字典中的字段名仅为参考形状。
 
-**Q: 真实 SQL Server 环境如何配置?**
-将 `adapter` 改为 `mssql_readonly`,删除 `path`,改用 `dsn_env` 指向环境变量:
+**Q: 真实 SQL Server 如何配置?**
 
 ```yaml
 adapter: mssql_readonly
 dsn_env: D2A_E10_DSN
+tables: {}   # 再用 UI 或手写填入
 ```
 
-ODBC 连接串通过环境变量注入,绝不写入配置文件。
-
-## 7. 分层回归测试
-
-安装开发依赖后,统一从仓库根目录运行:
-
-```bash
-# 每次修复后:读取工作区相对 HEAD 的变更并选择受影响测试
-python scripts/verify.py quick
-
-# 功能完成后:运行对应模块回归
-python scripts/verify.py module erp
-python scripts/verify.py module console
-
-# 合并前:Python 与前端质量检查并行,随后并行运行 Mock/Real E2E
-python scripts/verify.py full
-
-# 发布前:完整回归 + Docker 分发检查 + MSSQL 集成测试
-python scripts/verify.py release
-```
-
-`quick --base origin/main` 可覆盖当前分支相对 `origin/main` 的已提交和未提交改动。
-文档改动不会触发应用测试;未知配置或公共代码改动会自动回退到完整检查。
-
-Python 测试按 `unit`、`contract`、`integration`、`slow` 分类。完整 Python
-套件默认通过 `pytest-xdist` 并行执行;资源受限时可设置
-`D2A_PYTEST_WORKERS=2`。失败后可使用 `python -m pytest --lf -q` 只重跑上次失败项。
+ODBC 连接串只通过环境变量注入。

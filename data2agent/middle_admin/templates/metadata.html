@@ -23,9 +23,14 @@
   button.text{background:none;border:none;color:#0b6bcb;cursor:pointer;padding:0;font-size:13px}
 </style>
 
+<div id="from-config-banner" class="warn" style="display:none;margin-bottom:16px">
+  连接已配置。请先<strong>刷新元数据</strong>扫描 ERP 表，打开详情后「加入抽取计划」，再在抽取表页确认并保存。
+  新安装默认 <code>tables: {}</code>，未选表时同步不会访问任何业务表。
+</div>
+
 <div class="card">
   <h2>ERP 元数据</h2>
-  <p class="meta">只读发现表结构。加入抽取计划后，请到「抽取表」页确认模式、业务键与水位并保存。</p>
+  <p class="meta">只读发现表结构。加入抽取计划后，请到「抽取表」页确认模式、业务键与水位并保存。抽取表不在「配置」页编辑。</p>
   <div class="row">
     <button type="button" id="btn-scan">刷新元数据</button>
     <span id="scan-meta" class="meta">尚未扫描</span>
@@ -44,7 +49,9 @@
     <label><input id="f-planned" type="checkbox"> 仅已加入</label>
     <button type="button" id="btn-filter">筛选</button>
   </div>
-  <div id="table-list"><p class="meta">请先刷新元数据</p></div>
+  <div id="table-list">
+    <p class="meta">请先点击上方「刷新元数据」。扫描完成后在此浏览表，打开详情并加入抽取计划。</p>
+  </div>
 </div>
 
 <div id="drawer" class="drawer">
@@ -66,6 +73,13 @@ function authHeaders(){
 }
 var currentScan=null, selected=null, planSource=null, planRevision=null;
 var LEGACY_DRAFT_KEY='d2a_extraction_draft';
+(function(){
+  var q=new URLSearchParams(location.search);
+  if(q.get('from')==='config'){
+    var b=document.getElementById('from-config-banner');
+    if(b) b.style.display='block';
+  }
+})();
 
 function draftKey(src){
   if(!src) throw new Error('draft key requires source');

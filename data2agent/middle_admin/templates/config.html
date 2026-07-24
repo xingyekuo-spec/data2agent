@@ -110,8 +110,9 @@
   <p class="card-lead">只验证 ERP 是否可达与元数据权限，不读取抽取表。本页不显示密码、DSN 或 Token 明文。</p>
   <div class="conn-box">
     <button type="button" id="btn-conn-test">测试数据库连接</button>
-    <a href="/metadata" id="link-metadata" style="margin-left:12px;display:none">连接成功，前往 ERP 元数据 →</a>
+    <a href="/metadata?from=config" id="link-metadata" style="margin-left:12px;display:none">下一步：前往元数据扫描选表 →</a>
     <p id="conn-result" class="meta-line"></p>
+    <p class="field-hint" style="margin-top:8px">抽取表不在本页编辑。连接成功后请到「元数据」扫描，再在「抽取表」确认并保存。</p>
   </div>
 </div>
 
@@ -227,8 +228,9 @@
         if (body.admin_token) sessionStorage.setItem('d2a_token', body.admin_token);
         var b = document.getElementById('restart-banner');
         b.style.display = 'block';
-        b.textContent = j.message || '配置已保存。请再用管理界面登录密码登录；抽取服务需启动或重启后生效。';
-        setTimeout(function () { location.href = '/status'; }, 800);
+        b.innerHTML = (j.message || '配置已保存。抽取服务需启动或重启后生效。') +
+          ' 下一步：<a href="/metadata?from=config">扫描 ERP 元数据并选表</a>（默认空表清单，未选表不会访问业务表）。';
+        setTimeout(function () { location.href = '/metadata?from=config'; }, 1200);
       });
   });
 
@@ -273,7 +275,8 @@
         currentRevision = j.revision || currentRevision;
         var b = document.getElementById('restart-banner');
         b.style.display = 'block';
-        b.innerHTML = '配置已保存。请重启抽取进程后生效（便携包可再双击 <code>data2agent.exe</code>；或重启 Windows 服务）。';
+        b.innerHTML = '配置已保存。请重启抽取进程后生效（便携包可再双击 <code>data2agent.exe</code>；或重启 Windows 服务）。' +
+          ' 若尚未选表，请到 <a href="/metadata?from=config">元数据</a> 扫描并加入抽取计划。';
       });
   });
 

@@ -7,7 +7,12 @@
 | `d2a-portable-platform-<版本>.zip` | 数据平台 |
 | `d2a-portable-middle-<版本>.zip` | 中间服务器 |
 
-两台机器必须使用同一 Release 版本。
+两台机器必须使用**同一 Release**（同一提交、同一版本、同一 `ingest_protocol_version`）。
+版本不一致时中间机同步会 fail-fast，不会产生半份数据。
+
+Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` 调用
+`scripts/check_portable_package.py`；中间机包须包含 `/metadata`、`/tables` 页面且无
+ERP 候选表清单。该检查是 Release 门槛。
 
 ## 2. 端口
 
@@ -31,7 +36,12 @@
    - ERP 连接信息
    - 与平台一致的 ingest Token
    - 管理 Token
-8. 确认两台机器托盘「运行状态」均为正常。
+8. **首次选表（默认空清单，未选表不会访问 ERP 业务表）**:
+   1. 在配置页「测试数据库连接」通过后，打开 `/metadata`（或点「下一步：元数据」）；
+   2. 「刷新元数据」扫描表结构，打开详情「加入抽取计划」；
+   3. 在 `/tables` 确认模式、业务键与水位，校验通过后保存；
+   4. 重启抽取进程使新 `tables` 生效。
+9. 确认两台机器托盘「运行状态」均为正常。
 
 ## 4. 验收
 
@@ -53,4 +63,5 @@ data\
 data\logs\
 ```
 
-凭据写入 `config\secrets.env`,配置写入 `config\*.yaml`。
+凭据写入 `config\secrets.env`,配置写入 `config\*.yaml`。新安装 `connect.yaml` 中
+`tables` 默认为空对象 `{}`。

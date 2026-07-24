@@ -4,6 +4,10 @@
 > 用于映射引擎、MCP 与回归测试开发。真实客户环境的表名 / 字段名 / 状态码
 > **以现场数据字典核对为准**,核对后将对应 binding 置为 `verified`。
 >
+> **运行时抽取配置不以本文为准。** 中间机默认 `tables: {}`；现场通过
+> `/metadata` 只读扫描当前连接库、在 `/tables` 确认业务键与水位后写入
+> `connect.yaml`。本文仅作参考形状，不随包作为候选表清单加载。
+>
 > 生成方式:`python -m data2agent.showroom.seed --dict-md docs/dict/digiwin_e10.md`
 > (来源:`data2agent/showroom/e10_schema.py`,请勿手改本文件)
 >
@@ -16,7 +20,8 @@
 
 ## 抽取配置(connect.yaml)
 
-物理表名和 watermark 字段应写入中间机的 `connect.yaml` 的 `tables` 段落。以下为参考库的 6 张基线表及推荐策略:
+物理表名和 watermark 字段应经现场元数据确认后写入中间机 `connect.yaml` 的 `tables`
+段落。以下为**参考库**的 6 张基线表及推荐策略（不是安装包内嵌清单）:
 
 | 表名 | 模式 | 水位字段 | 说明 |
 | --- | --- | --- | --- |

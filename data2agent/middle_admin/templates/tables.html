@@ -24,15 +24,20 @@
 
 <div class="card">
   <h2>抽取表计划</h2>
-  <p class="meta">确认模式、业务键与水位后原子保存。保存后 connector 从下一轮开始使用新配置。未保存修改会保留在本机草稿中。</p>
+  <p class="meta">确认模式、业务键与水位后原子保存。保存后 connector 从下一轮开始使用新配置。未保存修改会保留在本机草稿中。请勿在「配置」页寻找表编辑器。</p>
   <div class="row">
     <button type="button" id="btn-reload">重新加载</button>
     <button type="button" id="btn-validate">校验</button>
     <button type="button" id="btn-save">保存计划</button>
     <button type="button" id="btn-discard" class="danger" style="display:none">放弃草稿</button>
+    <a href="/metadata">前往元数据选表</a>
     <span id="rev" class="meta"></span>
   </div>
   <div id="msg" class="meta"></div>
+  <div id="empty-guide" class="warn" style="display:none;margin-top:10px">
+    当前抽取计划为空（新安装默认不访问任何 ERP 业务表）。请先到
+    <a href="/metadata">元数据</a> 扫描并「加入抽取计划」，再回到本页确认键/水位后保存。
+  </div>
   <div id="diff" class="warn" style="display:none;margin-top:10px"></div>
 </div>
 
@@ -130,15 +135,18 @@ function showDiff(diff){
 }
 function render(){
   document.getElementById('rev').textContent=revision?('revision '+revision.slice(0,18)+'…'+(dirty?' · 有未保存草稿':'')):'';
+  var names=Object.keys(tables).sort();
+  var guide=document.getElementById('empty-guide');
+  if(guide) guide.style.display=(!names.length && !dirty)?'block':'none';
   var html='';
-  Object.keys(tables).sort().forEach(function(name){
+  names.forEach(function(name){
     var s=tables[name]||{};
     var st=results[name];
     html+='<tr><td>'+esc((s.schema||'')+'.'+name)+'</td><td>'+esc(s.mode)+'</td><td>'+
       esc((s.key_columns||[]).join(', ')||'—')+'</td><td>'+esc(s.watermark||'—')+'</td><td>'+
       esc(st?st.status:'—')+'</td><td><button type="button" class="text" data-edit="'+esc(name)+'">编辑</button></td></tr>';
   });
-  document.getElementById('tbody').innerHTML=html||'<tr><td colspan="6" class="meta">暂无抽取表</td></tr>';
+  document.getElementById('tbody').innerHTML=html||'<tr><td colspan="6" class="meta">暂无抽取表 — 请先到元数据页选表</td></tr>';
 }
 function openEditor(name){
   editing=name;

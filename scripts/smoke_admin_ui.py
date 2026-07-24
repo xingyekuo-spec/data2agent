@@ -102,6 +102,29 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
             _fail(f"middle: GET {path} → {r.status_code}")
     _ok("middle: HTML pages /status /config /logs /metadata /tables → 200")
 
+    nav = client.get("/status", headers=h).text
+    if 'href="/metadata"' not in nav or 'href="/tables"' not in nav:
+        _fail("middle: nav missing /metadata or /tables")
+    _ok("middle: nav includes metadata + tables")
+
+    r = client.get("/api/extraction-tables", headers=h)
+    if r.status_code != 200:
+        _fail(f"middle: GET /api/extraction-tables → {r.status_code}")
+    et = r.json()
+    if "tables" not in et or not isinstance(et["tables"], dict):
+        _fail(f"middle: extraction-tables missing tables dict: {et}")
+    if "revision" not in et or "source" not in et:
+        _fail(f"middle: extraction-tables missing revision/source: {et}")
+    _ok("middle: GET /api/extraction-tables (tables may be empty)")
+
+    meta_page = client.get("/metadata", headers=h).text
+    tables_page = client.get("/tables", headers=h).text
+    if "d2a_extraction_draft:" not in meta_page or "d2a_extraction_draft:" not in tables_page:
+        _fail("middle: pages missing source-scoped draft key")
+    if "前往元数据" not in tables_page and 'href="/metadata"' not in tables_page:
+        _fail("middle: tables page missing metadata guidance")
+    _ok("middle: metadata/tables draft key + empty-plan guidance")
+
     r = client.get("/api/status", headers=h)
     if r.status_code != 200 or r.json().get("schedule_source") != "derived_from_yaml":
         _fail(f"middle: /api/status bad: {r.status_code} {r.text[:200]}")

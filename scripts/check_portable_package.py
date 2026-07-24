@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail a portable build when its shipped UI, templates, or ERP profile are stale."""
+"""Fail a portable build when shipped UI/templates or middle-admin pages are stale."""
 
 from __future__ import annotations
 
@@ -37,10 +37,21 @@ def _check_templates(portable: Path, expected: Path) -> None:
             _fail(f"dead-stock template missing: {required}")
 
 
+def _site_packages(portable: Path) -> Path:
+    # Windows embed: runtime/Lib/site-packages; allow Lib or lib
+    for candidate in (
+        portable / "runtime" / "Lib" / "site-packages",
+        portable / "runtime" / "lib" / "site-packages",
+    ):
+        if candidate.is_dir():
+            return candidate
+    _fail("runtime site-packages missing")
+
+
 def _check_platform_entry(portable: Path) -> None:
     if not (portable / "app" / "console-ui" / "dist" / "index.html").is_file():
         _fail("Vue Console dist/index.html missing")
-    app_py = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "console" / "app.py"
+    app_py = _site_packages(portable) / "data2agent" / "console" / "app.py"
     if not app_py.is_file():
         _fail("installed platform console module missing")
     app_code = app_py.read_text(encoding="utf-8")
@@ -48,6 +59,39 @@ def _check_platform_entry(portable: Path) -> None:
         _fail("installed platform wheel does not mount root Vue assets")
     if 'def legacy_v1_index()' not in app_code:
         _fail("installed platform wheel does not retain /v1 compatibility redirect")
+
+
+def _check_middle_admin(portable: Path) -> None:
+    pkg = _site_packages(portable) / "data2agent" / "middle_admin"
+    tpl = pkg / "templates"
+    required = ("metadata.html", "tables.html", "config.html", "status.html", "layout.html")
+    for name in required:
+        path = tpl / name
+        if not path.is_file():
+            _fail(f"middle_admin template missing: {name}")
+    meta = (tpl / "metadata.html").read_text(encoding="utf-8")
+    tables = (tpl / "tables.html").read_text(encoding="utf-8")
+    layout = (tpl / "layout.html").read_text(encoding="utf-8")
+    if "d2a_extraction_draft:" not in meta or "d2a_extraction_draft:" not in tables:
+        _fail("middle_admin draft key missing (expected d2a_extraction_draft:<source>)")
+    if "/api/extraction-tables" not in meta or "/api/extraction-tables" not in tables:
+        _fail("middle_admin pages missing /api/extraction-tables")
+    if 'href="/metadata"' not in layout or 'href="/tables"' not in layout:
+        _fail("middle_admin nav missing /metadata or /tables")
+
+    # 新安装不得随包携带 ERP 表名候选清单 / 旧 profile
+    for bad_name in ("erp_profile", "erp_profiles", "table_candidates"):
+        for hit in pkg.rglob("*"):
+            if not hit.is_file():
+                continue
+            if bad_name in hit.name.casefold():
+                _fail(f"forbidden ERP profile artifact in package: {hit}")
+    # 扫描已安装 middle_admin 源码字符串
+    for py in pkg.rglob("*.py"):
+        text = py.read_text(encoding="utf-8", errors="ignore")
+        for needle in ("whitelist_from_bindings", "extra_whitelist", "migrate_config_to_tables"):
+            if needle in text:
+                _fail(f"legacy symbol {needle!r} in {py}")
 
 
 def main() -> int:
@@ -64,6 +108,8 @@ def main() -> int:
         _fail("portable build label missing")
     if args.role == "platform":
         _check_platform_entry(portable)
+    else:
+        _check_middle_admin(portable)
     print("portable package check: OK")
     return 0
 
