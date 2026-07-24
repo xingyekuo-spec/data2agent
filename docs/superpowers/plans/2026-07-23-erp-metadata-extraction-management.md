@@ -763,7 +763,9 @@ showroom 迁移必须额外覆盖当前直接引用它的测试与入口，包�
 - 删除旧 ingest 请求模型和双协议分支；
 - 删除相关兼容测试、文档和部署脚本；
 - 测试环境重新生成 `connect.yaml`；
-- 平台包和中间机包必须来自同一 Release。
+- 每个正式 Release 仍从同一提交打出平台包与中间机包；
+- **现场升级**：协议未变时可只升级数据平台；仅在 `ingest_protocol_version`
+  bump 时要求中间机与平台同升（见 `docs/runbook/portable.md`）。
 
 ### 11.2 不设置灰度开关
 

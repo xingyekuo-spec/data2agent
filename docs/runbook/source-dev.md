@@ -103,6 +103,7 @@ sources:
 ```
 
 同步前中间机会校验平台 `ingest_protocol_version`（当前为 `"2"`），不一致立即失败。
+现场升级策略见 [portable.md](portable.md)：协议未变时可只升平台包。
 
 ## 7. 常见问题
 

@@ -7,8 +7,20 @@
 | `d2a-portable-platform-<版本>.zip` | 数据平台 |
 | `d2a-portable-middle-<版本>.zip` | 中间服务器 |
 
-两台机器必须使用**同一 Release**（同一提交、同一版本、同一 `ingest_protocol_version`）。
-版本不一致时中间机同步会 fail-fast，不会产生半份数据。
+### 升级策略（现场）
+
+典型现场：**数据平台会定期升级，中间机很少动。**
+
+硬约束只有一条——两边的 **`ingest_protocol_version` 必须一致**（当前为 `"2"`）。
+中间机同步前会校验平台健康接口；协议不一致时 fail-fast，不会产生半份数据。
+
+因此：
+
+- **协议未变**（Release 说明未写协议 bump）：可以只升级数据平台，中间机继续用现有包。
+- **协议 bump**（例如 `"2"` → `"3"`）：平台与中间机必须一起换到支持新协议号的包。
+- 首次安装仍建议从**同一次 Release**各取一个 zip，减少首装排障变量。
+
+每个正式 Release 仍会同时产出两个便携包（便于按需取用），不等于每次都必须两边都装。
 
 Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` 调用
 `scripts/check_portable_package.py`（扫描**整个**便携包根，禁止 `erp-configs` /
