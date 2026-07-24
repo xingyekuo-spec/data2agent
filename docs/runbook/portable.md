@@ -58,9 +58,11 @@
 因此：
 
 - **平台仍声明支持 v2**：只升级数据平台即可，既有 v2 中间机**无需升级**。
-- **破坏性协议变更**（平台不再接受某基线发送协议）：在提交内更新
-  `deploy/ingest_protocol_compat.json` 的 `unsupported`（含 reason / since_release），
-  CI 与 tag Release 正文会据此提示「中间机必须升级」。
+- **破坏性协议变更**（平台不再接受某基线发送协议）：基线
+  `field_baseline_send_protocols` **只增不减**（相对上一正式版本 / CI 基线 ref）；
+  须在同一提交的 `deploy/ingest_protocol_compat.json` 中把该协议留在基线并写入
+  `unsupported`（`reason` / `since_release`）。CI 与 tag Release 会与上一基线比对，
+  禁止把基线从 `["2"]` 静默改成 `["3"]` 来绕过声明；Release 正文会提示中间机必须升级。
 - 两个 zip **不必**来自同一次 Release；以各自 `BUILD-INFO.json` 与平台 health 为准。
 - 每个正式 tag 仍会打出两个便携包，便于按需取用。
 

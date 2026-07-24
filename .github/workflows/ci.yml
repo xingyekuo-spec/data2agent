@@ -65,6 +65,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
@@ -74,7 +76,17 @@ jobs:
       - run: python scripts/verify.py module backend
       - name: ingest 协议兼容门禁
         run: |
-          python scripts/check_ingest_compat.py
+          # 相对 PR 基线 / 推送前 commit / main 比对,禁止静默缩短 field_baseline
+          BASE_REF="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE_REF" ] || [ "$BASE_REF" = "null" ]; then
+            BASE_REF="${{ github.event.before }}"
+          fi
+          if [ -z "$BASE_REF" ] || [ "$BASE_REF" = "null" ] || \
+             [ "$(echo "$BASE_REF" | tr -d '0')" = "" ]; then
+            BASE_REF="origin/main"
+            git fetch --no-tags origin main 2>/dev/null || true
+          fi
+          python scripts/check_ingest_compat.py --base-ref "$BASE_REF"
           python -m pytest tests/test_ingest_protocol_compat.py -q --tb=short
 
   frontend:

@@ -156,6 +156,41 @@ def test_compat_script_requires_manifest_when_dropping_baseline(tmp_path: Path, 
     assert "v2" in notes
 
 
+def test_compat_script_rejects_silent_baseline_shrink(monkeypatch):
+    """将基线从 [2] 改成 [3] 且 supported=[3] 不得绕过 unsupported 声明。"""
+    import scripts.check_ingest_compat as mod
+
+    monkeypatch.setattr(mod, "SUPPORTED_INGEST_PROTOCOL_VERSIONS", ("3",))
+    monkeypatch.setattr(mod, "INGEST_PROTOCOL_VERSION", "3")
+    previous = {
+        "schema_version": 1,
+        "field_baseline_send_protocols": ["2"],
+        "unsupported": {},
+    }
+    shrunk = {
+        "schema_version": 1,
+        "field_baseline_send_protocols": ["3"],
+        "unsupported": {},
+    }
+    errors = mod.check_constants(shrunk, previous_manifest=previous)
+    assert errors
+    assert any("缩短" in e for e in errors)
+
+    proper = {
+        "schema_version": 1,
+        "field_baseline_send_protocols": ["2", "3"],
+        "unsupported": {
+            "2": {
+                "reason": "v3 replaces v2",
+                "since_release": "v0.6.0",
+            }
+        },
+    }
+    assert mod.check_constants(proper, previous_manifest=previous) == []
+    notes = mod.render_release_notes(release_version="v0.6.0", manifest=proper)
+    assert "破坏性发布" in notes
+
+
 def test_compat_script_rejects_stale_unsupported_still_in_supported():
     import scripts.check_ingest_compat as mod
 
@@ -166,6 +201,5 @@ def test_compat_script_rejects_stale_unsupported_still_in_supported():
             "2": {"reason": "gone", "since_release": "v0.6.0"},
         },
     }
-    # SUPPORTED still includes 2 → contradiction
     errors = mod.check_constants(stale)
     assert any("仍在" in e for e in errors)

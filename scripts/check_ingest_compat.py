@@ -8,12 +8,17 @@
 
 破坏性变更声明(可审计、随提交进仓):
   deploy/ingest_protocol_compat.json
-  - field_baseline_send_protocols:现场仍可能在跑的中间机发送协议基线
+  - field_baseline_send_protocols:现场发送协议基线(相对上一正式版本只增不减)
   - unsupported: { "<version>": { "reason": "...", "since_release": "vX.Y.Z" } }
-    仅当平台 SUPPORTED 不再包含某基线协议时填写;CI/tag Release 均读此文件。
+    平台 SUPPORTED 不再包含某基线协议时必须填写;CI/tag Release 均读此文件。
+
+基线防静默缩短:
+  与 --base-ref / D2A_COMPAT_BASE_REF / 自动探测的上一 ref 中的同路径文件比对,
+  当前 field_baseline_send_protocols 必须是上一版的超集。
 
 用法:
   python scripts/check_ingest_compat.py
+  python scripts/check_ingest_compat.py --base-ref origin/main
   python scripts/check_ingest_compat.py --emit-release-notes --release-version v0.5.1
 """
 
@@ -22,11 +27,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPAT_PATH = ROOT / "deploy" / "ingest_protocol_compat.json"
+COMPAT_REL = "deploy/ingest_protocol_compat.json"
+COMPAT_PATH = ROOT / COMPAT_REL
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -68,15 +75,105 @@ def unsupported_map(manifest: dict) -> dict[str, dict]:
     return out
 
 
-def dropped_undeclared(manifest: dict | None = None) -> list[str]:
-    """基线中已不在 SUPPORTED、且未在 manifest.unsupported 声明的协议。"""
-    man = manifest if manifest is not None else load_compat_manifest()
-    supported = set(SUPPORTED_INGEST_PROTOCOL_VERSIONS)
-    declared = set(unsupported_map(man))
-    return [v for v in field_baseline(man) if v not in supported and v not in declared]
+def _git_show(ref: str, rel_path: str = COMPAT_REL) -> str | None:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(ROOT), "show", f"{ref}:{rel_path}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
 
 
-def check_constants(manifest: dict | None = None) -> list[str]:
+def load_manifest_at_ref(ref: str) -> dict | None:
+    """读取某 git ref 上的兼容声明;文件不存在则返回 None。"""
+    raw = _git_show(ref)
+    if raw is None:
+        return None
+    data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError(f"{ref}:{COMPAT_REL} 须为 JSON object")
+    return data
+
+
+def _is_null_sha(value: str) -> bool:
+    return not value or set(value) <= {"0"}
+
+
+def resolve_base_ref(explicit: str | None = None) -> str | None:
+    """解析用于比对的上一基线 ref。
+
+    优先序:显式参数 → D2A_COMPAT_BASE_REF → 最近 v* tag → origin/main → main → HEAD~1。
+    """
+    if explicit and not _is_null_sha(explicit):
+        return explicit.strip()
+    env = os.environ.get("D2A_COMPAT_BASE_REF", "").strip()
+    if env and not _is_null_sha(env):
+        return env
+
+    candidates: list[str] = []
+    try:
+        tags = subprocess.run(
+            ["git", "-C", str(ROOT), "tag", "-l", "v*", "--sort=-v:refname"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if tags.returncode == 0:
+            for line in tags.stdout.splitlines():
+                tag = line.strip()
+                if tag:
+                    candidates.append(tag)
+                    break
+    except OSError:
+        pass
+
+    for name in ("origin/main", "main", "origin/master", "master"):
+        candidates.append(name)
+    candidates.append("HEAD~1")
+
+    for ref in candidates:
+        # 只要能解析出 commit 即可;文件缺失由 load_manifest_at_ref 处理
+        probe = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--verify", ref],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if probe.returncode == 0:
+            return ref
+    return None
+
+
+def check_baseline_superset(current: dict, previous: dict) -> list[str]:
+    """当前基线必须是上一版基线的超集(禁止静默缩短以绕过 unsupported)。"""
+    errors: list[str] = []
+    try:
+        cur = set(field_baseline(current))
+        prev = set(field_baseline(previous))
+    except ValueError as e:
+        return [str(e)]
+    removed = sorted(prev - cur)
+    if removed:
+        errors.append(
+            "field_baseline_send_protocols 相对上一基线被缩短:"
+            f" 移除了 {removed}。基线只增不减;"
+            "若平台停止支持某协议,须保留在基线中并写入 unsupported"
+            "({reason, since_release})"
+        )
+    return errors
+
+
+def check_constants(
+    manifest: dict | None = None,
+    *,
+    previous_manifest: dict | None = None,
+) -> list[str]:
     errors: list[str] = []
     try:
         man = manifest if manifest is not None else load_compat_manifest()
@@ -84,6 +181,9 @@ def check_constants(manifest: dict | None = None) -> list[str]:
         unsupported = unsupported_map(man)
     except (OSError, ValueError, json.JSONDecodeError) as e:
         return [str(e)]
+
+    if previous_manifest is not None:
+        errors.extend(check_baseline_superset(man, previous_manifest))
 
     if not SUPPORTED_INGEST_PROTOCOL_VERSIONS:
         errors.append("SUPPORTED_INGEST_PROTOCOL_VERSIONS 不能为空")
@@ -109,7 +209,7 @@ def check_constants(manifest: dict | None = None) -> list[str]:
         if ver not in baseline:
             errors.append(
                 f"unsupported 声明了 {ver!r},但 field_baseline_send_protocols "
-                "未包含该协议(请先纳入基线或删除声明)"
+                "未包含该协议(停止支持时须保留在基线中)"
             )
 
     missing = [v for v in baseline if v not in supported and v not in unsupported]
@@ -139,7 +239,6 @@ def render_release_notes(
         f"- 平台兼容中间机发送协议: **{supported}**",
         "",
     ]
-    # 相对本版仍「故意不支持」的基线协议 → 破坏性提示
     breaking = [
         v for v in field_baseline(man)
         if v in unsupported and v not in SUPPORTED_INGEST_PROTOCOL_VERSIONS
@@ -160,7 +259,6 @@ def render_release_notes(
             ]
         )
     else:
-        # 若基线中仍有受支持的旧发送协议,强调可只升平台
         legacy_ok = [v for v in field_baseline(man) if v in SUPPORTED_INGEST_PROTOCOL_VERSIONS]
         if legacy_ok:
             legacy = ", ".join(f"v{v}" for v in legacy_ok)
@@ -199,9 +297,30 @@ def main() -> int:
         type=Path,
         help="把 Release 兼容性段落写入该文件",
     )
+    parser.add_argument(
+        "--base-ref",
+        default="",
+        help="上一正式基线所在 git ref(默认 D2A_COMPAT_BASE_REF 或自动探测)",
+    )
+    parser.add_argument(
+        "--skip-base-ref",
+        action="store_true",
+        help="跳过与上一 ref 的基线超集比对(仅用于无 git 历史的单元夹具)",
+    )
     args = parser.parse_args()
 
-    errors = check_constants()
+    previous: dict | None = None
+    base_ref: str | None = None
+    if not args.skip_base_ref:
+        base_ref = resolve_base_ref(args.base_ref or None)
+        if base_ref:
+            try:
+                previous = load_manifest_at_ref(base_ref)
+            except (ValueError, json.JSONDecodeError) as e:
+                print(f"ingest compat check failed: {e}", file=sys.stderr)
+                return 1
+
+    errors = check_constants(previous_manifest=previous)
     if errors:
         for e in errors:
             print(f"ingest compat check failed: {e}", file=sys.stderr)
@@ -214,11 +333,12 @@ def main() -> int:
     if args.emit_release_notes:
         sys.stdout.write(notes)
     elif not args.write:
+        base_note = f", base_ref={base_ref}" if base_ref else ", base_ref=<none>"
         print(
             "ingest compat check: OK "
             f"(send/active={INGEST_PROTOCOL_VERSION}, "
             f"supported={list(SUPPORTED_INGEST_PROTOCOL_VERSIONS)}, "
-            f"manifest={COMPAT_PATH.relative_to(ROOT)})"
+            f"manifest={COMPAT_PATH.relative_to(ROOT)}{base_note})"
         )
     return 0
 

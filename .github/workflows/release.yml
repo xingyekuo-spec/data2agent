@@ -33,6 +33,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PY_VERSION }}
@@ -42,7 +43,15 @@ jobs:
       - run: python scripts/verify.py module backend
       - name: ingest 协议兼容门禁 + 旧中间机契约
         run: |
-          python scripts/check_ingest_compat.py
+          # tag 发布:与上一 v* tag 比对;若无 tag 则与 main 比对
+          BASE_REF="$(git tag -l 'v*' --sort=-v:refname | sed -n '1,2p' | tail -n 1)"
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # 当前就是最新 tag 时取倒数第二个;仅一个 tag 时回退 main
+            PREV="$(git tag -l 'v*' --sort=-v:refname | sed -n '2p')"
+            BASE_REF="${PREV:-origin/main}"
+          fi
+          git fetch --no-tags origin main 2>/dev/null || true
+          python scripts/check_ingest_compat.py --base-ref "$BASE_REF"
           python -m pytest tests/test_ingest_protocol_compat.py -q --tb=short
 
   # M6 Release 门槛:真实 SQL Server 元数据 / 业务键 / 快照替换必须在打包前通过。
