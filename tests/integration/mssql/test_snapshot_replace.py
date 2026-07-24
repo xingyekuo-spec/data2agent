@@ -31,9 +31,10 @@ def test_full_refresh_snapshot_removes_deleted_row(tmp_path: Path):
     sa.autocommit = True
     # 清理可能残留的临时行
     sa.execute("DELETE FROM CURRENCY WHERE CURRENCY_CODE = ?", TEMP_CODE)
+    next_id = sa.execute("SELECT ISNULL(MAX(Id), 0) + 1 FROM CURRENCY").fetchone()[0]
     sa.execute(
-        "INSERT INTO CURRENCY (CURRENCY_CODE, CURRENCY_NAME) VALUES (?, ?)",
-        TEMP_CODE, "snapshot-temp",
+        "INSERT INTO CURRENCY (Id, CURRENCY_CODE, CURRENCY_NAME) VALUES (?, ?, ?)",
+        next_id, TEMP_CODE, "snapshot-temp",
     )
 
     landing = LandingStore(tmp_path / "landing.sqlite")

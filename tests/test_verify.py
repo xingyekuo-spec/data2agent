@@ -68,6 +68,4 @@ def test_full_plan_parallelizes_backend_and_frontend_then_e2e():
     phases = verify.build_plan(args)
     assert [task.name for task in phases[0]] == ["Python", "Vue Console"]
     assert [task.name for task in phases[1]] == ["E2E Mock", "E2E Real"]
-    assert dict(phases[1][1].commands[0].env)["D2A_PYTHON"].endswith(
-        ".venv/bin/python"
-    )
+    assert dict(phases[1][1].commands[0].env)["D2A_PYTHON"] == verify._python()

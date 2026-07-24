@@ -327,6 +327,7 @@ def register_discoverer(
 
 def discoverer_default_schema(adapter: str) -> str:
     """解析已注册 discoverer 的默认 schema,不在调用方写死 adapter 分支。"""
+    _ensure_discoverers_registered()
     cap = DISCOVERER_REGISTRY.get(adapter)
     if cap is None:
         raise MetadataDiscoveryUnsupported(
@@ -336,11 +337,19 @@ def discoverer_default_schema(adapter: str) -> str:
 
 def build_discoverer(scfg: SourceConfig) -> MetadataDiscoverer:
     """按已注册能力构造 discoverer;未注册则抛稳定错误码。"""
+    _ensure_discoverers_registered()
     cap = DISCOVERER_REGISTRY.get(scfg.adapter)
     if cap is None:
         raise MetadataDiscoveryUnsupported(
             f"adapter '{scfg.adapter}' 不支持元数据发现")
     return cap.factory(scfg)
+
+
+def _ensure_discoverers_registered() -> None:
+    """懒加载注册表,避免调用方遗漏 ``import data2agent.connect.discoverers``。"""
+    if DISCOVERER_REGISTRY:
+        return
+    from . import discoverers as _discoverers  # noqa: F401
 
 
 def map_odbc_error(exc: BaseException) -> MetadataError:

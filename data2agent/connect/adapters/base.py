@@ -172,10 +172,12 @@ class SourceAdapter(ABC):
                 f"{table.name}: 运行键存在 NULL 值({row['c']} 行),"
                 f"键来源={table.key_source}")
         key_sql = ", ".join(self._quote(c) for c in table.pk)
+        # SQL Server 要求派生表必须有别名;SQLite 也接受。
         dup_sql = (
             f"SELECT COUNT(*) AS c FROM ("
             f"SELECT {key_sql} FROM {self._quote(table.name)} "
-            f"GROUP BY {key_sql} HAVING COUNT(*) > 1)"
+            f"GROUP BY {key_sql} HAVING COUNT(*) > 1"
+            f") AS d"
         )
         (dup,) = self._audited_fetch(dup_sql, action="validate_keys")
         if int(dup["c"]) > 0:

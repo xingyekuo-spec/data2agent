@@ -88,17 +88,11 @@ def test_schema_fingerprint_stable():
 
 
 def test_build_discoverer_unsupported():
-    scfg = SourceConfig(adapter="sqlite_readonly", path="x", tables={})
-    from data2agent.connect import metadata as md
-
-    old = dict(md.DISCOVERER_REGISTRY)
-    try:
-        md.DISCOVERER_REGISTRY.clear()
-        with pytest.raises(MetadataDiscoveryUnsupported) as ei:
-            build_discoverer(scfg)
-        assert ei.value.code == "metadata_discovery_unsupported"
-    finally:
-        md.DISCOVERER_REGISTRY.update(old)
+    scfg = SourceConfig.model_construct(
+        adapter="no_such_adapter", path="x", tables={})
+    with pytest.raises(MetadataDiscoveryUnsupported) as ei:
+        build_discoverer(scfg)
+    assert ei.value.code == "metadata_discovery_unsupported"
 
 
 def test_sqlite_discoverer_lists_and_details(sqlite_source):
