@@ -15,6 +15,33 @@ from pydantic import ValidationError
 
 from ..connect.config import SourceConfig, TableExtractConfig, config_revision, load_config
 from ..connect.metadata import MetadataDiscoveryUnsupported, MetadataError, build_discoverer
+from ..admin_common.suggestions import field_error
+
+
+_STATUS_SUGGESTIONS: dict[str, str] = {
+    "key_missing": "在「抽取表」页为该表填写 key_columns（业务键或主键）后重新校验",
+    "watermark_missing": "为 incremental 表指定水位列（通常为更新时间类字段）后重新校验",
+    "watermark_invalid": "更换合适的水位列，或在元数据页确认字段类型后重试",
+    "permission_denied": "为只读账号授予该表/元数据权限后重新扫描并校验",
+    "connection_failed": "先在「配置」页测试数据库连接，修复连通性问题后再校验",
+    "table_missing": "确认表名/schema，或先在「元数据」页刷新扫描后再选表",
+    "key_not_unique": "更换唯一键组合，或先清洗源表重复/空值后再作为抽取键",
+    "fingerprint_mismatch": "重新打开元数据扫描确认结构，再写回抽取计划",
+    "metadata_stale": "重新打开元数据扫描确认结构，再写回抽取计划",
+}
+
+
+def _mark(
+    entry: dict[str, Any],
+    status: str,
+    detail: str,
+    suggestion: str | None = None,
+) -> dict[str, Any]:
+    entry["status"] = status
+    entry["detail"] = detail
+    entry["suggestion"] = suggestion or _STATUS_SUGGESTIONS.get(
+        status, "修正配置后重新校验并保存")
+    return entry
 
 
 def _utc_now() -> str:
@@ -87,60 +114,54 @@ def validate_table_plan(
             "mode": spec.mode,
             "status": "ready",
             "detail": None,
+            "suggestion": None,
         }
-        # 结构层已由 TableExtractConfig 保证;此处补业务语义码
         if spec.mode == "incremental":
             if not spec.key_columns:
-                entry["status"] = "key_missing"
-                entry["detail"] = "incremental 必须配置 key_columns"
-                results.append(entry)
+                results.append(_mark(
+                    entry, "key_missing", "incremental 必须配置 key_columns"))
                 continue
             if not spec.watermark:
-                entry["status"] = "watermark_missing"
-                entry["detail"] = "incremental 必须配置 watermark"
-                results.append(entry)
+                results.append(_mark(
+                    entry, "watermark_missing", "incremental 必须配置 watermark"))
                 continue
 
         if discoverer is None:
             if not live:
-                # 仅结构校验:不冒充现场已验证
                 results.append(entry)
                 continue
             if discoverer_error == "permission_denied":
-                entry["status"] = "permission_denied"
-                entry["detail"] = "无元数据访问权限"
+                results.append(_mark(entry, "permission_denied", "无元数据访问权限"))
             else:
                 code = discoverer_error or "connection_failed"
-                entry["status"] = "connection_failed"
-                entry["detail"] = f"无法现场校验元数据({code})"
-            results.append(entry)
+                results.append(_mark(
+                    entry, "connection_failed",
+                    f"无法现场校验元数据({code})"))
             continue
 
         try:
             detail = discoverer.get_table(schema, name)
         except MetadataError as e:
             if e.code in ("table_not_found", "not_found"):
-                entry["status"] = "table_missing"
+                status = "table_missing"
             elif e.code == "permission_denied":
-                entry["status"] = "permission_denied"
+                status = "permission_denied"
             else:
-                entry["status"] = "table_missing"
-            entry["detail"] = str(e)[:300]
-            results.append(entry)
+                status = "table_missing"
+            results.append(_mark(
+                entry, status, str(e)[:300], getattr(e, "suggestion", None)))
             continue
         except Exception as e:
-            entry["status"] = "table_missing"
-            entry["detail"] = str(e)[:300]
-            results.append(entry)
+            results.append(_mark(entry, "table_missing", str(e)[:300]))
             continue
 
         cols = {c.name for c in detail.columns}
         if spec.key_columns:
             missing = [c for c in spec.key_columns if c not in cols]
             if missing:
-                entry["status"] = "key_missing"
-                entry["detail"] = f"键列不存在: {', '.join(missing)}"
-                results.append(entry)
+                results.append(_mark(
+                    entry, "key_missing",
+                    f"键列不存在: {', '.join(missing)}"))
                 continue
             try:
                 check = discoverer.check_key(
@@ -149,44 +170,39 @@ def validate_table_plan(
                     code = "key_not_unique"
                     if check.code == "key_missing":
                         code = "key_missing"
-                    entry["status"] = code
-                    entry["detail"] = check.detail or check.code
-                    results.append(entry)
+                    results.append(_mark(
+                        entry, code, check.detail or check.code))
                     continue
             except Exception as e:
-                entry["status"] = "key_not_unique"
-                entry["detail"] = str(e)[:300]
-                results.append(entry)
+                results.append(_mark(entry, "key_not_unique", str(e)[:300]))
                 continue
 
         if spec.watermark:
             if spec.watermark not in cols:
-                entry["status"] = "watermark_invalid"
-                entry["detail"] = f"水位列不存在: {spec.watermark}"
-                results.append(entry)
+                results.append(_mark(
+                    entry, "watermark_invalid",
+                    f"水位列不存在: {spec.watermark}"))
                 continue
             try:
                 wm = discoverer.check_watermark(schema, name, spec.watermark)
                 if not wm.ok:
-                    entry["status"] = "watermark_invalid"
-                    entry["detail"] = wm.detail or wm.code
-                    results.append(entry)
+                    results.append(_mark(
+                        entry, "watermark_invalid", wm.detail or wm.code))
                     continue
             except Exception as e:
-                entry["status"] = "watermark_invalid"
-                entry["detail"] = str(e)[:300]
-                results.append(entry)
+                results.append(_mark(entry, "watermark_invalid", str(e)[:300]))
                 continue
 
         if spec.schema_fingerprint and detail.schema_fingerprint:
             if spec.schema_fingerprint != detail.schema_fingerprint:
-                entry["status"] = "metadata_stale"
-                entry["detail"] = "结构指纹与最近扫描不一致,请重新确认"
-                results.append(entry)
+                results.append(_mark(
+                    entry, "metadata_stale",
+                    "结构指纹与最近扫描不一致,请重新确认"))
                 continue
 
         entry["status"] = "ready"
         results.append(entry)
+
 
     if discoverer is not None and hasattr(discoverer, "close"):
         try:
@@ -211,7 +227,11 @@ def replace_source_tables(
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     sources = data.get("sources")
     if not isinstance(sources, dict) or source not in sources:
-        return False, [{"field": "source", "message": f"配置中没有源 '{source}'"}], config_revision(path)
+        return False, [field_error(
+            "source",
+            f"配置中没有源 '{source}'",
+            "在「配置」页确认 sources 名称，或先完成首次配置",
+        )], config_revision(path)
 
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup_path = path.with_suffix(path.suffix + f".bak-{timestamp}")
@@ -250,7 +270,11 @@ def replace_source_tables(
             os.close(tmp_fd)
         except Exception:
             pass
-        return False, [{"field": "", "message": str(e)}], config_revision(path)
+        return False, [field_error(
+            "",
+            str(e),
+            "根据报错修正 connect.yaml / 抽取表计划后重试保存",
+        )], config_revision(path)
 
     return True, [], config_revision(path)
 

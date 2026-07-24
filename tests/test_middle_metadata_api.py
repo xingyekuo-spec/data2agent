@@ -118,6 +118,7 @@ def test_metadata_tables_requires_scan(meta_env):
     r = client.get("/api/metadata/tables", headers=h)
     assert r.status_code == 409
     assert r.json()["detail"]["code"] == "metadata_stale"
+    assert r.json()["detail"].get("suggestion")
 
 
 def test_running_scan_does_not_hide_completed_cache(meta_env):
@@ -136,6 +137,7 @@ def test_running_scan_does_not_hide_completed_cache(meta_env):
     busy = client.post("/api/metadata/scans", headers=h, json={})
     assert busy.status_code == 409
     assert busy.json()["detail"]["code"] == "scan_busy"
+    assert busy.json()["detail"].get("suggestion")
     middle_app._SCAN_STORE.fail(blocking.scan_id, "cancelled", "test")
 
 

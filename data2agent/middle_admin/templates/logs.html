@@ -53,9 +53,11 @@
     fetch(url, {headers: authHeaders()})
       .then(function (r) { return r.json(); })
       .then(function (body) {
-        output.textContent = body.ok ? (body.text || '(空)') : (body.text || '读取失败');
+        output.textContent = body.ok
+          ? (body.text || '(空)')
+          : ((body.text || '读取失败') + (body.suggestion ? ('\n建议：' + body.suggestion) : ''));
       })
-      .catch(function () { output.textContent = '请求失败'; });
+      .catch(function () { output.textContent = '请求失败\n建议：检查管理进程是否在运行，以及登录密码是否有效'; });
   }
 
   document.getElementById('log-refresh').addEventListener('click', loadLogs);

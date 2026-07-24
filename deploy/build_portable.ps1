@@ -168,15 +168,21 @@ $buildInfo = [ordered]@{
 if ($Role -eq 'platform') {
     $protocolJson = & $runtimePy -c @"
 import json
-from data2agent.ingest.protocol import INGEST_PROTOCOL_VERSION, SUPPORTED_INGEST_PROTOCOL_VERSIONS
+from data2agent.ingest.protocol import (
+    INGEST_PROTOCOL_VERSION,
+    LEGACY_HEALTH_INGEST_PROTOCOL_VERSION,
+    SUPPORTED_INGEST_PROTOCOL_VERSIONS,
+)
 print(json.dumps({
     'active_ingest_protocol_version': INGEST_PROTOCOL_VERSION,
+    'legacy_health_ingest_protocol_version': LEGACY_HEALTH_INGEST_PROTOCOL_VERSION,
     'supported_ingest_protocol_versions': list(SUPPORTED_INGEST_PROTOCOL_VERSIONS),
 }))
 "@
     if ($LASTEXITCODE -ne 0) { throw 'cannot read platform ingest protocol declaration' }
     $proto = ConvertFrom-Json $protocolJson
     $buildInfo['active_ingest_protocol_version'] = $proto.active_ingest_protocol_version
+    $buildInfo['legacy_health_ingest_protocol_version'] = $proto.legacy_health_ingest_protocol_version
     $buildInfo['supported_ingest_protocol_versions'] = $proto.supported_ingest_protocol_versions
 } else {
     $sendVer = & $runtimePy -c "from data2agent.ingest.protocol import INGEST_PROTOCOL_VERSION; print(INGEST_PROTOCOL_VERSION)"

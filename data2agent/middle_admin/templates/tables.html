@@ -144,7 +144,8 @@ function render(){
     var st=results[name];
     html+='<tr><td>'+esc((s.schema||'')+'.'+name)+'</td><td>'+esc(s.mode)+'</td><td>'+
       esc((s.key_columns||[]).join(', ')||'—')+'</td><td>'+esc(s.watermark||'—')+'</td><td>'+
-      esc(st?st.status:'—')+'</td><td><button type="button" class="text" data-edit="'+esc(name)+'">编辑</button></td></tr>';
+      esc(st?(st.status+(st.suggestion?(' · '+st.suggestion):'')):'—')+
+      '</td><td><button type="button" class="text" data-edit="'+esc(name)+'">编辑</button></td></tr>';
   });
   document.getElementById('tbody').innerHTML=html||'<tr><td colspan="6" class="meta">暂无抽取表 — 请先到元数据页选表</td></tr>';
 }
@@ -199,7 +200,7 @@ async function reload(opts){
   }
   var r=await fetch('/api/extraction-tables',{headers:authHeaders()});
   var body=await r.json();
-  if(!r.ok){ setMsg(JSON.stringify(body), false); return; }
+  if(!r.ok){ setMsg(typeof formatApiError==='function'?formatApiError(body,'加载失败'):JSON.stringify(body), false); return; }
   applyServerBody(body, opts);
   if(!opts.preferDraft || !dirty) setMsg('已加载 '+Object.keys(tables).length+' 张表', true);
 }
@@ -210,7 +211,11 @@ async function validatePlan(){
   results={}; (body.results||[]).forEach(function(x){ results[x.table]=x; });
   render();
   showDiff(body.diff);
-  setMsg(body.ok?'校验通过':'校验未通过', !!body.ok);
+  setMsg(body.ok?'校验通过':(typeof formatApiError==='function'
+    ? formatApiError({errors:(body.results||[]).filter(function(x){return x.status!=='ready';}).map(function(x){
+        return {field:x.table,message:(x.status||'')+': '+(x.detail||''),suggestion:x.suggestion};
+      })}, '校验未通过')
+    : '校验未通过'), !!body.ok);
   return body;
 }
 async function savePlan(){
@@ -229,9 +234,16 @@ async function savePlan(){
   var r=await fetch('/api/extraction-tables',{method:'PUT',headers:authHeaders(),
     body:JSON.stringify({tables:tables, revision:revision})});
   var saved=await r.json().catch(function(){return {};});
-  if(r.status===409){ setMsg('配置已被其他会话修改，请重新加载后提交', false); return; }
+  if(r.status===409){
+    setMsg(typeof formatApiError==='function'
+      ? formatApiError(saved,'配置已被其他会话修改，请重新加载后提交')
+      : '配置已被其他会话修改，请重新加载后提交', false);
+    return;
+  }
   if(!r.ok || !saved.ok){
-    setMsg((saved.errors||[]).map(function(e){return e.field+': '+e.message;}).join('\n')||JSON.stringify(saved), false);
+    setMsg(typeof formatApiError==='function'
+      ? formatApiError(saved,'保存失败')
+      : ((saved.errors||[]).map(function(e){return e.field+': '+e.message;}).join('\n')||JSON.stringify(saved)), false);
     if(saved.results){ results={}; saved.results.forEach(function(x){ results[x.table]=x; }); render(); }
     return;
   }
@@ -277,7 +289,10 @@ document.getElementById('btn-keycheck').onclick=async function(){
   var r=await fetch('/api/metadata/key-check',{method:'POST',headers:authHeaders(),
     body:JSON.stringify({schema:schema, table:editing, columns:keys})});
   var body=await r.json();
-  document.getElementById('ed-msg').textContent=body.ok?'键校验通过':((body.detail||body.code||JSON.stringify(body)));
+  document.getElementById('ed-msg').textContent=body.ok
+    ?'键校验通过'
+    :(typeof formatApiError==='function'?formatApiError(body, body.detail||body.code||'键校验失败')
+      :((body.detail||body.code||JSON.stringify(body))+(body.suggestion?(' — 建议：'+body.suggestion):'')));
 };
 reload({preferDraft:true});
 </script>

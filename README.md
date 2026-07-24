@@ -54,7 +54,7 @@ python -m data2agent.console --landing landing/factory.sqlite --templates templa
 
 ## 边界(诚实声明)
 
-data2agent 当前基线为 **`v0.5.0`**:在 `v0.3.0` 可观察/可验证能力之上,已完成 ERP 元数据发现、
+data2agent 当前基线为 **`v0.5.1`**:在 `v0.3.0` 可观察/可验证能力之上,已完成 ERP 元数据发现、
 抽取表显式管理、配置业务键、复合键增量、`full_refresh` 快照、中间机 `/metadata` `/tables`,
 以及产品包展厅/Mock 清理。它适合在工厂做**受控只读影子试运行**,但还未宣告正式生产试点就绪。
 正式试点前仍需完成 **v0.4 跨机可靠性**(批次回执、E6b 对账、生产加密传输、凭据治理、

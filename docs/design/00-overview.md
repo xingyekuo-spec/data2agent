@@ -45,7 +45,7 @@ MCP 网关:query_objects / query_metrics,看/说/做 治理档位     → docs 0
 
 ## 4. 产品范围(诚实声明)
 
-data2agent 当前基线为 **`v0.5.0`**:抽取框架、国产 ERP 参考连接器、元模型与模板、
+data2agent 当前基线为 **`v0.5.1`**:抽取框架、国产 ERP 参考连接器、元模型与模板、
 MCP 网关“看/说”档、管理界面、E10-like 测试数据链、Vue Console、数据集原子发布、映射 Preview、
 字段血缘、MCP 会话证据、一键验收,以及中间机元数据发现与抽取表管理均在本仓库内,可运行、可审计。
 它适合做受控只读影子试运行,但尚未宣告达到真实工厂正式生产试点就绪:
@@ -78,7 +78,7 @@ MCP 网关“看/说”档、管理界面、E10-like 测试数据链、Vue Conso
 | ③′ 现场部署形态 | 便携包(`data2agent.exe`)+ 平台 Vue Console + 中间机轻量管理界面 + 推送 runbook | ✅ |
 | ④ v0.2 可观察 | Vue Console + 契约 + 管道/运行/数据/MCP 可视化 | ✅ |
 | ⑤ v0.3 可验证 | 字段血缘 + 映射 preview + 数据集版本 + 会话证据 + 一键验收 | ✅ (`v0.3.0`) |
-| ⑤′ v0.5 ERP 元数据 | 元数据发现 + 抽取表页 + 业务键/复合增量 + full_refresh 快照 + 去展厅/Mock | ✅ (`v0.5.0`) |
+| ⑤′ v0.5 ERP 元数据 | 元数据发现 + 抽取表页 + 业务键/复合增量 + full_refresh 快照 + 去展厅/Mock | ✅ (`v0.5.1`) |
 | ⑥ v0.4 可试点 | 批次回执 + E6b + 加密传输 + SQLite 基线 | 待建 |
 | ⑦ 现场验证 | 进厂核对字典、binding 置 verified、连续运行并验收 | 未开始(依赖 v0.4 与外部条件) |
 | 持续 | 模板 5→18(按需)、金蝶 / 用友 binding(社区)、达到阈值后评估 PG | 拉动式 |
@@ -92,7 +92,7 @@ MCP 网关“看/说”档、管理界面、E10-like 测试数据链、Vue Conso
 - [05 运维控制台](05-console.md) —— 平台 Vue Console 与中间机管理入口
 - [06 中间机抽取表配置](06-middle-table-extraction-config.md) —— 元数据发现与显式表计划
 - [07 呆滞库存 MCP](07-dead-stock-mcp.md) —— 呆滞库存对象、指标、确定性口径与验收边界
-- [路线图](../roadmap.md) —— `v0.5.0` 基线与 v0.4 可试点门槛
+- [路线图](../roadmap.md) —— `v0.5.1` 基线与 v0.4 可试点门槛
 - 现场 runbook:[便携包](../runbook/portable.md) · [推送验收](../runbook/push-validation.md)
 - [E10 参考表字典](../dict/digiwin_e10.md) —— 生成文件,勿手改
 - 接单评审链路断言见 `tests/test_mcp_core.py`（fixtures 辅助）

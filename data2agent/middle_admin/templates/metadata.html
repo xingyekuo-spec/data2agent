@@ -164,7 +164,8 @@ async function startScan(){
   document.getElementById('scan-err').textContent='';
   var r=await fetch('/api/metadata/scans',{method:'POST',headers:authHeaders(),body:'{}'});
   var body=await r.json();
-  if(!r.ok){ document.getElementById('scan-err').textContent=body.detail||JSON.stringify(body); return; }
+  if(!r.ok){ document.getElementById('scan-err').textContent=
+    (typeof formatApiError==='function'?formatApiError(body,'扫描失败'):(body.detail||JSON.stringify(body))); return; }
   currentScan=body.scan_id;
   rememberSource(body.source);
   document.getElementById('scan-meta').textContent='扫描中 '+esc(currentScan)+'…';
@@ -180,7 +181,11 @@ async function pollScan(){
     (body.finished_at?(' · 完成于 '+esc(body.finished_at)):'');
   if(body.status==='running'){ setTimeout(pollScan,800); return; }
   if(body.status==='failed'||body.status==='timeout'){
-    document.getElementById('scan-err').textContent=body.error_detail||body.error_code||body.status;
+    document.getElementById('scan-err').textContent=
+      (typeof formatApiError==='function'
+        ? formatApiError(body, body.error_detail||body.error_code||body.status)
+        : ((body.error_detail||body.error_code||body.status)+
+           (body.error_suggestion||body.suggestion?(' — 建议：'+(body.error_suggestion||body.suggestion)):'')));
   }
   loadTables();
 }
@@ -197,7 +202,9 @@ async function loadTables(){
   var r=await fetch('/api/metadata/tables?'+qs.toString(),{headers:authHeaders()});
   var body=await r.json();
   if(!r.ok){
-    document.getElementById('table-list').innerHTML='<p class="err">'+(body.detail&&body.detail.detail?esc(body.detail.detail):esc(JSON.stringify(body)))+'</p>';
+    document.getElementById('table-list').innerHTML='<p class="err">'+
+      esc(typeof formatApiError==='function'?formatApiError(body,'加载失败'):
+        (body.detail&&body.detail.detail?body.detail.detail:JSON.stringify(body)))+'</p>';
     return;
   }
   rememberSource(body.source);

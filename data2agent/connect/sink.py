@@ -135,7 +135,9 @@ class HttpPushSink:
                 f"{self.url}/ingest/health", self.token, self.timeout)
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
             raise ProtocolVersionError(
-                f"无法读取平台 ingest 协议版本:{e}") from e
+                f"无法读取平台 ingest 协议版本:{e}。"
+                f"建议：确认 sink.url 可达、Token 有效，以及平台 ingest 服务已启动"
+            ) from e
         mine = INGEST_PROTOCOL_VERSION
         supported = health.get("supported_ingest_protocol_versions")
         if isinstance(supported, list) and supported:
@@ -143,7 +145,10 @@ class HttpPushSink:
             if mine not in supported_s:
                 raise ProtocolVersionError(
                     f"ingest 协议不兼容:中间机发送 {mine}, "
-                    f"平台支持 {supported_s}")
+                    f"平台支持 {supported_s}。"
+                    f"建议：按 Release 说明同步升级平台与中间机，"
+                    f"或换用平台仍支持的中间机包版本"
+                )
         else:
             remote = health.get("active_ingest_protocol_version")
             if remote is None:
@@ -151,7 +156,9 @@ class HttpPushSink:
             if remote != mine:
                 raise ProtocolVersionError(
                     f"ingest 协议版本不一致:中间机要求 {mine}, "
-                    f"平台返回 {remote!r}")
+                    f"平台返回 {remote!r}。"
+                    f"建议：升级平台或中间机使协议号一致后再同步"
+                )
         self._protocol_checked = True
 
     def _post_with_retry(self, path: str, payload: dict) -> None:
@@ -163,7 +170,10 @@ class HttpPushSink:
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last = e
                 time.sleep(min(2 ** attempt, 10))
-        raise RuntimeError(f"推送 {path} 失败(重试 {self.retries} 次):{last}")
+        raise RuntimeError(
+            f"推送 {path} 失败(重试 {self.retries} 次):{last}。"
+            f"建议：检查平台接收端点、网络与 ingest Token 后重试"
+        )
 
     def _base_payload(self, source: str, info: TableInfo, mode: SyncMode,
                       snapshot_id: str | None) -> dict:

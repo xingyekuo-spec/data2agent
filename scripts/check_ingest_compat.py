@@ -39,6 +39,7 @@ if str(ROOT) not in sys.path:
 
 from data2agent.ingest.protocol import (  # noqa: E402
     INGEST_PROTOCOL_VERSION,
+    LEGACY_HEALTH_INGEST_PROTOCOL_VERSION,
     SUPPORTED_INGEST_PROTOCOL_VERSIONS,
 )
 
@@ -154,15 +155,15 @@ def check_baseline_superset(current: dict, previous: dict) -> list[str]:
     """当前基线必须是上一版基线的超集(禁止静默缩短以绕过 unsupported)。"""
     errors: list[str] = []
     try:
-        cur = set(field_baseline(current))
-        prev = set(field_baseline(previous))
+        cur = field_baseline(current)
+        prev = field_baseline(previous)
     except ValueError as e:
         return [str(e)]
-    removed = sorted(prev - cur)
-    if removed:
+    removed = sorted(set(prev) - set(cur))
+    if removed or cur[:len(prev)] != prev:
         errors.append(
             "field_baseline_send_protocols 相对上一基线被缩短:"
-            f" 移除了 {removed}。基线只增不减;"
+            f" 移除了 {removed} 或改变了既有顺序。基线只增不减;"
             "若平台停止支持某协议,须保留在基线中并写入 unsupported"
             "({reason, since_release})"
         )
@@ -194,6 +195,15 @@ def check_constants(
         )
 
     supported = set(SUPPORTED_INGEST_PROTOCOL_VERSIONS)
+    active_baseline = next((v for v in baseline if v in supported), None)
+    if active_baseline is None:
+        errors.append("平台未支持任何现场基线发送协议")
+    elif LEGACY_HEALTH_INGEST_PROTOCOL_VERSION != active_baseline:
+        errors.append(
+            "LEGACY_HEALTH_INGEST_PROTOCOL_VERSION 必须等于最早仍受支持的"
+            f"现场基线协议 {active_baseline!r}; got "
+            f"{LEGACY_HEALTH_INGEST_PROTOCOL_VERSION!r}"
+        )
     for ver, meta in unsupported.items():
         reason = meta.get("reason")
         since = meta.get("since_release")

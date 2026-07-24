@@ -12,6 +12,8 @@ from typing import Any, Callable
 
 import yaml
 
+from .suggestions import field_error
+
 MIDDLE_EDITABLE = {
     "templates",
     "landing",
@@ -106,6 +108,10 @@ def merge_whitelist_and_save(
             os.close(tmp_fd)
         except Exception:
             pass
-        return False, [{"field": "", "message": str(e)}]
+        return False, [field_error(
+            "",
+            str(e),
+            "根据报错修正 connect.yaml 中对应字段后重新保存",
+        )]
 
     return True, []

@@ -85,6 +85,21 @@ def test_legacy_middle_equality_against_current_platform_health(tmp_path: Path):
     legacy_ensure(health, mine="2")
 
 
+def test_legacy_middle_survives_new_active_when_v2_is_still_supported(monkeypatch):
+    """平台 active 升至 v3 但仍支持 v2 时，已部署 v2 中间机可继续推送。"""
+    import data2agent.ingest.protocol as protocol
+
+    monkeypatch.setattr(protocol, "INGEST_PROTOCOL_VERSION", "3")
+    monkeypatch.setattr(protocol, "SUPPORTED_INGEST_PROTOCOL_VERSIONS", ("2", "3"))
+    monkeypatch.setattr(protocol, "LEGACY_HEALTH_INGEST_PROTOCOL_VERSION", "2")
+    health = protocol.health_protocol_fields()
+
+    assert health["active_ingest_protocol_version"] == "3"
+    assert health["supported_ingest_protocol_versions"] == ["2", "3"]
+    # 模拟上一版中间机：它只读取遗留字段，不知道 supported 列表。
+    assert health["ingest_protocol_version"] == "2"
+
+
 def test_legacy_middle_fails_if_platform_drops_v2():
     def legacy_ensure(health_body: dict, mine: str = "2") -> None:
         remote = health_body.get("ingest_protocol_version")
@@ -131,6 +146,7 @@ def test_compat_script_requires_manifest_when_dropping_baseline(tmp_path: Path, 
 
     monkeypatch.setattr(mod, "SUPPORTED_INGEST_PROTOCOL_VERSIONS", ("3",))
     monkeypatch.setattr(mod, "INGEST_PROTOCOL_VERSION", "3")
+    monkeypatch.setattr(mod, "LEGACY_HEALTH_INGEST_PROTOCOL_VERSION", "3")
     bare = {
         "schema_version": 1,
         "field_baseline_send_protocols": ["2", "3"],
@@ -156,12 +172,31 @@ def test_compat_script_requires_manifest_when_dropping_baseline(tmp_path: Path, 
     assert "v2" in notes
 
 
+def test_compat_script_keeps_legacy_health_on_oldest_supported_baseline(monkeypatch):
+    import scripts.check_ingest_compat as mod
+
+    manifest = {
+        "schema_version": 1,
+        "field_baseline_send_protocols": ["2", "3"],
+        "unsupported": {},
+    }
+    monkeypatch.setattr(mod, "SUPPORTED_INGEST_PROTOCOL_VERSIONS", ("2", "3"))
+    monkeypatch.setattr(mod, "INGEST_PROTOCOL_VERSION", "3")
+    monkeypatch.setattr(mod, "LEGACY_HEALTH_INGEST_PROTOCOL_VERSION", "2")
+    assert mod.check_constants(manifest) == []
+
+    monkeypatch.setattr(mod, "LEGACY_HEALTH_INGEST_PROTOCOL_VERSION", "3")
+    errors = mod.check_constants(manifest)
+    assert any("最早仍受支持" in error for error in errors)
+
+
 def test_compat_script_rejects_silent_baseline_shrink(monkeypatch):
     """将基线从 [2] 改成 [3] 且 supported=[3] 不得绕过 unsupported 声明。"""
     import scripts.check_ingest_compat as mod
 
     monkeypatch.setattr(mod, "SUPPORTED_INGEST_PROTOCOL_VERSIONS", ("3",))
     monkeypatch.setattr(mod, "INGEST_PROTOCOL_VERSION", "3")
+    monkeypatch.setattr(mod, "LEGACY_HEALTH_INGEST_PROTOCOL_VERSION", "3")
     previous = {
         "schema_version": 1,
         "field_baseline_send_protocols": ["2"],

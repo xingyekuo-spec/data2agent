@@ -47,6 +47,32 @@
 </main>
 <script src="{{ static_url }}/htmx.min.js"></script>
 <script>
+/** 把 API 错误体格式化为「详情 — 建议：…」文案。 */
+function formatApiError(body, fallback) {
+  if (!body) return fallback || '请求失败';
+  if (body.errors && body.errors.length) {
+    return body.errors.map(function (e) {
+      var m = (e.field ? e.field + ': ' : '') + (e.message || '');
+      return e.suggestion ? (m + ' — 建议：' + e.suggestion) : m;
+    }).join('\n') || fallback || '请求失败';
+  }
+  var d = body.detail;
+  var detail = null;
+  var suggestion = body.suggestion || body.error_suggestion || null;
+  if (typeof d === 'string') {
+    detail = d;
+  } else if (d && typeof d === 'object') {
+    detail = d.detail || d.message || null;
+    suggestion = suggestion || d.suggestion || null;
+  }
+  if (!detail) {
+    detail = body.message || body.error_detail || body.text || body.error || fallback || '请求失败';
+  }
+  if (!suggestion && body.error) {
+    suggestion = null;
+  }
+  return suggestion ? (detail + ' — 建议：' + suggestion) : detail;
+}
 document.body.addEventListener('htmx:configRequest', function (e) {
   var token = sessionStorage.getItem('d2a_token');
   if (token) {

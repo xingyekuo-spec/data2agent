@@ -16,6 +16,7 @@
 | `application_version` | 应用包版本（平台/中间机可各自独立升级） |
 | `send_ingest_protocol_version` | **中间机包**实际发送的协议（写入中间机 `BUILD-INFO.json`） |
 | `supported_ingest_protocol_versions` | **平台**接受的协议列表（健康接口 + 平台 `BUILD-INFO.json`） |
+| `ingest_protocol_version` | 为旧中间机保留的 health 字段；在旧协议仍受支持时保持其最早基线值，不等于 active |
 
 平台 `/ingest/health` 示例:
 
@@ -30,7 +31,7 @@
 
 中间机只要自己发送的协议落在平台 `supported_ingest_protocol_versions` 中即可推送；
 否则 fail-fast，不会产生半份数据。旧中间机若只认 `ingest_protocol_version` 精确相等，
-在平台仍以 v2 为 active 时同样可用。
+平台即使 active 已升至 v3，只要仍支持 v2 也会继续返回 v2，因此仍可推送。
 
 包内 `BUILD-INFO.json`（按角色不同字段）:
 
@@ -41,6 +42,7 @@
   "release_version": "v0.5.1",
   "role": "platform",
   "active_ingest_protocol_version": "2",
+  "legacy_health_ingest_protocol_version": "2",
   "supported_ingest_protocol_versions": ["2"],
   "commit": "..."
 }

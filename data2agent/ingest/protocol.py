@@ -21,6 +21,12 @@ INGEST_PROTOCOL_VERSION = "2"
 # 从列表移除现场仍可能在跑的协议前,须更新 deploy/ingest_protocol_compat.json。
 SUPPORTED_INGEST_PROTOCOL_VERSIONS: tuple[str, ...] = ("2",)
 
+# 供已发布中间机读取的历史 health 字段。旧版本只比较
+# ``ingest_protocol_version``，因此只要 v2 仍被平台接受，这里就必须保留 v2；
+# 新中间机则读取 supported 列表。移除 v2 后，兼容门禁会要求本值切换到下一
+# 个仍受支持的现场基线协议。
+LEGACY_HEALTH_INGEST_PROTOCOL_VERSION = "2"
+
 
 def is_supported_protocol(version: str | None) -> bool:
     return version is not None and version in SUPPORTED_INGEST_PROTOCOL_VERSIONS
@@ -29,11 +35,11 @@ def is_supported_protocol(version: str | None) -> bool:
 def health_protocol_fields() -> dict[str, object]:
     """平台 /ingest/health 的协议相关字段。
 
-    保留 `ingest_protocol_version`(= active)供旧中间机精确比对;
+    `ingest_protocol_version` 是旧中间机的兼容字段，独立于 active；
     新中间机优先读 `supported_ingest_protocol_versions`。
     """
     return {
-        "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+        "ingest_protocol_version": LEGACY_HEALTH_INGEST_PROTOCOL_VERSION,
         "active_ingest_protocol_version": INGEST_PROTOCOL_VERSION,
         "supported_ingest_protocol_versions": list(SUPPORTED_INGEST_PROTOCOL_VERSIONS),
     }

@@ -144,9 +144,12 @@ def main() -> int:
         if "send_ingest_protocol_version" in build_info:
             _fail("platform BUILD-INFO must not declare send_ingest_protocol_version")
         active = build_info.get("active_ingest_protocol_version")
+        legacy_health = build_info.get("legacy_health_ingest_protocol_version")
         supported = build_info.get("supported_ingest_protocol_versions")
         if not isinstance(active, str) or not active:
             _fail("platform BUILD-INFO missing active_ingest_protocol_version")
+        if not isinstance(legacy_health, str) or not legacy_health:
+            _fail("platform BUILD-INFO missing legacy_health_ingest_protocol_version")
         if (
             not isinstance(supported, list)
             or not supported
@@ -158,6 +161,8 @@ def main() -> int:
             )
         if active not in supported:
             _fail("platform active_ingest_protocol_version must be in supported list")
+        if legacy_health not in supported:
+            _fail("platform legacy_health_ingest_protocol_version must be in supported list")
     else:
         if "supported_ingest_protocol_versions" in build_info:
             _fail("middle BUILD-INFO must not declare supported_ingest_protocol_versions")

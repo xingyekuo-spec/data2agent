@@ -221,7 +221,9 @@
       .then(function (j) {
         var err = document.getElementById('setup-errors');
         if (!j.ok) {
-          err.textContent = (j.errors || []).map(function (e) { return e.message; }).join('; ') || '保存失败';
+          err.textContent = (typeof formatApiError === 'function'
+            ? formatApiError(j, '保存失败')
+            : ((j.errors || []).map(function (e) { return e.message; }).join('; ') || '保存失败'));
           return;
         }
         err.textContent = '';
@@ -267,8 +269,10 @@
         var j = response.j;
         var err = document.getElementById('config-errors');
         if (!response.ok || !j.ok) {
-          err.textContent = (j.errors || []).map(function (e) { return e.message; }).join('; ') ||
-            (typeof j.detail === 'string' ? j.detail : (j.detail && j.detail.detail) || '保存失败');
+          err.textContent = (typeof formatApiError === 'function'
+            ? formatApiError(j, '保存失败')
+            : ((j.errors || []).map(function (e) { return e.message; }).join('; ') ||
+              (typeof j.detail === 'string' ? j.detail : (j.detail && j.detail.detail) || '保存失败')));
           return;
         }
         err.textContent = '';
@@ -303,7 +307,14 @@
             sessionStorage.setItem('d2a_last_connection_test',
               JSON.stringify({at: Date.now(), body: body}));
           } catch (e) {}
-          out.textContent = JSON.stringify(body);
+          if (body.status === 'failed' || body.error) {
+            out.textContent = (typeof formatApiError === 'function'
+              ? formatApiError(body, '连接失败')
+              : ((body.detail || body.error || '连接失败') +
+                 (body.suggestion ? (' — 建议：' + body.suggestion) : '')));
+          } else {
+            out.textContent = JSON.stringify(body);
+          }
           var link = document.getElementById('link-metadata');
           if (body.status === 'connected' || body.status === 'connected_limited') {
             link.style.display = 'inline';

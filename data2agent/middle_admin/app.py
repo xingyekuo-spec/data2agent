@@ -28,6 +28,12 @@ from ..admin_common.setup_yaml import (
     build_odbc_dsn,
     write_yaml,
 )
+from ..admin_common.suggestions import (
+    field_error,
+    http_error,
+    suggestion_for_check,
+    suggestion_for_connection,
+)
 from ..connect.config import ConnectConfig, SourceConfig, config_revision, load_config
 from ..connect import discoverers as _discoverers  # noqa: F401  — 注册 MetadataDiscoverer
 from ..connect.metadata import (
@@ -201,10 +207,46 @@ def _resolve_source(cfg: ConnectConfig, source: str | None) -> tuple[str, Source
     if source is not None:
         scfg = cfg.sources.get(source)
         if scfg is None:
-            raise HTTPException(404, f"配置中没有源 '{source}',可用:{sorted(cfg.sources)}")
+            raise http_error(
+                404,
+                f"配置中没有源 '{source}',可用:{sorted(cfg.sources)}",
+                "在「配置」页确认 sources 名称，或先完成首次配置",
+            )
         return source, scfg
     name = next(iter(cfg.sources))
     return name, cfg.sources[name]
+
+
+
+def _meta_http(exc: MetadataError, *, table_lookup: bool = False) -> HTTPException:
+    status = 400
+    if exc.code in ("connection_failed", "timeout"):
+        status = 503
+    elif exc.code == "permission_denied":
+        status = 403
+    elif exc.code == "scan_busy":
+        status = 409
+    elif table_lookup and exc.code in ("table_missing", "not_found", "table_not_found"):
+        status = 404
+    return http_error(status, exc.message, exc.suggestion, code=exc.code)
+
+
+def _unsupported_http(exc: MetadataDiscoveryUnsupported) -> HTTPException:
+    return http_error(
+        400, str(exc),
+        getattr(exc, "suggestion", "确认 adapter 类型或升级中间机包"),
+        code=exc.code,
+    )
+
+
+def _with_conn_suggestion(result: dict) -> dict:
+    if result.get("status") in ("failed",) or result.get("error"):
+        result = dict(result)
+        result.setdefault(
+            "suggestion",
+            suggestion_for_connection(result.get("error")),
+        )
+    return result
 
 
 def _sanitize_detail(message: str) -> str:
@@ -279,7 +321,10 @@ def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict
     try:
         return merge_whitelist_and_save(tmp_path, MIDDLE_EDITABLE, patch, validate=load_config)
     except Exception as e:
-        return False, [{"field": "", "message": str(e)}]
+        return False, [field_error(
+            "", str(e),
+            "根据报错修正配置字段后重新校验",
+        )]
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -332,11 +377,17 @@ def create_app(
         if needs_setup():
             if path in ("/api/setup", "/api/setup/status") or path.startswith("/api/setup"):
                 if _client_host(request) not in _LOOPBACK:
-                    raise HTTPException(403, "首次配置仅允许本机访问")
+                    raise http_error(
+                        403, "首次配置仅允许本机访问",
+                        "在本机浏览器打开管理界面完成首次配置，勿从远程主机提交 /api/setup",
+                    )
                 return
             if path in ("/config", "/", "/status", "/logs") or path.startswith("/static"):
                 return
-            raise HTTPException(409, "尚未完成首次配置,请打开 /config")
+            raise http_error(
+                409, "尚未完成首次配置,请打开 /config",
+                "在本机打开 /config 完成首次配置后再调用其它 API",
+            )
 
         tok = state["token"]
         if not tok:
@@ -344,11 +395,17 @@ def create_app(
         supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip() \
             or request.query_params.get("token", "")
         if supplied != tok:
-            raise HTTPException(401, "需要有效的管理界面登录密码")
+            raise http_error(
+                401, "需要有效的管理界面登录密码",
+                "在登录框输入管理界面登录密码，或检查 Authorization: Bearer / ?token=",
+            )
 
     def reload_config() -> ConnectConfig:
         if needs_setup():
-            raise HTTPException(409, "尚未完成首次配置")
+            raise http_error(
+                409, "尚未完成首次配置",
+                "打开 /config 完成首次配置后再操作",
+            )
         return load_config(cfg_path)
 
     app = FastAPI(title="data2agent 中间机管理")
@@ -399,13 +456,25 @@ def create_app(
     @api.post("/setup")
     def run_setup(body: SetupBody, request: Request) -> dict:
         if _client_host(request) not in _LOOPBACK:
-            raise HTTPException(403, "首次配置仅允许本机访问")
+            raise http_error(
+                403, "首次配置仅允许本机访问",
+                "在本机浏览器打开管理界面完成首次配置",
+            )
         if home_layout is None:
-            raise HTTPException(400, "未启用 --home,无法浏览器首次配置")
+            raise http_error(
+                400, "未启用 --home,无法浏览器首次配置",
+                "以 --home <目录> 启动中间机管理进程后再用浏览器配置",
+            )
         if not body.platform_url.startswith("http"):
-            return {"ok": False, "errors": [{"field": "platform_url", "message": "须为 http(s) URL"}]}
+            return {"ok": False, "errors": [field_error(
+                "platform_url", "须为 http(s) URL",
+                "填写平台 ingest 根地址，例如 https://platform.example.com",
+            )]}
         if not body.admin_token.strip() or not body.ingest_token.strip():
-            return {"ok": False, "errors": [{"field": "token", "message": "Token 不能为空"}]}
+            return {"ok": False, "errors": [field_error(
+                "token", "Token 不能为空",
+                "分别填写管理界面登录密码与平台 ingest Token",
+            )]}
 
         home_layout.ensure_dirs()
         data = build_middle_connect_yaml(
@@ -435,7 +504,10 @@ def create_app(
             load_config(cfg_path)
         except Exception as e:
             cfg_path.unlink(missing_ok=True)
-            return {"ok": False, "errors": [{"field": "", "message": str(e)}]}
+            return {"ok": False, "errors": [field_error(
+                "", str(e),
+                "根据报错修正 ERP/平台参数后重试首次配置",
+            )]}
 
         state["token"] = body.admin_token.strip()
         return {
@@ -460,22 +532,34 @@ def create_app(
         patch = _patch_to_dict(body)
         with config_write_lock:
             if needs_setup():
-                raise HTTPException(409, "尚未完成首次配置")
+                raise http_error(
+                    409, "尚未完成首次配置",
+                    "打开 /config 完成首次配置后再保存",
+                )
             current = config_revision(cfg_path)
             if body.revision is None:
-                raise HTTPException(
-                    409, {"detail": "已有配置的更新必须提交 revision,请刷新页面获取最新修订号。",
-                          "hint": "GET /api/config 返回 revision 字段",
-                          "current_revision": current})
+                raise http_error(
+                    409,
+                    "已有配置的更新必须提交 revision,请刷新页面获取最新修订号。",
+                    "先 GET /api/config 取 revision，再随保存请求提交",
+                    hint="GET /api/config 返回 revision 字段",
+                    current_revision=current,
+                )
             if body.revision != current:
-                raise HTTPException(409, {"detail": "配置已被其他会话修改,请刷新后重新提交。",
-                                         "current_revision": current})
+                raise http_error(
+                    409,
+                    "配置已被其他会话修改,请刷新后重新提交。",
+                    "重新加载配置页，合并改动后再保存",
+                    current_revision=current,
+                )
             try:
                 ok, errors = merge_whitelist_and_save(
                     cfg_path, MIDDLE_EDITABLE, patch, validate=load_config)
             except Exception as e:
-                return {"ok": False, "errors": [{"field": "", "message": str(e)}],
-                        "restart_required": False, "revision": current}
+                return {"ok": False, "errors": [field_error(
+                    "", str(e),
+                    "根据报错修正配置字段后重试",
+                )], "restart_required": False, "revision": current}
             revision = config_revision(cfg_path) if ok else current
         return {"ok": ok, "errors": errors, "restart_required": ok, "revision": revision}
 
@@ -487,7 +571,10 @@ def create_app(
     @api.get("/extraction-tables")
     def get_extraction_tables(source: str | None = None) -> dict:
         if needs_setup():
-            raise HTTPException(409, "尚未完成首次配置")
+            raise http_error(
+                409, "尚未完成首次配置",
+                "打开 /config 完成首次配置后再查看抽取表",
+            )
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, source)
         tables = {
@@ -504,7 +591,10 @@ def create_app(
     @api.post("/extraction-tables/validate")
     def validate_extraction_tables(body: ExtractionTablesValidateBody) -> dict:
         if needs_setup():
-            raise HTTPException(409, "尚未完成首次配置")
+            raise http_error(
+                409, "尚未完成首次配置",
+                "打开 /config 完成首次配置后再校验抽取表",
+            )
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
         try:
@@ -512,7 +602,10 @@ def create_app(
         except (ValidationError, ValueError) as e:
             return {
                 "ok": False, "source": name,
-                "errors": [{"field": "tables", "message": str(e)}],
+                "errors": [field_error(
+                    "tables", str(e),
+                    "按 TableExtractConfig 要求修正 mode/key_columns/watermark 后重试",
+                )],
                 "results": [], "diff": None,
             }
         before = dict(scfg.tables or {})
@@ -528,14 +621,20 @@ def create_app(
     @api.put("/extraction-tables")
     def put_extraction_tables(body: ExtractionTablesPutBody) -> dict:
         if needs_setup():
-            raise HTTPException(409, "尚未完成首次配置")
+            raise http_error(
+                409, "尚未完成首次配置",
+                "打开 /config 完成首次配置后再保存抽取表",
+            )
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
         try:
             parsed = parse_tables_payload(body.tables)
         except (ValidationError, ValueError) as e:
             return {
-                "ok": False, "errors": [{"field": "tables", "message": str(e)}],
+                "ok": False, "errors": [field_error(
+                    "tables", str(e),
+                    "按 TableExtractConfig 要求修正后重试",
+                )],
                 "revision": config_revision(cfg_path), "restart_required": False,
             }
         # 保存必须现场校验；忽略客户端任何 live 开关意图
@@ -544,8 +643,11 @@ def create_app(
         if not_ready:
             return {
                 "ok": False,
-                "errors": [{"field": r["table"], "message": f"{r['status']}: {r.get('detail') or ''}"}
-                           for r in not_ready],
+                "errors": [field_error(
+                    r["table"],
+                    f"{r['status']}: {r.get('detail') or ''}",
+                    r.get("suggestion") or "按校验结果修正该表后重新保存",
+                ) for r in not_ready],
                 "results": results,
                 "revision": config_revision(cfg_path),
                 "restart_required": False,
@@ -553,13 +655,17 @@ def create_app(
         with config_write_lock:
             current = config_revision(cfg_path)
             if body.revision is None:
-                raise HTTPException(
-                    409, {"detail": "更新抽取表必须提交 revision",
-                          "current_revision": current})
+                raise http_error(
+                    409, "更新抽取表必须提交 revision",
+                    "重新加载抽取表页获取最新 revision 后再保存",
+                    current_revision=current,
+                )
             if body.revision != current:
-                raise HTTPException(
-                    409, {"detail": "配置已被其他会话修改,请刷新后重新提交。",
-                          "current_revision": current})
+                raise http_error(
+                    409, "配置已被其他会话修改,请刷新后重新提交。",
+                    "重新加载抽取计划，合并改动后再保存",
+                    current_revision=current,
+                )
             before = dict(scfg.tables or {})
             ok, errors, revision = replace_source_tables(
                 cfg_path, name, parsed, validate=load_config,
@@ -584,16 +690,26 @@ def create_app(
                  level: str | None = None) -> dict:
         capped = max(1, min(lines, 1000))
         if service not in _LOG_FILES:
-            return {"ok": False,
-                    "text": f"未知服务 '{service}',可用:{sorted(_LOG_FILES)}"}
+            return {
+                "ok": False,
+                "text": f"未知服务 '{service}',可用:{sorted(_LOG_FILES)}",
+                "suggestion": "选择 connector / admin / launcher 之一",
+            }
         if _log_dir is not None:
             path = _log_dir / _LOG_FILES[service]
         elif service == "connector" and _log_path is not None:
             path = _log_path
         else:
-            return {"ok": False, "text": "未配置日志目录"}
+            return {
+                "ok": False,
+                "text": "未配置日志目录",
+                "suggestion": "以 --home 启动或传入日志路径后重启管理进程",
+            }
         ok, text = tail_lines(path, lines=capped, level=level)
-        return {"ok": ok, "text": text}
+        out = {"ok": ok, "text": text}
+        if not ok:
+            out["suggestion"] = "确认日志文件存在且进程有读权限，或切换其它日志源"
+        return out
 
     @api.post("/connection/test")
     def test_connection(body: TestConnectionBody = TestConnectionBody()) -> dict:
@@ -601,33 +717,34 @@ def create_app(
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
         if scfg.adapter != "mssql_readonly":
-            return {"status": "failed", "error": "unsupported",
-                    "detail": "连接测试仅支持 mssql_readonly 适配器"}
+            return _with_conn_suggestion({
+                "status": "failed", "error": "unsupported",
+                "detail": "连接测试仅支持 mssql_readonly 适配器",
+            })
         dsn = os.environ.get(scfg.dsn_env or "", "")
         if not dsn:
-            return {"status": "failed", "error": "missing_dsn",
-                    "detail": f"环境变量 {scfg.dsn_env} 未设置"}
+            return _with_conn_suggestion({
+                "status": "failed", "error": "missing_dsn",
+                "detail": f"环境变量 {scfg.dsn_env} 未设置",
+            })
         started = time.perf_counter()
         result = _probe_connection_with_timeout(dsn, timeout=10)
         result["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
-        return result
+        return _with_conn_suggestion(result)
 
     def _open_discoverer(scfg: SourceConfig):
         try:
             return build_discoverer(scfg)
         except MetadataDiscoveryUnsupported as e:
-            raise HTTPException(400, {"code": e.code, "detail": str(e)}) from e
+            raise _unsupported_http(e) from e
         except MetadataError as e:
-            status = 503 if e.code in ("connection_failed", "timeout") else 400
-            if e.code == "permission_denied":
-                status = 403
-            raise HTTPException(status, {"code": e.code, "detail": e.message}) from e
+            raise _meta_http(e) from e
 
     def _default_schema_for(scfg: SourceConfig) -> str:
         try:
             return discoverer_default_schema(scfg.adapter)
         except MetadataDiscoveryUnsupported as e:
-            raise HTTPException(400, {"code": e.code, "detail": str(e)}) from e
+            raise _unsupported_http(e) from e
 
     def _planned_keys(scfg: SourceConfig) -> set[tuple[str, str]]:
         return extraction_plan_keys(
@@ -637,7 +754,10 @@ def create_app(
         discoverer = None
         try:
             if time.monotonic() > deadline_mono:
-                _SCAN_STORE.fail(scan_id, "timeout", "扫描在开始前已超时", status="timeout")
+                _SCAN_STORE.fail(
+                    scan_id, "timeout", "扫描在开始前已超时", status="timeout",
+                    suggestion="减小扫描范围或在业务低峰重试",
+                )
                 return
             discoverer = build_discoverer(scfg)
             tables, _total = discoverer.list_tables(
@@ -666,7 +786,8 @@ def create_app(
                     table_errors += 1
                     # 连接级 / 权限级错误:整次扫描失败,不伪装 completed
                     if e.code in ("connection_failed", "permission_denied", "timeout"):
-                        _SCAN_STORE.fail(scan_id, e.code, e.message)
+                        _SCAN_STORE.fail(
+                            scan_id, e.code, e.message, suggestion=e.suggestion)
                         return
                     finalized.append(TableSummary(
                         schema=summary.schema,
@@ -678,6 +799,7 @@ def create_app(
                         watermark_candidates=(),
                         error_code=e.code,
                         error_detail=e.message,
+                        error_suggestion=e.suggestion,
                     ))
             if timed_out:
                 if finalized or details:
@@ -687,9 +809,13 @@ def create_app(
                         table_errors=table_errors,
                         error_code="timeout",
                         error_detail="扫描超过总时限,结果可能不完整",
+                        error_suggestion="减小扫描范围或在业务低峰重试；已返回部分结果可继续使用",
                     )
                 else:
-                    _SCAN_STORE.fail(scan_id, "timeout", "扫描超过总时限", status="timeout")
+                    _SCAN_STORE.fail(
+                        scan_id, "timeout", "扫描超过总时限", status="timeout",
+                        suggestion="减小扫描范围或在业务低峰重试",
+                    )
                 return
             status = "partial" if table_errors else "completed"
             _SCAN_STORE.complete(
@@ -702,12 +828,19 @@ def create_app(
                 ),
             )
         except MetadataDiscoveryUnsupported as e:
-            _SCAN_STORE.fail(scan_id, e.code, str(e))
+            _SCAN_STORE.fail(
+                scan_id, e.code, str(e),
+                suggestion=getattr(e, "suggestion", None),
+            )
         except MetadataError as e:
             status = "timeout" if e.code == "timeout" else "failed"
-            _SCAN_STORE.fail(scan_id, e.code, e.message, status=status)
+            _SCAN_STORE.fail(
+                scan_id, e.code, e.message, status=status, suggestion=e.suggestion)
         except Exception as e:
-            _SCAN_STORE.fail(scan_id, type(e).__name__, _sanitize_detail(str(e)))
+            _SCAN_STORE.fail(
+                scan_id, type(e).__name__, _sanitize_detail(str(e)),
+                suggestion="查看管理界面日志中的脱敏错误后重试",
+            )
         finally:
             if discoverer is not None:
                 try:
@@ -723,7 +856,7 @@ def create_app(
         try:
             rec = _SCAN_STORE.try_begin(name)
         except MetadataError as e:
-            raise HTTPException(409, {"code": e.code, "detail": e.message}) from e
+            raise _meta_http(e) from e
         deadline = time.monotonic() + _SCAN_STORE.scan_deadline_seconds
         _SCAN_STORE.submit(_run_scan, rec.scan_id, scfg, deadline)
         return {
@@ -737,7 +870,10 @@ def create_app(
     def get_metadata_scan(scan_id: str) -> dict:
         rec = _SCAN_STORE.get(scan_id)
         if rec is None:
-            raise HTTPException(404, "scan_id 不存在或已过期")
+            raise http_error(
+                404, "scan_id 不存在或已过期",
+                "重新发起扫描，或使用最近一次扫描返回的 scan_id",
+            )
         out = rec.summary()
         if rec.status in ("completed", "partial"):
             out["tables"] = [
@@ -754,6 +890,8 @@ def create_app(
                     "watermark_candidates": list(t.watermark_candidates),
                     "error_code": t.error_code,
                     "error_detail": t.error_detail,
+                    "error_suggestion": t.error_suggestion,
+                    "suggestion": t.error_suggestion,
                 }
                 for t in rec.tables
             ]
@@ -773,10 +911,11 @@ def create_app(
         name, scfg = _resolve_source(cfg, source)
         rec = _SCAN_STORE.latest_completed_for_source(name)
         if rec is None:
-            raise HTTPException(
+            raise http_error(
                 409,
-                {"code": "metadata_stale",
-                 "detail": "尚无可用元数据缓存,请先 POST /api/metadata/scans"},
+                "尚无可用元数据缓存,请先 POST /api/metadata/scans",
+                "在「元数据」页点击扫描，完成后再浏览表列表",
+                code="metadata_stale",
             )
         default_schema = _default_schema_for(scfg)
         planned = _planned_keys(scfg)
@@ -807,6 +946,8 @@ def create_app(
                     t.schema, t.name, planned, default_schema=default_schema),
                 "error_code": t.error_code,
                 "error_detail": t.error_detail,
+                "error_suggestion": t.error_suggestion,
+                "suggestion": t.error_suggestion,
             })
         total = len(rows)
         page = rows[offset:offset + max(1, min(limit, 500))]
@@ -831,12 +972,7 @@ def create_app(
             try:
                 detail = discoverer.get_table(schema, table)
             except MetadataError as e:
-                status = 404 if e.code == "table_missing" else 400
-                if e.code == "permission_denied":
-                    status = 403
-                elif e.code in ("connection_failed", "timeout"):
-                    status = 503
-                raise HTTPException(status, {"code": e.code, "detail": e.message}) from e
+                raise _meta_http(e, table_lookup=True) from e
             finally:
                 discoverer.close()
         default_schema = _default_schema_for(scfg)
@@ -898,6 +1034,7 @@ def create_app(
             "detail": result.detail,
             "null_count": result.null_count,
             "duplicate_groups": result.duplicate_groups,
+            "suggestion": None if result.ok else suggestion_for_check(result.code),
         }
 
     @api.post("/metadata/watermark-check")
@@ -916,25 +1053,41 @@ def create_app(
             "detail": result.detail,
             "sql_type": result.sql_type,
             "candidate": result.candidate,
+            "suggestion": None if result.ok else suggestion_for_check(result.code),
         }
 
     @api.post("/actions/trigger")
     def trigger_action(body: TriggerBody) -> dict:
         if body.action == "reconcile":
-            raise HTTPException(400, "中间机管理 v1 不支持 reconcile")
+            raise http_error(
+                400, "中间机管理 v1 不支持 reconcile",
+                "请使用 sync 动作，或在平台侧处理对账流程",
+            )
         if body.action != "sync":
-            raise HTTPException(400, f"不支持的动作 '{body.action}'")
+            raise http_error(
+                400, f"不支持的动作 '{body.action}'",
+                "仅支持 action=sync",
+            )
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
         if not scfg.table_whitelist():
-            return {"action": "sync", "source": name, "executed": False,
-                    "reason": "tables_unconfigured", "overlap_warning": True,
-                    "note": "尚未配置抽取表，未发起同步"}
+            return {
+                "action": "sync", "source": name, "executed": False,
+                "reason": "tables_unconfigured", "overlap_warning": True,
+                "note": "尚未配置抽取表，未发起同步",
+                "suggestion": "到「元数据」选表并在「抽取表」页保存计划后再触发同步",
+            }
         executed = run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
-        return {"action": "sync", "source": name, "executed": executed,
-                "overlap_warning": True,
-                "reason": "executed" if executed else "outside_window",
-                "note": "" if executed else "错峰窗口外，未发起（窗口约束同样生效）"}
+        return {
+            "action": "sync", "source": name, "executed": executed,
+            "overlap_warning": True,
+            "reason": "executed" if executed else "outside_window",
+            "note": "" if executed else "错峰窗口外，未发起（窗口约束同样生效）",
+            "suggestion": (
+                None if executed
+                else "等待错峰窗口开始，或临时调整 sources.*.windows 后重启抽取进程"
+            ),
+        }
 
     app.include_router(api)
     # HTML 也走轻量检查:首次配置时放行

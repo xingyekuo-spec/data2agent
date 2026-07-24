@@ -1,6 +1,6 @@
 [project]
 name = "data2agent"
-version = "0.5.0"
+version = "0.5.1"
 description = "Data to Agent, for factories — 把工厂数据接给 AI Agent:抽取框架 + 国产 ERP 连接器 + 制造业本体模板 + MCP Server"
 readme = "README.md"
 license = { text = "Apache-2.0" }

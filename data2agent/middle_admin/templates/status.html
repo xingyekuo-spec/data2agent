@@ -112,7 +112,9 @@ document.getElementById('btn-trigger').onclick = async function () {
     body: JSON.stringify({action: 'sync'})
   });
   var body = await r.json();
-  el.textContent = JSON.stringify(body);
+  el.textContent = (!r.ok || body.executed === false)
+    ? (typeof formatApiError === 'function' ? formatApiError(body, JSON.stringify(body)) : JSON.stringify(body))
+    : JSON.stringify(body);
 };
 document.getElementById('btn-test').onclick = async function () {
   var el = document.getElementById('test-result');
@@ -122,7 +124,13 @@ document.getElementById('btn-test').onclick = async function () {
   });
   var body = await r.json();
   try { sessionStorage.setItem('d2a_last_connection_test', JSON.stringify({at: Date.now(), body: body})); } catch (e) {}
-  el.textContent = JSON.stringify(body);
+  if (body.status === 'failed' || body.error) {
+    el.textContent = typeof formatApiError === 'function'
+      ? formatApiError(body, '连接失败')
+      : JSON.stringify(body);
+  } else {
+    el.textContent = JSON.stringify(body);
+  }
 };
 </script>
 {% endblock %}

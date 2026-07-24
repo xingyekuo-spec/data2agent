@@ -57,6 +57,7 @@ def test_merge_whitelist_validate_failure_restores_backup(tmp_path):
     )
     assert not ok
     assert errors and errors[0]["message"] == "invalid config"
+    assert errors[0].get("suggestion")
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
     assert data["templates"] == "t"
     assert list(tmp_path.glob("connect.yaml.bak*"))

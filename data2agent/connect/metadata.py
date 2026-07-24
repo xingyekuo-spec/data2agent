@@ -41,15 +41,45 @@ class MetadataDiscoveryUnsupported(Exception):
     """当前 adapter 不支持元数据发现。"""
 
     code = "metadata_discovery_unsupported"
+    suggestion = (
+        "确认 connect.yaml 中 adapter 为已注册的元数据发现类型，"
+        "或升级中间机包后再试"
+    )
+
+
+_DEFAULT_SUGGESTIONS: dict[str, str] = {
+    "connection_failed": "检查 ERP 服务器地址、端口、账号密码，以及本机到数据库的网络连通",
+    "timeout": "增大连接/查询超时，或在业务低峰重试；确认数据库未过载",
+    "permission_denied": "为只读账号授予所需元数据/表 SELECT 与查看定义权限后重试",
+    "scan_busy": "等待当前扫描完成后再发起新扫描",
+    "not_found": "确认 schema/表名拼写，或先刷新元数据扫描",
+    "table_missing": "确认 schema/表名拼写，或先刷新元数据扫描",
+    "table_not_found": "确认 schema/表名拼写，或先刷新元数据扫描",
+    "invalid_identifier": "仅使用字母、数字、下划线组成的合法 SQL 标识符",
+    "dsn_missing": "在 secrets 或环境中配置对应 DSN 环境变量后重启中间机管理进程",
+    "metadata_stale": "先 POST /api/metadata/scans 完成一次扫描后再查询表列表",
+    "metadata_discovery_unsupported": (
+        "确认 connect.yaml 中 adapter 为已注册的元数据发现类型，"
+        "或升级中间机包后再试"
+    ),
+    "table_errors": "打开表详情查看单表错误，修复权限或连通性后重新扫描",
+    "key_missing": "在抽取计划中填写存在的业务键/主键列后重试",
+    "key_not_unique": "更换唯一键组合，或先清洗源表重复/空值",
+    "key_check_failed": "查看日志中的脱敏错误，核对表权限与键列后重试",
+    "watermark_missing": "选择存在的水位列（通常为更新时间类字段）",
+    "watermark_invalid": "更换合适的水位列，或确认字段类型适合增量抽取",
+}
 
 
 class MetadataError(Exception):
     """元数据发现或校验失败(已脱敏)。"""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, suggestion: str | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.suggestion = suggestion or _DEFAULT_SUGGESTIONS.get(
+            code, "请查看管理界面日志后重试")
 
 
 @dataclass(frozen=True)
@@ -87,6 +117,7 @@ class TableSummary:
     watermark_candidates: tuple[str, ...]
     error_code: str | None = None
     error_detail: str | None = None
+    error_suggestion: str | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +166,7 @@ class ScanRecord:
     finished_at_utc: float | None = None
     error_code: str | None = None
     error_detail: str | None = None
+    error_suggestion: str | None = None
     table_errors: int = 0
     tables: list[TableSummary] = field(default_factory=list)
     details: dict[tuple[str, str], TableDetail] = field(default_factory=dict)
@@ -152,6 +184,8 @@ class ScanRecord:
             "table_errors": self.table_errors,
             "error_code": self.error_code,
             "error_detail": self.error_detail,
+            "error_suggestion": self.error_suggestion,
+            "suggestion": self.error_suggestion,
         }
 
 
@@ -317,22 +351,31 @@ def map_odbc_error(exc: BaseException) -> MetadataError:
     low = str(exc).lower()
 
     if any(k in low for k in ("login failed", "authentication", "password", "18456")):
-        return MetadataError("connection_failed", "数据库认证失败")
+        return MetadataError(
+            "connection_failed", "数据库认证失败",
+            "核对只读账号与密码，确认账号未被锁定且允许从中间机主机登录")
     if any(k in low for k in ("timeout", "timed out", "hyt00", "08s01")):
-        return MetadataError("timeout", "数据库连接或查询超时")
+        return MetadataError(
+            "timeout", "数据库连接或查询超时",
+            "检查网络与数据库负载，必要时增大超时并在低峰重试")
     if any(k in low for k in (
         "permission", "denied", "not authorized", "229", "230",
         "select permission", "view definition",
     )):
-        return MetadataError("permission_denied", "元数据权限不足")
+        return MetadataError(
+            "permission_denied", "元数据权限不足",
+            "为只读账号授予相关库的 VIEW DEFINITION / SELECT 权限后重试")
     if any(k in low for k in (
         "cannot open", "server does not exist", "network", "08001",
         "could not connect", "named pipes", "connection refused",
         "no such host", "unreachable",
     )):
-        return MetadataError("connection_failed", "无法连接数据库")
-    # 未知错误:一律固定文案,避免泄露 Server=/Database=/IP 等连接细节
-    return MetadataError("connection_failed", "数据库访问失败")
+        return MetadataError(
+            "connection_failed", "无法连接数据库",
+            "检查服务器地址、端口、防火墙与 SQL Server 是否允许远程连接")
+    return MetadataError(
+        "connection_failed", "数据库访问失败",
+        "查看管理界面日志中的脱敏错误，核对连接配置后重试")
 
 
 class ScanStore:
@@ -379,6 +422,7 @@ class ScanStore:
                 raise MetadataError(
                     "scan_busy",
                     f"已有 {len(self._active)} 个扫描进行中,请等待完成后再试",
+                    "等待当前扫描结束后再发起；勿并行打开多个扫描请求",
                 )
             # 只驱逐非活动记录
             inactive = [
@@ -442,6 +486,7 @@ class ScanStore:
         table_errors: int = 0,
         error_code: str | None = None,
         error_detail: str | None = None,
+        error_suggestion: str | None = None,
     ) -> None:
         with self._lock:
             rec = self._scans.get(scan_id)
@@ -456,9 +501,20 @@ class ScanStore:
             rec.table_errors = table_errors
             rec.error_code = error_code
             rec.error_detail = error_detail
+            if error_code and not error_suggestion:
+                error_suggestion = _DEFAULT_SUGGESTIONS.get(error_code)
+            rec.error_suggestion = error_suggestion
             self._active.discard(scan_id)
 
-    def fail(self, scan_id: str, code: str, detail: str, *, status: str = "failed") -> None:
+    def fail(
+        self,
+        scan_id: str,
+        code: str,
+        detail: str,
+        *,
+        status: str = "failed",
+        suggestion: str | None = None,
+    ) -> None:
         with self._lock:
             rec = self._scans.get(scan_id)
             if rec is None:
@@ -469,6 +525,8 @@ class ScanStore:
             rec.finished_at_utc = _utc_now()
             rec.error_code = code
             rec.error_detail = detail
+            rec.error_suggestion = suggestion or _DEFAULT_SUGGESTIONS.get(
+                code, "查看管理界面日志后重试")
             self._active.discard(scan_id)
 
     def clear(self) -> None:
