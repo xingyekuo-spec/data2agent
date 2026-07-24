@@ -182,7 +182,11 @@ def main() -> int:
         if wm_col is None:
             ap.error(f"表 {args.table} 不在配置的增量表中,无法按区间回补。"
                      f"增量表: {sorted(watermarks)}")
-        info = adapter.table_info(args.table)
+        from .adapters.base import resolve_runtime_keys
+        raw_info = adapter.table_info(args.table)
+        info = resolve_runtime_keys(
+            raw_info, scfg.table_key_columns().get(args.table), require_keys=True)
+        adapter.validate_runtime_keys(info)
         landing.ensure_raw_table(args.source, info)
         import uuid
         batch_id = uuid.uuid4().hex[:12]
@@ -196,8 +200,11 @@ def main() -> int:
     if args.cmd == "sync":
         if args.full:
             watermarks = {}
-        report = incremental_sync(adapter, landing, args.source, watermarks,
-                                  lookback_days=scfg.lookback_days())
+        report = incremental_sync(
+            adapter, landing, args.source, watermarks,
+            lookback_days=scfg.lookback_days(),
+            key_columns=scfg.table_key_columns(),
+        )
         print(f"同步完成:run #{report.run_id},{len(report.tables)} 表,"
               f"共 {report.total_rows} 行 → {cfg.landing}")
         for t in report.tables:
@@ -205,7 +212,10 @@ def main() -> int:
             print(f"  - {t.table:<16} {t.rows:>6} 行 / {t.batches} 批  [{t.strategy}]{wm}")
         return 0
 
-    report = reconcile(adapter, landing, args.source, watermarks, deep=args.deep)
+    report = reconcile(
+        adapter, landing, args.source, watermarks, deep=args.deep,
+        key_columns=scfg.table_key_columns(),
+    )
     mode = "deep" if args.deep else "L1"
     print(f"对账完成({mode}):run #{report.run_id},检查 {len(report.segments)} 段,"
           f"不一致 {len(report.mismatched)} 段,软删 {report.total_soft_deleted} 行")
@@ -262,10 +272,8 @@ def _apply_loop(args) -> int:
 def _status(args) -> int:
     landing = LandingStore(args.landing)
     print(f"== 水位状态(source={args.source})==")
-    rows = landing.con.execute(
-        "SELECT table_name, watermark_col, high_water, last_run_at FROM d2a_sync_state "
-        "WHERE source = ? ORDER BY table_name", (args.source,)).fetchall()
-    for r in rows or []:
+    rows = landing.list_sync_watermarks(args.source)
+    for r in rows:
         print(f"  {r['table_name']:<16} {r['watermark_col']} → {r['high_water']}"
               f"  (最近 {r['last_run_at']})")
     if not rows:

@@ -134,7 +134,10 @@ def test_http_sync_emits_completion_for_zero_row_table(tmp_path):
         def tables(self):
             return [TableInfo("EMPTY_DIM", [("Id", "int")], ["Id"])]
 
-        def read_increment(self, _table, since=None, watermark_col=None):
+        def validate_runtime_keys(self, _table):
+            return None
+
+        def read_increment(self, _table, since=None, watermark_col=None, resume_after=None):
             return iter(())
 
     platform = LandingStore(tmp_path / "platform.sqlite")

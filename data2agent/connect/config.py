@@ -91,6 +91,8 @@ class TableExtractConfig(BaseModel):
             for col in self.key_columns:
                 if not ident.match(col):
                     raise ValueError(f"非法键列名 '{col}'(须为 SQL 标识符)")
+            if len(self.key_columns) != len(set(self.key_columns)):
+                raise ValueError("key_columns 不得包含重复列")
         return self
 
 

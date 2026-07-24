@@ -33,6 +33,20 @@ class TestTableExtractConfig:
         with pytest.raises(ValueError, match="非法水位列名"):
             TableExtractConfig(mode="incremental", watermark="1bad_column")
 
+    def test_rejects_duplicate_key_columns(self):
+        with pytest.raises(ValueError, match="重复列"):
+            TableExtractConfig(
+                mode="incremental", watermark="UPD",
+                key_columns=["CODE", "CODE"],
+            )
+
+    def test_accepts_distinct_key_columns(self):
+        cfg = TableExtractConfig(
+            mode="incremental", watermark="UPD",
+            key_columns=["ITEM_ID", "WH_ID"],
+        )
+        assert cfg.key_columns == ["ITEM_ID", "WH_ID"]
+
 
 class TestSourceConfigTables:
     def test_whitelist_from_tables(self):

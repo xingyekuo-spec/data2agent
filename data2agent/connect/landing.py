@@ -514,6 +514,20 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _cursor_ahead(new_w, new_k: list | None, old_w, old_k: list | None) -> bool:
+    """判断新游标是否严格前进(字典序)。完成态 (w, None) > 同水位任意中途键。"""
+    nw, ow = str(new_w), str(old_w)
+    if nw > ow:
+        return True
+    if nw < ow:
+        return False
+    if old_k is None:
+        return False
+    if new_k is None:
+        return True
+    return tuple(str(x) for x in new_k) > tuple(str(x) for x in old_k)
+
+
 def _row_to_dataset_version(row: sqlite3.Row) -> DatasetVersionRecord:
     keys = set(row.keys())
     return DatasetVersionRecord(
@@ -802,11 +816,36 @@ class LandingStore:
 
     # ---- raw 表 ----
 
+    def raw_table_exists(self, source: str, table: str) -> bool:
+        name = raw_table_name(source, table)
+        row = self.con.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (name,)).fetchone()
+        return row is not None
+
+    def raw_table_primary_key(self, source: str, table: str) -> list[str] | None:
+        if not self.raw_table_exists(source, table):
+            return None
+        name = raw_table_name(source, table)
+        rows = self.con.execute(f'PRAGMA table_info("{name}")').fetchall()
+        pk = [r[1] for r in sorted(rows, key=lambda x: x[5]) if r[5] > 0]
+        return pk or None
+
     def ensure_raw_table(self, source: str, info: TableInfo) -> None:
         if not info.pk:
             raise ValueError(
                 f"{info.name}: 源表无主键,无法幂等 upsert;"
                 "请在 binding notes 标注并走全量替换策略(E2)")
+        existing_pk = self.raw_table_primary_key(source, info.name)
+        if existing_pk is None:
+            self._create_raw_table(source, info)
+            return
+        if existing_pk == list(info.pk):
+            return
+        # 运行键变更:受控重建(先校验新键在现有数据上唯一)
+        self._rebuild_raw_table_for_pk_change(source, info, existing_pk)
+
+    def _create_raw_table(self, source: str, info: TableInfo) -> None:
         cols = ",\n".join(
             [f'    "{c}" {_TYPE_SQL[t]}' for c, t in info.columns]
             + [f'    "{c}" {t}' for c, t in _META_COLS])
@@ -815,6 +854,52 @@ class LandingStore:
             f'CREATE TABLE IF NOT EXISTS "{raw_table_name(source, info.name)}" '
             f"(\n{cols},\n    PRIMARY KEY ({pk})\n)")
         self.con.commit()
+
+    def _rebuild_raw_table_for_pk_change(
+        self, source: str, info: TableInfo, old_pk: list[str]
+    ) -> None:
+        """将既有 raw 表主键迁移到新运行键;新键不唯一则明确阻断。"""
+        table = raw_table_name(source, info.name)
+        existing_cols = {
+            r[1] for r in self.con.execute(f'PRAGMA table_info("{table}")').fetchall()
+        }
+        missing = [c for c in info.pk if c not in existing_cols]
+        if missing:
+            raise ValueError(
+                f"{info.name}: 无法将落地表主键从 {old_pk} 切换为 {list(info.pk)};"
+                f"缺少列 {missing}。请清空该 raw 表后重新同步。")
+        key_sql = ", ".join(f'"{c}"' for c in info.pk)
+        (dup,) = self.con.execute(
+            f'SELECT COUNT(*) FROM ('
+            f'SELECT {key_sql} FROM "{table}" '
+            f'GROUP BY {key_sql} HAVING COUNT(*) > 1)'
+        ).fetchone()
+        if dup:
+            raise ValueError(
+                f"{info.name}: 无法将落地表主键从 {old_pk} 切换为 {list(info.pk)};"
+                f"现有数据在新运行键上有 {dup} 组重复。"
+                f"请修正源数据/配置键,或删除 raw 表后全量重抽。")
+        tmp = f"{table}__pk_mig"
+        self.con.execute(f'DROP TABLE IF EXISTS "{tmp}"')
+        cols = ",\n".join(
+            [f'    "{c}" {_TYPE_SQL[t]}' for c, t in info.columns]
+            + [f'    "{c}" {t}' for c, t in _META_COLS])
+        pk = ", ".join(f'"{k}"' for k in info.pk)
+        self.con.execute(
+            f'CREATE TABLE "{tmp}" (\n{cols},\n    PRIMARY KEY ({pk})\n)')
+        # 复制业务列 + 元数据列(仅两边都存在的)
+        new_cols = [c for c, _ in info.columns] + [c for c, _ in _META_COLS]
+        copy_cols = [c for c in new_cols if c in existing_cols]
+        col_sql = ", ".join(f'"{c}"' for c in copy_cols)
+        self.con.execute(
+            f'INSERT INTO "{tmp}" ({col_sql}) SELECT {col_sql} FROM "{table}"')
+        self.con.execute(f'DROP TABLE "{table}"')
+        self.con.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
+        self.con.commit()
+        self.log_audit(
+            source, "raw_pk_migrate",
+            f"table={info.name} from={','.join(old_pk)} to={','.join(info.pk)}",
+            0, 0.0)
 
     def upsert_rows(self, source: str, info: TableInfo, rows: list[dict], batch_id: str) -> int:
         if not rows:
@@ -860,47 +945,136 @@ class LandingStore:
 
     def active_pks(self, source: str, table: str, pk_col: str,
                    wm_col: str | None = None, start=None, end=None) -> set:
-        sql = f'SELECT "{pk_col}" FROM "{raw_table_name(source, table)}" WHERE _d2a_deleted_at IS NULL'
+        """单列主键活跃集合(兼容旧调用)。"""
+        return {
+            t[0] for t in self.active_key_tuples(
+                source, table, [pk_col], wm_col, start, end)
+        }
+
+    def active_key_tuples(
+        self, source: str, table: str, pk_cols: list[str],
+        wm_col: str | None = None, start=None, end=None,
+    ) -> set[tuple]:
+        """活跃行的完整运行键元组集合。"""
+        if not pk_cols:
+            return set()
+        cols_sql = ", ".join(f'"{c}"' for c in pk_cols)
+        sql = (f'SELECT {cols_sql} FROM "{raw_table_name(source, table)}" '
+               f"WHERE _d2a_deleted_at IS NULL")
         params: tuple = ()
         if wm_col is not None:
             sql += f' AND "{wm_col}" >= ? AND "{wm_col}" < ?'
             params = (start, end)
-        return {r[0] for r in self.con.execute(sql, params)}
+        return {
+            tuple(r[c] for c in pk_cols)
+            for r in self.con.execute(sql, params)
+        }
 
     def mark_deleted(self, source: str, table: str, pk_col: str, pks: set) -> int:
-        """软删打标:源侧消失的行,永不物理删。"""
-        if not pks:
+        """软删打标(单列主键兼容入口)。"""
+        return self.mark_deleted_keys(
+            source, table, [pk_col], { (p,) if not isinstance(p, tuple) else p for p in pks })
+
+    def mark_deleted_keys(
+        self, source: str, table: str, pk_cols: list[str], keys: set[tuple],
+    ) -> int:
+        """按完整运行键元组软删。"""
+        if not keys or not pk_cols:
             return 0
         now, table_sql = _now(), raw_table_name(source, table)
-        pk_list = sorted(pks)
-        for i in range(0, len(pk_list), 500):  # SQLite 参数上限内分块
-            chunk = pk_list[i:i + 500]
-            self.con.execute(
-                f'UPDATE "{table_sql}" SET _d2a_deleted_at = ? '
-                f'WHERE "{pk_col}" IN ({", ".join("?" * len(chunk))})',
-                (now, *chunk))
+        key_list = sorted(keys)
+        pred = " AND ".join(f'"{c}" = ?' for c in pk_cols)
+        for i in range(0, len(key_list), 200):
+            chunk = key_list[i:i + 200]
+            for key in chunk:
+                if len(key) != len(pk_cols):
+                    raise ValueError(
+                        f"软删键元组长度不匹配: got {len(key)}, want {len(pk_cols)}")
+                self.con.execute(
+                    f'UPDATE "{table_sql}" SET _d2a_deleted_at = ? WHERE {pred}',
+                    (now, *key))
         self.con.commit()
-        return len(pks)
+        return len(keys)
 
     def min_watermark(self, source: str, table: str, wm_col: str) -> str | None:
         (m,) = self.con.execute(
             f'SELECT MIN("{wm_col}") FROM "{raw_table_name(source, table)}"').fetchone()
         return m
 
-    # ---- 水位状态 ----
+    # ---- 水位 / 复合键游标状态 ----
 
     def get_high_water(self, source: str, table: str) -> str | None:
+        """返回已提交水位标量(游标中的 w);兼容旧调用。"""
+        cursor = self.get_sync_cursor(source, table)
+        if cursor is None:
+            return None
+        w, _keys = cursor
+        return None if w is None else str(w)
+
+    def list_sync_watermarks(self, source: str) -> list[dict]:
+        """对外水位视图:仅返回解码后的 watermark 标量,不含复合键游标。"""
+        from .adapters.base import decode_keyset_cursor
+
+        rows = self.con.execute(
+            "SELECT table_name, watermark_col, high_water, last_run_at "
+            "FROM d2a_sync_state WHERE source = ? ORDER BY table_name",
+            (source,),
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            high = r["high_water"]
+            if high is not None:
+                w, _keys = decode_keyset_cursor(high)
+                high = None if w is None else str(w)
+            out.append({
+                "table_name": r["table_name"],
+                "watermark_col": r["watermark_col"],
+                "high_water": high,
+                "last_run_at": r["last_run_at"],
+            })
+        return out
+
+    def get_sync_cursor(self, source: str, table: str) -> tuple[object, list | None] | None:
+        """返回 (watermark, key_values|None)。None 键值表示该水位整表已完成。"""
+        from .adapters.base import decode_keyset_cursor
         row = self.con.execute(
             "SELECT high_water FROM d2a_sync_state WHERE source = ? AND table_name = ?",
             (source, table)).fetchone()
-        return row["high_water"] if row else None
+        if row is None or row["high_water"] is None:
+            return None
+        return decode_keyset_cursor(row["high_water"])
 
     def set_high_water(self, source: str, table: str, watermark_col: str,
                        high_water: str | None, batch_id: str) -> None:
-        """水位只前进不后退(字符串比较,ISO 时间格式下与时间序一致)。"""
-        old = self.get_high_water(source, table)
-        if high_water is None or (old is not None and high_water < old):
-            high_water = old
+        """兼容旧接口:写入已完成水位游标(无中途键)。"""
+        self.set_sync_cursor(
+            source, table, watermark_col, high_water, None, batch_id)
+
+    def set_sync_cursor(
+        self,
+        source: str,
+        table: str,
+        watermark_col: str,
+        watermark,
+        key_values: list | None,
+        batch_id: str,
+        *,
+        force: bool = False,
+    ) -> None:
+        """原子写入统一游标。默认只前进不后退。
+
+        key_values=None 表示水位整表完成;list 表示已完成到该复合键边界。
+        """
+        from .adapters.base import encode_keyset_cursor
+
+        if watermark is None:
+            return
+        new_raw = encode_keyset_cursor(watermark, key_values)
+        old = self.get_sync_cursor(source, table)
+        if not force and old is not None:
+            old_w, old_k = old
+            if not _cursor_ahead(watermark, key_values, old_w, old_k):
+                return
         self.con.execute(
             "INSERT INTO d2a_sync_state "
             "(source, table_name, watermark_col, high_water, last_run_at, last_batch_id) "
@@ -908,7 +1082,7 @@ class LandingStore:
             "ON CONFLICT (source, table_name) DO UPDATE SET "
             "watermark_col = excluded.watermark_col, high_water = excluded.high_water, "
             "last_run_at = excluded.last_run_at, last_batch_id = excluded.last_batch_id",
-            (source, table, watermark_col, high_water, _now(), batch_id))
+            (source, table, watermark_col, new_raw, _now(), batch_id))
         self.con.commit()
 
     # ---- 隔离区(E4)----

@@ -53,9 +53,7 @@ def build_status(cfg: ConnectConfig, now: datetime | None = None) -> dict:
     sources = []
     for name, scfg in cfg.sources.items():
         last_run = _last_run_at(db, name)
-        watermarks = [dict(r) for r in db.con.execute(
-            "SELECT table_name, watermark_col, high_water, last_run_at "
-            "FROM d2a_sync_state WHERE source = ? ORDER BY table_name", (name,))]
+        watermarks = db.list_sync_watermarks(name)
         tables_configured = len(scfg.table_whitelist()) > 0
         sources.append({
             "source": name,

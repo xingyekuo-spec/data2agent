@@ -1415,9 +1415,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         sources = _observed_sources()
         out_sources = []
         for s in sources:
-            sync_state = [dict(r) for r in db.con.execute(
-                "SELECT table_name, watermark_col, high_water, last_run_at "
-                "FROM d2a_sync_state WHERE source = ? ORDER BY table_name", (s,))]
+            sync_state = db.list_sync_watermarks(s)
             (quarantined,) = db.con.execute(
                 "SELECT COUNT(*) FROM d2a_quarantine WHERE source = ? AND resolved_at IS NULL",
                 (s,)).fetchone()

@@ -49,7 +49,12 @@ class MssqlReadOnlyAdapter(SourceAdapter):
             raise ValueError(f"源库中不存在表 '{name}'")
         columns = [(r["COLUMN_NAME"], _TYPE_MAP.get(r["DATA_TYPE"].lower(), "text")) for r in cols]
         pk_rows = self._audited_fetch(_PK_SQL, (name,), action="schema")
-        return TableInfo(name=name, columns=columns, pk=[r["COLUMN_NAME"] for r in pk_rows])
+        return TableInfo(
+            name=name,
+            columns=columns,
+            pk=[r["COLUMN_NAME"] for r in pk_rows],
+            key_source="database_pk",
+        )
 
     def _page_sql(self, table: TableInfo, limit: int, offset: int) -> str:
         cols = ", ".join(f"[{c}]" for c, _ in table.columns)
@@ -60,17 +65,5 @@ class MssqlReadOnlyAdapter(SourceAdapter):
     def _quote(self, ident: str) -> str:
         return f"[{ident}]"
 
-    def _increment_sql(self, table: TableInfo, watermark_col: str,
-                       *, resume: bool, filtered: bool, bounded: bool = False) -> str:
-        cols = ", ".join(f"[{c}]" for c, _ in table.columns)
-        wm, pk = f"[{watermark_col}]", f"[{table.pk[0]}]"
-        conds = []
-        if resume:
-            conds.append(f"({wm} > ? OR ({wm} = ? AND {pk} > ?))")
-        elif filtered:
-            conds.append(f"{wm} >= ?")
-        if bounded:
-            conds.append(f"{wm} < ?")
-        where = f" WHERE {' AND '.join(conds)}" if conds else ""
-        return (f"SELECT TOP {self.batch_size} {cols} FROM [{table.name}]{where} "
-                f"ORDER BY {wm}, {pk}")
+    def _limit_clause(self, limit: int) -> str:
+        return f" TOP {int(limit)}"

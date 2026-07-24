@@ -38,7 +38,7 @@ class SqliteReadOnlyAdapter(SourceAdapter):
             raise ValueError(f"源库中不存在表 '{name}'")
         columns = [(r["name"], _portable_type(r["type"])) for r in rows]
         pk = [r["name"] for r in sorted(rows, key=lambda r: r["pk"]) if r["pk"] > 0]
-        return TableInfo(name=name, columns=columns, pk=pk)
+        return TableInfo(name=name, columns=columns, pk=pk, key_source="database_pk")
 
     def _page_sql(self, table: TableInfo, limit: int, offset: int) -> str:
         cols = ", ".join(f'"{c}"' for c, _ in table.columns)
@@ -48,17 +48,5 @@ class SqliteReadOnlyAdapter(SourceAdapter):
     def _quote(self, ident: str) -> str:
         return f'"{ident}"'
 
-    def _increment_sql(self, table: TableInfo, watermark_col: str,
-                       *, resume: bool, filtered: bool, bounded: bool = False) -> str:
-        cols = ", ".join(f'"{c}"' for c, _ in table.columns)
-        wm, pk = f'"{watermark_col}"', f'"{table.pk[0]}"'
-        conds = []
-        if resume:
-            conds.append(f"({wm} > ? OR ({wm} = ? AND {pk} > ?))")
-        elif filtered:
-            conds.append(f"{wm} >= ?")
-        if bounded:
-            conds.append(f"{wm} < ?")
-        where = f" WHERE {' AND '.join(conds)}" if conds else ""
-        return (f'SELECT {cols} FROM "{table.name}"{where} '
-                f"ORDER BY {wm}, {pk} LIMIT {self.batch_size}")
+    def _limit_clause(self, limit: int) -> str:
+        return f" LIMIT {int(limit)}"

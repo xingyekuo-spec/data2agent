@@ -68,9 +68,11 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
     adapter = build_adapter(name, scfg, landing)
     sink = build_sink(scfg, landing)
     watermarks = scfg.table_watermarks()
+    key_columns = scfg.table_key_columns()
     report = incremental_sync(
         adapter, landing, name, watermarks,
         lookback_days=scfg.lookback_days(), sink=sink,
+        key_columns=key_columns,
         should_continue=lambda: in_window(datetime.now().time(), scfg.windows))
     log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
              name, report.run_id, report.total_rows, len(report.tables),
@@ -99,7 +101,10 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig,
         return False
     landing = LandingStore(landing_path)
     adapter = build_adapter(name, scfg, landing)
-    report = reconcile(adapter, landing, name, scfg.table_watermarks(), deep=deep)
+    report = reconcile(
+        adapter, landing, name, scfg.table_watermarks(), deep=deep,
+        key_columns=scfg.table_key_columns(),
+    )
     log.info("reconcile source=%s run=%s segments=%s mismatched=%s soft_deleted=%s",
              name, report.run_id, len(report.segments),
              len(report.mismatched), report.total_soft_deleted)

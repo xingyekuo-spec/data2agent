@@ -3,8 +3,8 @@
 协议(docs/design/02-extraction.md §6):
 - 按水位自然月分段;L1(廉价,每日可跑):源侧段内 COUNT+MAX vs 落地侧同口径;
 - L2(修复,对不一致段或 --deep 全段):重抽该段(upsert 幂等,顺带修正原地改动、
-  复活误删行),源侧消失的主键打 _d2a_deleted_at 软删标记;
-- 无水位表(小维表):整表 count 对比,L2 = 全量重抽 + 主键 diff;
+  复活误删行),源侧消失的运行键打 _d2a_deleted_at 软删标记;
+- 无水位表(小维表):整表 count 对比,L2 = 全量重抽 + 运行键 diff;
 - 已知边界:原地改动若不改水位,L1 的 COUNT+MAX 察觉不到,须靠 --deep 兜底。
 """
 
@@ -14,7 +14,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .adapters.base import SourceAdapter, TableInfo
+from .adapters.base import SourceAdapter, TableInfo, resolve_runtime_keys
 from .landing import LandingStore, normalize_value
 
 
@@ -60,38 +60,43 @@ def month_segments(min_wm: str, max_wm: str) -> list[tuple[str, str, str]]:
 
 def _repair_segment(adapter: SourceAdapter, landing: LandingStore, source: str,
                     info: TableInfo, wm_col: str, start, end) -> tuple[int, int]:
-    """L2:重抽段 + 主键 diff 软删。返回 (重抽行数, 软删行数)。"""
+    """L2:重抽段 + 完整运行键 diff 软删。返回 (重抽行数, 软删行数)。"""
     batch_id = uuid.uuid4().hex[:12]
-    pk = info.pk[0]
-    src_pks: set = set()
+    pk_cols = list(info.pk)
+    src_keys: set[tuple] = set()
     rows = 0
     for batch in adapter.read_segment(info, wm_col, start, end):
         rows += landing.upsert_rows(source, info, batch, batch_id)
-        src_pks |= {r[pk] for r in batch}
-    gone = landing.active_pks(source, info.name, pk, wm_col, start, end) - src_pks
-    return rows, landing.mark_deleted(source, info.name, pk, gone)
+        src_keys |= {tuple(r[c] for c in pk_cols) for r in batch}
+    gone = landing.active_key_tuples(
+        source, info.name, pk_cols, wm_col, start, end) - src_keys
+    return rows, landing.mark_deleted_keys(source, info.name, pk_cols, gone)
 
 
 def _repair_full(adapter: SourceAdapter, landing: LandingStore, source: str,
                  info: TableInfo) -> tuple[int, int]:
-    """无水位表的 L2:全量重抽 + 主键 diff 软删。"""
+    """无水位表的 L2:全量重抽 + 完整运行键 diff 软删。"""
     batch_id = uuid.uuid4().hex[:12]
-    pk = info.pk[0]
-    src_pks: set = set()
+    pk_cols = list(info.pk)
+    src_keys: set[tuple] = set()
     rows = 0
     for batch in adapter.read_increment(info):
         rows += landing.upsert_rows(source, info, batch, batch_id)
-        src_pks |= {r[pk] for r in batch}
-    gone = landing.active_pks(source, info.name, pk) - src_pks
-    return rows, landing.mark_deleted(source, info.name, pk, gone)
+        src_keys |= {tuple(r[c] for c in pk_cols) for r in batch}
+    gone = landing.active_key_tuples(source, info.name, pk_cols) - src_keys
+    return rows, landing.mark_deleted_keys(source, info.name, pk_cols, gone)
 
 
 def reconcile(adapter: SourceAdapter, landing: LandingStore, source: str,
-              watermarks: dict[str, str] | None = None, deep: bool = False) -> ReconcileReport:
+              watermarks: dict[str, str] | None = None, deep: bool = False,
+              key_columns: dict[str, list[str]] | None = None) -> ReconcileReport:
     watermarks = watermarks or {}
+    key_columns = key_columns or {}
     report = ReconcileReport(source=source, run_id=landing.start_run(source, "reconcile"), deep=deep)
     try:
-        for info in adapter.tables():
+        for raw_info in adapter.tables():
+            info = resolve_runtime_keys(
+                raw_info, key_columns.get(raw_info.name), require_keys=True)
             wm_col = watermarks.get(info.name)
             if wm_col is None:
                 _reconcile_full_table(adapter, landing, source, info, deep, report)
@@ -119,7 +124,7 @@ def _reconcile_by_month(adapter, landing, source, info: TableInfo, wm_col: str,
     min_wm = landing.min_watermark(source, info.name, wm_col)
     high = landing.get_high_water(source, info.name)
     if min_wm is None or high is None:
-        return  # 尚未同步过,无从对账
+        return  # 尚未同步过,跳过对账
     max_wm = max(high, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     for label, start, end in month_segments(min_wm, max_wm):
         step_id = landing.add_step(
