@@ -205,15 +205,21 @@ _VUE_MISSING_HTML = """<!doctype html>
 """
 
 
-def resolve_vue_dist() -> Path | None:
-    """定位 Vue dist;优先 D2A_VUE_DIST,其次便携 home,再仓库/包内路径。"""
+def resolve_vue_dist(home: str | Path | None = None) -> Path | None:
+    """定位 Vue dist;优先显式目录、便携 home,再环境变量和仓库/包内路径。"""
     env = (os.environ.get("D2A_VUE_DIST") or "").strip()
     candidates: list[Path] = []
     if env:
         candidates.append(Path(env))
-    home = (os.environ.get("D2A_HOME") or "").strip()
-    if home:
-        home_path = Path(home)
+    # create_app(home=...) 必须完全自包含，不能被同一进程中其他实例的
+    # D2A_HOME 覆盖（测试并行及多实例嵌入场景均会出现这种情况）。
+    explicit_home = Path(home) if home is not None else None
+    if explicit_home is not None:
+        candidates.append(explicit_home / "app" / "console-ui" / "dist")
+        candidates.append(explicit_home / "console-ui" / "dist")
+    env_home = (os.environ.get("D2A_HOME") or "").strip()
+    if env_home:
+        home_path = Path(env_home)
         candidates.append(home_path / "app" / "console-ui" / "dist")
         candidates.append(home_path / "console-ui" / "dist")
     candidates.append(_REPO_ROOT / "console-ui" / "dist")
@@ -3885,7 +3891,7 @@ def create_app(landing: str | None = None, templates: str = "templates",
         return response
 
     # ---- Vue Console 根路径静态挂载与 SPA fallback ----
-    vue_dist = resolve_vue_dist()
+    vue_dist = resolve_vue_dist(home_layout.root if home_layout is not None else None)
     app.state.vue_dist = vue_dist
 
     def _vue_missing() -> HTMLResponse:

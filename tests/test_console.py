@@ -24,12 +24,10 @@ SOURCE = "digiwin_e10"
 
 
 def _ensure_vue_dist(tmp_path: Path) -> Path:
-    """创建最小 Vue dist 目录并设置 D2A_HOME 使 Console 首页返回 200。"""
+    """创建最小 Vue dist 目录，供 create_app(home=...) 发现。"""
     dist = tmp_path / "console-ui" / "dist"
     dist.mkdir(parents=True, exist_ok=True)
     (dist / "index.html").write_text("<!DOCTYPE html><html><body>d2a</body></html>")
-    import os
-    os.environ["D2A_HOME"] = str(tmp_path)
     return dist
 
 
@@ -76,6 +74,19 @@ def test_readonly_mode_views_and_blocked_actions(env):
 
     assert client.get("/api/runs").json()[0]["status"] == "ok"
     assert client.get("/api/audit").json(), "审计日志应有内容"
+
+
+def test_explicit_home_ignores_process_home_for_vue_dist(env, monkeypatch):
+    """显式 home 不能受其他并行测试设置的 D2A_HOME 影响。"""
+    landing, platform_yaml, tmp_path = env
+    monkeypatch.setenv("D2A_HOME", str(tmp_path / "another-install"))
+    platform_cfg = PlatformConfig(
+        templates=str(ROOT / "templates"), landing=landing.db_path)
+    client = TestClient(create_app(
+        landing.db_path, str(ROOT / "templates"),
+        platform_cfg, config_path=platform_yaml, home=tmp_path))
+
+    assert client.get("/", follow_redirects=False).status_code == 200
 
 
 def test_full_mode_apply(env):
