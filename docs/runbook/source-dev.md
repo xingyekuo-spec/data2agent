@@ -81,17 +81,18 @@ python -m data2agent.connect status
 ## 5. 本地元数据扫描
 
 ```bash
-# 单元/API 测试（不依赖真实 SQL Server）
+# 单元/API 测试（不依赖真实 SQL Server；在仓库根目录执行）
 .venv/bin/python -m pytest tests/test_metadata_discoverer.py tests/test_middle_metadata_api.py -q
 
-# 真实 SQL Server（需 compose）
-cd tests/integration/mssql
-# 见该目录 docker-compose.yml 头注释设置 D2A_IT_MSSQL_DSN
+# 真实 SQL Server：在仓库根目录启动 compose（会 seed 并跑 tests/integration/mssql）
+docker compose -f tests/integration/mssql/docker-compose.yml up \
+  --build --abort-on-container-exit --exit-code-from runner
+
+# 若已有外部 MSSQL 并设置了 D2A_IT_MSSQL_DSN / D2A_IT_MSSQL_SA_DSN，也可在仓库根目录：
 .venv/bin/python -m pytest tests/integration/mssql/ -q
 ```
 
-门控环境变量未设置时，MSSQL 集成测试自动 skip。
-
+门控环境变量未设置时，直接跑 pytest 会 skip 集成用例；compose 路径会注入 DSN 并实际执行。
 ## 6. HTTP 推送模式
 
 ```yaml

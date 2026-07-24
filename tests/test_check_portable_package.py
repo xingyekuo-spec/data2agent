@@ -70,3 +70,31 @@ def test_check_portable_middle_rejects_missing_metadata(tmp_path: Path, monkeypa
     )
     with pytest.raises(SystemExit, match="metadata.html"):
         main()
+
+
+def test_check_portable_rejects_erp_configs_anywhere(tmp_path: Path, monkeypatch):
+    """旧 ERP 清单即使在 app/ 而非 middle_admin 下也应失败。"""
+    portable = tmp_path / "portable"
+    expected = tmp_path / "templates"
+    _write(expected / "metrics" / "dead_stock.yaml")
+    _write(expected / "objects" / "dead_stock_item.yaml")
+    _write(expected / "objects" / "dead_stock_attribution.yaml")
+    shutil.copytree(expected, portable / "app" / "templates")
+    _write(portable / "BUILD-INFO.json", json.dumps({"release_version": "0.5.0-test"}))
+    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
+    src = ROOT / "data2agent" / "middle_admin" / "templates"
+    shutil.copytree(src, pkg / "templates")
+    _write(pkg / "__init__.py", "")
+    _write(portable / "app" / "erp-configs" / "e10.yaml", "tables: [CUSTOMER]\n")
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_portable_package.py",
+            "--portable", str(portable),
+            "--role", "middle",
+            "--expected-templates", str(expected),
+        ],
+    )
+    with pytest.raises(SystemExit, match="erp-configs"):
+        main()

@@ -11,8 +11,10 @@
 版本不一致时中间机同步会 fail-fast，不会产生半份数据。
 
 Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` 调用
-`scripts/check_portable_package.py`；中间机包须包含 `/metadata`、`/tables` 页面且无
-ERP 候选表清单。该检查是 Release 门槛。
+`scripts/check_portable_package.py`（扫描**整个**便携包根，禁止 `erp-configs` /
+旧 profile 等路径）。打 `v*` tag 的 Release workflow 会先跑
+`tests/integration/mssql` compose 集成（真实 SQL Server），通过后才打包上传。
+该检查是 Release 门槛。
 
 ## 2. 端口
 

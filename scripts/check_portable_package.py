@@ -8,6 +8,23 @@ import hashlib
 import sys
 from pathlib import Path
 
+# 文件名/目录名不得出现在便携包任意位置(含 app、runtime、其他子包)。
+_FORBIDDEN_PATH_PARTS = (
+    "erp_profile",
+    "erp_profiles",
+    "erp-configs",
+    "erp_configs",
+    "table_candidates",
+    "table-candidates",
+)
+
+# 已安装 data2agent 包内不得再出现的旧切换符号。
+_FORBIDDEN_CODE_SYMBOLS = (
+    "whitelist_from_bindings",
+    "extra_whitelist",
+    "migrate_config_to_tables",
+)
+
 
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -61,6 +78,26 @@ def _check_platform_entry(portable: Path) -> None:
         _fail("installed platform wheel does not retain /v1 compatibility redirect")
 
 
+def _check_no_legacy_erp_artifacts(portable: Path) -> None:
+    """扫描整个便携包根，禁止旧 ERP profile / 候选清单路径名。"""
+    for hit in portable.rglob("*"):
+        folded = hit.name.casefold()
+        for bad in _FORBIDDEN_PATH_PARTS:
+            if bad in folded:
+                rel = hit.relative_to(portable)
+                _fail(f"forbidden ERP profile artifact in package: {rel}")
+
+    d2a = _site_packages(portable) / "data2agent"
+    if not d2a.is_dir():
+        return
+    for py in d2a.rglob("*.py"):
+        text = py.read_text(encoding="utf-8", errors="ignore")
+        for needle in _FORBIDDEN_CODE_SYMBOLS:
+            if needle in text:
+                rel = py.relative_to(portable)
+                _fail(f"legacy symbol {needle!r} in {rel}")
+
+
 def _check_middle_admin(portable: Path) -> None:
     pkg = _site_packages(portable) / "data2agent" / "middle_admin"
     tpl = pkg / "templates"
@@ -79,20 +116,6 @@ def _check_middle_admin(portable: Path) -> None:
     if 'href="/metadata"' not in layout or 'href="/tables"' not in layout:
         _fail("middle_admin nav missing /metadata or /tables")
 
-    # 新安装不得随包携带 ERP 表名候选清单 / 旧 profile
-    for bad_name in ("erp_profile", "erp_profiles", "table_candidates"):
-        for hit in pkg.rglob("*"):
-            if not hit.is_file():
-                continue
-            if bad_name in hit.name.casefold():
-                _fail(f"forbidden ERP profile artifact in package: {hit}")
-    # 扫描已安装 middle_admin 源码字符串
-    for py in pkg.rglob("*.py"):
-        text = py.read_text(encoding="utf-8", errors="ignore")
-        for needle in ("whitelist_from_bindings", "extra_whitelist", "migrate_config_to_tables"):
-            if needle in text:
-                _fail(f"legacy symbol {needle!r} in {py}")
-
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -106,6 +129,7 @@ def main() -> int:
     build_info = portable / "BUILD-INFO.json"
     if not build_info.is_file() or '"release_version"' not in build_info.read_text(encoding="utf-8"):
         _fail("portable build label missing")
+    _check_no_legacy_erp_artifacts(portable)
     if args.role == "platform":
         _check_platform_entry(portable)
     else:

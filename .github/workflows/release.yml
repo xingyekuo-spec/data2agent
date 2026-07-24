@@ -40,8 +40,21 @@ jobs:
       - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
       - run: python scripts/verify.py module backend
 
+  # M6 Release 门槛:真实 SQL Server 元数据 / 业务键 / 快照替换必须在打包前通过。
+  # module backend 使用 not integration，不能替代本 job。
+  mssql-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      - name: MSSQL compose integration
+        run: >
+          docker compose -f tests/integration/mssql/docker-compose.yml up
+          --build --abort-on-container-exit --exit-code-from runner
+
   package:
-    needs: test
+    needs: [test, mssql-integration]
     runs-on: windows-latest
     defaults:
       run:
