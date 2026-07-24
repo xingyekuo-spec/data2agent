@@ -1,0 +1,223 @@
+{% extends "layout.html" %}
+{% block title %}ERP 元数据 — 中间机管理{% endblock %}
+{% block content %}
+<style>
+  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
+        box-shadow:0 1px 3px rgba(16,34,54,.08)}
+  .card h2{font-size:15px;margin:0 0 10px;color:#12314f}
+  .meta{font-size:13px;color:#51606f;line-height:1.55}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+  .row input,.row select{padding:7px 9px;border:1px solid #d0d7de;border-radius:6px;font-size:13px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #e8edf2;vertical-align:top}
+  th{color:#51606f;font-weight:600;background:#f6f8fa}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+  .badge-ok{background:#e6f4ea;color:#1e7e34}
+  .badge-off{background:#f0f2f4;color:#51606f}
+  .drawer{position:fixed;top:0;right:0;width:min(420px,92vw);height:100%;background:#fff;
+           box-shadow:-4px 0 18px rgba(16,34,54,.12);padding:18px;overflow:auto;display:none;z-index:20}
+  .drawer.open{display:block}
+  .warn{font-size:12px;color:#8a4b00;background:#fff8e6;border:1px solid #f0d89a;
+        border-radius:6px;padding:8px 10px}
+  .err{color:#b42318;font-size:13px}
+  button.text{background:none;border:none;color:#0b6bcb;cursor:pointer;padding:0;font-size:13px}
+</style>
+
+<div class="card">
+  <h2>ERP 元数据</h2>
+  <p class="meta">只读发现表结构。加入抽取计划后，请到「抽取表」页确认模式、业务键与水位并保存。</p>
+  <div class="row">
+    <button type="button" id="btn-scan">刷新元数据</button>
+    <span id="scan-meta" class="meta">尚未扫描</span>
+  </div>
+  <div id="scan-err" class="err"></div>
+</div>
+
+<div class="card">
+  <div class="row">
+    <label>Schema <input id="f-schema" type="text" placeholder="dbo / main" style="width:110px"></label>
+    <label>关键词 <input id="f-q" type="text" placeholder="表名" style="width:140px"></label>
+    <label>类型
+      <select id="f-type"><option value="">全部</option><option value="table">表</option><option value="view">视图</option></select>
+    </label>
+    <label><input id="f-pk" type="checkbox"> 仅有 PK</label>
+    <label><input id="f-planned" type="checkbox"> 仅已加入</label>
+    <button type="button" id="btn-filter">筛选</button>
+  </div>
+  <div id="table-list"><p class="meta">请先刷新元数据</p></div>
+</div>
+
+<div id="drawer" class="drawer">
+  <button type="button" class="text" id="btn-close">关闭</button>
+  <h2 id="drawer-title" style="margin-top:8px">详情</h2>
+  <div id="drawer-body" class="meta"></div>
+  <div style="margin-top:14px">
+    <button type="button" id="btn-add">加入抽取计划</button>
+    <p class="warn" style="margin-top:10px">不会立即保存到 connect.yaml；将写入本页草稿并跳转抽取表页。</p>
+  </div>
+</div>
+
+<script>
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function authHeaders(){
+  var h={'Content-Type':'application/json'};
+  var t=sessionStorage.getItem('d2a_token'); if(t) h['Authorization']='Bearer '+t;
+  return h;
+}
+var currentScan=null, selected=null, planSource=null, planRevision=null;
+var LEGACY_DRAFT_KEY='d2a_extraction_draft';
+
+function draftKey(src){
+  if(!src) throw new Error('draft key requires source');
+  return 'd2a_extraction_draft:'+src;
+}
+function loadDraft(src){
+  try{
+    var d=JSON.parse(sessionStorage.getItem(draftKey(src))||'null');
+    if(d) return d;
+    // 迁移旧固定键（无 source 分区）
+    var legacy=JSON.parse(sessionStorage.getItem(LEGACY_DRAFT_KEY)||'null');
+    if(legacy && legacy.tables && (!legacy.source || legacy.source===src)){
+      sessionStorage.removeItem(LEGACY_DRAFT_KEY);
+      return legacy;
+    }
+    return null;
+  }catch(e){ return null; }
+}
+function saveDraft(src, d){
+  sessionStorage.setItem(draftKey(src), JSON.stringify(d));
+  sessionStorage.removeItem(LEGACY_DRAFT_KEY);
+}
+function rememberSource(src){
+  if(src) planSource=src;
+}
+
+async function ensurePlanContext(){
+  var r=await fetch('/api/extraction-tables',{headers:authHeaders()});
+  var body=await r.json();
+  if(!r.ok) throw new Error(JSON.stringify(body));
+  rememberSource(body.source);
+  planRevision=body.revision;
+  return body;
+}
+
+async function addToPlan(){
+  if(!selected) return;
+  var src=planSource || selected.source;
+  var tables={}, baseRev=planRevision;
+  try{
+    var cur=await ensurePlanContext();
+    src=cur.source;
+    baseRev=cur.revision;
+    var draft=loadDraft(src);
+    if(draft && draft.tables){ tables=JSON.parse(JSON.stringify(draft.tables)); }
+    else { tables=JSON.parse(JSON.stringify(cur.tables||{})); }
+  }catch(e){ alert('无法读取抽取计划: '+e.message); return; }
+  if(!src){ alert('无法确定 source，不能写入草稿'); return; }
+  var keys=selected.primary_key&&selected.primary_key.length?selected.primary_key:
+    ((selected.key_suggestions&&selected.key_suggestions[0]&&selected.key_suggestions[0].columns)||[]);
+  tables[selected.name]={
+    mode: keys.length?'incremental':'full_refresh',
+    schema: selected.schema,
+    key_columns: keys.length?keys:null,
+    watermark: (selected.watermark_candidates&&selected.watermark_candidates[0])||null,
+    schema_fingerprint: selected.schema_fingerprint||null
+  };
+  if(tables[selected.name].mode==='full_refresh'){
+    delete tables[selected.name].watermark;
+    delete tables[selected.name].key_columns;
+  }
+  saveDraft(src, {
+    source: src,
+    base_revision: baseRev,
+    tables: tables,
+    dirty: true,
+    updated_at: Date.now()
+  });
+  location.href='/tables?from=metadata';
+}
+document.getElementById('btn-scan').onclick=startScan;
+document.getElementById('btn-filter').onclick=loadTables;
+document.getElementById('btn-close').onclick=function(){ document.getElementById('drawer').classList.remove('open'); };
+document.getElementById('btn-add').onclick=addToPlan;
+document.getElementById('table-list').addEventListener('click', function(e){
+  var b=e.target.closest('button[data-t]'); if(!b) return;
+  openDetail(b.getAttribute('data-s'), b.getAttribute('data-t'));
+});
+ensurePlanContext().catch(function(){});
+
+async function startScan(){
+  document.getElementById('scan-err').textContent='';
+  var r=await fetch('/api/metadata/scans',{method:'POST',headers:authHeaders(),body:'{}'});
+  var body=await r.json();
+  if(!r.ok){ document.getElementById('scan-err').textContent=body.detail||JSON.stringify(body); return; }
+  currentScan=body.scan_id;
+  rememberSource(body.source);
+  document.getElementById('scan-meta').textContent='扫描中 '+esc(currentScan)+'…';
+  pollScan();
+}
+async function pollScan(){
+  if(!currentScan) return;
+  var r=await fetch('/api/metadata/scans/'+encodeURIComponent(currentScan),{headers:authHeaders()});
+  var body=await r.json();
+  if(!r.ok){ document.getElementById('scan-err').textContent=JSON.stringify(body); return; }
+  document.getElementById('scan-meta').textContent=
+    '状态 '+esc(body.status)+' · 表 '+esc(body.table_count||0)+
+    (body.finished_at?(' · 完成于 '+esc(body.finished_at)):'');
+  if(body.status==='running'){ setTimeout(pollScan,800); return; }
+  if(body.status==='failed'||body.status==='timeout'){
+    document.getElementById('scan-err').textContent=body.error_detail||body.error_code||body.status;
+  }
+  loadTables();
+}
+async function loadTables(){
+  var qs=new URLSearchParams();
+  var schema=document.getElementById('f-schema').value.trim();
+  var q=document.getElementById('f-q').value.trim();
+  var ot=document.getElementById('f-type').value;
+  if(schema) qs.set('schema',schema);
+  if(q) qs.set('q',q);
+  if(ot) qs.set('object_type',ot);
+  if(document.getElementById('f-pk').checked) qs.set('has_pk','true');
+  qs.set('limit','100');
+  var r=await fetch('/api/metadata/tables?'+qs.toString(),{headers:authHeaders()});
+  var body=await r.json();
+  if(!r.ok){
+    document.getElementById('table-list').innerHTML='<p class="err">'+(body.detail&&body.detail.detail?esc(body.detail.detail):esc(JSON.stringify(body)))+'</p>';
+    return;
+  }
+  rememberSource(body.source);
+  var onlyPlanned=document.getElementById('f-planned').checked;
+  var rows=(body.tables||[]).filter(function(t){ return !onlyPlanned || t.in_extraction_plan; });
+  if(!rows.length){ document.getElementById('table-list').innerHTML='<p class="meta">无匹配表</p>'; return; }
+  var html='<table><thead><tr><th>表</th><th>类型</th><th>行数≈</th><th>PK</th><th>抽取</th><th></th></tr></thead><tbody>';
+  rows.forEach(function(t){
+    html+='<tr><td>'+esc(t.schema)+'.'+esc(t.name)+'</td><td>'+esc(t.object_type)+'</td><td>'+
+      esc(t.estimated_rows==null?'—':t.estimated_rows)+'</td><td>'+esc((t.primary_key||[]).join(', ')||'—')+
+      '</td><td><span class="badge '+(t.in_extraction_plan?'badge-ok':'badge-off')+'">'+
+      (t.in_extraction_plan?'已加入':'未加入')+'</span></td><td><button type="button" class="text" data-s="'+
+      esc(t.schema)+'" data-t="'+esc(t.name)+'">详情</button></td></tr>';
+  });
+  html+='</tbody></table>';
+  document.getElementById('table-list').innerHTML=html;
+}
+async function openDetail(schema, table){
+  var r=await fetch('/api/metadata/tables/'+encodeURIComponent(schema)+'/'+encodeURIComponent(table),{headers:authHeaders()});
+  var body=await r.json();
+  if(!r.ok){ alert(JSON.stringify(body)); return; }
+  selected=body;
+  rememberSource(body.source);
+  document.getElementById('drawer-title').textContent=body.schema+'.'+body.name;
+  var html='<p>类型 '+esc(body.object_type)+' · 指纹 '+esc(body.schema_fingerprint||'—')+'</p>';
+  html+='<p>PK: '+esc((body.primary_key||[]).join(', ')||'—')+'</p>';
+  html+='<p>水位候选: '+esc((body.watermark_candidates||[]).join(', ')||'—')+' <em>待确认</em></p>';
+  html+='<table><thead><tr><th>列</th><th>类型</th><th>NULL</th></tr></thead><tbody>';
+  (body.columns||[]).forEach(function(c){
+    html+='<tr><td>'+esc(c.name)+'</td><td>'+esc(c.sql_type)+'</td><td>'+esc(c.nullable?'是':'否')+'</td></tr>';
+  });
+  html+='</tbody></table>';
+  document.getElementById('drawer-body').innerHTML=html;
+  document.getElementById('drawer').classList.add('open');
+}
+</script>
+{% endblock %}

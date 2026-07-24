@@ -1,0 +1,276 @@
+{% extends "layout.html" %}
+{% block title %}抽取表 — 中间机管理{% endblock %}
+{% block content %}
+<style>
+  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
+        box-shadow:0 1px 3px rgba(16,34,54,.08)}
+  .card h2{font-size:15px;margin:0 0 10px;color:#12314f}
+  .meta{font-size:13px;color:#51606f;line-height:1.55}
+  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0}
+  .field{display:block;margin-bottom:12px}
+  .field span{display:block;font-size:12px;color:#51606f;margin-bottom:4px;font-weight:600}
+  .field input,.field select{width:100%;max-width:420px;padding:7px 9px;border:1px solid #d0d7de;border-radius:6px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #e8edf2}
+  th{color:#51606f;background:#f6f8fa}
+  .warn{font-size:12px;color:#8a4b00;background:#fff8e6;border:1px solid #f0d89a;border-radius:6px;padding:8px 10px}
+  .err{color:#b42318;font-size:13px;white-space:pre-wrap}
+  .ok{color:#1e7e34;font-size:13px}
+  .panel{border:1px solid #e8edf2;border-radius:8px;padding:14px;margin-top:12px;display:none}
+  .panel.open{display:block}
+  button.danger{background:#b42318;color:#fff;border:none;border-radius:6px;padding:7px 12px;cursor:pointer}
+  button.text{background:none;border:none;color:#0b6bcb;cursor:pointer;font-size:13px}
+</style>
+
+<div class="card">
+  <h2>抽取表计划</h2>
+  <p class="meta">确认模式、业务键与水位后原子保存。保存后 connector 从下一轮开始使用新配置。未保存修改会保留在本机草稿中。</p>
+  <div class="row">
+    <button type="button" id="btn-reload">重新加载</button>
+    <button type="button" id="btn-validate">校验</button>
+    <button type="button" id="btn-save">保存计划</button>
+    <button type="button" id="btn-discard" class="danger" style="display:none">放弃草稿</button>
+    <span id="rev" class="meta"></span>
+  </div>
+  <div id="msg" class="meta"></div>
+  <div id="diff" class="warn" style="display:none;margin-top:10px"></div>
+</div>
+
+<div class="card">
+  <table>
+    <thead><tr><th>表</th><th>模式</th><th>键</th><th>水位</th><th>校验</th><th></th></tr></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+  <div class="panel" id="editor">
+    <h2 id="ed-title">编辑</h2>
+    <label class="field"><span>模式</span>
+      <select id="ed-mode"><option value="incremental">incremental</option><option value="full_refresh">full_refresh</option></select>
+    </label>
+    <label class="field"><span>Schema</span><input id="ed-schema" type="text"></label>
+    <label class="field" id="wrap-keys"><span>key_columns（逗号分隔）</span><input id="ed-keys" type="text"></label>
+    <label class="field" id="wrap-wm"><span>watermark</span><input id="ed-wm" type="text"></label>
+    <div class="row">
+      <button type="button" id="btn-apply">应用到草稿</button>
+      <button type="button" id="btn-keycheck">校验业务键</button>
+      <button type="button" class="danger" id="btn-remove">移除表</button>
+    </div>
+    <div id="ed-msg" class="meta"></div>
+  </div>
+</div>
+
+<script>
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function authHeaders(){
+  var h={'Content-Type':'application/json'};
+  var t=sessionStorage.getItem('d2a_token'); if(t) h['Authorization']='Bearer '+t;
+  return h;
+}
+var sourceName=null, revision=null, serverTables={}, tables={}, editing=null, dirty=false, results={};
+
+var LEGACY_DRAFT_KEY='d2a_extraction_draft';
+function draftKey(src){
+  if(!src) return null;
+  return 'd2a_extraction_draft:'+src;
+}
+function readDraft(src){
+  if(!src) return null;
+  try{
+    var d=JSON.parse(sessionStorage.getItem(draftKey(src))||'null');
+    if(d) return d;
+    var legacy=JSON.parse(sessionStorage.getItem(LEGACY_DRAFT_KEY)||'null');
+    if(legacy && legacy.tables && (!legacy.source || legacy.source===src)){
+      sessionStorage.removeItem(LEGACY_DRAFT_KEY);
+      return legacy;
+    }
+    return null;
+  }catch(e){ return null; }
+}
+function persistDraft(){
+  if(!sourceName) return;
+  var key=draftKey(sourceName);
+  if(!dirty){
+    sessionStorage.removeItem(key);
+    sessionStorage.removeItem(LEGACY_DRAFT_KEY);
+    document.getElementById('btn-discard').style.display='none';
+    return;
+  }
+  sessionStorage.setItem(key, JSON.stringify({
+    source: sourceName,
+    base_revision: revision,
+    tables: tables,
+    dirty: true,
+    updated_at: Date.now()
+  }));
+  sessionStorage.removeItem(LEGACY_DRAFT_KEY);
+  document.getElementById('btn-discard').style.display='inline-block';
+}
+function clearDraft(){
+  if(sourceName) sessionStorage.removeItem(draftKey(sourceName));
+  sessionStorage.removeItem(LEGACY_DRAFT_KEY);
+  document.getElementById('btn-discard').style.display='none';
+}
+function markDirty(v){
+  dirty=!!v;
+  window.onbeforeunload=dirty?function(){return '有未保存的抽取计划修改';}:null;
+  persistDraft();
+}
+function setMsg(text, ok){
+  var el=document.getElementById('msg');
+  el.className=ok===false?'err':(ok?'ok':'meta');
+  el.textContent=text||'';
+}
+function showDiff(diff){
+  var d=document.getElementById('diff');
+  diff=diff||{added:[], removed:[], changed:[]};
+  d.style.display='block';
+  d.textContent='保存前差异 — 新增: '+(diff.added||[]).join(', ')+
+    ' · 修改: '+(diff.changed||[]).join(', ')+
+    ' · 删除: '+(diff.removed||[]).join(', ');
+  return diff;
+}
+function render(){
+  document.getElementById('rev').textContent=revision?('revision '+revision.slice(0,18)+'…'+(dirty?' · 有未保存草稿':'')):'';
+  var html='';
+  Object.keys(tables).sort().forEach(function(name){
+    var s=tables[name]||{};
+    var st=results[name];
+    html+='<tr><td>'+esc((s.schema||'')+'.'+name)+'</td><td>'+esc(s.mode)+'</td><td>'+
+      esc((s.key_columns||[]).join(', ')||'—')+'</td><td>'+esc(s.watermark||'—')+'</td><td>'+
+      esc(st?st.status:'—')+'</td><td><button type="button" class="text" data-edit="'+esc(name)+'">编辑</button></td></tr>';
+  });
+  document.getElementById('tbody').innerHTML=html||'<tr><td colspan="6" class="meta">暂无抽取表</td></tr>';
+}
+function openEditor(name){
+  editing=name;
+  var s=tables[name]||{mode:'full_refresh',schema:'dbo'};
+  document.getElementById('ed-title').textContent='编辑 '+name;
+  document.getElementById('ed-mode').value=s.mode||'full_refresh';
+  document.getElementById('ed-schema').value=s.schema||'dbo';
+  document.getElementById('ed-keys').value=(s.key_columns||[]).join(', ');
+  document.getElementById('ed-wm').value=s.watermark||'';
+  toggleMode();
+  document.getElementById('editor').classList.add('open');
+  document.getElementById('ed-msg').textContent='';
+}
+function toggleMode(){
+  var inc=document.getElementById('ed-mode').value==='incremental';
+  document.getElementById('wrap-wm').style.display=inc?'block':'none';
+}
+function applyServerBody(body, opts){
+  opts=opts||{};
+  sourceName=body.source;
+  serverTables=JSON.parse(JSON.stringify(body.tables||{}));
+  var draft=readDraft(sourceName);
+  if(opts.preferDraft && draft && draft.tables && draft.dirty){
+    tables=JSON.parse(JSON.stringify(draft.tables));
+    dirty=true;
+    // 保留草稿原始 base_revision 提交，避免用服务器最新 revision 绕过乐观锁
+    var base=draft.base_revision || null;
+    if(base && base !== body.revision){
+      revision=base;
+      setMsg('已恢复未保存草稿，但配置已被其他会话更新（草稿 '+base.slice(0,12)+'… ≠ 当前 '+String(body.revision||'').slice(0,12)+'…）。保存将触发冲突；请重新加载后合并，或放弃草稿。', false);
+    } else {
+      revision=base || body.revision;
+      setMsg('已恢复未保存草稿（基于 revision '+String(revision||'').slice(0,12)+'…）', true);
+    }
+  } else {
+    revision=body.revision;
+    tables=JSON.parse(JSON.stringify(serverTables));
+    dirty=false;
+  }
+  results={};
+  render();
+  markDirty(dirty);
+}
+async function reload(opts){
+  opts=opts||{};
+  if(dirty && !opts.force && !opts.preferDraft){
+    if(!confirm('当前有未保存草稿。重新加载将丢弃这些修改，是否继续？')) return;
+    clearDraft();
+    dirty=false;
+  }
+  var r=await fetch('/api/extraction-tables',{headers:authHeaders()});
+  var body=await r.json();
+  if(!r.ok){ setMsg(JSON.stringify(body), false); return; }
+  applyServerBody(body, opts);
+  if(!opts.preferDraft || !dirty) setMsg('已加载 '+Object.keys(tables).length+' 张表', true);
+}
+async function validatePlan(){
+  var r=await fetch('/api/extraction-tables/validate',{method:'POST',headers:authHeaders(),
+    body:JSON.stringify({tables:tables, live:true})});
+  var body=await r.json();
+  results={}; (body.results||[]).forEach(function(x){ results[x.table]=x; });
+  render();
+  showDiff(body.diff);
+  setMsg(body.ok?'校验通过':'校验未通过', !!body.ok);
+  return body;
+}
+async function savePlan(){
+  if(!revision){ setMsg('缺少 revision，请重新加载', false); return; }
+  var body=await validatePlan();
+  if(!body || !body.ok){
+    setMsg('校验未通过，不能保存。请先修复现场校验问题。', false);
+    return;
+  }
+  var diff=body.diff||{added:[], removed:[], changed:[]};
+  var summary='即将保存抽取计划：\n'+
+    '新增: '+(diff.added.join(', ')||'（无）')+'\n'+
+    '修改: '+(diff.changed.join(', ')||'（无）')+'\n'+
+    '删除: '+(diff.removed.join(', ')||'（无）')+'\n\n确认原子替换整个 tables 配置？';
+  if(!confirm(summary)) return;
+  var r=await fetch('/api/extraction-tables',{method:'PUT',headers:authHeaders(),
+    body:JSON.stringify({tables:tables, revision:revision})});
+  var saved=await r.json().catch(function(){return {};});
+  if(r.status===409){ setMsg('配置已被其他会话修改，请重新加载后提交', false); return; }
+  if(!r.ok || !saved.ok){
+    setMsg((saved.errors||[]).map(function(e){return e.field+': '+e.message;}).join('\n')||JSON.stringify(saved), false);
+    if(saved.results){ results={}; saved.results.forEach(function(x){ results[x.table]=x; }); render(); }
+    return;
+  }
+  clearDraft();
+  dirty=false;
+  window.onbeforeunload=null;
+  revision=saved.revision;
+  setMsg(saved.message||'已保存', true);
+  await reload({force:true});
+}
+document.getElementById('btn-reload').onclick=function(){ reload({}); };
+document.getElementById('btn-validate').onclick=validatePlan;
+document.getElementById('btn-save').onclick=savePlan;
+document.getElementById('btn-discard').onclick=function(){
+  if(!confirm('确认放弃未保存草稿并恢复磁盘上的抽取计划？')) return;
+  clearDraft(); dirty=false; window.onbeforeunload=null;
+  reload({force:true});
+};
+document.getElementById('ed-mode').onchange=toggleMode;
+document.getElementById('tbody').addEventListener('click', function(e){
+  var b=e.target.closest('button[data-edit]'); if(b) openEditor(b.getAttribute('data-edit'));
+});
+document.getElementById('btn-apply').onclick=function(){
+  if(!editing) return;
+  var mode=document.getElementById('ed-mode').value;
+  var keys=document.getElementById('ed-keys').value.split(',').map(function(s){return s.trim();}).filter(Boolean);
+  var spec={mode:mode, schema:document.getElementById('ed-schema').value.trim()||null};
+  if(keys.length) spec.key_columns=keys;
+  if(mode==='incremental') spec.watermark=document.getElementById('ed-wm').value.trim()||null;
+  tables[editing]=spec; markDirty(true); render();
+  document.getElementById('ed-msg').textContent='已写入草稿（刷新后仍保留，保存成功后清除）';
+};
+document.getElementById('btn-remove').onclick=function(){
+  if(!editing) return;
+  if(!confirm('确认从抽取计划移除 '+editing+'？仍需点击「保存计划」才会写入磁盘。')) return;
+  delete tables[editing]; editing=null; markDirty(true);
+  document.getElementById('editor').classList.remove('open'); render();
+};
+document.getElementById('btn-keycheck').onclick=async function(){
+  if(!editing) return;
+  var keys=document.getElementById('ed-keys').value.split(',').map(function(s){return s.trim();}).filter(Boolean);
+  var schema=document.getElementById('ed-schema').value.trim()||'dbo';
+  var r=await fetch('/api/metadata/key-check',{method:'POST',headers:authHeaders(),
+    body:JSON.stringify({schema:schema, table:editing, columns:keys})});
+  var body=await r.json();
+  document.getElementById('ed-msg').textContent=body.ok?'键校验通过':((body.detail||body.code||JSON.stringify(body)));
+};
+reload({preferDraft:true});
+</script>
+{% endblock %}

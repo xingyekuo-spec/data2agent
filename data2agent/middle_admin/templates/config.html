@@ -23,16 +23,7 @@
   .section-title{font-size:13px;color:#51606f;margin:18px 0 10px;padding-top:8px;
                  border-top:1px solid #e8edf2}
   .section-title:first-of-type{border-top:0;margin-top:0;padding-top:0}
-  .tables-list{width:100%;border-collapse:collapse;margin-top:4px}
-  .tables-list th{text-align:left;font-size:12px;color:#51606f;padding:6px 8px;border-bottom:1px solid #d0d7de;background:#f6f8fa}
-  .tables-list td{padding:4px 8px;border-bottom:1px solid #e8edf2;vertical-align:middle}
-  .tables-list input[type=text],.tables-list select{width:100%;box-sizing:border-box;padding:5px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px}
-  .tables-list select{background:#fff}
-  .text-btn{background:none;border:none;cursor:pointer;font-size:13px;padding:2px 6px}
-  .text-btn.danger{color:#b42318}
-  .text-btn.danger:hover{text-decoration:underline}
-  .add-table-row{margin-top:8px;display:flex;gap:6px;align-items:center}
-  .add-table-row input[type=text]{width:220px}
+  .conn-box{border:1px solid #e8edf2;border-radius:8px;padding:12px;margin-top:12px}
 </style>
 
 <div id="setup-banner" class="banner warn" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
@@ -114,6 +105,16 @@
 </form>
 
 <!-- 日常配置 -->
+<div id="conn-card" class="card" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
+  <h2>测试数据库连接</h2>
+  <p class="card-lead">只验证 ERP 是否可达与元数据权限，不读取抽取表。本页不显示密码、DSN 或 Token 明文。</p>
+  <div class="conn-box">
+    <button type="button" id="btn-conn-test">测试数据库连接</button>
+    <a href="/metadata" id="link-metadata" style="margin-left:12px;display:none">连接成功，前往 ERP 元数据 →</a>
+    <p id="conn-result" class="meta-line"></p>
+  </div>
+</div>
+
 <form id="config-form" class="card" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
   <h2>运行参数</h2>
   <p class="card-lead">调整路径与抽取策略。保存后请重启抽取进程（便携包可再双击一次 <code>data2agent.exe</code>，或重启对应 Windows 服务）。</p>
@@ -276,7 +277,39 @@
       });
   });
 
-  if (!needsSetup) loadDaily();
+  if (!needsSetup) {
+    loadDaily();
+    try {
+      var last = JSON.parse(sessionStorage.getItem('d2a_last_connection_test') || 'null');
+      if (last && last.body) {
+        document.getElementById('conn-result').textContent =
+          '最近结果: ' + JSON.stringify(last.body);
+        if (last.body.status === 'connected' || last.body.status === 'connected_limited') {
+          document.getElementById('link-metadata').style.display = 'inline';
+        }
+      }
+    } catch (e) {}
+    var btn = document.getElementById('btn-conn-test');
+    if (btn) btn.onclick = function () {
+      var out = document.getElementById('conn-result');
+      out.textContent = '测试中…';
+      fetch('/api/connection/test', {method: 'POST', headers: authHeaders(), body: '{}'})
+        .then(function (r) { return r.json(); })
+        .then(function (body) {
+          try {
+            sessionStorage.setItem('d2a_last_connection_test',
+              JSON.stringify({at: Date.now(), body: body}));
+          } catch (e) {}
+          out.textContent = JSON.stringify(body);
+          var link = document.getElementById('link-metadata');
+          if (body.status === 'connected' || body.status === 'connected_limited') {
+            link.style.display = 'inline';
+          } else {
+            link.style.display = 'none';
+          }
+        });
+    };
+  }
 })();
 </script>
 {% endblock %}

@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from ..admin_common.config_edit import MIDDLE_EDITABLE, merge_whitelist_and_save
 from ..admin_common.home_layout import HomeLayout
@@ -43,6 +43,13 @@ from ..connect.metadata import (
 )
 from ..connect.scheduler import run_sync_cycle
 
+from .extraction_tables import (
+    parse_tables_payload,
+    plan_diff,
+    replace_source_tables,
+    table_spec_to_dict,
+    validate_table_plan,
+)
 from .status import build_status
 
 _SCAN_STORE = ScanStore()
@@ -103,6 +110,22 @@ class WatermarkCheckBody(BaseModel):
     column: str
 
     model_config = {"populate_by_name": True}
+
+
+class ExtractionTablesValidateBody(BaseModel):
+    """校验预览；live=False 仅做结构校验，不得用于保存。"""
+    source: str | None = None
+    tables: dict[str, Any]
+    live: bool = True
+
+    model_config = {"populate_by_name": True}
+
+
+class ExtractionTablesPutBody(BaseModel):
+    """保存抽取计划。现场校验为服务端固定规则，不接受客户端 live 开关。"""
+    source: str | None = None
+    tables: dict[str, Any]
+    revision: str | None = None
 
 
 class SetupBody(BaseModel):
@@ -357,6 +380,14 @@ def create_app(
     def logs_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "logs.html", page_ctx(request))
 
+    @app.get("/metadata", response_class=HTMLResponse)
+    def metadata_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "metadata.html", page_ctx(request))
+
+    @app.get("/tables", response_class=HTMLResponse)
+    def tables_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "tables.html", page_ctx(request))
+
     @api.get("/setup/status")
     def setup_status() -> dict:
         return {
@@ -452,6 +483,97 @@ def create_app(
     def validate_config(body: ConfigPatch) -> dict:
         ok, errors = _validate_merged(cfg_path, _patch_to_dict(body))
         return {"ok": ok, "errors": errors}
+
+    @api.get("/extraction-tables")
+    def get_extraction_tables(source: str | None = None) -> dict:
+        if needs_setup():
+            raise HTTPException(409, "尚未完成首次配置")
+        cfg = reload_config()
+        name, scfg = _resolve_source(cfg, source)
+        tables = {
+            tbl: table_spec_to_dict(spec)
+            for tbl, spec in (scfg.tables or {}).items()
+        }
+        return {
+            "source": name,
+            "revision": config_revision(cfg_path),
+            "tables": tables,
+            "table_count": len(tables),
+        }
+
+    @api.post("/extraction-tables/validate")
+    def validate_extraction_tables(body: ExtractionTablesValidateBody) -> dict:
+        if needs_setup():
+            raise HTTPException(409, "尚未完成首次配置")
+        cfg = reload_config()
+        name, scfg = _resolve_source(cfg, body.source)
+        try:
+            parsed = parse_tables_payload(body.tables)
+        except (ValidationError, ValueError) as e:
+            return {
+                "ok": False, "source": name,
+                "errors": [{"field": "tables", "message": str(e)}],
+                "results": [], "diff": None,
+            }
+        before = dict(scfg.tables or {})
+        results = validate_table_plan(scfg, parsed, live=body.live)
+        ok = all(r["status"] == "ready" for r in results)
+        return {
+            "ok": ok,
+            "source": name,
+            "results": results,
+            "diff": plan_diff(before, parsed),
+        }
+
+    @api.put("/extraction-tables")
+    def put_extraction_tables(body: ExtractionTablesPutBody) -> dict:
+        if needs_setup():
+            raise HTTPException(409, "尚未完成首次配置")
+        cfg = reload_config()
+        name, scfg = _resolve_source(cfg, body.source)
+        try:
+            parsed = parse_tables_payload(body.tables)
+        except (ValidationError, ValueError) as e:
+            return {
+                "ok": False, "errors": [{"field": "tables", "message": str(e)}],
+                "revision": config_revision(cfg_path), "restart_required": False,
+            }
+        # 保存必须现场校验；忽略客户端任何 live 开关意图
+        results = validate_table_plan(scfg, parsed, live=True)
+        not_ready = [r for r in results if r["status"] != "ready"]
+        if not_ready:
+            return {
+                "ok": False,
+                "errors": [{"field": r["table"], "message": f"{r['status']}: {r.get('detail') or ''}"}
+                           for r in not_ready],
+                "results": results,
+                "revision": config_revision(cfg_path),
+                "restart_required": False,
+            }
+        with config_write_lock:
+            current = config_revision(cfg_path)
+            if body.revision is None:
+                raise HTTPException(
+                    409, {"detail": "更新抽取表必须提交 revision",
+                          "current_revision": current})
+            if body.revision != current:
+                raise HTTPException(
+                    409, {"detail": "配置已被其他会话修改,请刷新后重新提交。",
+                          "current_revision": current})
+            before = dict(scfg.tables or {})
+            ok, errors, revision = replace_source_tables(
+                cfg_path, name, parsed, validate=load_config,
+                stamp_validated_at=True)
+        return {
+            "ok": ok,
+            "errors": errors,
+            "results": results,
+            "diff": plan_diff(before, parsed) if ok else None,
+            "revision": revision,
+            "restart_required": ok,
+            "message": ("抽取计划已保存;connector 从下一轮开始使用新配置"
+                        if ok else None),
+        }
 
     @api.get("/status")
     def get_status() -> dict:
@@ -821,7 +943,7 @@ def create_app(
         if request.url.path.startswith("/api"):
             return await call_next(request)
         if needs_setup() and request.url.path not in (
-            "/config", "/", "/status", "/logs"
+            "/config", "/", "/status", "/logs", "/metadata", "/tables"
         ) and not request.url.path.startswith("/static"):
             return RedirectResponse("/config")
         return await call_next(request)

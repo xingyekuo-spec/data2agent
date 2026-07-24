@@ -209,7 +209,7 @@ def test_trigger_rejects_reconcile(middle_env):
 def test_html_pages(middle_env):
     client, _ = middle_env
     h = {"Authorization": "Bearer secret"}
-    for path in ("/status", "/config", "/logs"):
+    for path in ("/status", "/config", "/logs", "/metadata", "/tables"):
         r = client.get(path, headers=h)
         assert r.status_code == 200
         body = r.content.lower()
