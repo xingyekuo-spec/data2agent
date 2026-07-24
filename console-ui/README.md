@@ -26,7 +26,7 @@ URL 或日志;401 时自动清除并弹出认证提示。
 ## 测试
 
 ```bash
-npm test                 # Vitest(可用本地 MSW handlers 作测试 stub,非产品模式)
+npm test                 # Vitest(src/test 下 fetch stub + fixtures,非产品模式)
 npm run build
 node scripts/check-dist.mjs
 node scripts/e2e-acceptance.mjs --real   # Playwright 真实 API 验收
@@ -39,8 +39,8 @@ src/
 ├── api/                 # 类型化客户端
 ├── components/          # 布局与业务组件
 ├── config/              # 模式(恒 real)与路由辅助
-├── mocks/               # 仅 Vitest 测试 stub/handlers(不进入产品运行时)
+├── test/                # Vitest fetch stub、场景 fixtures(不进入产品运行时)
 ├── stores/ views/ ...
 ```
 
-生产构建不得携带 MSW worker 或 fixture 场景数据;由 `check-dist.mjs` 门禁。
+生产构建不得携带测试 fixture 场景数据;由 `check-dist.mjs` 门禁。
