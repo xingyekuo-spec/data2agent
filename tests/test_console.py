@@ -66,7 +66,9 @@ def test_readonly_mode_views_and_blocked_actions(env):
     assert r.status_code == 200
     assert "text/html" in r.headers["content-type"]
 
-    o = client.get("/api/overview").json()
+    o_resp = client.get("/api/overview")
+    assert o_resp.status_code == 200, f"overview 响应异常: {o_resp.status_code} {o_resp.text}"
+    o = o_resp.json()
     assert o["readonly"] is False
     assert {s["source"] for s in o["sources"]} == {SOURCE}
     by = {x["object"]: x for x in o["objects"]}
@@ -96,7 +98,9 @@ def test_full_mode_apply(env):
     client = TestClient(create_app(
         landing.db_path, str(ROOT / "templates"),
         platform_cfg, config_path=platform_yaml, home=tmp_path))
-    o = client.get("/api/overview").json()
+    o_resp = client.get("/api/overview")
+    assert o_resp.status_code == 200, f"overview 响应异常: {o_resp.status_code} {o_resp.text}"
+    o = o_resp.json()
     assert o["readonly"] is False
 
     r = client.post("/api/actions/apply", json={"source": SOURCE}).json()
@@ -114,7 +118,9 @@ def test_quarantine_view_and_retry(env):
         landing.db_path, str(ROOT / "templates"),
         platform_cfg, config_path=platform_yaml, home=tmp_path))
 
-    r = client.post("/api/actions/retry", json={"source": SOURCE, "object": "Quotation"}).json()
+    r_resp = client.post("/api/actions/retry", json={"source": SOURCE, "object": "Quotation"})
+    assert r_resp.status_code == 200, f"retry 响应异常: {r_resp.status_code} {r_resp.text}"
+    r = r_resp.json()
     assert r["mapped"] == 179 and r["quarantined"] == 1
     q = client.get("/api/quarantine").json()
     assert len(q) == 1 and "映射失败" in q[0]["reason"]

@@ -146,6 +146,8 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: npm ci --prefer-offline
+      # 平台 console(8849) 依赖 console-ui/dist,必须先构建,否则 /v0 → / 链路返回 503
+      - run: npm run build
       - run: pip install -e ".[dev,console,connect]"
         working-directory: .
       - name: Cache Playwright Chromium
