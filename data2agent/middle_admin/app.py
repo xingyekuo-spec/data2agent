@@ -29,9 +29,23 @@ from ..admin_common.setup_yaml import (
     write_yaml,
 )
 from ..connect.config import ConnectConfig, SourceConfig, config_revision, load_config
+from ..connect import discoverers as _discoverers  # noqa: F401  — 注册 MetadataDiscoverer
+from ..connect.metadata import (
+    DEFAULT_SCAN_TABLE_LIMIT,
+    MetadataDiscoveryUnsupported,
+    MetadataError,
+    ScanStore,
+    TableSummary,
+    build_discoverer,
+    discoverer_default_schema,
+    extraction_plan_keys,
+    in_extraction_plan,
+)
 from ..connect.scheduler import run_sync_cycle
 
 from .status import build_status
+
+_SCAN_STORE = ScanStore()
 
 _PKG = Path(__file__).resolve().parent
 _ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
@@ -66,6 +80,29 @@ class TriggerBody(BaseModel):
 
 class TestConnectionBody(BaseModel):
     source: str | None = None
+
+
+class MetadataScanBody(BaseModel):
+    source: str | None = None
+
+
+class KeyCheckBody(BaseModel):
+    source: str | None = None
+    schema_name: str = Field("dbo", alias="schema")
+    table: str
+    columns: list[str]
+    timeout_seconds: float = 30
+
+    model_config = {"populate_by_name": True}
+
+
+class WatermarkCheckBody(BaseModel):
+    source: str | None = None
+    schema_name: str = Field("dbo", alias="schema")
+    table: str
+    column: str
+
+    model_config = {"populate_by_name": True}
 
 
 class SetupBody(BaseModel):
@@ -452,6 +489,312 @@ def create_app(
         result = _probe_connection_with_timeout(dsn, timeout=10)
         result["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
         return result
+
+    def _open_discoverer(scfg: SourceConfig):
+        try:
+            return build_discoverer(scfg)
+        except MetadataDiscoveryUnsupported as e:
+            raise HTTPException(400, {"code": e.code, "detail": str(e)}) from e
+        except MetadataError as e:
+            status = 503 if e.code in ("connection_failed", "timeout") else 400
+            if e.code == "permission_denied":
+                status = 403
+            raise HTTPException(status, {"code": e.code, "detail": e.message}) from e
+
+    def _default_schema_for(scfg: SourceConfig) -> str:
+        try:
+            return discoverer_default_schema(scfg.adapter)
+        except MetadataDiscoveryUnsupported as e:
+            raise HTTPException(400, {"code": e.code, "detail": str(e)}) from e
+
+    def _planned_keys(scfg: SourceConfig) -> set[tuple[str, str]]:
+        return extraction_plan_keys(
+            scfg.tables, default_schema=_default_schema_for(scfg))
+
+    def _run_scan(scan_id: str, scfg: SourceConfig, deadline_mono: float) -> None:
+        discoverer = None
+        try:
+            if time.monotonic() > deadline_mono:
+                _SCAN_STORE.fail(scan_id, "timeout", "扫描在开始前已超时", status="timeout")
+                return
+            discoverer = build_discoverer(scfg)
+            tables, _total = discoverer.list_tables(
+                limit=DEFAULT_SCAN_TABLE_LIMIT, offset=0)
+            details = {}
+            finalized: list[TableSummary] = []
+            table_errors = 0
+            timed_out = False
+            for summary in tables:
+                if time.monotonic() > deadline_mono:
+                    timed_out = True
+                    break
+                try:
+                    detail = discoverer.get_table(summary.schema, summary.name)
+                    details[(summary.schema, summary.name)] = detail
+                    finalized.append(TableSummary(
+                        schema=detail.schema,
+                        name=detail.name,
+                        object_type=detail.object_type,
+                        estimated_rows=detail.estimated_rows,
+                        primary_key=detail.primary_key,
+                        unique_keys=detail.unique_keys,
+                        watermark_candidates=detail.watermark_candidates,
+                    ))
+                except MetadataError as e:
+                    table_errors += 1
+                    # 连接级 / 权限级错误:整次扫描失败,不伪装 completed
+                    if e.code in ("connection_failed", "permission_denied", "timeout"):
+                        _SCAN_STORE.fail(scan_id, e.code, e.message)
+                        return
+                    finalized.append(TableSummary(
+                        schema=summary.schema,
+                        name=summary.name,
+                        object_type=summary.object_type,
+                        estimated_rows=None,
+                        primary_key=(),
+                        unique_keys=(),
+                        watermark_candidates=(),
+                        error_code=e.code,
+                        error_detail=e.message,
+                    ))
+            if timed_out:
+                if finalized or details:
+                    _SCAN_STORE.complete(
+                        scan_id, finalized, details,
+                        status="partial",
+                        table_errors=table_errors,
+                        error_code="timeout",
+                        error_detail="扫描超过总时限,结果可能不完整",
+                    )
+                else:
+                    _SCAN_STORE.fail(scan_id, "timeout", "扫描超过总时限", status="timeout")
+                return
+            status = "partial" if table_errors else "completed"
+            _SCAN_STORE.complete(
+                scan_id, finalized, details,
+                status=status,
+                table_errors=table_errors,
+                error_code="table_errors" if table_errors else None,
+                error_detail=(
+                    f"{table_errors} 张表元数据读取失败" if table_errors else None
+                ),
+            )
+        except MetadataDiscoveryUnsupported as e:
+            _SCAN_STORE.fail(scan_id, e.code, str(e))
+        except MetadataError as e:
+            status = "timeout" if e.code == "timeout" else "failed"
+            _SCAN_STORE.fail(scan_id, e.code, e.message, status=status)
+        except Exception as e:
+            _SCAN_STORE.fail(scan_id, type(e).__name__, _sanitize_detail(str(e)))
+        finally:
+            if discoverer is not None:
+                try:
+                    discoverer.close()
+                except Exception:
+                    pass
+
+    @api.post("/metadata/scans")
+    def start_metadata_scan(body: MetadataScanBody = MetadataScanBody()) -> dict:
+        """启动元数据扫描;不要求 tables 已配置。受活动槽位与总时限约束。"""
+        cfg = reload_config()
+        name, scfg = _resolve_source(cfg, body.source)
+        try:
+            rec = _SCAN_STORE.try_begin(name)
+        except MetadataError as e:
+            raise HTTPException(409, {"code": e.code, "detail": e.message}) from e
+        deadline = time.monotonic() + _SCAN_STORE.scan_deadline_seconds
+        _SCAN_STORE.submit(_run_scan, rec.scan_id, scfg, deadline)
+        return {
+            "scan_id": rec.scan_id,
+            "source": name,
+            "status": rec.status,
+            "deadline_seconds": _SCAN_STORE.scan_deadline_seconds,
+        }
+
+    @api.get("/metadata/scans/{scan_id}")
+    def get_metadata_scan(scan_id: str) -> dict:
+        rec = _SCAN_STORE.get(scan_id)
+        if rec is None:
+            raise HTTPException(404, "scan_id 不存在或已过期")
+        out = rec.summary()
+        if rec.status in ("completed", "partial"):
+            out["tables"] = [
+                {
+                    "schema": t.schema,
+                    "name": t.name,
+                    "object_type": t.object_type,
+                    "estimated_rows": t.estimated_rows,
+                    "primary_key": list(t.primary_key),
+                    "unique_keys": [
+                        {"name": k.name, "columns": list(k.columns), "kind": k.kind}
+                        for k in t.unique_keys
+                    ],
+                    "watermark_candidates": list(t.watermark_candidates),
+                    "error_code": t.error_code,
+                    "error_detail": t.error_detail,
+                }
+                for t in rec.tables
+            ]
+        return out
+
+    @api.get("/metadata/tables")
+    def list_metadata_tables(
+        source: str | None = None,
+        schema: str | None = None,
+        q: str | None = None,
+        object_type: str | None = None,
+        has_pk: bool | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict:
+        cfg = reload_config()
+        name, scfg = _resolve_source(cfg, source)
+        rec = _SCAN_STORE.latest_completed_for_source(name)
+        if rec is None:
+            raise HTTPException(
+                409,
+                {"code": "metadata_stale",
+                 "detail": "尚无可用元数据缓存,请先 POST /api/metadata/scans"},
+            )
+        default_schema = _default_schema_for(scfg)
+        planned = _planned_keys(scfg)
+        rows = []
+        for t in rec.tables:
+            if schema and t.schema != schema:
+                continue
+            if object_type and t.object_type != object_type:
+                continue
+            if q and q.casefold() not in t.name.casefold():
+                continue
+            if has_pk is True and not t.primary_key:
+                continue
+            if has_pk is False and t.primary_key:
+                continue
+            rows.append({
+                "schema": t.schema,
+                "name": t.name,
+                "object_type": t.object_type,
+                "estimated_rows": t.estimated_rows,
+                "primary_key": list(t.primary_key),
+                "unique_keys": [
+                    {"name": k.name, "columns": list(k.columns), "kind": k.kind}
+                    for k in t.unique_keys
+                ],
+                "watermark_candidates": list(t.watermark_candidates),
+                "in_extraction_plan": in_extraction_plan(
+                    t.schema, t.name, planned, default_schema=default_schema),
+                "error_code": t.error_code,
+                "error_detail": t.error_detail,
+            })
+        total = len(rows)
+        page = rows[offset:offset + max(1, min(limit, 500))]
+        return {
+            "source": name,
+            "scan_id": rec.scan_id,
+            "scan_status": rec.status,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "tables": page,
+        }
+
+    @api.get("/metadata/tables/{schema}/{table}")
+    def get_metadata_table(schema: str, table: str, source: str | None = None) -> dict:
+        cfg = reload_config()
+        name, scfg = _resolve_source(cfg, source)
+        rec = _SCAN_STORE.latest_completed_for_source(name)
+        detail = rec.details.get((schema, table)) if rec else None
+        if detail is None:
+            discoverer = _open_discoverer(scfg)
+            try:
+                detail = discoverer.get_table(schema, table)
+            except MetadataError as e:
+                status = 404 if e.code == "table_missing" else 400
+                if e.code == "permission_denied":
+                    status = 403
+                elif e.code in ("connection_failed", "timeout"):
+                    status = 503
+                raise HTTPException(status, {"code": e.code, "detail": e.message}) from e
+            finally:
+                discoverer.close()
+        default_schema = _default_schema_for(scfg)
+        planned = _planned_keys(scfg)
+        return {
+            "source": name,
+            "schema": detail.schema,
+            "name": detail.name,
+            "object_type": detail.object_type,
+            "columns": [
+                {"name": c.name, "ordinal": c.ordinal,
+                 "sql_type": c.sql_type, "nullable": c.nullable}
+                for c in detail.columns
+            ],
+            "primary_key": list(detail.primary_key),
+            "unique_keys": [
+                {"name": k.name, "columns": list(k.columns), "kind": k.kind}
+                for k in detail.unique_keys
+            ],
+            "foreign_keys": [
+                {
+                    "name": f.name,
+                    "columns": list(f.columns),
+                    "referenced_schema": f.referenced_schema,
+                    "referenced_table": f.referenced_table,
+                    "referenced_columns": list(f.referenced_columns),
+                }
+                for f in detail.foreign_keys
+            ],
+            "estimated_rows": detail.estimated_rows,
+            "watermark_candidates": list(detail.watermark_candidates),
+            "schema_fingerprint": detail.schema_fingerprint,
+            "scanned_at": detail.scanned_at,
+            "in_extraction_plan": in_extraction_plan(
+                detail.schema, detail.name, planned, default_schema=default_schema),
+            "key_suggestions": [
+                {"source": "primary_key", "columns": list(detail.primary_key)}
+            ] + [
+                {"source": k.kind, "columns": list(k.columns), "name": k.name}
+                for k in detail.unique_keys if k.kind != "primary"
+            ],
+        }
+
+    @api.post("/metadata/key-check")
+    def metadata_key_check(body: KeyCheckBody) -> dict:
+        cfg = reload_config()
+        _name, scfg = _resolve_source(cfg, body.source)
+        discoverer = _open_discoverer(scfg)
+        try:
+            result = discoverer.check_key(
+                body.schema_name, body.table, body.columns,
+                timeout_seconds=body.timeout_seconds,
+            )
+        finally:
+            discoverer.close()
+        return {
+            "ok": result.ok,
+            "code": result.code,
+            "detail": result.detail,
+            "null_count": result.null_count,
+            "duplicate_groups": result.duplicate_groups,
+        }
+
+    @api.post("/metadata/watermark-check")
+    def metadata_watermark_check(body: WatermarkCheckBody) -> dict:
+        cfg = reload_config()
+        _name, scfg = _resolve_source(cfg, body.source)
+        discoverer = _open_discoverer(scfg)
+        try:
+            result = discoverer.check_watermark(
+                body.schema_name, body.table, body.column)
+        finally:
+            discoverer.close()
+        return {
+            "ok": result.ok,
+            "code": result.code,
+            "detail": result.detail,
+            "sql_type": result.sql_type,
+            "candidate": result.candidate,
+        }
 
     @api.post("/actions/trigger")
     def trigger_action(body: TriggerBody) -> dict:
