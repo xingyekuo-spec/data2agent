@@ -339,10 +339,13 @@ def create_app(
     home_layout = HomeLayout.from_path(home) if home is not None else None
     if home_layout is not None:
         home_layout.ensure_dirs()
+        # 仅当本 home 自带 secrets 时才灌入环境并取 Token,避免同进程残留污染。
         if home_layout.secrets_env.is_file():
             apply_secrets_to_environ(home_layout.secrets_env)
-        if token is None:
-            token = os.environ.get("D2A_MIDDLE_ADMIN_TOKEN") or None
+            if token is None:
+                token = os.environ.get("D2A_MIDDLE_ADMIN_TOKEN") or None
+    elif token is None:
+        token = os.environ.get("D2A_MIDDLE_ADMIN_TOKEN") or None
 
     if config_path is not None:
         cfg_path = Path(config_path)

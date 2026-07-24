@@ -38,6 +38,15 @@ def apply_secrets_to_environ(path: Path) -> dict[str, str]:
     return data
 
 
+def restore_environ(prior: dict[str, str | None]) -> None:
+    """Restore keys captured before apply_secrets_to_environ (tests / temporary loads)."""
+    for key, old in prior.items():
+        if old is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = old
+
+
 def load_home_secrets_if_present(home: str | Path | None = None) -> Path | None:
     """Load D2A_HOME/config/secrets.env into process env (browser first-setup).
 

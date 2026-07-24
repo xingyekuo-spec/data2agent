@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -365,39 +366,46 @@ def test_retry_422_string_and_validation_list(env):
 
 
 def test_setup_response_union_narrowable(tmp_path):
+    from data2agent.admin_common.secrets_file import restore_environ
+
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
     shutil.copytree(ROOT / "templates", home.app / "templates")
-    client = TestClient(create_app(home=home.root))
-    fail = client.post("/api/setup", json={"ingest_token": " ", "console_token": " "})
-    assert fail.status_code == 200
-    SetupFailureResponse.model_validate(fail.json())
-    assert "message" not in fail.json()
+    secret_keys = ("D2A_INGEST_TOKEN", "D2A_CONSOLE_TOKEN", "D2A_MCP_TOKEN")
+    prior = {k: os.environ.get(k) for k in secret_keys}
+    try:
+        client = TestClient(create_app(home=home.root))
+        fail = client.post("/api/setup", json={"ingest_token": " ", "console_token": " "})
+        assert fail.status_code == 200
+        SetupFailureResponse.model_validate(fail.json())
+        assert "message" not in fail.json()
 
-    ok = client.post("/api/setup", json={
-        "ingest_token": "ingest-tok",
-        "console_token": "console-tok",
-    })
-    assert ok.status_code == 200
-    SetupSuccessResponse.model_validate(ok.json())
-    assert "errors" not in ok.json()
+        ok = client.post("/api/setup", json={
+            "ingest_token": "ingest-tok",
+            "console_token": "console-tok",
+        })
+        assert ok.status_code == 200
+        SetupSuccessResponse.model_validate(ok.json())
+        assert "errors" not in ok.json()
 
-    # After setup + token, setup endpoints require Bearer (matches OpenAPI optional auth).
-    assert client.get("/api/setup/status").status_code == 401
-    assert client.post("/api/setup", json={
-        "ingest_token": "x", "console_token": "y",
-    }).status_code == 401
-    authed = client.get(
-        "/api/setup/status", headers={"Authorization": "Bearer console-tok"})
-    assert authed.status_code == 200
-    assert authed.json()["needs_setup"] is False
+        # After setup + token, setup endpoints require Bearer (matches OpenAPI optional auth).
+        assert client.get("/api/setup/status").status_code == 401
+        assert client.post("/api/setup", json={
+            "ingest_token": "x", "console_token": "y",
+        }).status_code == 401
+        authed = client.get(
+            "/api/setup/status", headers={"Authorization": "Bearer console-tok"})
+        assert authed.status_code == 200
+        assert authed.json()["needs_setup"] is False
 
-    schemas = _openapi_app(tmp_path).openapi()["components"]["schemas"]
-    for name in ("SetupSuccessResponse", "SetupFailureResponse"):
-        assert "ok" in schemas[name].get("required", []), (
-            f"{name}.ok must be required for TS discriminant narrowing"
-        )
-        assert "default" not in schemas[name]["properties"]["ok"]
+        schemas = _openapi_app(tmp_path).openapi()["components"]["schemas"]
+        for name in ("SetupSuccessResponse", "SetupFailureResponse"):
+            assert "ok" in schemas[name].get("required", []), (
+                f"{name}.ok must be required for TS discriminant narrowing"
+            )
+            assert "default" not in schemas[name]["properties"]["ok"]
+    finally:
+        restore_environ(prior)
 
 
 def test_apply_response_model(env):

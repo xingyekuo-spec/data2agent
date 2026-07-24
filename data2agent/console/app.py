@@ -578,13 +578,17 @@ def create_app(landing: str | None = None, templates: str = "templates",
     home_layout = HomeLayout.from_path(home) if home is not None else None
     if home_layout is not None:
         home_layout.ensure_dirs()
+        # 仅当本 home 自带 secrets 时才灌入环境并取 Token。
+        # 避免同进程先前 setup 测试残留的 D2A_CONSOLE_TOKEN 污染显式 home 实例。
         if home_layout.secrets_env.is_file():
             apply_secrets_to_environ(home_layout.secrets_env)
-        if token is None:
-            token = os.environ.get("D2A_CONSOLE_TOKEN") or None
+            if token is None:
+                token = os.environ.get("D2A_CONSOLE_TOKEN") or None
         if config is None and home_layout.platform_yaml.is_file():
             config = load_platform_config(home_layout.platform_yaml)
             config_path = home_layout.platform_yaml
+    elif token is None:
+        token = os.environ.get("D2A_CONSOLE_TOKEN") or None
 
     if config is not None:  # 配置在场时以其为准,避免两套路径
         landing, templates = config.landing, config.templates

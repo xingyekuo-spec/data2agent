@@ -75,6 +75,7 @@ def test_middle_browser_setup(tmp_path):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
+    from data2agent.admin_common.secrets_file import restore_environ
     from data2agent.middle_admin.app import create_app
 
     home = HomeLayout(tmp_path)
@@ -84,38 +85,46 @@ def test_middle_browser_setup(tmp_path):
     import shutil
     shutil.copytree(root / "templates", home.app / "templates")
 
-    client = TestClient(create_app(home=home.root, token=None))
-    assert client.get("/").status_code in (200, 302)
-    st = client.get("/api/setup/status")
-    assert st.status_code == 200 and st.json()["needs_setup"] is True
+    secret_keys = (
+        "D2A_INGEST_TOKEN", "D2A_MIDDLE_ADMIN_TOKEN", "D2A_E10_DSN", "D2A_MCP_TOKEN",
+    )
+    prior = {k: os.environ.get(k) for k in secret_keys}
+    try:
+        client = TestClient(create_app(home=home.root, token=None))
+        assert client.get("/").status_code in (200, 302)
+        st = client.get("/api/setup/status")
+        assert st.status_code == 200 and st.json()["needs_setup"] is True
 
-    r = client.post("/api/setup", json={
-        "platform_url": "http://10.0.0.2:8850",
-        "erp_server": "ERPHOST",
-        "erp_database": "E10",
-        "erp_user": "ro",
-        "erp_password": "secret",
-        "erp_port": 1433,
-        "ingest_token": "ingest-tok",
-        "admin_token": "admin-tok",
-    })
-    assert r.status_code == 200 and r.json()["ok"] is True
-    assert home.connect_yaml.is_file()
-    assert home.secrets_env.is_file()
-    secrets = load_secrets(home.secrets_env)
-    assert secrets["D2A_INGEST_TOKEN"] == "ingest-tok"
-    assert "PWD=secret" in secrets["D2A_E10_DSN"]
-    assert "password" not in home.connect_yaml.read_text(encoding="utf-8").lower()
+        r = client.post("/api/setup", json={
+            "platform_url": "http://10.0.0.2:8850",
+            "erp_server": "ERPHOST",
+            "erp_database": "E10",
+            "erp_user": "ro",
+            "erp_password": "secret",
+            "erp_port": 1433,
+            "ingest_token": "ingest-tok",
+            "admin_token": "admin-tok",
+        })
+        assert r.status_code == 200 and r.json()["ok"] is True
+        assert home.connect_yaml.is_file()
+        assert home.secrets_env.is_file()
+        secrets = load_secrets(home.secrets_env)
+        assert secrets["D2A_INGEST_TOKEN"] == "ingest-tok"
+        assert "PWD=secret" in secrets["D2A_E10_DSN"]
+        assert "password" not in home.connect_yaml.read_text(encoding="utf-8").lower()
 
-    # after setup, protected APIs need token
-    assert client.get("/api/status").status_code == 401
-    assert client.get("/api/status", headers={"Authorization": "Bearer admin-tok"}).status_code == 200
+        # after setup, protected APIs need token
+        assert client.get("/api/status").status_code == 401
+        assert client.get("/api/status", headers={"Authorization": "Bearer admin-tok"}).status_code == 200
+    finally:
+        restore_environ(prior)
 
 
 def test_platform_browser_setup(tmp_path):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
+    from data2agent.admin_common.secrets_file import restore_environ
     from data2agent.console.app import create_app
 
     home = HomeLayout(tmp_path)
@@ -124,19 +133,24 @@ def test_platform_browser_setup(tmp_path):
     import shutil
     shutil.copytree(root / "templates", home.app / "templates")
 
-    client = TestClient(create_app(home=home.root))
-    assert client.get("/api/setup/status").json()["needs_setup"] is True
-    r = client.post("/api/setup", json={
-        "ingest_token": "ingest-tok",
-        "console_token": "console-tok",
-    })
-    assert r.status_code == 200 and r.json()["ok"] is True
-    assert home.platform_yaml.is_file()
-    secrets = load_secrets(home.secrets_env)
-    assert secrets["D2A_INGEST_TOKEN"] == "ingest-tok"
-    assert secrets["D2A_CONSOLE_TOKEN"] == "console-tok"
-    assert secrets.get("D2A_MCP_TOKEN")  # auto-generated
-    assert client.get("/api/overview").status_code == 401
-    assert client.get(
-        "/api/overview", headers={"Authorization": "Bearer console-tok"}
-    ).status_code == 200
+    secret_keys = ("D2A_INGEST_TOKEN", "D2A_CONSOLE_TOKEN", "D2A_MCP_TOKEN")
+    prior = {k: os.environ.get(k) for k in secret_keys}
+    try:
+        client = TestClient(create_app(home=home.root))
+        assert client.get("/api/setup/status").json()["needs_setup"] is True
+        r = client.post("/api/setup", json={
+            "ingest_token": "ingest-tok",
+            "console_token": "console-tok",
+        })
+        assert r.status_code == 200 and r.json()["ok"] is True
+        assert home.platform_yaml.is_file()
+        secrets = load_secrets(home.secrets_env)
+        assert secrets["D2A_INGEST_TOKEN"] == "ingest-tok"
+        assert secrets["D2A_CONSOLE_TOKEN"] == "console-tok"
+        assert secrets.get("D2A_MCP_TOKEN")  # auto-generated
+        assert client.get("/api/overview").status_code == 401
+        assert client.get(
+            "/api/overview", headers={"Authorization": "Bearer console-tok"}
+        ).status_code == 200
+    finally:
+        restore_environ(prior)
