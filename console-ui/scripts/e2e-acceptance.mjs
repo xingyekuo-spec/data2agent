@@ -75,11 +75,15 @@ function postIngestBatch(landing) {
   const script = `
 from fastapi.testclient import TestClient
 from data2agent.ingest.app import create_app
+from data2agent.ingest.protocol import INGEST_PROTOCOL_VERSION
 
 client = TestClient(create_app(${JSON.stringify(landing)}))
 body = {
+    # 真实中间机推送会携带协议与写入模式；E2E 必须遵守同一 wire contract。
+    "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
     "source": ${JSON.stringify(SOURCE)},
     "table": "CUSTOMER",
+    "mode": "incremental",
     "columns": [
         ["Id", "int"],
         ["CUSTOMER_CODE", "text"],
