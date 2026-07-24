@@ -133,7 +133,7 @@ def test_console_config_whitelist(env):
     h = {"Authorization": "Bearer t"}
     r = client.get("/api/config", headers=h)
     assert r.status_code == 200
-    assert r.json()["app_version"] == "0.4.0"
+    assert r.json()["app_version"] == "0.5.0"
     assert r.json()["build_version"] is None
     r2 = client.post("/api/config", headers=h, json={
         "landing": str(landing.db_path),

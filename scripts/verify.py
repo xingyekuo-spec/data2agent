@@ -329,7 +329,9 @@ def _quick_plan(
             else:
                 backend_full = True
             continue
-        if parts[0] == "deploy" or filename in {"docker-compose.yml"}:
+        if parts[0] == "deploy" or filename in {
+            "tests/integration/mssql/docker-compose.yml",
+        }:
             frontend = True
             frontend_build = True
             continue

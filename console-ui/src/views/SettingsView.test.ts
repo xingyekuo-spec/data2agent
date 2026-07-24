@@ -16,7 +16,7 @@ describe('SettingsView', () => {
     vi.mocked(getConfig).mockResolvedValue({
       ok: true,
       data: {
-        app_version: '0.4.0',
+        app_version: '0.5.0',
         build_version: 'manual-808aaaa',
         needs_setup: false,
         templates: 'C:/d2a/app/templates',
@@ -27,7 +27,7 @@ describe('SettingsView', () => {
     const wrapper = mount(SettingsView, { global: { plugins: [ElementPlus] } })
     await flushPromises()
     expect(wrapper.find('[data-testid="settings-app-version"]').text()).toBe(
-      '当前应用版本：v0.4.0（构建 manual-808aaaa）',
+      '当前应用版本：v0.5.0（构建 manual-808aaaa）',
     )
   })
 })

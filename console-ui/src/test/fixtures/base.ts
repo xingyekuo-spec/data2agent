@@ -787,7 +787,7 @@ export const baseFixture: ScenarioFixture = {
     apply: { ok: true, method: 'log_mtime' },
     console: { ok: true, method: 'self' },
   },
-  config: { app_version: '0.4.0', build_version: 'manual-808aaaa', needs_setup: false, templates: 'templates', landing: '/data/landing.sqlite' },
+  config: { app_version: '0.5.0', build_version: 'manual-808aaaa', needs_setup: false, templates: 'templates', landing: '/data/landing.sqlite' },
   logs: { ok: true, text: '2026-07-18 09:10:06 INFO sync done rows=1284' },
   rawTable: {
     table: 'raw_digiwin_e10__CUSTOMER',

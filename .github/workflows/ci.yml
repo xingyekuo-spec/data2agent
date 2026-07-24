@@ -50,7 +50,7 @@ jobs:
               - 'console-ui/package-lock.json'
               - 'scripts/check_docker_v1_distribution.py'
               - 'scripts/check_v1_distribution.py'
-              - 'docker-compose.yml'
+              - 'tests/integration/mssql/docker-compose.yml'
               - 'pyproject.toml'
               - '.github/workflows/ci.yml'
 
