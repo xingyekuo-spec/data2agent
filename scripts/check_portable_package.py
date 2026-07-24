@@ -135,19 +135,35 @@ def main() -> int:
         build_info = json.loads(build_info_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as e:
         _fail(f"BUILD-INFO.json invalid JSON: {e}")
-    for key in (
-        "application_version",
-        "release_version",
-        "ingest_protocol_versions",
-        "commit",
-    ):
+    for key in ("application_version", "release_version", "role", "commit"):
         if key not in build_info:
             _fail(f"BUILD-INFO.json missing {key}")
-    protocols = build_info["ingest_protocol_versions"]
-    if not isinstance(protocols, list) or not protocols or not all(
-        isinstance(p, str) and p for p in protocols
-    ):
-        _fail("BUILD-INFO.json ingest_protocol_versions must be a non-empty string list")
+    if build_info.get("role") != args.role:
+        _fail(f"BUILD-INFO.json role={build_info.get('role')!r} != --role {args.role}")
+    if args.role == "platform":
+        if "send_ingest_protocol_version" in build_info:
+            _fail("platform BUILD-INFO must not declare send_ingest_protocol_version")
+        active = build_info.get("active_ingest_protocol_version")
+        supported = build_info.get("supported_ingest_protocol_versions")
+        if not isinstance(active, str) or not active:
+            _fail("platform BUILD-INFO missing active_ingest_protocol_version")
+        if (
+            not isinstance(supported, list)
+            or not supported
+            or not all(isinstance(p, str) and p for p in supported)
+        ):
+            _fail(
+                "platform BUILD-INFO supported_ingest_protocol_versions "
+                "must be a non-empty string list"
+            )
+        if active not in supported:
+            _fail("platform active_ingest_protocol_version must be in supported list")
+    else:
+        if "supported_ingest_protocol_versions" in build_info:
+            _fail("middle BUILD-INFO must not declare supported_ingest_protocol_versions")
+        send = build_info.get("send_ingest_protocol_version")
+        if not isinstance(send, str) or not send:
+            _fail("middle BUILD-INFO missing send_ingest_protocol_version")
     _check_no_legacy_erp_artifacts(portable)
     if args.role == "platform":
         _check_platform_entry(portable)

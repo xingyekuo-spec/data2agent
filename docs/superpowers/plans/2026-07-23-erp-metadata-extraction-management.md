@@ -777,7 +777,8 @@ showroom 迁移必须额外覆盖当前直接引用它的测试与入口，包�
    `supported_ingest_protocol_versions`（并保留旧字段 `ingest_protocol_version`）;
 2. 中间机启动同步前确认自身发送协议 ∈ 平台支持列表;
 3. 不在列表则立即停止同步并显示明确错误;
-4. 应用版本可独立升级;仅从支持列表移除协议时须破坏性发布并升级中间机。
+4. 应用版本可独立升级;仅当 `deploy/ingest_protocol_compat.json` 声明某基线
+   发送协议为 unsupported 时,才要求对应中间机升级。
 
 ## 12. 实施时必须更新的文档
 

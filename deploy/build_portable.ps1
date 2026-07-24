@@ -154,8 +154,6 @@ Set-Content -Path (Join-Path $portable 'README.txt') -Value $readme -Encoding ut
 # distinguish a current package from an older folder with the same wheel version.
 $packageVersion = & $runtimePy -c "from data2agent import __version__; print(__version__)"
 if ($LASTEXITCODE -ne 0) { throw 'cannot read installed data2agent version' }
-$protocolJson = & $runtimePy -c "import json; from data2agent.ingest.protocol import SUPPORTED_INGEST_PROTOCOL_VERSIONS; print(json.dumps(list(SUPPORTED_INGEST_PROTOCOL_VERSIONS)))"
-if ($LASTEXITCODE -ne 0) { throw 'cannot read ingest protocol versions' }
 $commit = $env:GITHUB_SHA
 if (-not $commit) {
     $commit = (git -C $root rev-parse HEAD 2>$null)
@@ -164,8 +162,26 @@ if (-not $commit) { $commit = 'unknown' }
 $buildInfo = [ordered]@{
     application_version = $packageVersion.Trim()
     release_version = $Version
-    ingest_protocol_versions = (ConvertFrom-Json $protocolJson)
+    role = $Role
     commit = "$commit".Trim()
+}
+if ($Role -eq 'platform') {
+    $protocolJson = & $runtimePy -c @"
+import json
+from data2agent.ingest.protocol import INGEST_PROTOCOL_VERSION, SUPPORTED_INGEST_PROTOCOL_VERSIONS
+print(json.dumps({
+    'active_ingest_protocol_version': INGEST_PROTOCOL_VERSION,
+    'supported_ingest_protocol_versions': list(SUPPORTED_INGEST_PROTOCOL_VERSIONS),
+}))
+"@
+    if ($LASTEXITCODE -ne 0) { throw 'cannot read platform ingest protocol declaration' }
+    $proto = ConvertFrom-Json $protocolJson
+    $buildInfo['active_ingest_protocol_version'] = $proto.active_ingest_protocol_version
+    $buildInfo['supported_ingest_protocol_versions'] = $proto.supported_ingest_protocol_versions
+} else {
+    $sendVer = & $runtimePy -c "from data2agent.ingest.protocol import INGEST_PROTOCOL_VERSION; print(INGEST_PROTOCOL_VERSION)"
+    if ($LASTEXITCODE -ne 0) { throw 'cannot read middle send ingest protocol' }
+    $buildInfo['send_ingest_protocol_version'] = $sendVer.Trim()
 }
 $buildInfo | ConvertTo-Json | Set-Content -Path (Join-Path $portable 'BUILD-INFO.json') -Encoding utf8
 

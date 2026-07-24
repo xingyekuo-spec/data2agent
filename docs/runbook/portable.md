@@ -14,7 +14,8 @@
 | 概念 | 含义 |
 | --- | --- |
 | `application_version` | 应用包版本（平台/中间机可各自独立升级） |
-| `ingest_protocol_version` | 跨机推送契约；平台健康接口声明其**支持列表** |
+| `send_ingest_protocol_version` | **中间机包**实际发送的协议（写入中间机 `BUILD-INFO.json`） |
+| `supported_ingest_protocol_versions` | **平台**接受的协议列表（健康接口 + 平台 `BUILD-INFO.json`） |
 
 平台 `/ingest/health` 示例:
 
@@ -27,20 +28,43 @@
 }
 ```
 
-中间机只要自己发送的协议落在 `supported_ingest_protocol_versions` 中即可推送；
+中间机只要自己发送的协议落在平台 `supported_ingest_protocol_versions` 中即可推送；
 否则 fail-fast，不会产生半份数据。旧中间机若只认 `ingest_protocol_version` 精确相等，
 在平台仍以 v2 为 active 时同样可用。
+
+包内 `BUILD-INFO.json`（按角色不同字段）:
+
+```json
+// 平台
+{
+  "application_version": "0.5.1",
+  "release_version": "v0.5.1",
+  "role": "platform",
+  "active_ingest_protocol_version": "2",
+  "supported_ingest_protocol_versions": ["2"],
+  "commit": "..."
+}
+
+// 中间机（只声明自己发送的协议，不声明平台支持列表）
+{
+  "application_version": "0.5.1",
+  "release_version": "v0.5.1",
+  "role": "middle",
+  "send_ingest_protocol_version": "2",
+  "commit": "..."
+}
+```
 
 因此：
 
 - **平台仍声明支持 v2**：只升级数据平台即可，既有 v2 中间机**无需升级**。
-- **破坏性协议变更**（从支持列表移除旧协议）：Release 说明会明确写出
-  「中间机必须升级」；此时才需要换中间机包。
-- 两个 zip **不必**来自同一次 Release；每个包的 `BUILD-INFO.json` 含
-  `application_version` / `ingest_protocol_versions` / `commit`，以包内声明为准。
+- **破坏性协议变更**（平台不再接受某基线发送协议）：在提交内更新
+  `deploy/ingest_protocol_compat.json` 的 `unsupported`（含 reason / since_release），
+  CI 与 tag Release 正文会据此提示「中间机必须升级」。
+- 两个 zip **不必**来自同一次 Release；以各自 `BUILD-INFO.json` 与平台 health 为准。
 - 每个正式 tag 仍会打出两个便携包，便于按需取用。
 
-以 Release 正文中的「ingest 协议兼容性」段落为准，不要靠猜测。
+以 Release 正文中的「ingest 协议兼容性」段落与 `deploy/ingest_protocol_compat.json` 为准。
 
 Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` 调用
 `scripts/check_portable_package.py`（扫描**整个**便携包根，禁止 `erp-configs` /

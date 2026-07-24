@@ -29,7 +29,8 @@ def test_check_portable_middle_ok(tmp_path: Path, monkeypatch):
     _write(portable / "BUILD-INFO.json", json.dumps({
         "application_version": "0.5.0-test",
         "release_version": "0.5.0-test",
-        "ingest_protocol_versions": ["2"],
+        "role": "middle",
+        "send_ingest_protocol_version": "2",
         "commit": "test",
     }))
 
@@ -60,7 +61,8 @@ def test_check_portable_middle_rejects_missing_metadata(tmp_path: Path, monkeypa
     _write(portable / "BUILD-INFO.json", json.dumps({
         "application_version": "0.5.0-test",
         "release_version": "0.5.0-test",
-        "ingest_protocol_versions": ["2"],
+        "role": "middle",
+        "send_ingest_protocol_version": "2",
         "commit": "test",
     }))
     pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
@@ -93,7 +95,8 @@ def test_check_portable_rejects_erp_configs_anywhere(tmp_path: Path, monkeypatch
     _write(portable / "BUILD-INFO.json", json.dumps({
         "application_version": "0.5.0-test",
         "release_version": "0.5.0-test",
-        "ingest_protocol_versions": ["2"],
+        "role": "middle",
+        "send_ingest_protocol_version": "2",
         "commit": "test",
     }))
     pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
@@ -126,7 +129,8 @@ def test_check_portable_rejects_showroom_anywhere(tmp_path: Path, monkeypatch):
     _write(portable / "BUILD-INFO.json", json.dumps({
         "application_version": "0.5.0-test",
         "release_version": "0.5.0-test",
-        "ingest_protocol_versions": ["2"],
+        "role": "middle",
+        "send_ingest_protocol_version": "2",
         "commit": "test",
     }))
     pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
@@ -148,4 +152,41 @@ def test_check_portable_rejects_showroom_anywhere(tmp_path: Path, monkeypatch):
         ],
     )
     with pytest.raises(SystemExit, match="showroom"):
+        main()
+
+
+def test_check_portable_middle_rejects_supported_list(tmp_path: Path, monkeypatch):
+    portable = tmp_path / "portable"
+    expected = tmp_path / "templates"
+    _write(expected / "metrics" / "dead_stock.yaml")
+    _write(expected / "objects" / "dead_stock_item.yaml")
+    _write(expected / "objects" / "dead_stock_attribution.yaml")
+    shutil.copytree(expected, portable / "app" / "templates")
+    _write(
+        portable / "BUILD-INFO.json",
+        json.dumps(
+            {
+                "application_version": "0.5.0-test",
+                "release_version": "0.5.0-test",
+                "role": "middle",
+                "send_ingest_protocol_version": "2",
+                "supported_ingest_protocol_versions": ["2", "3"],
+                "commit": "test",
+            }
+        ),
+    )
+    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
+    src = ROOT / "data2agent" / "middle_admin" / "templates"
+    shutil.copytree(src, pkg / "templates")
+    _write(pkg / "__init__.py", "")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_portable_package.py",
+            "--portable", str(portable),
+            "--role", "middle",
+            "--expected-templates", str(expected),
+        ],
+    )
+    with pytest.raises(SystemExit, match="must not declare supported"):
         main()

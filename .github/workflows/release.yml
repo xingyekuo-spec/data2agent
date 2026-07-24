@@ -15,12 +15,6 @@ on:
         description: "目标 Python 版本(须与 embeddable / wheel 一致)"
         required: false
         default: "3.14"
-      breaking_ingest_protocol:
-        description: "破坏性协议发布:从 supported 移除既有中间机协议时须设 true"
-        required: false
-        default: "false"
-        type: choice
-        options: ["false", "true"]
 
 permissions:
   contents: write
@@ -31,7 +25,6 @@ concurrency:
 
 env:
   PY_VERSION: ${{ github.event.inputs.py_version || '3.14' }}
-  D2A_BREAKING_INGEST_PROTOCOL: ${{ github.event.inputs.breaking_ingest_protocol || 'false' }}
 
 jobs:
   test:

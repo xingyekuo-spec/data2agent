@@ -14,7 +14,6 @@ from data2agent.connect.landing import LandingStore
 from data2agent.connect.sink import HttpPushSink, ProtocolVersionError
 from data2agent.ingest.app import create_app
 from data2agent.ingest.protocol import (
-    BASELINE_INGEST_PROTOCOL_VERSIONS,
     INGEST_PROTOCOL_VERSION,
     SUPPORTED_INGEST_PROTOCOL_VERSIONS,
     health_protocol_fields,
@@ -121,24 +120,52 @@ def test_push_contract_current_platform_with_v2_middle(tmp_path: Path):
 def test_compat_script_ok_for_current_v2():
     assert check_constants() == []
     assert is_supported_protocol("2")
-    assert BASELINE_INGEST_PROTOCOL_VERSIONS == ("2",)
     notes = render_release_notes(release_version="v0.5.1")
-    assert "兼容中间机协议" in notes
+    assert "兼容中间机发送协议" in notes
     assert "无需升级" in notes
     assert "破坏性发布" not in notes
 
 
-def test_compat_script_requires_breaking_flag_when_dropping_baseline(monkeypatch):
+def test_compat_script_requires_manifest_when_dropping_baseline(tmp_path: Path, monkeypatch):
     import scripts.check_ingest_compat as mod
 
     monkeypatch.setattr(mod, "SUPPORTED_INGEST_PROTOCOL_VERSIONS", ("3",))
     monkeypatch.setattr(mod, "INGEST_PROTOCOL_VERSION", "3")
-    monkeypatch.delenv("D2A_BREAKING_INGEST_PROTOCOL", raising=False)
-    errors = mod.check_constants()
-    assert errors and "D2A_BREAKING_INGEST_PROTOCOL" in errors[0]
+    bare = {
+        "schema_version": 1,
+        "field_baseline_send_protocols": ["2", "3"],
+        "unsupported": {},
+    }
+    errors = mod.check_constants(bare)
+    assert errors and "ingest_protocol_compat.json" in errors[0]
 
-    monkeypatch.setenv("D2A_BREAKING_INGEST_PROTOCOL", "1")
-    assert mod.check_constants() == []
-    notes = mod.render_release_notes(release_version="v0.6.0")
+    declared = {
+        "schema_version": 1,
+        "field_baseline_send_protocols": ["2", "3"],
+        "unsupported": {
+            "2": {
+                "reason": "v3 snapshot framing replaces v2",
+                "since_release": "v0.6.0",
+            }
+        },
+    }
+    assert mod.check_constants(declared) == []
+    notes = mod.render_release_notes(release_version="v0.6.0", manifest=declared)
     assert "破坏性发布" in notes
     assert "必须升级" in notes
+    assert "v2" in notes
+
+
+def test_compat_script_rejects_stale_unsupported_still_in_supported():
+    import scripts.check_ingest_compat as mod
+
+    stale = {
+        "schema_version": 1,
+        "field_baseline_send_protocols": ["2"],
+        "unsupported": {
+            "2": {"reason": "gone", "since_release": "v0.6.0"},
+        },
+    }
+    # SUPPORTED still includes 2 → contradiction
+    errors = mod.check_constants(stale)
+    assert any("仍在" in e for e in errors)

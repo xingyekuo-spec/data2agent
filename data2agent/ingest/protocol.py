@@ -14,16 +14,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-# 本端写出 / 首选的协议号。
+# 本端写出 / 首选的协议号(中间机发送;平台 active)。
 INGEST_PROTOCOL_VERSION = "2"
 
-# 本端接受的协议号(平台 health 与 POST 校验共用)。当前仅 v2。
-# 移除某版本前须走破坏性发布门禁(见 scripts/check_ingest_compat.py)。
+# 本端接受的协议号(仅平台 health / POST 校验)。当前仅 v2。
+# 从列表移除现场仍可能在跑的协议前,须更新 deploy/ingest_protocol_compat.json。
 SUPPORTED_INGEST_PROTOCOL_VERSIONS: tuple[str, ...] = ("2",)
-
-# 历史基线:曾正式发布且现场仍可能在跑的中间机协议。平台若不再支持其中某号,
-# 必须显式声明破坏性发布。
-BASELINE_INGEST_PROTOCOL_VERSIONS: tuple[str, ...] = ("2",)
 
 
 def is_supported_protocol(version: str | None) -> bool:
