@@ -934,4 +934,6 @@ if (failures.length > 0) {
   console.error('失败项:', failures.join('; '))
   process.exit(1)
 }
-console.log('E2E ACCEPTANCE PASSED')
+// 成功路径显式退出:npm run dev 的 vite 孙进程持有 stdout 管道句柄,
+// SIGTERM 不跨 npm 传递时(Linux)事件循环无法自然排空,进程永不退出。
+process.stdout.write('E2E ACCEPTANCE PASSED\n', () => process.exit(0))
