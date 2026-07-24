@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
@@ -27,9 +28,8 @@ from ..admin_common.setup_yaml import (
     build_odbc_dsn,
     write_yaml,
 )
-from ..connect.config import ConnectConfig, SourceConfig, load_config
-from ..connect.landing import LandingStore
-from ..connect.scheduler import build_adapter, run_sync_cycle
+from ..connect.config import ConnectConfig, SourceConfig, config_revision, load_config
+from ..connect.scheduler import run_sync_cycle
 
 from .status import build_status
 
@@ -56,6 +56,7 @@ class ConfigPatch(BaseModel):
     templates: str | None = None
     landing: str | None = None
     sources: dict[str, Any] | None = None
+    revision: str | None = None
 
 
 class TriggerBody(BaseModel):
@@ -112,7 +113,14 @@ def _config_subset(cfg: ConnectConfig) -> dict:
             "lookback": scfg.lookback,
             "sync_every": scfg.sync_every,
             "tables": {
-                tbl: {"mode": spec.mode, "watermark": spec.watermark}
+                tbl: {
+                    "mode": spec.mode,
+                    "watermark": spec.watermark,
+                    "schema": spec.schema or "dbo",
+                    "key_columns": spec.key_columns,
+                    "schema_fingerprint": spec.schema_fingerprint,
+                    "validated_at": spec.validated_at,
+                }
                 for tbl, spec in (scfg.tables or {}).items()
             },
             "sink": {"url": scfg.sink.url,
@@ -145,33 +153,63 @@ def _sanitize_detail(message: str) -> str:
     return message[:500]
 
 
-def _probe_connection(name: str, scfg: SourceConfig, landing_path: str) -> dict:
-    """连接测试:验证表存在、主键和水位列。返回 {表名: {ok, pk_ok, wm_ok, error}}。"""
-    landing = LandingStore(landing_path)
-    adapter = build_adapter(name, scfg, landing)
-    results: dict[str, dict] = {}
-    for tbl in sorted(adapter.whitelist):
+def _probe_connection_pure(dsn: str, timeout: int = 10) -> dict:
+    """纯连接测试:直接建立 ODBC 连接并执行最小探测，不依赖抽取适配器。"""
+    import pyodbc
+    conn = None
+    try:
+        conn = pyodbc.connect(dsn, readonly=True, timeout=timeout)
+        conn.timeout = timeout
+        cur = conn.cursor()
+        cur.execute("SELECT DB_NAME()")
+        db_name = cur.fetchone()[0]
         try:
-            info = adapter.table_info(tbl)
-            spec = (scfg.tables or {}).get(tbl)
-            pk_ok = bool(info.pk)
-            wm_ok = True
-            wm_error = None
-            if spec and spec.mode == "incremental" and spec.watermark:
-                cols_lower = {name.casefold() for name, _ in info.columns}
-                if spec.watermark.lower() not in cols_lower:
-                    wm_ok = False
-                    wm_error = f"水位列 {spec.watermark} 不存在于表 {tbl}"
-            results[tbl] = {
-                "ok": pk_ok and wm_ok,
-                "pk_ok": pk_ok,
-                "wm_ok": wm_ok,
-                "wm_error": wm_error,
-                "error": None if pk_ok else "缺少主键(增量引擎要求)",
-            }
+            cur.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
+            cur.fetchone()
+            has_metadata = True
+        except Exception:
+            has_metadata = False
+        return {
+            "status": "connected" if has_metadata else "connected_limited",
+            "database": str(db_name) if db_name else None,
+            "has_metadata_access": has_metadata,
+        }
+    except pyodbc.Error as e:
+        msg = str(e)
+        if "login" in msg.lower() or "password" in msg.lower():
+            return {"status": "failed", "error": "auth", "detail": _sanitize_detail(msg)}
+        if "timeout" in msg.lower():
+            return {"status": "failed", "error": "timeout", "detail": _sanitize_detail(msg)}
+        return {"status": "failed", "error": type(e).__name__, "detail": _sanitize_detail(msg)}
+    except Exception as e:
+        return {"status": "failed", "error": type(e).__name__,
+                "detail": _sanitize_detail(str(e))}
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _probe_connection_with_timeout(dsn: str, timeout: float = 10) -> dict:
+    """在不等待超时线程回收的前提下执行 ODBC 探测。"""
+    pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        future = pool.submit(_probe_connection_pure, dsn, timeout=int(timeout))
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            future.cancel()
+            return {"status": "failed", "error": "timeout",
+                    "detail": f"连接测试超过 {timeout:g} 秒"}
         except Exception as e:
-            results[tbl] = {"ok": False, "error": str(e)[:200]}
-    return results
+            return {"status": "failed", "error": type(e).__name__,
+                    "detail": _sanitize_detail(str(e))}
+    finally:
+        # 不使用 with：超时离开上下文会 shutdown(wait=True)，使 HTTP 请求继续等待。
+        # pyodbc 的连接和查询超时负责尽快终止后台 ODBC 调用。
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict[str, str]]]:
@@ -180,6 +218,8 @@ def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict
     shutil.copy2(path, tmp_path)
     try:
         return merge_whitelist_and_save(tmp_path, MIDDLE_EDITABLE, patch, validate=load_config)
+    except Exception as e:
+        return False, [{"field": "", "message": str(e)}]
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -220,6 +260,8 @@ def create_app(
     }
 
     state = {"token": token}
+    # revision 比较和文件替换须在同一临界区内，避免最后写入者静默覆盖。
+    config_write_lock = threading.Lock()
 
     def needs_setup() -> bool:
         return not cfg_path.is_file()
@@ -339,17 +381,35 @@ def create_app(
     @api.get("/config")
     def get_config() -> dict:
         if needs_setup():
-            return {"needs_setup": True, "sources": {}}
+            return {"needs_setup": True, "sources": {}, "revision": None}
         out = _config_subset(reload_config())
         out["needs_setup"] = False
+        out["revision"] = config_revision(cfg_path)
         return out
 
     @api.post("/config")
     def post_config(body: ConfigPatch) -> dict:
         patch = _patch_to_dict(body)
-        ok, errors = merge_whitelist_and_save(
-            cfg_path, MIDDLE_EDITABLE, patch, validate=load_config)
-        return {"ok": ok, "errors": errors, "restart_required": True}
+        with config_write_lock:
+            if needs_setup():
+                raise HTTPException(409, "尚未完成首次配置")
+            current = config_revision(cfg_path)
+            if body.revision is None:
+                raise HTTPException(
+                    409, {"detail": "已有配置的更新必须提交 revision,请刷新页面获取最新修订号。",
+                          "hint": "GET /api/config 返回 revision 字段",
+                          "current_revision": current})
+            if body.revision != current:
+                raise HTTPException(409, {"detail": "配置已被其他会话修改,请刷新后重新提交。",
+                                         "current_revision": current})
+            try:
+                ok, errors = merge_whitelist_and_save(
+                    cfg_path, MIDDLE_EDITABLE, patch, validate=load_config)
+            except Exception as e:
+                return {"ok": False, "errors": [{"field": "", "message": str(e)}],
+                        "restart_required": False, "revision": current}
+            revision = config_revision(cfg_path) if ok else current
+        return {"ok": ok, "errors": errors, "restart_required": ok, "revision": revision}
 
     @api.post("/config/validate")
     def validate_config(body: ConfigPatch) -> dict:
@@ -376,35 +436,22 @@ def create_app(
         ok, text = tail_lines(path, lines=capped, level=level)
         return {"ok": ok, "text": text}
 
-    @api.post("/test-connection")
+    @api.post("/connection/test")
     def test_connection(body: TestConnectionBody = TestConnectionBody()) -> dict:
+        """纯连接测试:只验证 DSN 可连、数据库可访问、元数据权限。不读取 tables。"""
         cfg = reload_config()
+        name, scfg = _resolve_source(cfg, body.source)
+        if scfg.adapter != "mssql_readonly":
+            return {"status": "failed", "error": "unsupported",
+                    "detail": "连接测试仅支持 mssql_readonly 适配器"}
+        dsn = os.environ.get(scfg.dsn_env or "", "")
+        if not dsn:
+            return {"status": "failed", "error": "missing_dsn",
+                    "detail": f"环境变量 {scfg.dsn_env} 未设置"}
         started = time.perf_counter()
-        try:
-            name, scfg = _resolve_source(cfg, body.source)
-            with ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(_probe_connection, name, scfg, cfg.landing)
-                results = future.result(timeout=10.0)
-        except FuturesTimeoutError:
-            return {"ok": False, "error": "timeout", "detail": "连接测试超过 10 秒"}
-        except Exception as e:
-            return {"ok": False, "error": type(e).__name__,
-                    "detail": _sanitize_detail(str(e))}
-        elapsed_ms = int((time.perf_counter() - started) * 1000)
-        tables_ok = sum(1 for r in results.values() if r.get("ok"))
-        tables_with_pk = sum(1 for r in results.values() if r.get("pk_ok"))
-        tables_with_wm = sum(1 for r in results.values() if r.get("wm_ok"))
-        all_ok = all(r.get("ok", False) for r in results.values())
-        all_pk = all(r.get("pk_ok", False) for r in results.values())
-        all_wm = all(r.get("wm_ok", True) for r in results.values())
-        ok = all_ok and all_pk and all_wm
-        return {"ok": ok, "elapsed_ms": elapsed_ms,
-                "tables": sorted(results.keys()),
-                "table_count": len(results),
-                "tables_ok": tables_ok,
-                "tables_with_pk": tables_with_pk,
-                "tables_with_wm": tables_with_wm,
-                "results": results}
+        result = _probe_connection_with_timeout(dsn, timeout=10)
+        result["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
+        return result
 
     @api.post("/actions/trigger")
     def trigger_action(body: TriggerBody) -> dict:
@@ -414,10 +461,15 @@ def create_app(
             raise HTTPException(400, f"不支持的动作 '{body.action}'")
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
+        if not scfg.table_whitelist():
+            return {"action": "sync", "source": name, "executed": False,
+                    "reason": "tables_unconfigured", "overlap_warning": True,
+                    "note": "尚未配置抽取表，未发起同步"}
         executed = run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
         return {"action": "sync", "source": name, "executed": executed,
                 "overlap_warning": True,
-                "note": "" if executed else "错峰窗口外,未发起(窗口约束同样生效)"}
+                "reason": "executed" if executed else "outside_window",
+                "note": "" if executed else "错峰窗口外，未发起（窗口约束同样生效）"}
 
     app.include_router(api)
     # HTML 也走轻量检查:首次配置时放行

@@ -139,6 +139,7 @@
 (function () {
   var sourcesEl = document.getElementById('sources-container');
   var needsSetup = {{ 'true' if needs_setup else 'false' }};
+  var currentRevision = null;
 
   function authHeaders(extra) {
     var h = {'Content-Type': 'application/json'};
@@ -157,37 +158,6 @@
       inputHtml + '<span class="field-hint">' + hint + '</span></label>';
   }
 
-  function makeTableRow(name, mode, watermark) {
-    var isIncr = mode === 'incremental';
-    var wmStyle = isIncr ? '' : 'display:none;';
-    return '<tr class="table-row"><td>' +
-      '<input type="text" class="table-name" value="' + esc(name) + '" placeholder="表名"></td>' +
-      '<td><select class="table-mode">' +
-        '<option value="incremental"' + (isIncr ? ' selected' : '') + '>增量(按水位)</option>' +
-        '<option value="full_refresh"' + (!isIncr ? ' selected' : '') + '>全量刷新</option>' +
-      '</select></td>' +
-      '<td><input type="text" class="table-watermark" value="' + esc(watermark || '') +
-        '" placeholder="水位列名" style="' + wmStyle + '"></td>' +
-      '<td><button type="button" class="text-btn danger delete-row-btn">删除</button></td></tr>';
-  }
-
-  function renderTableEditor(tables) {
-    var rows = '';
-    Object.keys(tables || {}).forEach(function (name) {
-      var t = tables[name] || {};
-      rows += makeTableRow(name, t.mode || 'incremental', t.watermark || '');
-    });
-    return '<p class="section-title">抽取表配置</p>' +
-      '<p class="card-lead">管理要同步的表：选择增量（需水位列）或全量刷新模式。保存后重启抽取进程生效。</p>' +
-      '<table class="tables-list"><thead><tr>' +
-        '<th>表名</th><th>同步模式</th><th>水位字段</th><th></th>' +
-      '</tr></thead><tbody>' + rows + '</tbody></table>' +
-      '<div class="add-table-row">' +
-        '<input type="text" class="new-table-name" placeholder="输入新表名..." style="width:220px">' +
-        '<button type="button" class="add-table-btn">添加表</button>' +
-      '</div>';
-  }
-
   function renderSource(name, src) {
     var w = (src.windows || []).join(', ');
     var rate = src.rate || {};
@@ -196,7 +166,7 @@
     var tokOk = sink.token_env_set ? '已配置' : '未配置';
     return '<div class="source-block" data-source="' + esc(name) + '">' +
       '<h2>数据源：' + esc(name) + '</h2>' +
-      '<p class="card-lead">以下控制「抽什么、何时抽、推到哪里」。ERP 连接串在环境变量/凭据文件中，本页只显示是否已配置。</p>' +
+      '<p class="card-lead">以下控制抽取频率、资源用量和推送地址。ERP 连接串在环境变量/凭据文件中，本页只显示是否已配置。</p>' +
       field('抽取间隔',
         '多久自动抽一轮。例：<code>30m</code>、<code>1h</code>。',
         '<input type="text" data-key="sync_every" value="' + esc(src.sync_every || '') + '">') +
@@ -206,7 +176,6 @@
       field('回看窗口',
         '增量抽取时往回多看多久，避免漏数。例：<code>3d</code>=3 天。',
         '<input type="text" data-key="lookback" value="' + esc(src.lookback || '') + '">') +
-      renderTableEditor(src.tables) +
       field('每批行数',
         '单次查询最多取多少行。过大可能占 ERP 资源，过小则轮次变多。',
         '<input type="number" data-key="rate.batch_size" value="' + esc(rate.batch_size != null ? rate.batch_size : '') + '">') +
@@ -222,52 +191,13 @@
       '</div>';
   }
 
-  // event delegation: add table, delete row, toggle watermark on mode change
-  sourcesEl.addEventListener('click', function (ev) {
-    var t = ev.target;
-    if (t.classList.contains('add-table-btn')) {
-      var editor = t.closest('.source-block');
-      var nameInput = editor.querySelector('.new-table-name');
-      var name = nameInput.value.trim();
-      if (!name) { alert('请输入表名'); return; }
-      var existing = Array.from(editor.querySelectorAll('.table-name')).map(function (el) {
-        return el.value.trim();
-      });
-      if (existing.includes(name)) { alert('表名 "' + name + '" 已存在'); return; }
-      var tbody = editor.querySelector('.tables-list tbody');
-      var row = document.createElement('tr');
-      row.className = 'table-row';
-      row.innerHTML = makeTableRow(name, 'incremental', '');
-      tbody.appendChild(row);
-      nameInput.value = '';
-      return;
-    }
-    if (t.classList.contains('delete-row-btn')) {
-      var row = t.closest('tr');
-      if (row) row.remove();
-      return;
-    }
-  });
-  sourcesEl.addEventListener('change', function (ev) {
-    if (ev.target.classList.contains('table-mode')) {
-      var row = ev.target.closest('tr');
-      var wmInput = row.querySelector('.table-watermark');
-      if (wmInput) {
-        var newMode = ev.target.value;
-        wmInput.style.display = newMode === 'incremental' ? '' : 'none';
-        if (newMode === 'full_refresh') {
-          wmInput.value = '';
-        }
-      }
-    }
-  });
-
   function loadDaily() {
     fetch('/api/config', {headers: authHeaders()})
       .then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
       .then(function (x) {
         if (!x.ok) return;
         if (x.j.needs_setup) return;
+        currentRevision = x.j.revision || null;
         document.getElementById('cfg-templates').value = x.j.templates || '';
         document.getElementById('cfg-landing').value = x.j.landing || '';
         var html = '';
@@ -320,59 +250,26 @@
           src[key] = val;
         }
       });
-      // collect tables from editor
-      var tablesEditor = block.querySelector('.tables-list');
-      if (tablesEditor) {
-        var tables = {};
-        tablesEditor.querySelectorAll('.table-row').forEach(function (row) {
-          var tblName = row.querySelector('.table-name');
-          var tblMode = row.querySelector('.table-mode');
-          var tblWm = row.querySelector('.table-watermark');
-          var tn = tblName ? tblName.value.trim() : '';
-          if (!tn) return;
-          var mode = tblMode ? tblMode.value : 'incremental';
-          var wm = tblWm ? tblWm.value.trim() || null : null;
-          if (mode === 'incremental' && wm) {
-            tables[tn] = {mode: mode, watermark: wm};
-          } else if (mode === 'full_refresh') {
-            tables[tn] = {mode: mode};
-          } else {
-            tables[tn] = {mode: mode, watermark: wm};
-          }
-        });
-        src.tables = tables;
-      }
       sources[name] = src;
     });
-    // validate: incremental tables must have watermark
-    var validationErrors = [];
-    Object.keys(sources).forEach(function (srcName) {
-      var tables = sources[srcName].tables || {};
-      Object.keys(tables).forEach(function (tn) {
-        var t = tables[tn];
-        if (t.mode === 'incremental' && !t.watermark) {
-          validationErrors.push('数据源 "' + srcName + '" 中的表 "' + tn + '" 为增量模式但未填写水位字段');
-        }
-      });
-    });
-    if (validationErrors.length > 0) {
-      document.getElementById('config-errors').textContent = validationErrors.join('; ');
-      return;
-    }
     var body = {
       templates: document.getElementById('cfg-templates').value,
       landing: document.getElementById('cfg-landing').value,
-      sources: sources
+      sources: sources,
+      revision: currentRevision
     };
     fetch('/api/config', {method: 'POST', headers: authHeaders(), body: JSON.stringify(body)})
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
+      .then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
+      .then(function (response) {
+        var j = response.j;
         var err = document.getElementById('config-errors');
-        if (!j.ok) {
-          err.textContent = (j.errors || []).map(function (e) { return e.message; }).join('; ');
+        if (!response.ok || !j.ok) {
+          err.textContent = (j.errors || []).map(function (e) { return e.message; }).join('; ') ||
+            (typeof j.detail === 'string' ? j.detail : (j.detail && j.detail.detail) || '保存失败');
           return;
         }
         err.textContent = '';
+        currentRevision = j.revision || currentRevision;
         var b = document.getElementById('restart-banner');
         b.style.display = 'block';
         b.innerHTML = '配置已保存。请重启抽取进程后生效（便携包可再双击 <code>data2agent.exe</code>；或重启 Windows 服务）。';

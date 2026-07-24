@@ -60,6 +60,9 @@ function renderStatus(data) {
             ' · 下次预估: ' + esc(src.next_sync_at || '—') + '</p>';
     html += '<p><span class="badge ' + (inWin ? 'badge-ok' : 'badge-off') + '">' +
             (inWin ? '窗口内' : '窗口外') + '</span></p>';
+    if (!src.tables_configured) {
+      html += '<p class="warn">尚未配置抽取表；自动和手动同步都会跳过，不会连接 ERP。</p>';
+    }
     if (src.watermarks && src.watermarks.length) {
       html += '<table><thead><tr><th>表</th><th>水位列</th><th>高水位</th><th>上次同步</th></tr></thead><tbody>';
       src.watermarks.forEach(function (w) {
@@ -89,31 +92,16 @@ document.getElementById('btn-trigger').addEventListener('click', function () {
     });
 });
 document.getElementById('btn-test').addEventListener('click', function () {
-  fetch('/api/test-connection', {
+  fetch('/api/connection/test', {
     method: 'POST', headers: authHeaders(), body: '{}'
   }).then(function (r) { return r.json(); })
     .then(function (body) {
       var el = document.getElementById('test-result');
-      if (body.ok) {
-        el.innerHTML = '连接成功 · ' + body.elapsed_ms + ' ms · 表: ' +
-          esc((body.tables || []).join(', '));
+      if (body.status === 'connected' || body.status === 'connected_limited') {
+        var extra = body.database ? ' · ' + esc(body.database) : '';
+        el.innerHTML = '连接成功 (' + esc(body.status) + ') · ' + body.elapsed_ms + ' ms' + extra;
       } else {
-        var failures = [];
-        if (body.results) {
-          for (var tbl in body.results) {
-            if (!body.results.hasOwnProperty(tbl)) continue;
-            var r = body.results[tbl];
-            var msgs = [];
-            if (!r.ok) msgs.push(r.error || '表不存在');
-            if (!r.pk_ok) msgs.push('缺少主键');
-            if (!r.wm_ok) msgs.push(r.wm_error || '水位列异常');
-            if (msgs.length) failures.push(tbl + ': ' + msgs.join('; '));
-          }
-        }
-        var msg = failures.length > 0
-          ? '连接失败:<br>' + failures.map(function(f) { return '  - ' + esc(f); }).join('<br>')
-          : '连接失败: ' + esc(body.detail || body.error || '未知错误');
-        el.innerHTML = msg;
+        el.innerHTML = '连接失败 (' + esc(body.status) + '): ' + esc(body.detail || body.error || '未知错误');
       }
     });
 });

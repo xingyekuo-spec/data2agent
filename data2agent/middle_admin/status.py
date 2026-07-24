@@ -56,6 +56,7 @@ def build_status(cfg: ConnectConfig, now: datetime | None = None) -> dict:
         watermarks = [dict(r) for r in db.con.execute(
             "SELECT table_name, watermark_col, high_water, last_run_at "
             "FROM d2a_sync_state WHERE source = ? ORDER BY table_name", (name,))]
+        tables_configured = len(scfg.table_whitelist()) > 0
         sources.append({
             "source": name,
             "in_window": in_window(now.time(), scfg.windows),
@@ -64,5 +65,6 @@ def build_status(cfg: ConnectConfig, now: datetime | None = None) -> dict:
             "last_run_at": last_run.isoformat() if last_run else None,
             "next_sync_at": _estimate_next_sync(now, scfg, last_run).isoformat(),
             "watermarks": watermarks,
+            "tables_configured": tables_configured,
         })
     return {"schedule_source": "derived_from_yaml", "sources": sources}

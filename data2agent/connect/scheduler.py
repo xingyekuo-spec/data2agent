@@ -56,9 +56,13 @@ def build_sink(scfg: SourceConfig, landing: LandingStore):
 
 def run_sync_cycle(name: str, scfg: SourceConfig,
                    landing_path: str, templates: str = "templates") -> bool:
-    """一轮 sync(+apply)。返回是否实际执行(窗口外为 False)。"""
+    """一轮 sync(+apply)。返回是否实际执行(窗口外为 False)。
+    若 tables 为空则跳过，不连接 ERP、不报错、不创建失败运行。"""
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip source=%s reason=窗口外 windows=%s", name, scfg.windows)
+        return False
+    if not scfg.table_whitelist():
+        log.info("source=%s reason=tables_unconfigured", name)
         return False
     landing = LandingStore(landing_path)
     adapter = build_adapter(name, scfg, landing)

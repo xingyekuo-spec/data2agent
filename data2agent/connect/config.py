@@ -6,7 +6,9 @@ sqlite 源(开发 / 参考链)例外地允许直接写路径(无凭据可泄露)
 
 from __future__ import annotations
 
+import hashlib
 import re
+from datetime import datetime, timezone
 from datetime import time as dtime
 from pathlib import Path
 from typing import Literal
@@ -68,17 +70,27 @@ class SinkConfig(BaseModel):
 class TableExtractConfig(BaseModel):
     model_config = {"extra": "forbid"}
     mode: Literal["incremental", "full_refresh"]
-    watermark: str | None = None
+    schema: str | None = None              # SQL Server schema, 默认 dbo
+    key_columns: list[str] | None = None   # 数据库 PK / 唯一索引 / 业务唯一键
+    watermark: str | None = None           # incremental 必填, full_refresh 禁止
+    schema_fingerprint: str | None = None  # 已确认字段结构摘要(sha256:...)
+    validated_at: str | None = None        # 最近一次现场校验时间
 
     @model_validator(mode="after")
-    def watermark_required_for_incremental(self):
-        if self.mode == "incremental" and not self.watermark:
-            raise ValueError("incremental 模式必须配置 watermark")
+    def _validate_mode_constraints(self):
+        if self.mode == "incremental":
+            if not self.watermark:
+                raise ValueError("incremental 模式必须配置 watermark")
         if self.mode == "full_refresh" and self.watermark is not None:
             raise ValueError("full_refresh 模式不允许配置 watermark")
         if self.watermark is not None:
             if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", self.watermark):
                 raise ValueError(f"非法水位列名 '{self.watermark}'(须为 SQL 标识符)")
+        if self.key_columns is not None:
+            ident = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+            for col in self.key_columns:
+                if not ident.match(col):
+                    raise ValueError(f"非法键列名 '{col}'(须为 SQL 标识符)")
         return self
 
 
@@ -142,6 +154,15 @@ class SourceConfig(BaseModel):
             if spec.mode == "incremental" and spec.watermark
         }
 
+    def table_key_columns(self) -> dict[str, list[str]]:
+        if self.tables is None:
+            return {}
+        return {
+            table: spec.key_columns
+            for table, spec in self.tables.items()
+            if spec.key_columns
+        }
+
     def lookback_days(self) -> float:
         return parse_duration_seconds(self.lookback) / 86400
 
@@ -154,6 +175,12 @@ class ConnectConfig(BaseModel):
     templates: str = "templates"
     landing: str = "landing/factory.sqlite"
     sources: dict[str, SourceConfig]
+
+
+def config_revision(path: str | Path) -> str:
+    """返回配置文件的 sha256 内容哈希，作为乐观锁修订号。"""
+    content = Path(path).read_bytes()
+    return "sha256:" + hashlib.sha256(content).hexdigest()
 
 
 def load_config(path: str | Path) -> ConnectConfig:

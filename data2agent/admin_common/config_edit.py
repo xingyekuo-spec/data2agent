@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import os
 import shutil
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -75,7 +77,8 @@ def merge_whitelist_and_save(
     On validation failure, restore from backup and return (False, errors).
     """
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    # 微秒避免同一进程内连续保存时覆盖备份；调用方负责 revision 并发控制。
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     backup_path = path.with_suffix(path.suffix + f".bak-{timestamp}")
     shutil.copy2(path, backup_path)
 
@@ -85,16 +88,24 @@ def merge_whitelist_and_save(
         if _is_editable(dotted, editable):
             _set_path(merged, dotted, value)
 
-    path.write_text(
-        yaml.dump(merged, default_flow_style=False, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-
-    if validate is not None:
+    # 写入临时文件,验证后原子替换(源文件已备份,可用于灾难恢复)
+    yaml_text = yaml.dump(merged, default_flow_style=False,
+                          allow_unicode=True, sort_keys=False)
+    tmp_fd, tmp_path_str = tempfile.mkstemp(
+        suffix=".yaml", dir=str(path.parent), prefix=".tmp-")
+    tmp_path = Path(tmp_path_str)
+    try:
+        os.write(tmp_fd, yaml_text.encode("utf-8"))
+        os.close(tmp_fd)
+        if validate is not None:
+            validate(tmp_path)
+        os.replace(tmp_path_str, str(path))
+    except Exception as e:
+        tmp_path.unlink(missing_ok=True)
         try:
-            validate(path)
-        except Exception as e:
-            shutil.copy2(backup_path, path)
-            return False, [{"field": "", "message": str(e)}]
+            os.close(tmp_fd)
+        except Exception:
+            pass
+        return False, [{"field": "", "message": str(e)}]
 
     return True, []

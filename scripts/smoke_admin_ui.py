@@ -107,10 +107,12 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
         _fail(f"middle: /api/status bad: {r.status_code} {r.text[:200]}")
     _ok("middle: /api/status schedule_source=derived_from_yaml")
 
+    revision = client.get("/api/config", headers=h).json()["revision"]
     r = client.post(
         "/api/config",
         headers=h,
-        json={"sources": {"digiwin_e10": {"sync_every": "15m", "dsn_env": "HACKED"}}},
+        json={"sources": {"digiwin_e10": {"sync_every": "15m", "dsn_env": "HACKED"}},
+              "revision": revision},
     )
     body = r.json()
     if r.status_code != 200 or not body.get("ok"):
@@ -129,13 +131,11 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
         _fail(f"middle: /api/logs: {r.text[:200]}")
     _ok("middle: /api/logs")
 
-    r = client.post("/api/test-connection", headers=h)
-    if r.status_code != 200 or r.json().get("ok") is not True:
-        _fail(f"middle: test-connection: {r.text[:300]}")
-    detail = str(r.json())
-    if "PWD=" in detail.upper() or "password" in detail.lower():
-        _fail("middle: test-connection leaked secret-like text")
-    _ok("middle: /api/test-connection")
+    r = client.post("/api/connection/test", headers=h)
+    if (r.status_code != 200 or r.json().get("status") != "failed"
+            or r.json().get("error") != "unsupported"):
+        _fail(f"middle: connection/test: {r.text[:300]}")
+    _ok("middle: /api/connection/test (sqlite 不支持纯 ODBC 探测)")
 
     r = client.post("/api/actions/trigger", headers=h, json={"action": "sync"})
     if r.status_code != 200 or r.json().get("overlap_warning") is not True:

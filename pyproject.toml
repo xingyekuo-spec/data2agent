@@ -18,7 +18,7 @@ console = ["fastapi>=0.110", "uvicorn>=0.29"]
 middle_admin = ["fastapi>=0.110", "uvicorn>=0.29", "jinja2>=3.0"]
 ingest = ["fastapi>=0.110", "uvicorn>=0.29"]   # 平台侧接收端(Pattern A)
 excel = ["openpyxl>=3.1"]
-dev = ["pytest>=8.0", "pytest-xdist>=3.6"]
+dev = ["pytest>=8.0", "pytest-xdist>=3.6", "httpx2>=2.9"]
 
 [project.urls]
 Homepage = "https://github.com/xingyekuo-spec/data2agent"
