@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -127,9 +128,26 @@ def main() -> int:
 
     portable = args.portable.resolve()
     _check_templates(portable, args.expected_templates.resolve())
-    build_info = portable / "BUILD-INFO.json"
-    if not build_info.is_file() or '"release_version"' not in build_info.read_text(encoding="utf-8"):
+    build_info_path = portable / "BUILD-INFO.json"
+    if not build_info_path.is_file():
         _fail("portable build label missing")
+    try:
+        build_info = json.loads(build_info_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        _fail(f"BUILD-INFO.json invalid JSON: {e}")
+    for key in (
+        "application_version",
+        "release_version",
+        "ingest_protocol_versions",
+        "commit",
+    ):
+        if key not in build_info:
+            _fail(f"BUILD-INFO.json missing {key}")
+    protocols = build_info["ingest_protocol_versions"]
+    if not isinstance(protocols, list) or not protocols or not all(
+        isinstance(p, str) and p for p in protocols
+    ):
+        _fail("BUILD-INFO.json ingest_protocol_versions must be a non-empty string list")
     _check_no_legacy_erp_artifacts(portable)
     if args.role == "platform":
         _check_platform_entry(portable)

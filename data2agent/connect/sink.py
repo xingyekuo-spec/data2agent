@@ -102,7 +102,7 @@ def _urllib_get_json(url: str, token: str | None, timeout: float) -> dict:
 
 
 class ProtocolVersionError(RuntimeError):
-    """平台与中间机 ingest 协议版本不一致。"""
+    """平台不支持本端 ingest 发送协议(或不兼容)。"""
 
 
 class HttpPushSink:
@@ -123,7 +123,11 @@ class HttpPushSink:
         self._protocol_checked = False
 
     def ensure_protocol(self) -> None:
-        """同步前校验平台 ingest_protocol_version;不一致 fail-fast。"""
+        """同步前确认本端发送协议落在平台 supported 列表内;否则 fail-fast。
+
+        新平台返回 supported_ingest_protocol_versions;旧平台仅有
+        ingest_protocol_version 时回退为精确相等(兼容尚未升级的平台)。
+        """
         if self._protocol_checked:
             return
         try:
@@ -132,11 +136,22 @@ class HttpPushSink:
         except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as e:
             raise ProtocolVersionError(
                 f"无法读取平台 ingest 协议版本:{e}") from e
-        remote = health.get("ingest_protocol_version")
-        if remote != INGEST_PROTOCOL_VERSION:
-            raise ProtocolVersionError(
-                f"ingest 协议版本不一致:中间机要求 {INGEST_PROTOCOL_VERSION}, "
-                f"平台返回 {remote!r}")
+        mine = INGEST_PROTOCOL_VERSION
+        supported = health.get("supported_ingest_protocol_versions")
+        if isinstance(supported, list) and supported:
+            supported_s = [str(v) for v in supported]
+            if mine not in supported_s:
+                raise ProtocolVersionError(
+                    f"ingest 协议不兼容:中间机发送 {mine}, "
+                    f"平台支持 {supported_s}")
+        else:
+            remote = health.get("active_ingest_protocol_version")
+            if remote is None:
+                remote = health.get("ingest_protocol_version")
+            if remote != mine:
+                raise ProtocolVersionError(
+                    f"ingest 协议版本不一致:中间机要求 {mine}, "
+                    f"平台返回 {remote!r}")
         self._protocol_checked = True
 
     def _post_with_retry(self, path: str, payload: dict) -> None:

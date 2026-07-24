@@ -94,7 +94,10 @@ def test_ingest_health_reports_protocol_version(tmp_path):
     client = TestClient(create_app(LandingStore(tmp_path / "p.sqlite").db_path))
     r = client.get("/ingest/health")
     assert r.status_code == 200
-    assert r.json()["ingest_protocol_version"] == "2"
+    body = r.json()
+    assert body["ingest_protocol_version"] == "2"
+    assert body["active_ingest_protocol_version"] == "2"
+    assert body["supported_ingest_protocol_versions"] == ["2"]
 
 
 def test_ingest_batch_lands_rows(tmp_path):

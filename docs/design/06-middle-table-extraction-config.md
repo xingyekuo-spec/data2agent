@@ -64,7 +64,7 @@ sources:
 - 增量：配置/复合运行键 + 水位 keyset；水位仅来自 `tables`。
 - 全量：`full_refresh` 经 staging → 原子发布；源端删除行从 raw 消失。
 - CLI `sync` **不再**接受 `--full`；运行模式只来自逐表配置。
-- HTTP 推送前校验平台 `ingest_protocol_version`，不一致 fail-fast。
+- HTTP 推送前确认中间机发送协议 ∈ 平台 `supported_ingest_protocol_versions`，否则 fail-fast。
 
 ## 6. 安全与运维
 

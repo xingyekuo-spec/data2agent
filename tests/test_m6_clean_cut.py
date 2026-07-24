@@ -27,14 +27,17 @@ def _iter_prod_py() -> list[Path]:
 
 def test_ingest_protocol_version_is_v2():
     assert INGEST_PROTOCOL_VERSION == "2"
+    from data2agent.ingest.protocol import SUPPORTED_INGEST_PROTOCOL_VERSIONS
+
+    assert SUPPORTED_INGEST_PROTOCOL_VERSIONS == ("2",)
     sink = (PROD / "connect" / "sink.py").read_text(encoding="utf-8")
     ingest_app = (PROD / "ingest" / "app.py").read_text(encoding="utf-8")
-    assert "INGEST_PROTOCOL_VERSION" in sink
-    assert "ingest_protocol_version" in sink
-    assert "INGEST_PROTOCOL_VERSION" in ingest_app
-    assert 'INGEST_PROTOCOL_VERSION = "2"' in (
-        PROD / "ingest" / "protocol.py"
-    ).read_text(encoding="utf-8")
+    assert "ensure_protocol" in sink
+    assert "supported_ingest_protocol_versions" in sink
+    assert "health_protocol_fields" in ingest_app
+    proto = (PROD / "ingest" / "protocol.py").read_text(encoding="utf-8")
+    assert 'INGEST_PROTOCOL_VERSION = "2"' in proto
+    assert "SUPPORTED_INGEST_PROTOCOL_VERSIONS" in proto
 
 
 def test_production_code_has_no_legacy_cutover_symbols():

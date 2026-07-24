@@ -102,8 +102,8 @@ sources:
     apply_after_sync: false
 ```
 
-同步前中间机会校验平台 `ingest_protocol_version`（当前为 `"2"`），不一致立即失败。
-现场升级策略见 [portable.md](portable.md)：协议未变时可只升平台包。
+同步前中间机确认自身发送协议落在平台 `supported_ingest_protocol_versions` 中
+（当前为 `["2"]`）；不在列表则立即失败。现场升级策略见 [portable.md](portable.md)。
 
 ## 7. 常见问题
 

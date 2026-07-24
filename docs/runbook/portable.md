@@ -9,24 +9,43 @@
 
 ### 升级策略（现场）
 
-典型现场：**数据平台会定期升级，中间机很少动。**
+典型现场：**数据平台定期升级，中间机很少动。**
 
-硬约束只有一条——两边的 **`ingest_protocol_version` 必须一致**（当前为 `"2"`）。
-中间机同步前会校验平台健康接口；协议不一致时 fail-fast，不会产生半份数据。
+| 概念 | 含义 |
+| --- | --- |
+| `application_version` | 应用包版本（平台/中间机可各自独立升级） |
+| `ingest_protocol_version` | 跨机推送契约；平台健康接口声明其**支持列表** |
+
+平台 `/ingest/health` 示例:
+
+```json
+{
+  "ok": true,
+  "active_ingest_protocol_version": "2",
+  "supported_ingest_protocol_versions": ["2"],
+  "ingest_protocol_version": "2"
+}
+```
+
+中间机只要自己发送的协议落在 `supported_ingest_protocol_versions` 中即可推送；
+否则 fail-fast，不会产生半份数据。旧中间机若只认 `ingest_protocol_version` 精确相等，
+在平台仍以 v2 为 active 时同样可用。
 
 因此：
 
-- **协议未变**（Release 说明未写协议 bump）：可以只升级数据平台，中间机继续用现有包。
-- **协议 bump**（例如 `"2"` → `"3"`）：平台与中间机必须一起换到支持新协议号的包。
-- 首次安装仍建议从**同一次 Release**各取一个 zip，减少首装排障变量。
+- **平台仍声明支持 v2**：只升级数据平台即可，既有 v2 中间机**无需升级**。
+- **破坏性协议变更**（从支持列表移除旧协议）：Release 说明会明确写出
+  「中间机必须升级」；此时才需要换中间机包。
+- 两个 zip **不必**来自同一次 Release；每个包的 `BUILD-INFO.json` 含
+  `application_version` / `ingest_protocol_versions` / `commit`，以包内声明为准。
+- 每个正式 tag 仍会打出两个便携包，便于按需取用。
 
-每个正式 Release 仍会同时产出两个便携包（便于按需取用），不等于每次都必须两边都装。
+以 Release 正文中的「ingest 协议兼容性」段落为准，不要靠猜测。
 
 Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` 调用
 `scripts/check_portable_package.py`（扫描**整个**便携包根，禁止 `erp-configs` /
 旧 profile 等路径）。打 `v*` tag 的 Release workflow 会先跑
-`tests/integration/mssql` compose 集成（真实 SQL Server），通过后才打包上传。
-该检查是 Release 门槛。
+`tests/integration/mssql` compose、ingest 兼容门禁与契约测试，通过后才打包上传。
 
 ## 2. 端口
 

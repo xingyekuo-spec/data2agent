@@ -12,7 +12,7 @@ ERP → 中间服务器 → 数据平台
 | --- | --- |
 | 1 | 数据平台已拿到拟安装的 `d2a-portable-platform-<版本>.zip` |
 | 2 | 中间服务器已有可用的 `d2a-portable-middle-<版本>.zip`（可与平台应用版本不同） |
-| 3 | 两边 **`ingest_protocol_version` 一致**（协议 bump 时须双边同升；平时可只升平台） |
+| 3 | 平台 `supported_ingest_protocol_versions` 覆盖中间机发送协议（见 Release 兼容性说明；通常 v2 中间机可对接新平台） |
 | 4 | 两台机器约定同一 ingest Token |
 | 5 | 中间服务器已安装 ODBC Driver 18 for SQL Server |
 | 6 | 中间服务器可以访问 ERP SQL Server |

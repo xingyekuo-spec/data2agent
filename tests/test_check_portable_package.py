@@ -26,7 +26,12 @@ def test_check_portable_middle_ok(tmp_path: Path, monkeypatch):
     _write(expected / "objects" / "dead_stock_item.yaml")
     _write(expected / "objects" / "dead_stock_attribution.yaml")
     shutil.copytree(expected, portable / "app" / "templates")
-    _write(portable / "BUILD-INFO.json", json.dumps({"release_version": "0.5.0-test"}))
+    _write(portable / "BUILD-INFO.json", json.dumps({
+        "application_version": "0.5.0-test",
+        "release_version": "0.5.0-test",
+        "ingest_protocol_versions": ["2"],
+        "commit": "test",
+    }))
 
     pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
     src = ROOT / "data2agent" / "middle_admin" / "templates"
@@ -52,7 +57,12 @@ def test_check_portable_middle_rejects_missing_metadata(tmp_path: Path, monkeypa
     _write(expected / "objects" / "dead_stock_item.yaml")
     _write(expected / "objects" / "dead_stock_attribution.yaml")
     shutil.copytree(expected, portable / "app" / "templates")
-    _write(portable / "BUILD-INFO.json", json.dumps({"release_version": "0.5.0-test"}))
+    _write(portable / "BUILD-INFO.json", json.dumps({
+        "application_version": "0.5.0-test",
+        "release_version": "0.5.0-test",
+        "ingest_protocol_versions": ["2"],
+        "commit": "test",
+    }))
     pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
     src = ROOT / "data2agent" / "middle_admin" / "templates"
     shutil.copytree(src, pkg / "templates")
@@ -80,7 +90,12 @@ def test_check_portable_rejects_erp_configs_anywhere(tmp_path: Path, monkeypatch
     _write(expected / "objects" / "dead_stock_item.yaml")
     _write(expected / "objects" / "dead_stock_attribution.yaml")
     shutil.copytree(expected, portable / "app" / "templates")
-    _write(portable / "BUILD-INFO.json", json.dumps({"release_version": "0.5.0-test"}))
+    _write(portable / "BUILD-INFO.json", json.dumps({
+        "application_version": "0.5.0-test",
+        "release_version": "0.5.0-test",
+        "ingest_protocol_versions": ["2"],
+        "commit": "test",
+    }))
     pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
     src = ROOT / "data2agent" / "middle_admin" / "templates"
     shutil.copytree(src, pkg / "templates")
@@ -108,7 +123,12 @@ def test_check_portable_rejects_showroom_anywhere(tmp_path: Path, monkeypatch):
     _write(expected / "objects" / "dead_stock_item.yaml")
     _write(expected / "objects" / "dead_stock_attribution.yaml")
     shutil.copytree(expected, portable / "app" / "templates")
-    _write(portable / "BUILD-INFO.json", json.dumps({"release_version": "0.5.0-test"}))
+    _write(portable / "BUILD-INFO.json", json.dumps({
+        "application_version": "0.5.0-test",
+        "release_version": "0.5.0-test",
+        "ingest_protocol_versions": ["2"],
+        "commit": "test",
+    }))
     pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
     src = ROOT / "data2agent" / "middle_admin" / "templates"
     shutil.copytree(src, pkg / "templates")

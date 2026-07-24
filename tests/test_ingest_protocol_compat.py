@@ -1,0 +1,144 @@
+"""ingest 协议兼容:健康声明、supported 列表、旧中间机行为。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient
+
+from data2agent.connect.adapters.base import TableInfo
+from data2agent.connect.landing import LandingStore
+from data2agent.connect.sink import HttpPushSink, ProtocolVersionError
+from data2agent.ingest.app import create_app
+from data2agent.ingest.protocol import (
+    BASELINE_INGEST_PROTOCOL_VERSIONS,
+    INGEST_PROTOCOL_VERSION,
+    SUPPORTED_INGEST_PROTOCOL_VERSIONS,
+    health_protocol_fields,
+    is_supported_protocol,
+)
+from scripts.check_ingest_compat import check_constants, render_release_notes
+
+
+SOURCE = "digiwin_e10"
+
+
+def test_health_declares_active_and_supported_list(tmp_path: Path):
+    client = TestClient(create_app(LandingStore(tmp_path / "p.sqlite").db_path))
+    body = client.get("/ingest/health").json()
+    assert body["ok"] is True
+    assert body["ingest_protocol_version"] == "2"
+    assert body["active_ingest_protocol_version"] == "2"
+    assert body["supported_ingest_protocol_versions"] == ["2"]
+    assert health_protocol_fields()["supported_ingest_protocol_versions"] == ["2"]
+
+
+def test_middle_accepts_when_send_protocol_in_supported_list():
+    """平台可声明支持多协议;中间机只要自己发送的版本在列表中即可。"""
+    sink = HttpPushSink(
+        "http://platform",
+        post=lambda *a, **k: None,
+        get_json=lambda *a, **k: {
+            "ok": True,
+            "ingest_protocol_version": "9",
+            "active_ingest_protocol_version": "9",
+            "supported_ingest_protocol_versions": ["2", "9"],
+        },
+    )
+    sink.ensure_protocol()
+    assert sink._protocol_checked is True
+
+
+def test_middle_rejects_when_send_protocol_not_supported():
+    sink = HttpPushSink(
+        "http://platform",
+        post=lambda *a, **k: None,
+        get_json=lambda *a, **k: {
+            "ok": True,
+            "active_ingest_protocol_version": "3",
+            "supported_ingest_protocol_versions": ["3"],
+        },
+    )
+    with pytest.raises(ProtocolVersionError, match="不兼容"):
+        sink.ensure_protocol()
+
+
+def test_legacy_middle_equality_against_current_platform_health(tmp_path: Path):
+    """模拟上一正式版中间机:只读 ingest_protocol_version 并精确相等。
+
+    当前平台仍声明 v2 时,旧中间机必须能通过(平台可单独升级的契约门禁)。
+    """
+    client = TestClient(create_app(LandingStore(tmp_path / "p.sqlite").db_path))
+    health = client.get("/ingest/health").json()
+
+    def legacy_ensure(health_body: dict, mine: str = "2") -> None:
+        remote = health_body.get("ingest_protocol_version")
+        if remote != mine:
+            raise ProtocolVersionError(
+                f"ingest 协议版本不一致:中间机要求 {mine}, 平台返回 {remote!r}"
+            )
+
+    assert INGEST_PROTOCOL_VERSION == "2"
+    assert "2" in SUPPORTED_INGEST_PROTOCOL_VERSIONS
+    legacy_ensure(health, mine="2")
+
+
+def test_legacy_middle_fails_if_platform_drops_v2():
+    def legacy_ensure(health_body: dict, mine: str = "2") -> None:
+        remote = health_body.get("ingest_protocol_version")
+        if remote != mine:
+            raise ProtocolVersionError("协议版本不一致")
+
+    with pytest.raises(ProtocolVersionError):
+        legacy_ensure({"ingest_protocol_version": "3"}, mine="2")
+
+
+def test_push_contract_current_platform_with_v2_middle(tmp_path: Path):
+    """当前平台 + 发送 v2 的中间机:端到端 begin 可通(协议门禁通过)。"""
+    platform = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(platform.db_path))
+
+    def post(url, payload, tok, timeout):
+        path = "/" + url.split("://", 1)[1].split("/", 1)[1]
+        r = client.post(path, json=payload)
+        r.raise_for_status()
+
+    def get_json(url, tok, timeout):
+        path = "/" + url.split("://", 1)[1].split("/", 1)[1]
+        r = client.get(path)
+        r.raise_for_status()
+        return r.json()
+
+    sink = HttpPushSink("http://platform", post=post, get_json=get_json)
+    info = TableInfo("CURRENCY", [("CODE", "text")], ["CODE"])
+    sink.begin_table(SOURCE, info, mode="incremental")
+    assert sink._protocol_checked is True
+
+
+def test_compat_script_ok_for_current_v2():
+    assert check_constants() == []
+    assert is_supported_protocol("2")
+    assert BASELINE_INGEST_PROTOCOL_VERSIONS == ("2",)
+    notes = render_release_notes(release_version="v0.5.1")
+    assert "兼容中间机协议" in notes
+    assert "无需升级" in notes
+    assert "破坏性发布" not in notes
+
+
+def test_compat_script_requires_breaking_flag_when_dropping_baseline(monkeypatch):
+    import scripts.check_ingest_compat as mod
+
+    monkeypatch.setattr(mod, "SUPPORTED_INGEST_PROTOCOL_VERSIONS", ("3",))
+    monkeypatch.setattr(mod, "INGEST_PROTOCOL_VERSION", "3")
+    monkeypatch.delenv("D2A_BREAKING_INGEST_PROTOCOL", raising=False)
+    errors = mod.check_constants()
+    assert errors and "D2A_BREAKING_INGEST_PROTOCOL" in errors[0]
+
+    monkeypatch.setenv("D2A_BREAKING_INGEST_PROTOCOL", "1")
+    assert mod.check_constants() == []
+    notes = mod.render_release_notes(release_version="v0.6.0")
+    assert "破坏性发布" in notes
+    assert "必须升级" in notes

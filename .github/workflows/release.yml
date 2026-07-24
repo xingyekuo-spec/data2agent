@@ -1,6 +1,7 @@
 name: release
 # 打 tag(v*)或手动触发 → 测试通过后,打出两台 Windows 便携包(解压即用),上传 GitHub Release。
 # 每个便携包只有一个入口:data2agent.exe
+# 平台/中间机应用版本可独立升级;仅 ingest 协议不兼容时才须升级中间机。
 on:
   push:
     tags: ["v*"]
@@ -14,6 +15,12 @@ on:
         description: "目标 Python 版本(须与 embeddable / wheel 一致)"
         required: false
         default: "3.14"
+      breaking_ingest_protocol:
+        description: "破坏性协议发布:从 supported 移除既有中间机协议时须设 true"
+        required: false
+        default: "false"
+        type: choice
+        options: ["false", "true"]
 
 permissions:
   contents: write
@@ -24,6 +31,7 @@ concurrency:
 
 env:
   PY_VERSION: ${{ github.event.inputs.py_version || '3.14' }}
+  D2A_BREAKING_INGEST_PROTOCOL: ${{ github.event.inputs.breaking_ingest_protocol || 'false' }}
 
 jobs:
   test:
@@ -39,6 +47,10 @@ jobs:
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
       - run: python scripts/verify.py module backend
+      - name: ingest 协议兼容门禁 + 旧中间机契约
+        run: |
+          python scripts/check_ingest_compat.py
+          python -m pytest tests/test_ingest_protocol_compat.py -q --tb=short
 
   # M6 Release 门槛:真实 SQL Server 元数据 / 业务键 / 快照替换必须在打包前通过。
   # module backend 使用 not integration，不能替代本 job。
@@ -136,6 +148,29 @@ jobs:
             d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
             d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
 
+      - name: 生成 Release 正文(含协议兼容性)
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          python -m pip install -e ".[ingest]"
+          {
+            echo "## data2agent ${{ steps.ver.outputs.version }} 便携包"
+            echo ""
+            echo "解压 → 双击 **\`data2agent.exe\`**(唯一入口)。"
+            echo ""
+            echo "| 附件 | 用途 |"
+            echo "| --- | --- |"
+            echo "| \`d2a-portable-middle-*.zip\` | 中间服务器 |"
+            echo "| \`d2a-portable-platform-*.zip\` | 数据平台 |"
+            echo ""
+            echo "首次打开浏览器完成配置;之后同一次双击会拉起后台服务。"
+            echo "中间机另需 **ODBC Driver 18** MSI。详见 \`docs/runbook/portable.md\`。"
+            echo ""
+            RELEASE_VERSION="${{ steps.ver.outputs.version }}" \
+              python scripts/check_ingest_compat.py --emit-release-notes \
+              --release-version "${{ steps.ver.outputs.version }}"
+          } > release-body.md
+
       - name: 创建 Release 并上传附件(tag)
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
@@ -144,15 +179,4 @@ jobs:
             d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
             d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
           generate_release_notes: true
-          body: |
-            ## data2agent ${{ steps.ver.outputs.version }} 便携包
-
-            解压 → 双击 **`data2agent.exe`**(唯一入口)。
-
-            | 附件 | 用途 |
-            | --- | --- |
-            | `d2a-portable-middle-*.zip` | 中间服务器 |
-            | `d2a-portable-platform-*.zip` | 数据平台 |
-
-            首次打开浏览器完成配置;之后同一次双击会拉起后台服务。  
-            中间机另需 **ODBC Driver 18** MSI。详见 `docs/runbook/portable.md`。
+          body_path: release-body.md

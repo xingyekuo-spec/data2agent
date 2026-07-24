@@ -154,10 +154,20 @@ Set-Content -Path (Join-Path $portable 'README.txt') -Value $readme -Encoding ut
 # distinguish a current package from an older folder with the same wheel version.
 $packageVersion = & $runtimePy -c "from data2agent import __version__; print(__version__)"
 if ($LASTEXITCODE -ne 0) { throw 'cannot read installed data2agent version' }
-@{
+$protocolJson = & $runtimePy -c "import json; from data2agent.ingest.protocol import SUPPORTED_INGEST_PROTOCOL_VERSIONS; print(json.dumps(list(SUPPORTED_INGEST_PROTOCOL_VERSIONS)))"
+if ($LASTEXITCODE -ne 0) { throw 'cannot read ingest protocol versions' }
+$commit = $env:GITHUB_SHA
+if (-not $commit) {
+    $commit = (git -C $root rev-parse HEAD 2>$null)
+}
+if (-not $commit) { $commit = 'unknown' }
+$buildInfo = [ordered]@{
     application_version = $packageVersion.Trim()
     release_version = $Version
-} | ConvertTo-Json | Set-Content -Path (Join-Path $portable 'BUILD-INFO.json') -Encoding utf8
+    ingest_protocol_versions = (ConvertFrom-Json $protocolJson)
+    commit = "$commit".Trim()
+}
+$buildInfo | ConvertTo-Json | Set-Content -Path (Join-Path $portable 'BUILD-INFO.json') -Encoding utf8
 
 if ($LauncherExe -and (Test-Path $LauncherExe)) {
     Write-Step "Copy launcher -> data2agent.exe"

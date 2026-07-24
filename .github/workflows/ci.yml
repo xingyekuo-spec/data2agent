@@ -72,6 +72,10 @@ jobs:
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
       - run: python scripts/verify.py module backend
+      - name: ingest 协议兼容门禁
+        run: |
+          python scripts/check_ingest_compat.py
+          python -m pytest tests/test_ingest_protocol_compat.py -q --tb=short
 
   frontend:
     needs: changes
