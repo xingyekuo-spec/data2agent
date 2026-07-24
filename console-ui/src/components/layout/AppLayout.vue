@@ -1,9 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import ScenarioSwitcher from '@/components/shared/ScenarioSwitcher.vue'
-import { IS_MOCK } from '@/config/mode'
-import { scenarioEpoch } from '@/config/scenario-epoch'
 import { useOverviewStore } from '@/stores/overview'
 import { usePipelineStore } from '@/stores/pipeline'
 import { createPoller } from '@/stores/poller'
@@ -36,10 +33,6 @@ const poller = createPoller({
 onMounted(() => poller.start())
 onUnmounted(() => poller.stop())
 
-// Mock 场景切换 / 认证恢复后立即刷新一轮
-watch(scenarioEpoch, () => {
-  void poller.tickNow()
-})
 watch(
   () => session.authenticated,
   (authed, was) => {
@@ -63,14 +56,11 @@ watch(
         <TopBar />
       </el-header>
       <el-main class="app-shell__main">
-        <!-- Mock 场景切换时代际 +1,重挂载当前视图以重新取数 -->
-        <router-view :key="IS_MOCK ? scenarioEpoch : 'real'" />
+        <router-view />
       </el-main>
     </el-container>
   </el-container>
   <AuthDialog />
-  <!-- 仅 Mock 模式可见;不随页面滚动隐藏 -->
-  <ScenarioSwitcher v-if="IS_MOCK" />
 </template>
 
 <style scoped>

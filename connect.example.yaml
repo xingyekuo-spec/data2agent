@@ -6,7 +6,7 @@ landing: landing/factory.sqlite
 sources:
   digiwin_e10:
     adapter: sqlite_readonly        # 生产:mssql_readonly
-    path: showroom/e10.sqlite       # mssql:删除本行,改用 dsn_env
+    path: /tmp/e10.sqlite  # 先 python -m tests.fixtures.e10.seed --db /tmp/e10.sqlite       # mssql:删除本行,改用 dsn_env
     # dsn_env: D2A_E10_DSN
 
     # 抽取表与同步策略。首次安装为空；通过中间机管理页面连接后扫描并选择。

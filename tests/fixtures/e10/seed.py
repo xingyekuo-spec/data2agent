@@ -1,4 +1,4 @@
-"""E10-like 参考数据生成:python -m data2agent.showroom.seed [--db 路径] [--dict-md 路径]
+"""E10-like 参考数据生成:python -m tests.fixtures.e10.seed [--db 路径] [--dict-md 路径]
 
 按 E10 参考表形(e10_schema.TABLES)生成一份渔具外销业务参考数据库。
 数据确定性生成(--seed 固定随机种子、--asof 固定时间锚点),且自洽:
@@ -16,7 +16,7 @@ import sqlite3
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-from .e10_schema import TABLES, ddl, dict_markdown
+from tests.fixtures.e10.schema import TABLES, ddl, dict_markdown
 
 ORG = "ORG01"
 USERS = ["E001", "E003", "E007", "E012"]
@@ -580,7 +580,7 @@ def write_db(db_path: str | Path, data: dict[str, list[dict]]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="生成 E10-like 参考数据库")
-    ap.add_argument("--db", default="showroom/e10.sqlite", help="输出 SQLite 路径(已存在则重建)")
+    ap.add_argument("--db", default="tests/fixtures/e10/e10.sqlite", help="输出 SQLite 路径(已存在则重建)")
     ap.add_argument("--seed", type=int, default=42, help="随机种子(默认 42,确定性输出)")
     ap.add_argument("--asof", default="2026-07-10", help="数据窗口锚点日期(默认固定,保证可复现)")
     ap.add_argument("--dict-md", help="同时生成表字典 markdown 到该路径(如 docs/dict/digiwin_e10.md)")

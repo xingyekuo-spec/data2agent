@@ -16,6 +16,7 @@ _FORBIDDEN_PATH_PARTS = (
     "erp_configs",
     "table_candidates",
     "table-candidates",
+    "showroom",
 )
 
 # 已安装 data2agent 包内不得再出现的旧切换符号。

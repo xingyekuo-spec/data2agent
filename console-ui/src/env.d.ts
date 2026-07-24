@@ -1,8 +1,7 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** 环境模式:mock | real。见 src/config/mode.ts。 */
-  readonly VITE_CONSOLE_MODE?: string
+  // 无产品级模式开关:开发与生产均连真实 API。
 }
 
 interface ImportMeta {

@@ -1,41 +1,54 @@
 # 04 · 参考数据链与回归场景
 
-> 状态:SQLite/SQL Server 参考数据链、Vue Console 真实 API 验收、v0.3 证据链场景已实现(r3,2026-07-22)· 实现:`data2agent/showroom/` + 根目录 `docker-compose.yml`
+> 状态:SQLite/SQL Server 参考数据链、Vue Console 真实 API 验收已实现(r4,2026-07-24)·
+> 测试资产:`tests/fixtures/e10/` + `tests/integration/mssql/docker-compose.yml`
 > 上层基线:[路线图](../roadmap.md)
 
 ## 1. 定位
 
-本模块提供一条 E10-like 参考数据链,用于自动测试、字典生成、本地冒烟和真实 API 验收。
-它不再作为独立产品运行模式对外承诺。`docker compose up` 可起 SQL Server 参考源,
-跑通与真实部署**逻辑同构**的链路,用于观察抽取框架面对 SQL Server 源时的窗口、限流和审计行为。
+本模块描述 E10-like **测试**参考数据链,用于自动测试、字典生成、本地冒烟和真实 API 验收。
+它不是产品运行模式,不随 wheel / 便携包发布。
+
 生产试点仍要求跨机对账、批次回执和加密传输。
 
 ## 2. 当前拓扑
 
 ```
-mssql-sim     SQL Server 容器,init 脚本灌入 E10-like 表形 + seed 数据(源系统替身)
-   ▼ 抽取(connect,走 mssql_readonly 适配器,窗口/限流/审计全开)
+mssql-sim     SQL Server 容器(tests/integration/mssql),fixtures seed 灌数
+   ▼ 抽取(connect,走 mssql_readonly)
 landing-sqlite SQLite 落地库(raw_* + 物化对象表)
-   ├─ mcp     MCP 网关(streamable HTTP :8848) → 参考脚本或 Agent 编排
-   └─ console Vue Console(:8849 `/`)
+   ├─ mcp     MCP 网关(streamable HTTP :8848)
+   └─ console Vue Console(:8849 `/`) —— 仅真实 API
 ```
 
-本机快速版是 `seed → connect sync → connect apply → MCP`;源库和落地库均为 SQLite。
-compose 版把源库换成 SQL Server 并常驻调度,落地库仍为共享卷内 SQLite。
-PostgreSQL 不属于当前参考链目标;只有达到产品路线定义的容量/并发阈值后才单独评估迁移。
+本机快速版:
+
+```bash
+python -m tests.fixtures.e10.seed --db /tmp/e10.sqlite
+# 配置 connect.yaml 指向该库后:
+python -m data2agent.connect sync --config connect.yaml
+python -m data2agent.connect apply --config connect.yaml
+```
+
+SQL Server 集成:
+
+```bash
+docker compose -f tests/integration/mssql/docker-compose.yml up \
+  --build --abort-on-container-exit --exit-code-from runner
+```
 
 ## 3. 已实现
 
-- E10 参考表形(6 表)+ 确定性 seed(渔具外销厂,seed=42 / asof=2026-07-10,金额/状态/溯源自洽);
+- E10 参考表形 + 确定性 seed(`tests/fixtures/e10/`);
 - 表字典生成(`docs/dict/digiwin_e10.md`);
-- binding↔表形一致性测试(防漂移);
-- 抽取表配置使用 `connect.yaml` 显式 `tables` 字段(独立于模板维护),6 张 E10 基线表策略如下:
+- binding↔表形一致性测试;
+- 抽取表配置使用 `connect.yaml` 显式 `tables`(可为空);本地开发可显式列出基线表。
 
 ```yaml
 sources:
   digiwin_e10:
     adapter: sqlite_readonly
-    path: showroom/e10.sqlite
+    path: /tmp/e10.sqlite
     tables:
       CUSTOMER:       { mode: incremental, watermark: LAST_MODIFIED_DATE }
       CURRENCY:       { mode: full_refresh }
@@ -45,65 +58,13 @@ sources:
       SALES_ORDER_D:  { mode: incremental, watermark: LAST_MODIFIED_DATE }
 ```
 
-完整的参考链 `connect.example.yaml` 见仓库根目录。
+## 4. 接单评审参考链
 
-## 4. 接单评审参考链(粗颗粒,详设前置条件:网关"说"档)
+离线脚本入口已删除。链路断言保留在 `tests/test_mcp_core.py`
+（`tests.fixtures.e10.review.build_review`），与真 Agent 编排场景见历史设计说明。
 
-```
-询单(自然语言)→ 解析规格/数量/目标价
-  → 历史检索:该客户 + 同型谱产品的成交/未成交报价(query_objects)
-  → 口径取数:毛利率、响应时长基线(query_metrics)
-  → 风险项:账期、交期档期(钓季)、汇率假设
-  → 输出:接单评审建议卡(接/谨慎接/不接 + 依据 + 口径警示)
-```
+## 5. 相关
 
-两个可用版本("说"档已落地):
-- **脚本版(离线可跑)**:`python -m data2agent.showroom.review_demo` —— 走与真 Agent
-  相同的工具调用链(query_objects ×2 → query_metrics → propose_action),终端输出建议卡;
-- **真 Agent 版**:任意 MCP 客户端按本节询单场景和工具链路驱动,主角客户 C002。
-
-## 5. Vue 真实 API 验收
-
-参考链是 Vue Console 接入真实 API 的发布门槛,不能只依赖静态 Mock。
-
-### 5.1 两类验收数据
-
-| 类型 | 数据来源 | 用途 | 页面标识 |
-| --- | --- | --- | --- |
-| Mock | 提交在前端的 typed fixtures | 首次安装、运行中、推送失败、熔断、stale、服务不可达等难稳定复现状态 | `MOCK` 水印 |
-| Real/reference | Docker MSSQL → connector → SQLite → MCP/Console 真实链 | 验证真实 API、数据浏览、隔离、口径警示和建议卡 | `REAL` 标识 |
-
-Mock 不得生成正式验收结论;参考链也不等于生产安全验证。
-
-### 5.2 必验页面
-
-1. `/` 总览显示 ERP→抽取→推送/落地→映射→对象→MCP 节点;
-2. 运行详情能展开表、水位、批次、输入输出与错误;
-3. raw/object 浏览返回真实 seed 样本,有分页和敏感标识;
-4. 模板页展示 5 个对象、binding draft 和字段映射;
-5. 隔离页能用注入坏数据的 fixture/测试链展示隔离与熔断,不能把空隔离区写死为正常;
-6. MCP Lab 完成 `query_objects → query_metrics → propose_action` 并展开 evidence;
-7. `/`、`/config`、`/logs`、`/debug`、`/v0` 等旧平台入口重定向到 Vue Console;
-8. 前端资产不依赖外部 CDN。
-
-### 5.3 后续版本验收
-
-- v0.3:字段血缘、映射 preview、dataset version、原子发布和会话证据场景已落地;
-- v0.4:增加网络失败/重试、commit receipt、schema mismatch、E6b 和 TLS 入口验证;
-- PostgreSQL 只有达到 SQLite 换库阈值后才进入参考链矩阵。
-
-## 6. 配置验证
-
-参考链验收时需确认 `connect.yaml` 的 `tables` 配置与参考表形一致:
-
-- 6 表的 `mode` 和 `watermark` 字段与 `connect.example.yaml` 对齐;
-- `mode: full_refresh` 仅用于无可靠水位字段的小维表(如 CURRENCY);
-- 连接测试 API (`/api/test-connection` on middle_admin) 验证 PK 列和 watermark 列存在;
-- 抽取表清单不再从模板 binding 自动推导,所有变更通过 `connect.yaml` 显式管理。
-
-## 7. 决议记录
-
-- compose 已落地(仓库根 `docker-compose.yml`):mssql(SQL Server 2022,`MSSQL_IMAGE`/`MSSQL_PLATFORM` 可切 Azure SQL Edge)→ seed(灌数 + 建只读账号 d2a_reader)→ connector(serve 常驻,走只读账号)→ 共享卷 → mcp(streamable-http :8848);
-- 参考链编排载体 = 脚本版(入库,离线可跑)+ 真 Agent 版(MCP 提示词)并存,见 §4;
-- Vue Console 是平台唯一主产品界面;旧平台 Jinja/v0 页面不再作为入口保留;
-- 待议:v0.4 稳定后将 `data2agent/showroom` 迁移或重命名为更明确的测试 fixture 包。
+- fixtures 源码:`tests/fixtures/e10/`
+- MSSQL 集成:`tests/integration/mssql/`
+- 迁移核对:[2026-07-24-m7-showroom-migration-checklist.md](../superpowers/plans/2026-07-24-m7-showroom-migration-checklist.md)

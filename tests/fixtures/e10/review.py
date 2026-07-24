@@ -1,21 +1,8 @@
-"""接单评审参考链(脚本版):python -m data2agent.showroom.review_demo
-
-离线可跑的"老板测试":给定一条询单(客户 / 型谱关键词 / 数量 / 目标价),
-按 Agent 的工作方式走完整链路 —— query_objects 查客户档案与同型谱历史成交、
-query_metrics 查毛利率基线,最后经 propose_action(「说」档)生成接单评审建议卡,
-卡内每个数字都溯源到具体查询。真 Agent 版可按 docs/design/04-reference-chain.md §4 的场景驱动。
-
-前置:python -m data2agent.showroom.seed && python -m data2agent.connect sync
-      --config connect.example.yaml && python -m data2agent.connect apply
-"""
+"""接单评审链路辅助(测试 fixture，非产品入口)。"""
 
 from __future__ import annotations
 
-import argparse
-from pathlib import Path
-
-from ..mcp_server.core import QueryService
-from ..mcp_server.evidence import EvidenceContext
+from data2agent.mcp_server.core import QueryService
 
 
 def build_review(svc: QueryService, customer: str, keyword: str,
@@ -117,34 +104,3 @@ def render_card(card: dict, inquiry: str) -> str:
     lines.append("└" + "─" * 60)
     return "\n".join(lines)
 
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description="接单评审参考链(脚本版)")
-    ap.add_argument("--db", default="landing/factory.sqlite", help="落地库(对象层)")
-    ap.add_argument("--templates", default="templates")
-    ap.add_argument("--customer", default="C002", help="客户编号")
-    ap.add_argument("--keyword", default="矶钓竿", help="型谱关键词")
-    ap.add_argument("--qty", type=float, default=2000, help="询单数量")
-    ap.add_argument("--target-price", type=float, default=28.0, help="客户目标单价")
-    args = ap.parse_args()
-
-    if not Path(args.db).exists():
-        ap.error(f"落地库不存在:{args.db}(见模块 docstring 的前置命令)")
-    svc = QueryService(
-        args.db,
-        args.templates,
-        default_context=EvidenceContext(
-            principal="demo:local",
-            session_id="demo_session_review_local_0001",
-            channel="demo",
-        ),
-    )
-    card = build_review(svc, args.customer, args.keyword, args.qty, args.target_price)
-    inquiry = (f"{args.customer} · {args.keyword} · {args.qty:g} 支 · "
-               f"目标价 {args.target_price:g}")
-    print(render_card(card, inquiry))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

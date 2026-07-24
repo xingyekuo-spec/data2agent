@@ -100,37 +100,6 @@ jobs:
       - run: npm run build
       - run: node scripts/check-dist.mjs
 
-  e2e-mock:
-    needs: changes
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      startsWith(github.ref, 'refs/tags/') ||
-      github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/master' ||
-      needs.changes.outputs.frontend == 'true'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: console-ui
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: console-ui/package-lock.json
-      - run: npm ci --prefer-offline
-      - name: Cache Playwright Chromium
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('console-ui/package-lock.json') }}
-      - run: npx playwright install-deps chromium
-      - if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install chromium
-      - run: node scripts/e2e-acceptance.mjs --mock
-
   e2e-real:
     needs: changes
     if: >

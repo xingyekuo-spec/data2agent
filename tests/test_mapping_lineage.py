@@ -27,7 +27,7 @@ from data2agent.connect.mapping_apply import apply_object, apply_objects
 from tests.helpers import whitelist_from_pack
 from data2agent.metamodel.loader import load_pack
 from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
-from data2agent.showroom.seed import build, write_db
+from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"

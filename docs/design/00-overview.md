@@ -92,4 +92,4 @@ MCP 网关“看/说”档、管理界面、E10-like 参考数据链、Vue Conso
 - [路线图](../roadmap.md) —— 当前 v0.3.0 状态与 v0.4 可试点计划
 - 现场 runbook:[便携包](../runbook/portable.md) · [推送验收](../runbook/push-validation.md)
 - [E10 参考表字典](../dict/digiwin_e10.md) —— 生成文件,勿手改
-- 接单评审参考链:`python -m data2agent.showroom.review_demo`
+- 接单评审链路断言见 `tests/test_mcp_core.py`（fixtures 辅助）

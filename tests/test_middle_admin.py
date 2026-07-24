@@ -22,7 +22,7 @@ from tests.helpers import whitelist_from_pack  # noqa: E402
 import data2agent.middle_admin.app as middle_app  # noqa: E402
 from data2agent.middle_admin.app import create_app  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
-from data2agent.showroom.seed import build, write_db  # noqa: E402
+from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"

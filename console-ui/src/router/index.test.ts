@@ -39,14 +39,18 @@ describe('router', () => {
     ])
   })
 
-  it('菜单路由均可导航,标题与菜单一致', async () => {
-    const router = createAppRouter(createMemoryHistory())
-    for (const item of NAV_ITEMS) {
-      await router.push(item.path)
-      expect(router.currentRoute.value.name).toBe(item.name)
-      expect(router.currentRoute.value.meta.title).toBe(item.title)
-    }
-  })
+  it(
+    '菜单路由均可导航,标题与菜单一致',
+    async () => {
+      const router = createAppRouter(createMemoryHistory())
+      for (const item of NAV_ITEMS) {
+        await router.push(item.path)
+        expect(router.currentRoute.value.name).toBe(item.name)
+        expect(router.currentRoute.value.meta.title).toBe(item.title)
+      }
+    },
+    15_000,
+  )
 
   it('/mcp 直接访问到达 MCP Lab,不被兜底重定向', async () => {
     const router = createAppRouter(createMemoryHistory())

@@ -1,8 +1,6 @@
 /**
- * Mock 场景注册表与运行时切换。
- *
- * 场景只在 Mock 模式可见、可切换;切换场景不等于切换环境模式(MODE 仍由
- * VITE_CONSOLE_MODE 决定)。每个场景对应 fixtures/ 下同形的一份 typed fixture。
+ * Vitest 用场景注册表与运行时切换(测试 stub,非产品 Mock 模式)。
+ * 每个场景对应 fixtures/ 下同形的一份 typed fixture。
  */
 import { scenarioEpoch } from '@/config/scenario-epoch'
 import { applyCircuitBrokenFixture } from './fixtures/apply-circuit-broken'

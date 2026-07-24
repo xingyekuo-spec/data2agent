@@ -39,7 +39,7 @@ from data2agent.console.contracts import (  # noqa: E402
     SetupSuccessResponse,
 )
 from data2agent.metamodel.loader import load_pack  # noqa: E402
-from data2agent.showroom.seed import build, write_db  # noqa: E402
+from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"

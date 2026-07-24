@@ -20,7 +20,7 @@
   新安装默认空 `tables`，未选表不会访问 ERP 业务表。现场推荐[便携包](docs/runbook/portable.md)
   双击 `data2agent.exe`,链路验收见 [push-validation](docs/runbook/push-validation.md);
   管理 API 契约快照见 `console-ui/openapi.json`(用 `python scripts/export_console_openapi.py` 重新生成);
-- **参考数据与回归资产**:仓库保留 E10-like seed、SQL Server/SQLite 参考链和接单评审脚本,用于自动测试、字典生成和本地验收,不作为产品运行模式对外承诺。
+- **测试 fixture**:E10-like schema/seed 位于 `tests/fixtures/e10/`，仅服务自动测试与本地验收，不进入产品 wheel。
 
 **安全承诺**:装进你内网、碰你数据库的每一行代码都在这个仓库里 —— 只读账号、白名单表、限时限流、错峰窗口,全部可审计,可逐行核对。
 
@@ -40,7 +40,7 @@ python scripts/verify.py quick                    # 日常:按 Git 变更选择�
 python scripts/verify.py module erp               # 模块完成:ERP/抽取回归
 python scripts/verify.py full                     # 合并前:完整回归(含前端与 E2E)
 python -m data2agent.metamodel.validate templates # 模板校验
-python -m data2agent.showroom.seed                # 生成 E10-like 参考库 showroom/e10.sqlite
+python -m tests.fixtures.e10.seed --db /tmp/e10.sqlite   # 生成 E10-like 参考库(测试用)
 python -m data2agent.connect sync --config connect.example.yaml   # 抽取:水位增量 → 落地库(只读/白名单/审计)
 python -m data2agent.connect apply                # 映射:raw_* → 物化对象层 obj_*(隔离区 + 熔断)
 python -m data2agent.console --landing landing/factory.sqlite --templates templates

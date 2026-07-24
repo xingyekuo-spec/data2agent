@@ -1,17 +1,13 @@
 #!/usr/bin/env node
 /**
- * M3 浏览器验收:Dashboard / 管道页的关键用户判断(断言可见状态与关键文案,
- * 不是截图脚本)。
+ * 浏览器验收:Dashboard / 管道页的关键用户判断(断言可见状态与关键文案)。
  *
- * Part A(Mock):dev server + 10 场景 —— healthy 摘要、刷新失败保留旧数据、
- *   apply 熔断双节点定位;
- * Part B(Real):临时 SQLite(参考库 seed → sync → apply → reconcile → ingest)
- *   + 真实 FastAPI console + dev:real —— REAL 标识、真实计数、M4 运行/审计/数据验收。
+ * Real:临时 SQLite(fixtures seed → sync → apply → reconcile → ingest)
+ *   + 真实 FastAPI console + vite 开发服 —— REAL 标识、真实计数、运行/审计/数据验收。
  *
  * 用法:
- *   node scripts/e2e-acceptance.mjs            # Mock + Real
- *   node scripts/e2e-acceptance.mjs --mock     # 仅 Mock
- *   node scripts/e2e-acceptance.mjs --real     # 仅 Real
+ *   node scripts/e2e-acceptance.mjs
+ *   node scripts/e2e-acceptance.mjs --real
  * 环境:D2A_PYTHON 指定后端解释器(默认 python3);
  *       PLAYWRIGHT_BROWSERS_PATH 可指向已有浏览器缓存(CI 先 npx playwright install)。
  */
@@ -26,7 +22,6 @@ const PYTHON = process.env.D2A_PYTHON ?? 'python3'
 const ONLY = process.argv[2]
 const SOURCE = 'digiwin_e10'
 
-const MOCK_PORT = 5191
 const REAL_UI_PORT = 5192
 const CONSOLE_PORT = 8849
 
@@ -179,125 +174,6 @@ function startProc(cmd, args, name, cwd = ROOT) {
   return { proc, stop, name }
 }
 
-async function runMock(browser) {
-  console.log('\n== Part A: Mock 模式验收 ==')
-  const dev = startProc('npm', ['run', 'dev', '--', '--port', String(MOCK_PORT), '--strictPort'], 'mock-dev', resolve('.'))
-  try {
-    await waitFor(`http://localhost:${MOCK_PORT}/`)
-    const page = await browser.newPage()
-    await page.goto(`http://localhost:${MOCK_PORT}/`, { waitUntil: 'networkidle' })
-
-    // 仪表盘 healthy:30 秒判断要素齐全
-    expect((await waitText(page, '[data-testid="topbar-title"]')).includes('仪表盘'), '顶栏显示当前页面标题')
-    expect((await waitText(page, '[data-testid="env-badge"]')) === 'MOCK', '顶栏持续显示 MOCK 标识')
-    expect((await page.locator('[data-testid="stat-value"]').allTextContents()).length === 4, '四张摘要卡')
-    expect((await page.textContent('body')).includes('对象层总行数'), '摘要卡有口径标签')
-    expect((await page.textContent('body')).includes('ds-20260718-091100-a1b2'), 'healthy 展示已发布 dataset 版本')
-    expect((await page.textContent('body')).includes('raw_rows'), '数量口径说明可见')
-
-    // 首次安装场景:尚未发布,不伪造版本号
-    await page.locator('[data-testid="scenario-switcher"] select').selectOption('empty-install')
-    await page.waitForTimeout(300)
-    expect((await page.textContent('body')).includes('尚未发布') || (await page.textContent('body')).includes('尚未完成首次配置'),
-      'empty-install:尚未发布或不完整配置')
-    await page.locator('[data-testid="scenario-switcher"] select').selectOption('healthy')
-    await page.waitForTimeout(300)
-
-    // 管道页:7 节点 + overall;节点详情可开可关
-    await page.locator('.el-menu-item', { hasText: '管道状态' }).click()
-    await page.locator('[data-testid="pipeline-flow"]').waitFor({ state: 'visible' })
-    expect((await page.locator('.flow__node').count()) === 7, '管道页固定 7 节点')
-    expect((await page.locator('[data-testid="pipeline-overall"]').count()) === 1, 'overall 状态可见')
-    await page.locator('.flow__node').first().click()
-    expect((await page.locator('[data-testid="node-detail"]').count()) === 1, '节点详情可打开')
-    expect((await page.textContent('[data-testid="node-detail"]')).includes('M4'), '详情入口说明(M4 前不死链)')
-    await page.locator('.detail__close').click()
-    expect((await page.locator('[data-testid="node-detail"]').count()) === 0, '节点详情可关闭')
-
-    // 切场景:unknown-error → 刷新失败标记 + 旧数据保留
-    await page.locator('.el-menu-item', { hasText: '仪表盘' }).click()
-    await page.locator('[data-testid="scenario-switcher"] select').selectOption('unknown-error')
-    await page.locator('[data-testid="refresh-error"]').waitFor({ state: 'visible' })
-    expect(true, 'unknown-error:刷新失败标记可见')
-    expect((await page.locator('[data-testid="stat-grid"]').count()) === 1, 'unknown-error:旧摘要数据保留(不变空)')
-
-    // 切场景:apply 熔断 → 管道双节点可定位
-    await page.locator('[data-testid="scenario-switcher"] select').selectOption('apply-circuit-broken')
-    await page.locator('.el-menu-item', { hasText: '管道状态' }).click()
-    await page.locator('[data-testid="pipeline-flow"]').waitFor({ state: 'visible' })
-    const mapping = page.locator('.flow__node', { hasText: 'mapping' })
-    const objects = page.locator('.flow__node', { hasText: 'objects' })
-    expect((await mapping.getAttribute('data-status')) === 'failed', '熔断:映射节点 failed')
-    expect((await mapping.textContent()).includes('熔断'), '熔断:映射原因含熔断说明')
-    expect((await objects.getAttribute('data-status')) === 'stale', '熔断:对象层 stale(上一稳定结果)')
-
-    // M4:运行列表 → step 详情 → URL 恢复同一 run
-    await page.locator('[data-testid="scenario-switcher"] select').selectOption('healthy')
-    await page.locator('.el-menu-item', { hasText: '运行记录' }).click()
-    await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
-    await page.locator('[data-testid="runs-table"] tbody tr').first().click()
-    await page.locator('[data-testid="steps-table"]').waitFor({ state: 'visible' })
-    expect(true, 'M4:运行行点击打开详情抽屉')
-    expect((await page.locator('[data-testid="steps-table"] tbody tr').count()) > 0, 'M4:详情含 step 行')
-    expect((await page.textContent('[data-testid="steps-table"]')).includes('CUSTOMER'), 'M4:step 含目标表')
-    expect((await page.textContent('body')).includes('2026-07-17 08:30:00'), 'M4:step 含水位证据')
-    // URL 恢复:深链重新打开同一 run
-    await page.goto(`http://localhost:${MOCK_PORT}/runs?run_id=42`, { waitUntil: 'networkidle' })
-    await page.locator('[data-testid="run-detail-drawer"]').waitFor({ state: 'visible' })
-    expect(true, 'M4:run_id 深链自动打开详情')
-    // 审计与数据页
-    await page.goto(`http://localhost:${MOCK_PORT}/audit`, { waitUntil: 'networkidle' })
-    expect((await page.locator('[data-testid="sql-table"]').count()) === 1, 'M4:SQL 审计表可见')
-    expect((await page.locator('[data-testid="sql-full"]').count()) === 0, 'M4:SQL 默认折叠(全文不展开)')
-    await page.goto(`http://localhost:${MOCK_PORT}/data`, { waitUntil: 'networkidle' })
-    await page.locator('[data-testid="browse-CUSTOMER"]').click()
-    await page.locator('[data-testid="raw-table"]').waitFor({ state: 'visible' })
-    expect((await page.textContent('[data-testid="raw-table"]')).includes('***'), 'M4:raw 敏感列脱敏')
-
-    // M2:数据集 tab —— 待发布/已发布状态、发布与回滚交互、对象版本
-    await page.goto(`http://localhost:${MOCK_PORT}/data?tab=datasets`, { waitUntil: 'networkidle' })
-    await page.locator('[data-testid="datasets-table"]').waitFor({ state: 'visible' })
-    expect((await page.textContent('[data-testid="datasets-table"]')).includes('待发布'), 'M2:候选显示待发布')
-    expect((await page.textContent('[data-testid="datasets-table"]')).includes('已发布'), 'M2:当前 published 可见')
-    await page.locator('[data-testid="dataset-publish-ds-20260718-095000-e5f6"]').click()
-    await page.locator('[data-testid="dataset-action-result"]').waitFor({ state: 'visible' })
-    expect((await page.textContent('[data-testid="dataset-action-result"]')).includes('ds-20260718-095000-e5f6'),
-      'M2:publish 返回激活版本')
-    await page.locator('[data-testid="dataset-rollback-ds-20260718-091100-a1b2"]').click()
-    await page.waitForTimeout(300)
-    expect((await page.textContent('[data-testid="dataset-action-result"]')).includes('ds-20260717-220000-c3d4'),
-      'M2:rollback 回到上一稳定版本')
-    await page.locator('[data-testid="stage-only-toggle"] input').check()
-    await page.locator('[data-testid="apply-run"]').click()
-    await page.locator('[data-testid="apply-result"]').waitFor({ state: 'visible' })
-    expect((await page.textContent('[data-testid="apply-result"]')).includes('published=false'),
-      'M2:stage-only/apply 结果含 published=false')
-
-    // M5:MCP Lab Mock —— 查询表单、会话证据、建议卡入口,无写回控件
-    await page.goto(`http://localhost:${MOCK_PORT}/mcp`, { waitUntil: 'networkidle' })
-    await page.locator('[data-testid="mcp-lab-page"]').waitFor({ state: 'visible' })
-    expect((await page.locator('[data-testid="feature-placeholder"]').count()) === 0,
-      'M6:MCP Lab 不再是占位页')
-    expect((await page.textContent('[data-testid="mcp-scope-banner"]')).includes('标签页 session'),
-      'M5:标签页 evidence session 边界提示可见')
-    await page.locator('[data-testid="open-interface-query_objects"]').click()
-    await page.locator('[data-testid="object-interface-panel"]').waitFor({ state: 'visible' })
-    await page.locator('[data-testid="object-run"]').click()
-    await page.waitForTimeout(500)
-    expect((await page.locator('[data-testid="object-result"]').count()) === 1, 'M6:Mock 对象查询有结果')
-    expect((await page.textContent('[data-testid="object-dataset-version"]')).includes('ds-20260718-091100-a1b2'),
-      'M2:MCP Lab 展示查询 dataset_version')
-    await page.locator('[data-testid="back-to-interface-list"]').click()
-    await page.locator('[data-testid="open-interface-propose_action"]').click()
-    await page.locator('[data-testid="proposal-interface-panel"]').waitFor({ state: 'visible' })
-    expect((await page.textContent('[data-testid="no-execute-hint"]')).includes('不提供执行建议'),
-      'M6:明确无执行建议/写回')
-    await page.close()
-  } finally {
-    dev.stop()
-  }
-}
-
 async function runReal(browser) {
   console.log('\n== Part B: Real 模式验收(临时 SQLite + 真实后端)==')
   const tmp = mkdtempSync(join(tmpdir(), 'd2a-e2e-'))
@@ -305,7 +181,7 @@ async function runReal(browser) {
   const landing = join(tmp, 'landing.sqlite')
   const middleConfig = join(tmp, 'connect.yaml')
   const platformConfig = join(tmp, 'platform.yaml')
-  sh(PYTHON, ['-m', 'data2agent.showroom.seed', '--db', src], { cwd: ROOT })
+  sh(PYTHON, ['-m', 'tests.fixtures.e10.seed', '--db', src], { cwd: ROOT })
   writeFileSync(
     middleConfig,
     `templates: ${join(ROOT, 'templates')}
@@ -351,7 +227,7 @@ landing: ${landing}
       '--port', String(CONSOLE_PORT), '--token', 'e2e-token'],
     'console',
   )
-  const dev = startProc('npm', ['run', 'dev:real', '--', '--port', String(REAL_UI_PORT), '--strictPort'], 'real-dev', resolve('.'))
+  const dev = startProc('npm', ['run', 'dev', '--', '--port', String(REAL_UI_PORT), '--strictPort'], 'real-dev', resolve('.'))
   try {
     await waitFor(`http://localhost:${REAL_UI_PORT}/`)
     const page = await browser.newPage()
@@ -1037,14 +913,14 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
   }
 }
 
+if (ONLY === '--mock') {
+  console.error('Mock e2e 已移除(M7);请使用真实 API 验收(默认或 --real)')
+  process.exit(2)
+}
+
 const browser = await chromium.launch()
 try {
-  if (ONLY !== '--real') {
-    await runMock(browser)
-  }
-  if (ONLY !== '--mock') {
-    await runReal(browser)
-  }
+  await runReal(browser)
 } finally {
   await browser.close()
 }

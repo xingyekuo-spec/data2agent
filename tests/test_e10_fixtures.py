@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from data2agent.metamodel.loader import load_pack
-from data2agent.showroom.e10_schema import TABLES, dict_markdown
-from data2agent.showroom.seed import build, write_db
+from tests.fixtures.e10.schema import TABLES, dict_markdown
+from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
 ASOF = date(2026, 7, 10)

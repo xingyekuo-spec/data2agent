@@ -21,7 +21,7 @@ from data2agent.mcp_server.evidence import (
     canonical_json_dumps,
 )
 from data2agent.metamodel.loader import load_pack
-from data2agent.showroom.seed import build, write_db
+from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
@@ -329,7 +329,7 @@ def test_tier_ceiling_enforced(svc):
 
 
 def test_review_demo_chain(svc):
-    from data2agent.showroom.review_demo import build_review, render_card
+    from tests.fixtures.e10.review import build_review, render_card
 
     card = build_review(svc, "C002", "矶钓竿", 2000, 28.0)
     assert card["action"] == "quote_review" and card["tier"] == "说"

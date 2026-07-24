@@ -8,7 +8,7 @@
 | --- | --- |
 | 1 | Python 3.11+ 已安装 |
 | 2 | `pip install -e ".[dev,mcp,console,ingest,connect,middle_admin,excel]"` 已执行 |
-| 3 | 参考 seed 已生成:`python -m data2agent.showroom.seed`（测试资产；非产品运行模式） |
+| 3 | 参考 seed 已生成:`python -m tests.fixtures.e10.seed --db /tmp/e10.sqlite`（测试资产；非产品运行模式） |
 | 4 | (可选) Docker 已安装,用于 SQL Server 集成测试 |
 
 ## 2. connect.yaml 最小配置
@@ -23,7 +23,7 @@ landing: landing/factory.sqlite
 sources:
   digiwin_e10:
     adapter: sqlite_readonly
-    path: showroom/e10.sqlite
+    path: /tmp/e10.sqlite
     # 生产: adapter: mssql_readonly + dsn_env: D2A_E10_DSN
 
     tables:

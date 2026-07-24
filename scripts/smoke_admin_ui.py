@@ -16,6 +16,8 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 
 def _fail(msg: str) -> None:
@@ -27,7 +29,7 @@ def _ok(msg: str) -> None:
     print(f"OK  {msg}")
 
 
-# 冒烟测试固定表配置:与 showroom seed 中的表对齐。
+# 冒烟测试固定表配置:与 tests/fixtures/e10 seed 中的表对齐。
 # 抽取范围只来自显式 tables 字段，不从模板 binding 推导。
 _SMOKE_TABLES = """
     tables:
@@ -55,7 +57,7 @@ _SMOKE_TABLES = """
 
 def _prepare(tmp: Path) -> Path:
     from data2agent.connect.landing import LandingStore
-    from data2agent.showroom.seed import build, write_db
+    from tests.fixtures.e10.seed import build, write_db
 
     src = tmp / "e10.sqlite"
     write_db(src, build(seed=42, asof=date(2026, 7, 10)))

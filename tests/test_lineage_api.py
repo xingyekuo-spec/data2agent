@@ -25,7 +25,7 @@ from data2agent.connect.landing import LandingStore  # noqa: E402
 from tests.helpers import watermarks_from_pack, whitelist_from_pack  # noqa: E402
 from data2agent.console.app import create_app  # noqa: E402
 from data2agent.metamodel.loader import load_pack  # noqa: E402
-from data2agent.showroom.seed import build, write_db  # noqa: E402
+from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"

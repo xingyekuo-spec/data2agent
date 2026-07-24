@@ -22,7 +22,7 @@ from tests.helpers import whitelist_from_pack
 from data2agent.console.app import create_app
 from data2agent.console.contracts import MappingPreviewError, MappingPreviewResponse
 from data2agent.metamodel.loader import load_pack
-from data2agent.showroom.seed import build, write_db
+from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"

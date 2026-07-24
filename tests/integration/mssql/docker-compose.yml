@@ -21,5 +21,5 @@ services:
       # 适配器走专门的只读账号,而不是 sa —— 只读账号故事的真实预演
       D2A_IT_MSSQL_DSN: "DRIVER={ODBC Driver 18 for SQL Server};SERVER=mssql,1433;UID=d2a_reader;PWD=D2a!Reader1;DATABASE=d2a_e10;TrustServerCertificate=yes"
     command: >
-      bash -lc "python -m data2agent.showroom.seed_mssql &&
+      bash -lc "python -m tests.fixtures.e10.seed_mssql &&
                 pytest tests/integration/mssql -q"

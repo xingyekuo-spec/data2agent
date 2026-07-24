@@ -9,13 +9,12 @@
   },
   "scripts": {
     "dev": "vite",
-    "dev:real": "cross-env VITE_CONSOLE_MODE=real vite",
     "api:generate": "node scripts/generate-api-types.mjs openapi.json src/types/api.ts",
     "api:check": "node scripts/check-generated.mjs",
     "lint": "eslint .",
     "typecheck": "vue-tsc -b",
     "test": "vitest run",
-    "test:e2e": "node scripts/e2e-acceptance.mjs",
+    "test:e2e": "node scripts/e2e-acceptance.mjs --real",
     "build": "vite build",
     "preview": "vite preview"
   },

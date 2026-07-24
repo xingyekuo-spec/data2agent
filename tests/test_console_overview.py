@@ -25,7 +25,7 @@ from data2agent.metamodel.versioning import (  # noqa: E402
     ObjectVersionRecord,
     object_layer_fully_published,
 )
-from data2agent.showroom.seed import build, write_db  # noqa: E402
+from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"

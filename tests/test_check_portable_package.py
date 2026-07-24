@@ -98,3 +98,34 @@ def test_check_portable_rejects_erp_configs_anywhere(tmp_path: Path, monkeypatch
     )
     with pytest.raises(SystemExit, match="erp-configs"):
         main()
+
+
+def test_check_portable_rejects_showroom_anywhere(tmp_path: Path, monkeypatch):
+    """产品展厅路径不得出现在便携包任意位置。"""
+    portable = tmp_path / "portable"
+    expected = tmp_path / "templates"
+    _write(expected / "metrics" / "dead_stock.yaml")
+    _write(expected / "objects" / "dead_stock_item.yaml")
+    _write(expected / "objects" / "dead_stock_attribution.yaml")
+    shutil.copytree(expected, portable / "app" / "templates")
+    _write(portable / "BUILD-INFO.json", json.dumps({"release_version": "0.5.0-test"}))
+    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
+    src = ROOT / "data2agent" / "middle_admin" / "templates"
+    shutil.copytree(src, pkg / "templates")
+    _write(pkg / "__init__.py", "")
+    _write(
+        portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "showroom" / "seed.py",
+        "print('demo')\n",
+    )
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "check_portable_package.py",
+            "--portable", str(portable),
+            "--role", "middle",
+            "--expected-templates", str(expected),
+        ],
+    )
+    with pytest.raises(SystemExit, match="showroom"):
+        main()

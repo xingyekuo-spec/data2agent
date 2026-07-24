@@ -8,8 +8,8 @@
 > `/metadata` 只读扫描当前连接库、在 `/tables` 确认业务键与水位后写入
 > `connect.yaml`。本文仅作参考形状，不随包作为候选表清单加载。
 >
-> 生成方式:`python -m data2agent.showroom.seed --dict-md docs/dict/digiwin_e10.md`
-> (来源:`data2agent/showroom/e10_schema.py`,请勿手改本文件)
+> 生成方式:`python -m tests.fixtures.e10.seed --dict-md docs/dict/digiwin_e10.md`
+> (来源:`tests/fixtures/e10/schema.py`,请勿手改本文件)
 >
 > 呆滞库存场景的真实环境已核对表/字段见
 > [digiwin_e10_dead_stock_verified.md](digiwin_e10_dead_stock_verified.md)。两份字典

@@ -1,23 +1,14 @@
 <script setup lang="ts">
-// 顶栏持续展示环境模式:MOCK / REAL,大写,不可被滚动或切换隐藏。
-import { computed } from 'vue'
+// 顶栏持续展示环境模式:REAL(产品与开发均连真实后端)。
 import { MODE } from '@/config/mode'
-
-const label = computed(() => MODE.toUpperCase())
-
-const hints: Record<string, string> = {
-  mock: '全部数据来自本地 fixture,不是真实后端',
-  real: '数据来自真实后端',
-}
 </script>
 
 <template>
   <span
-    class="env-badge"
-    :class="`env-badge--${MODE}`"
-    :title="hints[MODE]"
+    class="env-badge env-badge--real"
+    title="数据来自真实后端"
     data-testid="env-badge"
-  >{{ label }}</span>
+  >{{ MODE.toUpperCase() }}</span>
 </template>
 
 <style scoped>
@@ -29,10 +20,6 @@ const hints: Record<string, string> = {
   letter-spacing: 2px;
   color: #fff;
   user-select: none;
-}
-
-.env-badge--mock {
-  background: var(--d2a-env-mock);
 }
 
 .env-badge--real {

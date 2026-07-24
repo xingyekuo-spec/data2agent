@@ -38,7 +38,7 @@ def main() -> int:
         args.token = os.environ.get("D2A_MCP_TOKEN", "")
 
     if not Path(args.db).exists():
-        ap.error(f"落地库不存在:{args.db}。参考链:python -m data2agent.showroom.seed && "
+        ap.error(f"落地库不存在:{args.db}。参考链:python -m tests.fixtures.e10.seed && "
                  "python -m data2agent.connect sync --config connect.example.yaml && "
                  "python -m data2agent.connect apply")
 

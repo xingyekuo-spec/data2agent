@@ -73,7 +73,7 @@ def test_audit_sink_records_tool_calls(tmp_path):
     from data2agent.mcp_server.core import QueryService
     from tests.helpers import watermarks_from_pack, whitelist_from_pack
     from data2agent.metamodel.loader import load_pack
-    from data2agent.showroom.seed import build, write_db
+    from tests.fixtures.e10.seed import build, write_db
 
     src = tmp_path / "source.sqlite"
     write_db(src, build(seed=42, asof=date(2026, 7, 10)))
