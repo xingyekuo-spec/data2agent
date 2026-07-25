@@ -210,7 +210,7 @@ def test_trigger_rejects_reconcile(middle_env):
 def test_html_pages(middle_env):
     client, _ = middle_env
     h = {"Authorization": "Bearer secret"}
-    for path in ("/status", "/config", "/logs", "/metadata", "/tables"):
+    for path in ("/status", "/config", "/logs", "/metadata", "/tables", "/push-logs"):
         r = client.get(path, headers=h)
         assert r.status_code == 200
         body = r.content.lower()
@@ -371,6 +371,37 @@ def test_run_returned_in_status(middle_env):
         assert "running_run" in src, f"source missing running_run"
         # latest_run 至少在有 run 记录后不为 null
         assert "latest_run" in src, f"source missing latest_run"
+
+
+def test_push_logs_api_returns_correct_batch_progress(middle_env):
+    """推送记录列表与批次详情暴露真实 write 行数和完成状态。"""
+    from data2agent.connect.config import load_config
+
+    client, cfg_path = middle_env
+    cfg = load_config(cfg_path)
+    db = LandingStore(cfg.landing)
+    try:
+        for kind, rows, status in (
+            ("write", 10, "ok"), ("write", 5, "ok"),
+            ("write", 7, "failed"), ("complete_table", 15, "ok"),
+        ):
+            db.record_push_log(
+                SOURCE, kind, "CUSTOMER", "incremental",
+                batch_id="push-test-1", rows_count=rows, status=status,
+            )
+    finally:
+        db.con.close()
+    headers = {"Authorization": "Bearer secret"}
+    listed = client.get("/api/push-logs", headers=headers)
+    assert listed.status_code == 200
+    assert listed.json()["total"] >= 4
+    detail = client.get("/api/push-logs/batch/push-test-1", headers=headers)
+    assert detail.status_code == 200
+    progress = detail.json()["progress"]
+    assert progress["rows"] == 15
+    assert progress["write_ok_batches"] == 2
+    assert progress["failed"] == 1
+    assert progress["completed"] is True
 
 
 def test_connection_probe_timeout_does_not_wait_for_worker(monkeypatch):

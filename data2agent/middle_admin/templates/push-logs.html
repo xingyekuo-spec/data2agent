@@ -148,7 +148,11 @@ function openPushBatch(batchId) {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       var p = data.progress;
-      var pct = p.total > 0 ? Math.round(p.ok / p.total * 100) : 0;
+      var completed = !!p.completed;
+      var progressText = completed
+        ? '已完成：成功推送 ' + p.write_ok_batches + ' 批 / ' + p.rows + ' 行'
+        : '进行中：已成功推送 ' + p.write_ok_batches + ' 批 / ' + p.rows + ' 行';
+      if (p.failed) progressText += '；' + p.failed + ' 个步骤失败';
       var html = '';
       html += '<dl class="push-stat-grid">';
       html += '<div class="push-stat"><dt>模式</dt><dd>' + esc(data.mode) + '</dd></div>';
@@ -160,8 +164,10 @@ function openPushBatch(batchId) {
       html += '<div class="push-stat"><dt>耗时</dt><dd>' + (p.duration_ms / 1000).toFixed(1) + 's</dd></div>';
       html += '</dl>';
       html += '<div style="margin-bottom:16px">';
-      html += '<span class="push-rows">进度: ' + p.ok + '/' + p.total + ' (' + pct + '%)</span>';
-      html += '<div class="progress-bar"><div class="progress-bar-fill" style="width:' + pct + '%"></div></div>';
+      html += '<span class="push-rows">' + progressText + '</span>';
+      // 未收到 complete_table 前无法知道总批数；不能伪造百分比。
+      html += '<div class="progress-bar"><div class="progress-bar-fill" style="width:' +
+              (completed ? '100' : '0') + '%"></div></div>';
       html += '</div>';
       html += '<table style="margin-top:8px"><thead><tr><th>步骤</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
       data.steps.forEach(function(s) {

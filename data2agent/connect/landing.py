@@ -1448,19 +1448,31 @@ class LandingStore:
     def push_log_batch_progress(
         self, source: str, table_name: str, batch_id: str,
     ) -> dict:
-        """给定 batch 的推送进度摘要。"""
+        """给定 batch 的推送进度摘要。
+
+        ``complete_table`` 的 ``rows_count`` 是整表累计值，不能与每个
+        ``write`` 的实际批次行数相加，否则页面会重复统计推送行数。
+        """
         rows = self.con.execute(
-            "SELECT status, COUNT(*) AS cnt, COALESCE(SUM(rows_count), 0) AS total_rows, "
+            "SELECT step_kind, status, COUNT(*) AS cnt, "
+            "COALESCE(SUM(rows_count), 0) AS total_rows, "
             "COALESCE(SUM(duration_ms), 0) AS total_ms "
             "FROM d2a_http_push_log "
             "WHERE source = ? AND table_name = ? AND batch_id = ? "
-            "GROUP BY status",
+            "GROUP BY step_kind, status",
             (source, table_name, batch_id)).fetchall()
-        result: dict = {"ok": 0, "failed": 0, "rows": 0, "duration_ms": 0.0}
+        result: dict = {
+            "ok": 0, "failed": 0, "rows": 0, "duration_ms": 0.0,
+            "write_ok_batches": 0, "completed": False,
+        }
         for r in rows:
             status_key = "ok" if r["status"] == "ok" else "failed"
             result[status_key] = r["cnt"]
-            result["rows"] += r["total_rows"] or 0
+            if r["step_kind"] == "write" and r["status"] == "ok":
+                result["rows"] += r["total_rows"] or 0
+                result["write_ok_batches"] += r["cnt"]
+            if r["step_kind"] == "complete_table" and r["status"] == "ok":
+                result["completed"] = True
             result["duration_ms"] += r["total_ms"] or 0
         result["total"] = result["ok"] + result["failed"]
         return result

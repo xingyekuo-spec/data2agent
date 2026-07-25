@@ -345,6 +345,37 @@ def test_http_abort_cleans_remote_staging_after_begin(tmp_path):
         (staging,)).fetchone() is None
 
 
+def test_http_push_log_counts_write_rows_once_and_records_abort(tmp_path):
+    """推送详情只累计成功 write 行数，且 abort 也必须留痕。"""
+    platform = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(platform.db_path))
+    middle = LandingStore(tmp_path / "middle.sqlite")
+    info = TableInfo("CURRENCY", [("CODE", "text"), ("NAME", "text")], ["CODE"])
+    sink = HttpPushSink(
+        "http://platform", post=_testclient_post(client),
+        get_json=_testclient_get_json(client), landing=middle, source=SOURCE,
+    )
+    batch_id = "increment-1"
+    sink.begin_table(SOURCE, info, mode="incremental")
+    sink.write(SOURCE, info, [{"CODE": "USD", "NAME": "美元"}], batch_id)
+    sink.write(SOURCE, info, [{"CODE": "EUR", "NAME": "欧元"}], batch_id)
+    sink.complete_table(SOURCE, info, batch_id, rows=2, batches=2)
+    progress = middle.push_log_batch_progress(SOURCE, "CURRENCY", batch_id)
+    assert progress["rows"] == 2
+    assert progress["write_ok_batches"] == 2
+    assert progress["completed"] is True
+
+    snapshot_id = "snapshot-abort"
+    sink.begin_table(SOURCE, info, mode="full_refresh", snapshot_id=snapshot_id)
+    sink.abort_table(SOURCE, info, mode="full_refresh", snapshot_id=snapshot_id)
+    abort_log = middle.con.execute(
+        "SELECT status FROM d2a_http_push_log "
+        "WHERE step_kind = 'abort_table' AND batch_id = ?",
+        (snapshot_id,),
+    ).fetchone()
+    assert abort_log["status"] == "ok"
+
+
 def test_http_abort_cleans_after_batch_and_failed_complete(tmp_path):
     """批次写入后 / 完成核对失败后 abort 均清理 staging。"""
     platform = LandingStore(tmp_path / "platform.sqlite")

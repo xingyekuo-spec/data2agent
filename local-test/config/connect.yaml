@@ -1,0 +1,34 @@
+templates: /Users/max/projects/data2agent/templates
+landing: /Users/max/projects/data2agent/local-test/data/landing.sqlite
+sources:
+  digiwin_e10:
+    adapter: sqlite_readonly
+    path: /Users/max/projects/data2agent/local-test/data/source.sqlite
+    tables:
+      CUSTOMER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      CURRENCY:
+        mode: full_refresh
+      ITEM:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      ITEM_WAREHOUSE:
+        mode: full_refresh
+      QUOTATION:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+      SALES_ORDER_D:
+        mode: incremental
+        watermark: LAST_MODIFIED_DATE
+    windows: []
+    rate:
+      batch_size: 5000
+      rows_per_second: 2000
+    lookback: 3d
+    sync_every: 30m
+    sink:
+      type: local

@@ -286,6 +286,17 @@ class HttpPushSink:
                     snapshot_id: str | None = None) -> None:
         if mode != "full_refresh" or not snapshot_id:
             return
-        self.ensure_protocol()
-        payload = self._base_payload(source, info, mode, snapshot_id)
-        self._post_with_retry("/ingest/table-abort", payload)
+        t0 = time.time()
+        try:
+            self.ensure_protocol()
+            payload = self._base_payload(source, info, mode, snapshot_id)
+            self._post_with_retry("/ingest/table-abort", payload)
+        except Exception:
+            self._log_push("abort_table", info.name, mode,
+                           batch_id=snapshot_id, status="failed",
+                           error_detail=_brief_error_str(),
+                           duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push("abort_table", info.name, mode,
+                       batch_id=snapshot_id, status="ok",
+                       duration_ms=(time.time() - t0) * 1000)
