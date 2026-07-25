@@ -33,8 +33,8 @@ beforeAll(() => {
 afterEach(() => {
   server.resetHandlers()
   setScenario('healthy')
-  sessionStorage.clear()
-  localStorage.clear()
+  try { sessionStorage.clear() } catch { /* jsdom 不支持 */ }
+  try { localStorage.clear() } catch { /* jsdom 不支持 */ }
 })
 
 afterAll(() => {

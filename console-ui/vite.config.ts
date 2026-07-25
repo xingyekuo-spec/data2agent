@@ -15,6 +15,7 @@ export default defineConfig(({ command }) => ({
   // 生产构建不拷贝 public/(避免历史 mock worker 进入产物)
   publicDir: command === 'build' ? false : 'public',
   server: {
+    port: 3000,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8849',
