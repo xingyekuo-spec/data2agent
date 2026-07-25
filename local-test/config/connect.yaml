@@ -1,9 +1,9 @@
-templates: /Users/max/projects/data2agent/templates
-landing: /Users/max/projects/data2agent/local-test/data/landing.sqlite
+templates: templates
+landing: local-test/data/landing.sqlite
 sources:
   digiwin_e10:
     adapter: sqlite_readonly
-    path: /Users/max/projects/data2agent/local-test/data/source.sqlite
+    path: local-test/data/source.sqlite
     tables:
       CUSTOMER:
         mode: incremental
