@@ -136,6 +136,9 @@ function renderStatus(data) {
       html += '<p class="meta" style="margin-top:6px">最近运行 #' + lr.id +
               ' ' + badge(lr.status) + ' · ' + esc(lr.tables || 0) + ' 表 · ' +
               esc(lr.rows || 0) + ' 行' + (lr.finished_at ? ' · ' + fmtAge(lr.finished_at) : '') + '</p>';
+      if (lr.status === 'failed' && lr.detail) {
+        html += '<p class="meta" style="color:#b42318;margin-top:4px">❌ ' + esc(lr.detail) + '</p>';
+      }
     }
 
     if (src.watermarks && src.watermarks.length) {
