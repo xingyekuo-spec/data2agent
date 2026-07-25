@@ -186,6 +186,7 @@ function openPushBatch(batchId) {
 
 function closePushDetail() {
   document.getElementById('push-detail-overlay').style.display = 'none';
+  document.getElementById('push-detail-body').innerHTML = '';
 }
 
 loadPushLogs();
