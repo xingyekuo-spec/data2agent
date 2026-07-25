@@ -468,6 +468,7 @@ function openPushBatch(batchId) {
 
 function closePushDetail() {
   document.getElementById('push-detail-overlay').style.display = 'none';
+  document.getElementById('push-detail-body').innerHTML = '';
 }
 
 // 页面加载时获取运行历史和推送记录
