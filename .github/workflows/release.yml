@@ -72,8 +72,26 @@ jobs:
           docker compose -f tests/integration/mssql/docker-compose.yml up
           --build --abort-on-container-exit --exit-code-from runner
 
-  package:
+  # 换包脚本(apply-update.ps1)的真实运行环境是 Windows:文件锁、部分换包与
+  # 回滚路径必须在 windows-latest 上验收,失败则阻断打包发布。
+  update-apply-e2e:
     needs: [test, mssql-integration]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PY_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
+      - name: 换包/回滚脚本验收(pwsh 端到端)
+        run: python -m pytest tests/test_update_apply_script.py -v
+
+  package:
+    needs: [test, mssql-integration, update-apply-e2e]
     runs-on: windows-latest
     defaults:
       run:
@@ -155,6 +173,24 @@ jobs:
             d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
             d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
 
+      - name: 生成平台更新清单 latest.json
+        if: github.ref_type == 'tag' || inputs.create_release
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          $zip = "d2a-portable-platform-$v.zip"
+          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          $bi = Get-Content "dist/portable/d2a-portable-platform-$v/BUILD-INFO.json" -Raw | ConvertFrom-Json
+          $repo = "${{ github.repository }}"
+          [ordered]@{
+            version = $v
+            package = $zip
+            url = "https://github.com/$repo/releases/download/$v/$zip"
+            sha256 = $sha
+            supported_ingest_protocol_versions = @($bi.supported_ingest_protocol_versions)
+            notes = ""
+          } | ConvertTo-Json | Set-Content latest.json -Encoding utf8
+
       - name: 生成 Release 正文(含协议兼容性)
         if: github.ref_type == 'tag' || inputs.create_release
         shell: bash
@@ -186,6 +222,7 @@ jobs:
           files: |
             d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
             d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
+            latest.json
           generate_release_notes: true
           body_path: release-body.md
           prerelease: ${{ github.ref_type != 'tag' }}

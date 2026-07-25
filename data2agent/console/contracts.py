@@ -304,6 +304,46 @@ class ConfigSaveResponse(ValidationResult):
     restart_required: bool | None = True
 
 
+# ---- update(平台便携包在线升级)----
+
+
+class UpdateCheckRequest(BaseModel):
+    source_url: str | None = Field(
+        default=None, description="更新清单 latest.json 地址;缺省取环境变量 D2A_UPDATE_URL")
+
+
+class UpdateStatusResponse(BaseModel):
+    available: bool = Field(description="更新功能是否可用(便携包安装,home 下存在 BUILD-INFO.json)")
+    phase: str = Field(description="idle / checked / downloading / ready / failed")
+    current_version: str | None = None
+    target_version: str | None = None
+    update_available: bool | None = None
+    protocol_ok: bool | None = None
+    blocked_reason: str | None = None
+    notes: str | None = None
+    progress_done: int | None = None
+    progress_total: int | None = None
+    error: str | None = None
+    bat_path: str | None = Field(default=None, description="就绪后双击的「升级.bat」路径")
+    updated_at: str | None = None
+
+
+class UpdateCheckResponse(BaseModel):
+    ok: bool
+    current_version: str | None = None
+    latest_version: str | None = None
+    update_available: bool = False
+    protocol_ok: bool = True
+    blocked_reason: str | None = None
+    notes: str | None = None
+    error: str | None = None
+
+
+class UpdateActionResponse(BaseModel):
+    ok: bool
+    message: str
+
+
 # ---- overview / runs / quarantine / audit ----
 
 

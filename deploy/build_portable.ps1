@@ -149,6 +149,14 @@ Keep this folder intact (runtime\ must stay next to data2agent.exe).
 "@
 Set-Content -Path (Join-Path $portable 'README.txt') -Value $readme -Encoding utf8
 
+# --- 5a. 平台端在线升级入口(单一事实来源:data2agent.updater.apply_script) ---
+if ($Role -eq 'platform') {
+    Write-Step 'Write 升级.bat (platform)'
+    $env:D2A_PORTABLE_OUT = $portable
+    & $runtimePy -c "import os; from pathlib import Path; from data2agent.updater.apply_script import UPDATE_BAT; (Path(os.environ['D2A_PORTABLE_OUT']) / '升级.bat').write_text(UPDATE_BAT, encoding='utf-8')"
+    if ($LASTEXITCODE -ne 0) { throw 'write 升级.bat failed' }
+}
+
 # Keep a user-visible, immutable build label in every extracted package.  The
 # Vue settings page reads this through the platform API, making it possible to
 # distinguish a current package from an older folder with the same wheel version.

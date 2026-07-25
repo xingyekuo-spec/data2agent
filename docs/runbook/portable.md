@@ -75,6 +75,27 @@ Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` �
 旧 profile 等路径）。打 `v*` tag 的 Release workflow 会先跑
 `tests/integration/mssql` compose、ingest 兼容门禁与契约测试，通过后才打包上传。
 
+### 平台端在线升级
+
+平台便携包支持在管理界面一键准备更新、退出后换包：
+
+1. 升级前确认平台处于空闲时段（无推送高峰）；升级全程不触碰 `config\` 与 `data\`。
+2. 打开管理界面「设置」页 →「检查更新」：
+   - 更新源由环境变量 `D2A_UPDATE_URL` 指定（写入 `config\secrets.env`），
+     指向 Release 附件 `latest.json`，例如
+     `https://github.com/<org>/<repo>/releases/latest/download/latest.json`；
+     私有仓库另需 `D2A_UPDATE_TOKEN`（只读 PAT）；也可指向内网文件服务器上的同名清单。
+   - 发现新版本时自动做 **ingest 协议预检**：新平台若不再支持现场中间机协议，
+     会直接拦截并提示「需先升级中间机」。
+3. 点「下载更新」：后台下载、sha256 校验、解压到 `data\updates\staging`，
+   并生成 `data\updates\apply-update.ps1` 与便携包根目录的「升级.bat」。
+4. 界面提示就绪后：右键托盘图标 →「退出」，双击「升级.bat」。
+   脚本自动完成换包（旧版本改名 `.old` 保留）→ 启动新版本 → 健康检查；
+   **新版本起不来会自动回滚到旧版本**，日志见 `data\logs\d2a-update.log`。
+5. 确认新版本运行正常后，可手动删除 `runtime.old` / `app.old` / `data2agent.exe.old`。
+
+中间机不使用该功能；按本节顶部策略，中间机很少升级，仍用新 zip 手工替换。
+
 ## 2. 端口
 
 | 机器 | 端口 | 用途 |
@@ -117,6 +138,7 @@ Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` �
 
 ```text
 data2agent.exe
+升级.bat              # 仅平台包:在线升级入口(详见「平台端在线升级」)
 runtime\
 app\templates\
 config\

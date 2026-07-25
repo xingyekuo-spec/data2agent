@@ -70,6 +70,14 @@ def _site_packages(portable: Path) -> Path:
 def _check_platform_entry(portable: Path) -> None:
     if not (portable / "app" / "console-ui" / "dist" / "index.html").is_file():
         _fail("Vue Console dist/index.html missing")
+    bat = portable / "升级.bat"
+    if not bat.is_file():
+        _fail("platform 升级入口 升级.bat missing")
+    # bat 必须与 updater 模块内模板一致(单一事实来源,防止两份脚本漂移)。
+    # 本脚本由便携包 runtime 的 python 执行,import 到的即被检 wheel 本身。
+    from data2agent.updater.apply_script import UPDATE_BAT
+    if bat.read_text(encoding="utf-8") != UPDATE_BAT:
+        _fail("升级.bat 与 updater.apply_script.UPDATE_BAT 不一致")
     app_py = _site_packages(portable) / "data2agent" / "console" / "app.py"
     if not app_py.is_file():
         _fail("installed platform console module missing")

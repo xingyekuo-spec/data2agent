@@ -711,6 +711,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/update/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Update Check */
+        post: operations["update_check_api_update_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/update/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Update Download */
+        post: operations["update_download_api_update_download_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/update/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Update Status */
+        get: operations["update_status_api_update_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/validation/run": {
         parameters: {
             query?: never;
@@ -3189,6 +3240,84 @@ export interface components {
             /** Target */
             target: string;
         };
+        /** UpdateActionResponse */
+        UpdateActionResponse: {
+            /** Message */
+            message: string;
+            /** Ok */
+            ok: boolean;
+        };
+        /** UpdateCheckRequest */
+        UpdateCheckRequest: {
+            /**
+             * Source Url
+             * @description 更新清单 latest.json 地址;缺省取环境变量 D2A_UPDATE_URL
+             */
+            source_url?: string | null;
+        };
+        /** UpdateCheckResponse */
+        UpdateCheckResponse: {
+            /** Blocked Reason */
+            blocked_reason?: string | null;
+            /** Current Version */
+            current_version?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Latest Version */
+            latest_version?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Protocol Ok
+             * @default true
+             */
+            protocol_ok: boolean;
+            /**
+             * Update Available
+             * @default false
+             */
+            update_available: boolean;
+        };
+        /** UpdateStatusResponse */
+        UpdateStatusResponse: {
+            /**
+             * Available
+             * @description 更新功能是否可用(便携包安装,home 下存在 BUILD-INFO.json)
+             */
+            available: boolean;
+            /**
+             * Bat Path
+             * @description 就绪后双击的「升级.bat」路径
+             */
+            bat_path?: string | null;
+            /** Blocked Reason */
+            blocked_reason?: string | null;
+            /** Current Version */
+            current_version?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Notes */
+            notes?: string | null;
+            /**
+             * Phase
+             * @description idle / checked / downloading / ready / failed
+             */
+            phase: string;
+            /** Progress Done */
+            progress_done?: number | null;
+            /** Progress Total */
+            progress_total?: number | null;
+            /** Protocol Ok */
+            protocol_ok?: boolean | null;
+            /** Target Version */
+            target_version?: string | null;
+            /** Update Available */
+            update_available?: boolean | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
         /** ValidationCheckResponse */
         ValidationCheckResponse: {
             /** Blocking */
@@ -5434,6 +5563,133 @@ export interface operations {
             };
             /** @description 冲突/未配置/只读/熔断 */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    update_check_api_update_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["UpdateCheckRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateCheckResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_download_api_update_download_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateActionResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    update_status_api_update_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatusResponse"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1,16 +1,25 @@
 <script setup lang="ts">
-// 平台配置页:Vue Console 内编辑非敏感部署配置。
-import { computed, onMounted, reactive, ref } from 'vue'
+// 平台配置页:Vue Console 内编辑非敏感部署配置 + 便携包在线升级。
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
-import { getConfig, postConfig, validateConfig } from '@/api/services'
+import {
+  getConfig,
+  getUpdateStatus,
+  postConfig,
+  postUpdateCheck,
+  postUpdateDownload,
+  validateConfig,
+} from '@/api/services'
 import type { components } from '@/types/api'
 import type { ApiError } from '@/api/errors'
 
 type ConfigViewResponse = components['schemas']['ConfigViewResponse']
 type FieldError = components['schemas']['FieldError']
+type UpdateStatusResponse = components['schemas']['UpdateStatusResponse']
+type UpdateCheckResponse = components['schemas']['UpdateCheckResponse']
 
 const loading = ref(false)
 const saving = ref(false)
@@ -84,6 +93,67 @@ async function save(): Promise<void> {
 onMounted(() => {
   void refresh()
 })
+
+// ---- 便携包在线升级 ----
+
+const update = ref<UpdateStatusResponse | null>(null)
+const updateChecking = ref(false)
+const updateDownloading = ref(false)
+const checkResult = ref<UpdateCheckResponse | null>(null)
+let pollTimer: number | undefined
+
+const updatePhase = computed(() => update.value?.phase ?? 'idle')
+const downloadPercent = computed(() => {
+  const done = update.value?.progress_done ?? 0
+  const total = update.value?.progress_total ?? 0
+  if (!done || !total) return 0
+  return Math.min(100, Math.round((done / total) * 100))
+})
+
+async function refreshUpdateStatus(): Promise<void> {
+  const result = await getUpdateStatus()
+  if (result.ok) update.value = result.data
+}
+
+async function checkUpdate(): Promise<void> {
+  updateChecking.value = true
+  checkResult.value = null
+  const result = await postUpdateCheck({})
+  updateChecking.value = false
+  if (!result.ok) {
+    ElMessage.error(`检查更新失败:${result.error.message}`)
+    return
+  }
+  checkResult.value = result.data
+  await refreshUpdateStatus()
+}
+
+function stopPolling(): void {
+  window.clearInterval(pollTimer)
+  pollTimer = undefined
+  updateDownloading.value = false
+}
+
+async function startDownload(): Promise<void> {
+  const result = await postUpdateDownload()
+  if (!result.ok) {
+    ElMessage.error(`下载失败:${result.error.message}`)
+    return
+  }
+  updateDownloading.value = true
+  pollTimer = window.setInterval(() => {
+    void refreshUpdateStatus().then(() => {
+      if (updatePhase.value === 'ready' || updatePhase.value === 'failed') {
+        stopPolling()
+      }
+    })
+  }, 1000)
+}
+
+onMounted(() => {
+  void refreshUpdateStatus()
+})
+onUnmounted(stopPolling)
 </script>
 
 <template>
@@ -176,6 +246,110 @@ onMounted(() => {
         </el-form>
       </template>
     </div>
+
+    <div
+      v-if="update?.available"
+      class="d2a-card update-card"
+      data-testid="update-card"
+    >
+      <h3 class="card-title">
+        版本升级
+      </h3>
+      <p class="card-subtitle">
+        升级不触碰 config/ 配置与 data/ 数据;失败自动回滚。请在平台空闲时段升级。
+      </p>
+
+      <el-alert
+        v-if="updatePhase === 'ready'"
+        type="success"
+        :closable="false"
+        data-testid="update-ready"
+      >
+        <template #title>
+          更新包 v{{ update?.target_version }} 已就绪
+        </template>
+        <p>
+          请从托盘退出程序(右键托盘图标 →「退出」),然后双击便携包目录中的「升级.bat」完成安装。
+        </p>
+        <p
+          v-if="update?.bat_path"
+          class="update-bat-path"
+        >
+          {{ update.bat_path }}
+        </p>
+      </el-alert>
+
+      <template v-else>
+        <div
+          v-if="updateDownloading || updatePhase === 'downloading'"
+          class="update-progress"
+          data-testid="update-progress"
+        >
+          <el-progress :percentage="downloadPercent" />
+          <p class="update-progress-text">
+            正在下载更新包 v{{ update?.target_version }}…下载完成后会提示下一步。
+          </p>
+        </div>
+
+        <el-alert
+          v-if="updatePhase === 'failed' && update?.error"
+          class="update-alert"
+          type="error"
+          :title="update.error"
+          :closable="false"
+          data-testid="update-failed"
+        />
+        <el-alert
+          v-if="checkResult && !checkResult.ok"
+          class="update-alert"
+          type="error"
+          :title="`检查更新失败:${checkResult.error ?? ''}`"
+          :closable="false"
+          data-testid="update-check-error"
+        />
+        <el-alert
+          v-else-if="checkResult?.ok && !checkResult.update_available"
+          class="update-alert"
+          type="info"
+          title="当前已是最新版本"
+          :closable="false"
+          data-testid="update-latest"
+        />
+        <el-alert
+          v-else-if="checkResult?.blocked_reason"
+          class="update-alert"
+          type="error"
+          :title="checkResult.blocked_reason"
+          :closable="false"
+          data-testid="update-blocked"
+        />
+        <p
+          v-if="checkResult?.notes"
+          class="update-notes"
+        >
+          {{ checkResult.notes }}
+        </p>
+
+        <div class="settings-actions">
+          <el-button
+            :loading="updateChecking"
+            data-testid="update-check"
+            @click="checkUpdate"
+          >
+            检查更新
+          </el-button>
+          <el-button
+            v-if="checkResult?.ok && checkResult.update_available && checkResult.protocol_ok"
+            type="primary"
+            :loading="updateDownloading"
+            data-testid="update-download"
+            @click="startDownload"
+          >
+            下载更新 v{{ checkResult.latest_version }}
+          </el-button>
+        </div>
+      </template>
+    </div>
   </section>
 </template>
 
@@ -223,5 +397,37 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.update-card {
+  margin-top: 16px;
+}
+
+.update-alert {
+  margin: 8px 0 12px;
+}
+
+.update-progress {
+  max-width: 480px;
+  margin: 8px 0 12px;
+}
+
+.update-progress-text {
+  margin: 6px 0 0;
+  color: var(--d2a-text-secondary);
+  font-size: 12px;
+}
+
+.update-bat-path {
+  margin: 6px 0 0;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.update-notes {
+  margin: 8px 0;
+  color: var(--d2a-text-secondary);
+  font-size: 12px;
+  white-space: pre-wrap;
 }
 </style>

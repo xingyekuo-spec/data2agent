@@ -127,6 +127,10 @@ from .contracts import (
     SetupSuccessResponse,
     TemplateMetric,
     TemplateObject,
+    UpdateActionResponse,
+    UpdateCheckRequest,
+    UpdateCheckResponse,
+    UpdateStatusResponse,
     ValidationError,
     ValidationReportResponse,
     ValidationResult,
@@ -134,6 +138,8 @@ from .contracts import (
     ValidationRunStartedResponse,
 )
 from .validation import build_validation_report
+from ..updater.core import UpdateManager
+from ..updater.manifest import UpdateError
 
 _RESP_HTTP_ERROR = {
     401: {"model": HttpError, "description": "缺少或无效的 Bearer Token"},
@@ -617,6 +623,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
         "query_service_sig": None,
         "_query_service_lock": threading.Lock(),
         "_validation_lock": threading.Lock(),
+        # 在线升级:应用生命周期内单例(下载线程与锁必须跨请求共享)
+        "update_manager": UpdateManager(home_layout.root) if home_layout is not None else None,
     }
     if state["landing"] and not (
         home_layout is not None and (_config_path is None or not Path(_config_path).is_file())
@@ -685,6 +693,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
                 return
             if path == "/api/config" and request.method == "GET":
                 return
+            if path.startswith("/api/update"):
+                return  # 升级不依赖平台配置:允许「先升级再首次配置」
             raise HTTPException(409, "尚未完成首次配置,请打开 /setup")
 
         tok = state["token"]
@@ -2229,6 +2239,67 @@ def create_app(landing: str | None = None, templates: str = "templates",
         path = require_config_path()
         ok, errors = _validate_merged(path, body.model_dump(exclude_none=True))
         return {"ok": ok, "errors": errors}
+
+    # ---- 便携包在线升级(仅平台端;换包在退出后由 apply-update.ps1 完成)----
+
+    def _update_manager() -> UpdateManager | None:
+        return state["update_manager"]
+
+    @api.get(
+        "/update/status",
+        response_model=UpdateStatusResponse,
+        responses={401: _RESP_HTTP_ERROR[401]},
+    )
+    def update_status() -> dict:
+        manager = _update_manager()
+        if manager is None or not manager.available():
+            return {"available": False, "phase": "idle"}
+        return manager.status()
+
+    @api.post(
+        "/update/check",
+        response_model=UpdateCheckResponse,
+        responses={
+            400: {"model": HttpError},
+            401: _RESP_HTTP_ERROR[401],
+        },
+    )
+    def update_check(body: UpdateCheckRequest | None = None) -> dict:
+        manager = _update_manager()
+        if manager is None or not manager.available():
+            raise HTTPException(400, "当前不是便携包安装,无法在线升级")
+        source = ((body.source_url if body else None) or "").strip() or \
+            os.environ.get("D2A_UPDATE_URL", "").strip()
+        if not source:
+            return {"ok": False, "error": "未配置更新源(环境变量 D2A_UPDATE_URL)"}
+        token = os.environ.get("D2A_UPDATE_TOKEN") or None
+        try:
+            result = manager.check(source, token=token)
+        except UpdateError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {k: result[k] for k in (
+            "ok", "current_version", "latest_version", "update_available",
+            "protocol_ok", "blocked_reason", "notes")}
+
+    @api.post(
+        "/update/download",
+        response_model=UpdateActionResponse,
+        responses={
+            400: {"model": HttpError},
+            401: _RESP_HTTP_ERROR[401],
+            409: _RESP_HTTP_ERROR[409],
+        },
+    )
+    def update_download() -> dict:
+        manager = _update_manager()
+        if manager is None or not manager.available():
+            raise HTTPException(400, "当前不是便携包安装,无法在线升级")
+        token = os.environ.get("D2A_UPDATE_TOKEN") or None
+        try:
+            manager.start_download(token=token)
+        except UpdateError as exc:
+            raise HTTPException(409, str(exc))
+        return {"ok": True, "message": "下载已开始,请稍候"}
 
     @api.get(
         "/services",

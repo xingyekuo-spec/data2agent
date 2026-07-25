@@ -77,6 +77,20 @@ export function getLogs(query: { service: string; lines?: number; level?: string
   return call(client.GET('/api/logs', { params: { query } }))
 }
 
+// ---- 便携包在线升级(仅平台端)----
+
+export function getUpdateStatus() {
+  return call(client.GET('/api/update/status'))
+}
+
+export function postUpdateCheck(body: components['schemas']['UpdateCheckRequest']) {
+  return call(client.POST('/api/update/check', { body }))
+}
+
+export function postUpdateDownload() {
+  return call(client.POST('/api/update/download'))
+}
+
 /** 契约桩:后端实现前真实调用返回 501,页面据此显示「尚未接入」 */
 export function getPipeline() {
   return call(client.GET('/api/pipeline'))

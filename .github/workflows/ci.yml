@@ -18,6 +18,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       e2e: ${{ steps.filter.outputs.e2e }}
       distribution: ${{ steps.filter.outputs.distribution }}
+      updater: ${{ steps.filter.outputs.updater }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -53,6 +54,15 @@ jobs:
               - 'tests/integration/mssql/docker-compose.yml'
               - 'pyproject.toml'
               - '.github/workflows/ci.yml'
+            updater:
+              - 'data2agent/updater/**'
+              - 'data2agent/console/**'
+              - 'deploy/**'
+              - 'tests/test_updater.py'
+              - 'tests/test_update_apply_script.py'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/release.yml'
 
   backend:
     needs: changes
@@ -88,6 +98,29 @@ jobs:
           fi
           python scripts/check_ingest_compat.py --base-ref "$BASE_REF"
           python -m pytest tests/test_ingest_protocol_compat.py -q --tb=short
+
+  # 换包脚本(apply-update.ps1)真实运行环境是 Windows:文件锁/部分换包/
+  # 回滚路径只能在 windows-latest 验收,更新相关路径变更时随 PR 运行,
+  # 避免问题拖到打 tag 发布时才暴露(与 release.yml 的 update-apply-e2e 一致)。
+  update-apply-e2e:
+    needs: changes
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/') ||
+      github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/master' ||
+      needs.changes.outputs.updater == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
+      - name: 换包/回滚脚本验收(pwsh 端到端)
+        run: python -m pytest tests/test_update_apply_script.py -v
 
   frontend:
     needs: changes
