@@ -321,8 +321,9 @@ landing: ${landing}
     await page.locator('.el-menu-item', { hasText: '数据浏览' }).click()
     await page.locator('[data-testid="raw-catalog"]').waitFor({ state: 'visible' })
     await page.locator('[data-testid="browse-CUSTOMER"]').click()
-    await page.locator('[data-testid="raw-table"]').waitFor({ state: 'visible' })
-    expect((await page.textContent('[data-testid="raw-table"]')).includes('***'),
+    // Raw 数据浏览改为抽屉(RawDataDrawer)展示,data-testid 前缀为 raw-drawer-
+    await page.locator('[data-testid="raw-drawer-table"]').waitFor({ state: 'visible' })
+    expect((await page.textContent('[data-testid="raw-drawer-table"]')).includes('***'),
       'Real:raw 敏感列脱敏')
     const panes = page.locator('.el-tabs__item', { hasText: '对象层' })
     await panes.click()
