@@ -9,6 +9,7 @@ import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import ObjectLineageDrawer from '@/components/shared/ObjectLineageDrawer.vue'
+import RawDataDrawer from '@/components/shared/RawDataDrawer.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useDataStore } from '@/stores/data'
 import { useDatasetsStore } from '@/stores/datasets'
@@ -52,6 +53,7 @@ const route = useRoute()
 const router = useRouter()
 const lineageStore = useLineageStore()
 const lineageDrawerVisible = ref(false)
+const rawDrawerVisible = ref(false)
 
 function openLineage(rowIndex: number) {
   const page = objPage.value
@@ -303,6 +305,7 @@ async function onApply(): Promise<void> {
 
 function selectRaw(source: string, table: string): void {
   store.selectRaw(source, table)
+  rawDrawerVisible.value = true
   syncRouteQuery()
 }
 
@@ -390,71 +393,6 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             raw 原始数据只允许授权管理主体访问:当前控制台未配置 Token。
             请在管理页完成首次配置,或以 D2A_CONSOLE_TOKEN 启动控制台后重试。
           </p>
-        </div>
-
-        <div v-else-if="rawPage" class="d2a-card">
-          <div class="toolbar">
-            <el-input
-              v-model="rawQuery.q"
-              :placeholder="rawPage.status === 'success' && rawPage.data.searchable ? '按业务键搜索' : '该资源没有可搜索业务键'"
-              size="small"
-              clearable
-              class="toolbar__search"
-              :disabled="rawPage.status === 'success' && !rawPage.data.searchable"
-              data-testid="raw-search"
-              @change="searchRaw()"
-            />
-            <el-button size="small" data-testid="raw-refresh" @click="store.browseRaw()">刷新</el-button>
-            <span class="toolbar__meta">
-              <template v-if="rawPage.status === 'success'">
-                {{ rawSel.source }}/{{ rawSel.table }} · 共 {{ rawPage.data.total }} 行 ·
-                排序 {{ rawPage.data.sort }}
-              </template>
-            </span>
-          </div>
-
-          <LoadingState v-if="rawPage.status === 'loading'" />
-          <ErrorState v-else-if="rawPage.status === 'error'" :error="rawPage.error" @retry="store.browseRaw()" />
-          <template v-else-if="rawPage.status === 'success'">
-            <p v-if="rawPageRefreshError" class="refresh-warning" data-testid="raw-page-refresh-error">
-              刷新失败({{ rawPageRefreshError.message }}),展示上一次成功数据
-            </p>
-            <ul v-if="rawPage.data.warnings.length" class="warnings" data-testid="raw-warnings">
-              <li v-for="w in rawPage.data.warnings" :key="w">{{ w }}</li>
-            </ul>
-            <el-table :data="rawPage.data.rows" size="small" data-testid="raw-table">
-              <el-table-column
-                v-for="col in rawCols"
-                :key="col.name"
-                :prop="col.name"
-                min-width="130"
-              >
-                <template #header>
-                  <span>{{ col.name }}</span>
-                  <el-tag v-if="col.classification === 'sensitive'" size="small" type="warning" class="col-flag">
-                    脱敏
-                  </el-tag>
-                  <el-tag v-else-if="col.classification === 'unknown'" size="small" type="info" class="col-flag">
-                    未知
-                  </el-tag>
-                </template>
-                <template #default="{ row }">{{ formatCell(row[col.name]) }}</template>
-              </el-table-column>
-            </el-table>
-            <p v-if="rawPage.data.truncations.length" class="trunc-note" data-testid="raw-truncations">
-              {{ rawPage.data.truncations.length }} 行存在截断字段(预览不是完整值):
-              {{ rawPage.data.truncations.map((t) => `#${t.row_index}(${t.fields.join('/')})`).join(', ') }}
-            </p>
-            <el-pagination
-              class="pager"
-              layout="prev, pager, next"
-              :total="rawPage.data.total"
-              :page-size="rawQuery.limit"
-              :current-page="rawQuery.offset / rawQuery.limit + 1"
-              data-testid="raw-pager"
-              @current-change="onRawPage"
-            />
-          </template>
         </div>
       </el-tab-pane>
 
@@ -774,6 +712,12 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
       :visible="lineageDrawerVisible"
       data-testid="obj-lineage-drawer"
       @close="closeLineage"
+    />
+
+    <RawDataDrawer
+      :visible="rawDrawerVisible"
+      data-testid="raw-data-drawer"
+      @close="rawDrawerVisible = false"
     />
   </section>
 </template>

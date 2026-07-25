@@ -8,6 +8,7 @@ import { setScenario } from '@/test/scenario'
 import { createAppRouter } from '@/router'
 import { server } from '@/test/fetch-stub'
 import DataView from './DataView.vue'
+import RawDataDrawer from '@/components/shared/RawDataDrawer.vue'
 import { baseFixture } from '@/test/fixtures/base'
 
 async function mountView(): Promise<ReturnType<typeof mount>> {
@@ -15,7 +16,11 @@ async function mountView(): Promise<ReturnType<typeof mount>> {
   const router = createAppRouter(createMemoryHistory())
   await router.push('/data')
   await router.isReady()
-  const wrapper = mount(DataView, { global: { plugins: [pinia, ElementPlus, router] } })
+  // attachTo 使 el-drawer Teleport 能渲染到真实 DOM
+  const wrapper = mount(DataView, {
+    attachTo: document.body,
+    global: { plugins: [pinia, ElementPlus, router] },
+  })
   await flushPromises()
   return wrapper
 }
@@ -28,7 +33,10 @@ async function mountViewWithQuery(query: Record<string, string>): Promise<{
   const router = createAppRouter(createMemoryHistory())
   await router.push({ path: '/data', query })
   await router.isReady()
-  const wrapper = mount(DataView, { global: { plugins: [pinia, ElementPlus, router] } })
+  const wrapper = mount(DataView, {
+    attachTo: document.body,
+    global: { plugins: [pinia, ElementPlus, router] },
+  })
   await flushPromises()
   return { wrapper, router }
 }
@@ -43,14 +51,15 @@ describe('DataView(M4)', () => {
     expect(catalog.text()).toContain('CUSTOMER')
     await wrapper.find('[data-testid="browse-CUSTOMER"]').trigger('click')
     await flushPromises()
-    const table = wrapper.find('[data-testid="raw-table"]')
-    expect(table.exists()).toBe(true)
-    expect(table.text()).toContain('C-001')
+    // el-drawer teleports to body — find table in document.body
+    const table = document.querySelector('[data-testid="raw-drawer-table"]')
+    expect(table).toBeTruthy()
+    expect(table!.textContent).toContain('C-001')
     // 敏感列显示脱敏标识,值是 ***
-    expect(wrapper.text()).toContain('脱敏')
-    expect(wrapper.text()).toContain('***')
-    expect(wrapper.text()).toContain('共 36 行')
-    expect(wrapper.text()).toContain('pk:CUSTOMER_CODE')
+    expect(document.body.textContent).toContain('脱敏')
+    expect(document.body.textContent).toContain('***')
+    expect(document.body.textContent).toContain('共 36 行')
+    expect(document.body.textContent).toContain('pk:CUSTOMER_CODE')
   })
 
   it('数据集 tab:列表区分待发布/已发布,可发布与回滚', async () => {
@@ -118,8 +127,8 @@ describe('DataView(M4)', () => {
     const wrapper = await mountView()
     await wrapper.find('[data-testid="browse-CUSTOMER"]').trigger('click')
     await flushPromises()
+    // drawer 虽然打开了,但 raw403 安全指引会显示（drawer 内显示 error state）
     expect(wrapper.find('[data-testid="raw-403-guide"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="raw-table"]').exists()).toBe(false)
   })
 
   it('raw catalog 403:初始目录也显示安全配置指引', async () => {
@@ -189,14 +198,19 @@ describe('DataView(M4)', () => {
     const wrapper = await mountView()
     await wrapper.find('[data-testid="browse-CUSTOMER"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-testid="raw-table"]').text()).toContain('C-001')
+    // the drawer component renders; data loads from store
+    const html0 = wrapper.html()
+    expect(html0).toContain('C-001')
+
     server.use(
       http.get('*/api/data/raw/:source/:table', () =>
         HttpResponse.json({ detail: 'boom' }, { status: 500 })),
     )
-    await wrapper.find('[data-testid="raw-refresh"]').trigger('click')
+    // click refresh in the already-open drawer
+    await wrapper.find('[data-testid="raw-drawer-refresh"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-testid="raw-page-refresh-error"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="raw-table"]').text()).toContain('C-001')
+    const html = wrapper.html()
+    expect(html).toContain('C-001')           // old success data preserved
+    expect(html).toContain('raw-drawer-refresh-error') // error banner visible
   })
 })
