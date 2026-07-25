@@ -326,10 +326,10 @@ landing: ${landing}
     expect((await page.textContent('[data-testid="raw-drawer-table"]')).includes('***'),
       'Real:raw 敏感列脱敏')
     // 关闭 raw 抽屉，否则遮罩会挡住后续的 tab 点击
-    const closeBtn = page.locator('.el-drawer__close-btn').first()
-    await closeBtn.click()
-    // 等待遮罩消失
-    await page.locator('.el-overlay').first().waitFor({ state: 'hidden' }).catch(() => {})
+    // el-drawer 在 jsdom 中可能通过 transition 隐藏,用 force 点击
+    const closeBtn = page.locator('.el-overlay.is-drawer:not([style*="display: none"]) .el-drawer__close-btn').first()
+    await closeBtn.click({ force: true })
+    await page.waitForTimeout(500)
     const panes = page.locator('.el-tabs__item', { hasText: '对象层' })
     await panes.click()
     await page.locator('[data-testid="obj-catalog"]').waitFor({ state: 'visible' })
