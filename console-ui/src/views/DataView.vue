@@ -89,9 +89,6 @@ onMounted(() => {
   void store.refreshRawCatalog()
 })
 
-const rawCols = computed(() =>
-  rawPage.value?.status === 'success' ? rawPage.value.data.columns : [],
-)
 const rawCatalogData = computed(() =>
   rawCatalog.value.status === 'success' ? rawCatalog.value.data : null,
 )
@@ -133,12 +130,6 @@ function formatCell(value: unknown): string {
     return `[BLOB ${blob.bytes ?? '?'} bytes]`
   }
   return String(value as CellValue)
-}
-
-function onRawPage(current: number): void {
-  rawQuery.offset = (current - 1) * rawQuery.limit
-  void store.browseRaw()
-  syncRouteQuery()
 }
 
 function onObjPage(current: number): void {
@@ -311,11 +302,6 @@ function selectRaw(source: string, table: string): void {
 
 function selectObject(object: string): void {
   store.selectObject(object)
-  syncRouteQuery()
-}
-
-function searchRaw(): void {
-  store.searchRaw()
   syncRouteQuery()
 }
 

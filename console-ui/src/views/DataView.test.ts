@@ -8,7 +8,6 @@ import { setScenario } from '@/test/scenario'
 import { createAppRouter } from '@/router'
 import { server } from '@/test/fetch-stub'
 import DataView from './DataView.vue'
-import RawDataDrawer from '@/components/shared/RawDataDrawer.vue'
 import { baseFixture } from '@/test/fixtures/base'
 
 async function mountView(): Promise<ReturnType<typeof mount>> {

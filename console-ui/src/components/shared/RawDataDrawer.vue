@@ -8,7 +8,6 @@ import { storeToRefs } from 'pinia'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import { useDataStore } from '@/stores/data'
-import type { ApiError } from '@/api/errors'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -107,7 +106,7 @@ function onSearch(): void {
 
     <ErrorState
       v-else-if="isFirstError"
-      :error="rawPage.error"
+      :error="(rawPage as any).error"
       @retry="onRefresh"
     />
 
