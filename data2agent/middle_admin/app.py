@@ -451,6 +451,10 @@ def create_app(
     def tables_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "tables.html", page_ctx(request))
 
+    @app.get("/push-logs", response_class=HTMLResponse)
+    def push_logs_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "push-logs.html", page_ctx(request))
+
     @api.get("/setup/status")
     def setup_status() -> dict:
         return {
