@@ -934,6 +934,7 @@ def create_app(
                 continue
             if has_pk is False and t.primary_key:
                 continue
+            detail = rec.details.get((t.schema, t.name)) if rec.details else None
             rows.append({
                 "schema": t.schema,
                 "name": t.name,
@@ -945,6 +946,8 @@ def create_app(
                     for k in t.unique_keys
                 ],
                 "watermark_candidates": list(t.watermark_candidates),
+                "schema_fingerprint": (
+                    detail.schema_fingerprint if detail is not None else None),
                 "in_extraction_plan": in_extraction_plan(
                     t.schema, t.name, planned, default_schema=default_schema),
                 "error_code": t.error_code,

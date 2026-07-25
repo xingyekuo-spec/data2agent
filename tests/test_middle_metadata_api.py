@@ -87,6 +87,8 @@ def test_metadata_scan_without_tables(meta_env):
     assert payload["total"] >= 1
     assert any(t["name"] == "CUSTOMER" for t in payload["tables"])
     assert all(t["in_extraction_plan"] is False for t in payload["tables"])
+    customer = next(t for t in payload["tables"] if t["name"] == "CUSTOMER")
+    assert customer.get("schema_fingerprint", "").startswith("sha256:")
 
     detail = client.get("/api/metadata/tables/main/CUSTOMER", headers=h)
     assert detail.status_code == 200

@@ -11,26 +11,62 @@
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #e8edf2;vertical-align:top}
   th{color:#51606f;font-weight:600;background:#f6f8fa}
+  th.check,td.check{width:36px;text-align:center;padding-left:6px;padding-right:6px}
   .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
   .badge-ok{background:#e6f4ea;color:#1e7e34}
   .badge-off{background:#f0f2f4;color:#51606f}
+  .badge-chg{background:#fff4e5;color:#8a4b00}
   .drawer{position:fixed;top:0;right:0;width:min(420px,92vw);height:100%;background:#fff;
            box-shadow:-4px 0 18px rgba(16,34,54,.12);padding:18px;overflow:auto;display:none;z-index:20}
   .drawer.open{display:block}
   .warn{font-size:12px;color:#8a4b00;background:#fff8e6;border:1px solid #f0d89a;
         border-radius:6px;padding:8px 10px}
-  .err{color:#b42318;font-size:13px}
+  .err{color:#b42318;font-size:13px;white-space:pre-wrap}
+  .ok{color:#1e7e34;font-size:13px}
   button.text{background:none;border:none;color:#0b6bcb;cursor:pointer;padding:0;font-size:13px}
+  .batch-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 12px;
+             padding:10px 12px;background:#f6f8fa;border-radius:8px}
+  .batch-bar[hidden]{display:none!important}
+  .batch-bar .meta{margin:0}
+  tr.selected td{background:#eef6fc}
+  .modal-backdrop{position:fixed;inset:0;background:rgba(16,34,54,.45);z-index:40;
+                  display:none;align-items:center;justify-content:center;padding:16px}
+  .modal-backdrop.open{display:flex}
+  .modal{background:#fff;border-radius:12px;width:min(1100px,98vw);max-height:92vh;
+         display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(16,34,54,.22)}
+  .modal header{padding:16px 18px 8px;border-bottom:1px solid #e8edf2}
+  .modal header h2{margin:0;font-size:16px;color:#12314f}
+  .modal .body{padding:12px 18px;overflow:auto;flex:1}
+  .modal footer{padding:12px 18px;border-top:1px solid #e8edf2;display:flex;
+                gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+  .modal footer .meta{margin-right:auto}
+  .modal table{font-size:13px;table-layout:fixed}
+  .modal th:nth-child(1),.modal td:nth-child(1){width:18%}
+  .modal th:nth-child(2),.modal td:nth-child(2){width:7%}
+  .modal th:nth-child(3),.modal td:nth-child(3){width:14%}
+  .modal th:nth-child(4),.modal td:nth-child(4){width:22%}
+  .modal th:nth-child(5),.modal td:nth-child(5){width:26%}
+  .modal th:nth-child(6),.modal td:nth-child(6){width:13%}
+  .modal .field-in{width:100%;padding:6px 8px;border:1px solid #d0d7de;border-radius:5px;
+                   font-size:12px;box-sizing:border-box;background:#fff}
+  .modal select.field-in{max-width:none}
+  .modal .wm-wrap[hidden]{display:none!important}
+  button.primary{background:#12314f;color:#fff;border:none;border-radius:6px;
+                 padding:8px 14px;cursor:pointer;font-size:13px}
+  button.primary:disabled{opacity:.55;cursor:not-allowed}
+  button.ghost{background:#fff;color:#12314f;border:1px solid #d0d7de;border-radius:6px;
+               padding:8px 14px;cursor:pointer;font-size:13px}
+  button.ghost:hover{background:#f6f8fa;color:#12314f}
 </style>
 
 <div id="from-config-banner" class="warn" style="display:none;margin-bottom:16px">
-  连接已配置。请先<strong>刷新元数据</strong>扫描 ERP 表，打开详情后「加入抽取计划」，再在抽取表页确认并保存。
+  连接已配置。请先<strong>刷新元数据</strong>扫描 ERP 表，勾选后在确认框中保存到抽取计划。
   新安装默认 <code>tables: {}</code>，未选表时同步不会访问任何业务表。
 </div>
 
 <div class="card">
   <h2>ERP 元数据</h2>
-  <p class="meta">只读发现表结构。加入抽取计划后，请到「抽取表」页确认模式、业务键与水位并保存。抽取表不在「配置」页编辑。</p>
+  <p class="meta">只读发现表结构。批量加入时在确认框核对模式/键/水位，确认后写入 connect.yaml（状态变为「已加入」）。可稍后在「抽取表」页细调。</p>
   <div class="row">
     <button type="button" id="btn-scan">刷新元数据</button>
     <span id="scan-meta" class="meta">尚未扫描</span>
@@ -49,8 +85,14 @@
     <label><input id="f-planned" type="checkbox"> 仅已加入</label>
     <button type="button" id="btn-filter">筛选</button>
   </div>
+  <div id="batch-bar" class="batch-bar" hidden>
+    <label><input type="checkbox" id="chk-page"> 全选本页</label>
+    <button type="button" id="btn-batch-add" disabled>批量加入抽取计划</button>
+    <button type="button" class="text" id="btn-clear-sel">清除选择</button>
+    <span id="batch-meta" class="meta">已选 0 张表</span>
+  </div>
   <div id="table-list">
-    <p class="meta">请先点击上方「刷新元数据」。扫描完成后在此浏览表，打开详情并加入抽取计划。</p>
+    <p class="meta">请先点击上方「刷新元数据」。扫描完成后勾选表，在确认框中保存到抽取计划。</p>
   </div>
 </div>
 
@@ -60,18 +102,44 @@
   <div id="drawer-body" class="meta"></div>
   <div style="margin-top:14px">
     <button type="button" id="btn-add">加入抽取计划</button>
-    <p class="warn" style="margin-top:10px">不会立即保存到 connect.yaml；将写入本页草稿并跳转抽取表页。</p>
+    <p class="warn" style="margin-top:10px">将打开确认框；确认后写入 connect.yaml，状态变为「已加入」。</p>
+  </div>
+</div>
+
+<div id="confirm-modal" class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="modal">
+    <header>
+      <h2 id="confirm-title">确认加入抽取计划</h2>
+      <p class="meta" id="confirm-summary" style="margin:8px 0 0">—</p>
+    </header>
+    <div class="body">
+      <div id="confirm-diff" class="warn" style="margin-bottom:10px;display:none"></div>
+      <div id="confirm-err" class="err" style="margin-bottom:10px"></div>
+      <div id="confirm-table"></div>
+    </div>
+    <footer>
+      <span id="confirm-status" class="meta">准备确认信息…</span>
+      <button type="button" class="ghost" id="btn-confirm-cancel">取消</button>
+      <button type="button" class="ghost" id="btn-confirm-revalidate" disabled>重新校验</button>
+      <button type="button" class="primary" id="btn-confirm-save" disabled>确认并保存</button>
+    </footer>
   </div>
 </div>
 
 <script>
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function escAttr(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;')
+    .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 function authHeaders(){
   var h={'Content-Type':'application/json'};
   var t=sessionStorage.getItem('d2a_token'); if(t) h['Authorization']='Bearer '+t;
   return h;
 }
 var currentScan=null, selected=null, planSource=null, planRevision=null;
+var visibleRows=[], selectedKeys={};
+var pendingConfirm=null; // {src, revision, existing, incoming, hints, validated}
 var LEGACY_DRAFT_KEY='d2a_extraction_draft';
 (function(){
   var q=new URLSearchParams(location.search);
@@ -85,25 +153,67 @@ function draftKey(src){
   if(!src) throw new Error('draft key requires source');
   return 'd2a_extraction_draft:'+src;
 }
-function loadDraft(src){
+function clearDraft(src){
   try{
-    var d=JSON.parse(sessionStorage.getItem(draftKey(src))||'null');
-    if(d) return d;
-    // 迁移旧固定键（无 source 分区）
-    var legacy=JSON.parse(sessionStorage.getItem(LEGACY_DRAFT_KEY)||'null');
-    if(legacy && legacy.tables && (!legacy.source || legacy.source===src)){
-      sessionStorage.removeItem(LEGACY_DRAFT_KEY);
-      return legacy;
-    }
-    return null;
-  }catch(e){ return null; }
-}
-function saveDraft(src, d){
-  sessionStorage.setItem(draftKey(src), JSON.stringify(d));
-  sessionStorage.removeItem(LEGACY_DRAFT_KEY);
+    if(src) sessionStorage.removeItem(draftKey(src));
+    sessionStorage.removeItem(LEGACY_DRAFT_KEY);
+  }catch(e){}
 }
 function rememberSource(src){
   if(src) planSource=src;
+}
+function rowKey(t){ return String(t.schema)+'\0'+String(t.name); }
+function selectedCount(){ return Object.keys(selectedKeys).length; }
+
+function syncBatchBar(){
+  var n=selectedCount();
+  var bar=document.getElementById('batch-bar');
+  var btn=document.getElementById('btn-batch-add');
+  var meta=document.getElementById('batch-meta');
+  var page=document.getElementById('chk-page');
+  if(!visibleRows.length){ bar.hidden=true; return; }
+  bar.hidden=false;
+  meta.textContent='已选 '+n+' 张表';
+  btn.disabled=n===0;
+  btn.textContent=n?('批量加入抽取计划 ('+n+')'):'批量加入抽取计划';
+  var visibleKeys=visibleRows.map(rowKey);
+  var allOn=visibleKeys.length>0 && visibleKeys.every(function(k){ return !!selectedKeys[k]; });
+  var someOn=!allOn && visibleKeys.some(function(k){ return !!selectedKeys[k]; });
+  page.checked=allOn;
+  page.indeterminate=someOn;
+}
+
+function setRowSelected(t, on){
+  var k=rowKey(t);
+  if(on) selectedKeys[k]=t;
+  else delete selectedKeys[k];
+}
+
+function cleanSpec(spec){
+  var out={mode:spec.mode};
+  if(spec.schema) out.schema=spec.schema;
+  if(spec.key_columns&&spec.key_columns.length) out.key_columns=spec.key_columns;
+  if(spec.watermark) out.watermark=spec.watermark;
+  if(spec.schema_fingerprint) out.schema_fingerprint=spec.schema_fingerprint;
+  if(spec.validated_at) out.validated_at=spec.validated_at;
+  return out;
+}
+function specFromTable(t){
+  var uniq=(t.unique_keys&&t.unique_keys[0]&&t.unique_keys[0].columns)||[];
+  var keys=(t.primary_key&&t.primary_key.length)?t.primary_key:
+    ((t.key_suggestions&&t.key_suggestions[0]&&t.key_suggestions[0].columns)||uniq||[]);
+  var spec={
+    mode: keys.length?'incremental':'full_refresh',
+    schema: t.schema,
+    key_columns: keys.length?keys:null,
+    watermark: (t.watermark_candidates&&t.watermark_candidates[0])||null,
+    schema_fingerprint: t.schema_fingerprint||null
+  };
+  if(spec.mode==='full_refresh'){
+    delete spec.watermark;
+    delete spec.key_columns;
+  }
+  return cleanSpec(spec);
 }
 
 async function ensurePlanContext(){
@@ -115,48 +225,385 @@ async function ensurePlanContext(){
   return body;
 }
 
+function closeConfirmModal(){
+  pendingConfirm=null;
+  document.getElementById('confirm-modal').classList.remove('open');
+  document.getElementById('btn-confirm-save').disabled=true;
+  document.getElementById('btn-confirm-revalidate').disabled=true;
+}
+function openConfirmModal(){
+  document.getElementById('confirm-modal').classList.add('open');
+}
+
+function markConfirmDirty(){
+  if(!pendingConfirm) return;
+  pendingConfirm.validated=false;
+  document.getElementById('btn-confirm-save').disabled=true;
+  document.getElementById('btn-confirm-revalidate').disabled=false;
+  document.getElementById('confirm-status').textContent='已修改，请重新校验后再保存';
+  document.getElementById('confirm-err').textContent='';
+  syncConfirmModeFields();
+}
+
+function syncConfirmModeFields(){
+  document.querySelectorAll('#confirm-table tr[data-table]').forEach(function(tr){
+    var mode=tr.querySelector('select.cf-mode');
+    var wm=tr.querySelector('.wm-wrap');
+    var dash=tr.querySelector('.wm-dash');
+    if(!mode||!wm) return;
+    var inc=mode.value==='incremental';
+    wm.hidden=!inc;
+    if(dash) dash.hidden=inc;
+  });
+}
+
+function parseKeyOptionValue(v){
+  if(!v) return [];
+  try{ var cols=JSON.parse(v); return Array.isArray(cols)?cols.filter(Boolean):[]; }
+  catch(e){ return String(v).split(',').map(function(s){return s.trim();}).filter(Boolean); }
+}
+function buildKeyOptions(hint, selectedCols){
+  var opts=[], seen={};
+  function add(cols, label){
+    if(!cols||!cols.length) return;
+    var key=cols.join('\0');
+    if(seen[key]) return;
+    seen[key]=true;
+    opts.push({
+      value: JSON.stringify(cols),
+      label: cols.join(', ') + (label?(' · '+label):'')
+    });
+  }
+  add(hint.primary_key, 'PK');
+  (hint.unique_keys||[]).forEach(function(uk){
+    add(uk.columns||[], uk.kind==='primary'?'PK':(uk.name||'唯一'));
+  });
+  (hint.key_suggestions||[]).forEach(function(ks){
+    add(ks.columns||[], ks.name||'建议');
+  });
+  if(selectedCols&&selectedCols.length) add(selectedCols, null);
+  return opts;
+}
+function buildWmOptions(hint, selected){
+  var opts=[], seen={};
+  function add(col){
+    if(!col||seen[col]) return;
+    seen[col]=true;
+    opts.push(col);
+  }
+  (hint.watermark_candidates||[]).forEach(add);
+  if(selected) add(selected);
+  return opts;
+}
+
+function collectIncomingFromForm(){
+  var incoming={};
+  document.querySelectorAll('#confirm-table tr[data-table]').forEach(function(tr){
+    var name=tr.getAttribute('data-table');
+    var mode=(tr.querySelector('select.cf-mode')||{}).value||'full_refresh';
+    var schema=(tr.getAttribute('data-schema')||'').trim();
+    var keys=parseKeyOptionValue((tr.querySelector('select.cf-keys')||{}).value||'');
+    var wm=((tr.querySelector('select.cf-wm')||{}).value||'').trim();
+    var fp=tr.getAttribute('data-fp')||'';
+    var spec={mode:mode};
+    if(schema) spec.schema=schema;
+    if(keys.length) spec.key_columns=keys;
+    if(mode==='incremental' && wm) spec.watermark=wm;
+    if(fp) spec.schema_fingerprint=fp;
+    incoming[name]=cleanSpec(spec);
+  });
+  return incoming;
+}
+
+function buildMergedPlan(existing, incoming){
+  var merged={};
+  Object.keys(existing||{}).forEach(function(k){ merged[k]=cleanSpec(existing[k]); });
+  Object.keys(incoming||{}).forEach(function(k){ merged[k]=incoming[k]; });
+  return merged;
+}
+
+function updateConfirmDiff(existing, incoming){
+  var added=[], changed=[];
+  Object.keys(incoming).forEach(function(n){ (existing[n]?changed:added).push(n); });
+  var diffEl=document.getElementById('confirm-diff');
+  diffEl.style.display='block';
+  diffEl.textContent='新增 '+(added.join(', ')||'（无）')+'；覆盖已有 '+(changed.join(', ')||'（无）')+
+    '。可修改模式/键/水位后点「重新校验」。确认保存后写入 connect.yaml，connector 从下一轮生效。';
+}
+
+function renderConfirmTable(incoming, existing, resultsByTable, hints){
+  hints=hints||{};
+  resultsByTable=resultsByTable||{};
+  var html='<table><thead><tr><th>表</th><th>变更</th><th>模式</th><th>键</th><th>水位</th><th>校验</th></tr></thead><tbody>';
+  Object.keys(incoming).sort().forEach(function(name){
+    var spec=incoming[name]||{};
+    var was=!!(existing&&existing[name]);
+    var res=resultsByTable[name];
+    var st=res?(res.status||'—'):'—';
+    var ok=st==='ready';
+    var hint=hints[name]||{};
+    var selKeys=spec.key_columns||[];
+    var keyOpts=buildKeyOptions(hint, selKeys);
+    // incremental 契约要求显式非空 key_columns；无选项时只能切 full_refresh
+    var selKeyVal=selKeys.length?JSON.stringify(selKeys):(keyOpts[0]?keyOpts[0].value:'');
+    var wmOpts=buildWmOptions(hint, spec.watermark||'');
+    var inc=spec.mode==='incremental';
+    var keyHtml='<select class="field-in cf-keys" title="业务键 / 主键">';
+    if(!keyOpts.length){
+      keyHtml+='<option value="">（无可用键）</option>';
+    } else {
+      keyOpts.forEach(function(o){
+        keyHtml+='<option value="'+escAttr(o.value)+'"'+(o.value===selKeyVal?' selected':'')+'>'+esc(o.label)+'</option>';
+      });
+    }
+    keyHtml+='</select>';
+    var wmHtml='<select class="field-in cf-wm" title="水位列">';
+    if(!wmOpts.length){
+      wmHtml+='<option value="">（无水位候选）</option>';
+    } else {
+      wmOpts.forEach(function(col){
+        wmHtml+='<option value="'+escAttr(col)+'"'+(col===(spec.watermark||'')?' selected':'')+'>'+esc(col)+'</option>';
+      });
+    }
+    wmHtml+='</select>';
+    html+='<tr data-table="'+esc(name)+'" data-schema="'+esc(spec.schema||'')+
+      '" data-fp="'+esc(spec.schema_fingerprint||'')+'">'+
+      '<td title="'+esc(name)+'">'+esc(name)+'</td>'+
+      '<td><span class="badge '+(was?'badge-chg':'badge-ok')+'">'+(was?'覆盖':'新增')+'</span></td>'+
+      '<td><select class="field-in cf-mode">'+
+        '<option value="incremental"'+(inc?' selected':'')+'>incremental</option>'+
+        '<option value="full_refresh"'+(!inc?' selected':'')+'>full_refresh</option>'+
+      '</select></td>'+
+      '<td>'+keyHtml+'</td>'+
+      '<td><span class="wm-wrap"'+(inc?'':' hidden')+'>'+wmHtml+
+      '</span><span class="meta wm-dash"'+(inc?' hidden':'')+'>—</span></td>'+
+      '<td class="'+(ok?'ok':(st==='—'?'meta':'err'))+'">'+esc(st)+
+        (res&&res.detail&&!ok?(' · '+esc(res.detail)):'')+'</td></tr>';
+  });
+  html+='</tbody></table>';
+  document.getElementById('confirm-table').innerHTML=html;
+  syncConfirmModeFields();
+}
+
+async function validatePendingConfirm(){
+  if(!pendingConfirm) return false;
+  var incoming=collectIncomingFromForm();
+  pendingConfirm.incoming=incoming;
+  var merged=buildMergedPlan(pendingConfirm.existing, incoming);
+  pendingConfirm.merged=merged;
+  updateConfirmDiff(pendingConfirm.existing, incoming);
+  document.getElementById('confirm-err').textContent='';
+  document.getElementById('confirm-status').textContent='正在校验…';
+  document.getElementById('btn-confirm-save').disabled=true;
+  document.getElementById('btn-confirm-revalidate').disabled=true;
+
+  var vr=await fetch('/api/extraction-tables/validate',{method:'POST',headers:authHeaders(),
+    body:JSON.stringify({tables:merged, live:true})});
+  var vbody=await vr.json().catch(function(){return {};});
+  var resultsByTable={};
+  (vbody.results||[]).forEach(function(x){ resultsByTable[x.table]=x; });
+  renderConfirmTable(incoming, pendingConfirm.existing, resultsByTable, pendingConfirm.hints);
+  document.getElementById('btn-confirm-revalidate').disabled=false;
+
+  if(!vr.ok || !vbody.ok){
+    var msg=typeof formatApiError==='function'
+      ? formatApiError(vbody,'校验未通过')
+      : ((vbody.errors||[]).map(function(e){return (e.field||'')+': '+(e.message||'');}).join('\n')
+        || '校验未通过，请修改后重新校验');
+    document.getElementById('confirm-err').textContent=msg;
+    document.getElementById('confirm-status').textContent='校验未通过';
+    pendingConfirm.validated=false;
+    return false;
+  }
+  pendingConfirm.validated=true;
+  document.getElementById('confirm-status').textContent='校验通过，可确认保存';
+  document.getElementById('btn-confirm-save').disabled=false;
+  return true;
+}
+
+async function openBatchConfirm(tables){
+  if(!tables||!tables.length) return;
+  var incoming={}, hints={};
+  tables.forEach(function(t){
+    if(!t||!t.name||t.error_code) return;
+    incoming[t.name]=specFromTable(t);
+    hints[t.name]={
+      primary_key: t.primary_key||[],
+      unique_keys: t.unique_keys||[],
+      key_suggestions: t.key_suggestions||[],
+      watermark_candidates: t.watermark_candidates||[]
+    };
+  });
+  var names=Object.keys(incoming);
+  if(!names.length){ alert('没有可加入的表'); return; }
+
+  document.getElementById('confirm-err').textContent='';
+  document.getElementById('confirm-diff').style.display='none';
+  document.getElementById('confirm-status').textContent='读取当前计划…';
+  document.getElementById('btn-confirm-save').disabled=true;
+  document.getElementById('btn-confirm-revalidate').disabled=true;
+  document.getElementById('confirm-summary').textContent=
+    '即将加入 '+names.length+' 张表（可编辑模式/键/水位）';
+  renderConfirmTable(incoming, {}, {}, hints);
+  openConfirmModal();
+
+  var cur;
+  try{ cur=await ensurePlanContext(); }
+  catch(e){
+    document.getElementById('confirm-err').textContent='无法读取抽取计划: '+e.message;
+    document.getElementById('confirm-status').textContent='读取失败';
+    return;
+  }
+  pendingConfirm={
+    src: cur.source,
+    revision: cur.revision,
+    existing: cur.tables||{},
+    incoming: incoming,
+    hints: hints,
+    merged: null,
+    validated: false,
+    count: names.length
+  };
+  updateConfirmDiff(pendingConfirm.existing, incoming);
+  renderConfirmTable(incoming, pendingConfirm.existing, {}, hints);
+  document.getElementById('btn-confirm-revalidate').disabled=false;
+  await validatePendingConfirm();
+}
+
+async function confirmAndSave(){
+  if(!pendingConfirm) return;
+  if(!pendingConfirm.validated){
+    var ok=await validatePendingConfirm();
+    if(!ok) return;
+  }
+  var incoming=collectIncomingFromForm();
+  var merged=buildMergedPlan(pendingConfirm.existing, incoming);
+  pendingConfirm.incoming=incoming;
+  pendingConfirm.merged=merged;
+  var p=pendingConfirm;
+  var btn=document.getElementById('btn-confirm-save');
+  btn.disabled=true;
+  document.getElementById('btn-confirm-revalidate').disabled=true;
+  document.getElementById('confirm-status').textContent='正在保存…';
+  document.getElementById('confirm-err').textContent='';
+  var r=await fetch('/api/extraction-tables',{method:'PUT',headers:authHeaders(),
+    body:JSON.stringify({tables:merged, revision:p.revision})});
+  var saved=await r.json().catch(function(){return {};});
+  if(r.status===409){
+    document.getElementById('confirm-status').textContent='保存冲突，正在重新加载计划…';
+    document.getElementById('confirm-err').textContent=typeof formatApiError==='function'
+      ? formatApiError(saved,'配置已被其他会话修改')
+      : '配置已被其他会话修改';
+    try{
+      var cur=await ensurePlanContext();
+      p.revision=cur.revision;
+      p.existing=cur.tables||{};
+      planRevision=cur.revision;
+      var latestIncoming=collectIncomingFromForm();
+      p.incoming=latestIncoming;
+      p.merged=buildMergedPlan(p.existing, latestIncoming);
+      p.validated=false;
+      updateConfirmDiff(p.existing, latestIncoming);
+      renderConfirmTable(latestIncoming, p.existing, {}, p.hints);
+      document.getElementById('confirm-err').textContent=
+        (typeof formatApiError==='function'
+          ? formatApiError(saved,'配置已被其他会话修改')
+          : '配置已被其他会话修改')
+        + '。已重新加载当前计划与 revision，正在重新校验…';
+      document.getElementById('btn-confirm-revalidate').disabled=false;
+      await validatePendingConfirm();
+    }catch(e){
+      document.getElementById('confirm-err').textContent=
+        '配置冲突且重新加载失败: '+e.message+'。请关闭弹窗后重试。';
+      document.getElementById('confirm-status').textContent='保存冲突';
+      document.getElementById('btn-confirm-revalidate').disabled=false;
+    }
+    return;
+  }
+  if(!r.ok || !saved.ok){
+    document.getElementById('confirm-err').textContent=typeof formatApiError==='function'
+      ? formatApiError(saved,'保存失败')
+      : ((saved.errors||[]).map(function(e){return (e.field||'')+': '+(e.message||'');}).join('\n')
+        || JSON.stringify(saved));
+    document.getElementById('confirm-status').textContent='保存失败';
+    if(saved.results){
+      var by={}; saved.results.forEach(function(x){ by[x.table]=x; });
+      renderConfirmTable(incoming, p.existing, by, p.hints);
+    }
+    p.validated=false;
+    document.getElementById('btn-confirm-revalidate').disabled=false;
+    return;
+  }
+  clearDraft(p.src);
+  planRevision=saved.revision||planRevision;
+  selectedKeys={};
+  var count=Object.keys(incoming).length;
+  closeConfirmModal();
+  document.getElementById('drawer').classList.remove('open');
+  await loadTables();
+  document.getElementById('batch-meta').textContent=
+    '已保存 '+count+' 张表到抽取计划（已加入）';
+}
+
 async function addToPlan(){
   if(!selected) return;
-  var src=planSource || selected.source;
-  var tables={}, baseRev=planRevision;
-  try{
-    var cur=await ensurePlanContext();
-    src=cur.source;
-    baseRev=cur.revision;
-    var draft=loadDraft(src);
-    if(draft && draft.tables){ tables=JSON.parse(JSON.stringify(draft.tables)); }
-    else { tables=JSON.parse(JSON.stringify(cur.tables||{})); }
-  }catch(e){ alert('无法读取抽取计划: '+e.message); return; }
-  if(!src){ alert('无法确定 source，不能写入草稿'); return; }
-  var keys=selected.primary_key&&selected.primary_key.length?selected.primary_key:
-    ((selected.key_suggestions&&selected.key_suggestions[0]&&selected.key_suggestions[0].columns)||[]);
-  tables[selected.name]={
-    mode: keys.length?'incremental':'full_refresh',
-    schema: selected.schema,
-    key_columns: keys.length?keys:null,
-    watermark: (selected.watermark_candidates&&selected.watermark_candidates[0])||null,
-    schema_fingerprint: selected.schema_fingerprint||null
-  };
-  if(tables[selected.name].mode==='full_refresh'){
-    delete tables[selected.name].watermark;
-    delete tables[selected.name].key_columns;
-  }
-  saveDraft(src, {
-    source: src,
-    base_revision: baseRev,
-    tables: tables,
-    dirty: true,
-    updated_at: Date.now()
-  });
-  location.href='/tables?from=metadata';
+  await openBatchConfirm([selected]);
 }
+async function addSelectedToPlan(){
+  var list=Object.keys(selectedKeys).map(function(k){ return selectedKeys[k]; })
+    .filter(function(t){ return t && t.name && !t.error_code; });
+  if(!list.length) return;
+  await openBatchConfirm(list);
+}
+
 document.getElementById('btn-scan').onclick=startScan;
 document.getElementById('btn-filter').onclick=loadTables;
 document.getElementById('btn-close').onclick=function(){ document.getElementById('drawer').classList.remove('open'); };
 document.getElementById('btn-add').onclick=addToPlan;
+document.getElementById('btn-batch-add').onclick=addSelectedToPlan;
+document.getElementById('btn-confirm-cancel').onclick=closeConfirmModal;
+document.getElementById('btn-confirm-revalidate').onclick=function(){ validatePendingConfirm(); };
+document.getElementById('btn-confirm-save').onclick=confirmAndSave;
+document.getElementById('confirm-modal').addEventListener('click', function(e){
+  if(e.target===this) closeConfirmModal();
+});
+document.getElementById('confirm-table').addEventListener('change', function(e){
+  if(!e.target.closest('.cf-mode,.cf-keys,.cf-wm')) return;
+  markConfirmDirty();
+});
+document.getElementById('btn-clear-sel').onclick=function(){
+  selectedKeys={};
+  document.querySelectorAll('#table-list input.row-check').forEach(function(c){ c.checked=false; });
+  document.querySelectorAll('#table-list tr.selected').forEach(function(tr){ tr.classList.remove('selected'); });
+  syncBatchBar();
+};
+document.getElementById('chk-page').onchange=function(){
+  var on=this.checked;
+  visibleRows.forEach(function(t){
+    if(t.error_code) return;
+    setRowSelected(t, on);
+  });
+  document.querySelectorAll('#table-list input.row-check').forEach(function(c){
+    c.checked=on && !c.disabled;
+    var tr=c.closest('tr');
+    if(tr) tr.classList.toggle('selected', c.checked);
+  });
+  syncBatchBar();
+};
 document.getElementById('table-list').addEventListener('click', function(e){
   var b=e.target.closest('button[data-t]'); if(!b) return;
   openDetail(b.getAttribute('data-s'), b.getAttribute('data-t'));
+});
+document.getElementById('table-list').addEventListener('change', function(e){
+  var c=e.target.closest('input.row-check'); if(!c) return;
+  var schema=c.getAttribute('data-s');
+  var name=c.getAttribute('data-t');
+  var t=visibleRows.find(function(r){ return r.schema===schema && r.name===name; });
+  if(!t) return;
+  setRowSelected(t, c.checked);
+  var tr=c.closest('tr');
+  if(tr) tr.classList.toggle('selected', c.checked);
+  syncBatchBar();
 });
 ensurePlanContext().catch(function(){});
 
@@ -202,25 +649,43 @@ async function loadTables(){
   var r=await fetch('/api/metadata/tables?'+qs.toString(),{headers:authHeaders()});
   var body=await r.json();
   if(!r.ok){
+    visibleRows=[];
     document.getElementById('table-list').innerHTML='<p class="err">'+
       esc(typeof formatApiError==='function'?formatApiError(body,'加载失败'):
         (body.detail&&body.detail.detail?body.detail.detail:JSON.stringify(body)))+'</p>';
+    syncBatchBar();
     return;
   }
   rememberSource(body.source);
   var onlyPlanned=document.getElementById('f-planned').checked;
-  var rows=(body.tables||[]).filter(function(t){ return !onlyPlanned || t.in_extraction_plan; });
-  if(!rows.length){ document.getElementById('table-list').innerHTML='<p class="meta">无匹配表</p>'; return; }
-  var html='<table><thead><tr><th>表</th><th>类型</th><th>行数≈</th><th>PK</th><th>抽取</th><th></th></tr></thead><tbody>';
+  var rows=(body.tables||[]).filter(function(t){
+    return !onlyPlanned || t.in_extraction_plan;
+  });
+  visibleRows=rows;
+  if(!rows.length){
+    document.getElementById('table-list').innerHTML='<p class="meta">无匹配表</p>';
+    syncBatchBar();
+    return;
+  }
+  var html='<table><thead><tr><th class="check"><span class="meta">选</span></th><th>表</th><th>类型</th><th>行数≈</th><th>PK</th><th>抽取</th><th></th></tr></thead><tbody>';
   rows.forEach(function(t){
-    html+='<tr><td>'+esc(t.schema)+'.'+esc(t.name)+'</td><td>'+esc(t.object_type)+'</td><td>'+
+    var k=rowKey(t);
+    var disabled=!!t.error_code;
+    if(disabled) delete selectedKeys[k];
+    var checked=!disabled && !!selectedKeys[k];
+    if(checked) selectedKeys[k]=t;
+    var planned=!!t.in_extraction_plan;
+    html+='<tr class="'+(checked?'selected':'')+'"><td class="check"><input type="checkbox" class="row-check" data-s="'+
+      esc(t.schema)+'" data-t="'+esc(t.name)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+
+      '></td><td>'+esc(t.schema)+'.'+esc(t.name)+'</td><td>'+esc(t.object_type)+'</td><td>'+
       esc(t.estimated_rows==null?'—':t.estimated_rows)+'</td><td>'+esc((t.primary_key||[]).join(', ')||'—')+
-      '</td><td><span class="badge '+(t.in_extraction_plan?'badge-ok':'badge-off')+'">'+
-      (t.in_extraction_plan?'已加入':'未加入')+'</span></td><td><button type="button" class="text" data-s="'+
+      '</td><td><span class="badge '+(planned?'badge-ok':'badge-off')+'">'+
+      (planned?'已加入':'未加入')+'</span></td><td><button type="button" class="text" data-s="'+
       esc(t.schema)+'" data-t="'+esc(t.name)+'">详情</button></td></tr>';
   });
   html+='</tbody></table>';
   document.getElementById('table-list').innerHTML=html;
+  syncBatchBar();
 }
 async function openDetail(schema, table){
   var r=await fetch('/api/metadata/tables/'+encodeURIComponent(schema)+'/'+encodeURIComponent(table),{headers:authHeaders()});
@@ -231,7 +696,7 @@ async function openDetail(schema, table){
   document.getElementById('drawer-title').textContent=body.schema+'.'+body.name;
   var html='<p>类型 '+esc(body.object_type)+' · 指纹 '+esc(body.schema_fingerprint||'—')+'</p>';
   html+='<p>PK: '+esc((body.primary_key||[]).join(', ')||'—')+'</p>';
-  html+='<p>水位候选: '+esc((body.watermark_candidates||[]).join(', ')||'—')+' <em>待确认</em></p>';
+  html+='<p>水位候选: '+esc((body.watermark_candidates||[]).join(', ')||'—')+'</p>';
   html+='<table><thead><tr><th>列</th><th>类型</th><th>NULL</th></tr></thead><tbody>';
   (body.columns||[]).forEach(function(c){
     html+='<tr><td>'+esc(c.name)+'</td><td>'+esc(c.sql_type)+'</td><td>'+esc(c.nullable?'是':'否')+'</td></tr>';

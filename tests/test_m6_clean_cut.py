@@ -70,8 +70,10 @@ def test_middle_admin_pages_and_nav_present():
     assert 'href="/tables"' in layout
     meta = (TEMPLATES / "metadata.html").read_text(encoding="utf-8")
     tables = (TEMPLATES / "tables.html").read_text(encoding="utf-8")
-    assert "d2a_extraction_draft:" in meta
-    assert "d2a_extraction_draft:" in tables
+    assert "d2a_extraction_draft:" in meta  # 元数据页清理历史草稿键
+    assert "saveTablesPlan" in tables
+    assert "btn-batch-edit" in tables
+    assert "btn-draft-only" not in tables
     assert "/api/extraction-tables" in meta
     assert "/api/extraction-tables" in tables
 

@@ -121,11 +121,15 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
 
     meta_page = client.get("/metadata", headers=h).text
     tables_page = client.get("/tables", headers=h).text
-    if "d2a_extraction_draft:" not in meta_page or "d2a_extraction_draft:" not in tables_page:
-        _fail("middle: pages missing source-scoped draft key")
+    if "d2a_extraction_draft:" not in meta_page:
+        _fail("middle: metadata page missing draft-key cleanup helper")
+    if "saveTablesPlan" not in tables_page or "btn-batch-edit" not in tables_page:
+        _fail("middle: tables page missing direct-save / batch edit")
+    if "btn-draft-only" in tables_page or "preferDraft" in tables_page:
+        _fail("middle: tables page still exposes draft save flow")
     if "前往元数据" not in tables_page and 'href="/metadata"' not in tables_page:
         _fail("middle: tables page missing metadata guidance")
-    _ok("middle: metadata/tables draft key + empty-plan guidance")
+    _ok("middle: metadata/tables pages (direct save + batch edit)")
 
     r = client.get("/api/status", headers=h)
     if r.status_code != 200 or r.json().get("schedule_source") != "derived_from_yaml":

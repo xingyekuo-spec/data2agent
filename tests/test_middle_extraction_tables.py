@@ -236,28 +236,45 @@ def test_put_ignores_client_live_false(env, monkeypatch):
     assert set(data["sources"][SOURCE]["tables"]) == {"CUSTOMER", "CURRENCY"}
 
 
-def test_html_pages_share_source_scoped_draft_key(env):
+def test_html_metadata_batch_confirm_and_tables_direct_save(env):
     client, _ = env
     meta = client.get("/metadata", headers=_h()).text
     tables = client.get("/tables", headers=_h()).text
+    # 元数据页仍清理历史草稿键；抽取表页不再提供草稿保存
     assert "d2a_extraction_draft:" in meta
-    assert "d2a_extraction_draft:" in tables
-    # 不得再写入无 source 分区的固定草稿键（迁移读取除外）
     assert "sessionStorage.setItem('d2a_extraction_draft'" not in meta
-    assert "sessionStorage.setItem('d2a_extraction_draft'" not in tables
     assert "sessionStorage.setItem(LEGACY_DRAFT_KEY" not in meta
     assert "rememberSource" in meta
-    assert "selected.source" in meta or "body.source" in meta
+    assert "btn-batch-add" in meta
+    assert "openBatchConfirm" in meta
+    assert "confirmAndSave" in meta
+    assert "confirm-modal" in meta
+    assert "/api/extraction-tables" in meta
+    assert "确认并保存" in meta
+    assert "cf-mode" in meta
+    assert "buildKeyOptions" in meta
+    assert "<th>Schema</th>" not in meta
+    # incremental 要求显式非空 key_columns，不得提供空键「依赖库主键」选项
+    assert "不指定，依赖库主键" not in meta
+    # 409 冲突后应重新拉取计划/revision，而不是沿用旧 revision 反复失败
+    assert "已重新加载当前计划与 revision" in meta
+    assert "ensurePlanContext" in meta
 
-
-def test_tables_page_keeps_draft_base_revision_for_optimistic_lock(env):
-    """恢复草稿时不得用服务器最新 revision 替换 base_revision，否则会静默覆盖他会话改动。"""
-    client, _ = env
-    page = client.get("/tables", headers=_h()).text
-    assert "draft.base_revision" in page
-    assert "base !== body.revision" in page
-    assert "revision=base" in page
-    assert "保存将触发冲突" in page
+    assert "edit-modal" in tables
+    assert "openEdit" in tables
+    assert "saveTablesPlan" in tables
+    assert "btn-batch-edit" in tables
+    assert "btn-batch-remove" in tables
+    assert 'id="btn-apply">保存并生效</button>' in tables
+    assert "btn-draft-only" not in tables
+    assert "dirty-banner" not in tables
+    assert "preferDraft" not in tables
+    assert "sessionStorage.setItem(key" not in tables  # 不再 persist 抽取草稿
+    assert "data-remove" in tables
+    assert "key_columns（" not in tables
+    assert "批量编辑" in tables
+    assert "不指定，依赖库主键" not in tables
+    assert "已重新加载当前计划与 revision" in tables
 
 
 def test_html_metadata_and_tables_pages(env):

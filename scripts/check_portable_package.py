@@ -111,8 +111,12 @@ def _check_middle_admin(portable: Path) -> None:
     meta = (tpl / "metadata.html").read_text(encoding="utf-8")
     tables = (tpl / "tables.html").read_text(encoding="utf-8")
     layout = (tpl / "layout.html").read_text(encoding="utf-8")
-    if "d2a_extraction_draft:" not in meta or "d2a_extraction_draft:" not in tables:
-        _fail("middle_admin draft key missing (expected d2a_extraction_draft:<source>)")
+    if "d2a_extraction_draft:" not in meta:
+        _fail("middle_admin metadata draft-key cleanup missing")
+    if "saveTablesPlan" not in tables or "btn-batch-edit" not in tables:
+        _fail("middle_admin tables page missing direct-save / batch edit")
+    if "btn-draft-only" in tables or "preferDraft" in tables:
+        _fail("middle_admin tables page still exposes draft save flow")
     if "/api/extraction-tables" not in meta or "/api/extraction-tables" not in tables:
         _fail("middle_admin pages missing /api/extraction-tables")
     if 'href="/metadata"' not in layout or 'href="/tables"' not in layout:

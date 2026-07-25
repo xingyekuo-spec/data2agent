@@ -5,30 +5,54 @@
   .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
         box-shadow:0 1px 3px rgba(16,34,54,.08)}
   .card h2{font-size:15px;margin:0 0 8px;color:#12314f}
-  .card-lead{font-size:13px;color:#51606f;margin:0 0 16px;line-height:1.5;max-width:640px}
+  .card-lead{font-size:13px;color:#51606f;margin:0 0 16px;line-height:1.5;max-width:720px}
   .field{display:block;margin-bottom:14px}
+  .field:last-child{margin-bottom:0}
   .field-label{display:block;font-size:13px;color:#12314f;font-weight:600;margin-bottom:4px}
   .field-hint{display:block;font-size:12px;color:#6a7682;margin:4px 0 0;line-height:1.45;max-width:560px}
   .field input[type=text],.field input[type=number],.field input[type=password]{
     width:100%;max-width:560px;box-sizing:border-box;
-    padding:8px 10px;border:1px solid #d0d7de;border-radius:6px;font-size:14px}
+    padding:8px 10px;border:1px solid #d0d7de;border-radius:6px;font-size:14px;background:#fff}
   .banner{background:#e8f4fd;border:1px solid #b6d9f5;color:#0b4a6f;border-radius:8px;
           padding:12px 14px;margin-bottom:16px;font-size:13px;line-height:1.5}
   .banner.warn{background:#fff8e6;border-color:#f0d78c;color:#6b5200}
   .banner code{background:#fff;padding:2px 6px;border-radius:4px}
-  .errors{color:#b42318;font-size:13px;margin-top:8px}
-  .source-block{border-top:1px solid #e8edf2;padding-top:14px;margin-top:18px}
-  .source-block h2{margin-bottom:6px}
-  .meta-line{font-size:12px;color:#6a7682;margin:8px 0 0}
-  .section-title{font-size:13px;color:#51606f;margin:18px 0 10px;padding-top:8px;
-                 border-top:1px solid #e8edf2}
-  .section-title:first-of-type{border-top:0;margin-top:0;padding-top:0}
-  .conn-box{border:1px solid #e8edf2;border-radius:8px;padding:12px;margin-top:12px}
+  .errors{color:#b42318;font-size:13px;margin-top:8px;white-space:pre-wrap}
+  .meta-line{font-size:12px;color:#6a7682;margin:0;line-height:1.55}
+  .tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid #e8edf2;margin:0 0 16px}
+  button.tab{appearance:none;background:transparent;border:0;border-bottom:2px solid transparent;
+       color:#51606f;padding:10px 14px;margin-bottom:-1px;border-radius:0;cursor:pointer;
+       font-size:13px;font-weight:600}
+  button.tab:hover{background:#f6f8fa;color:#12314f}
+  button.tab.active{color:#12314f;border-bottom-color:#12314f;background:transparent}
+  .tab-panel{display:none}
+  .tab-panel.active{display:block}
+  .panel-lead{font-size:12px;color:#6a7682;margin:0 0 14px;line-height:1.5;max-width:680px}
+  .group-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0 18px}
+  .cred-box{display:flex;flex-wrap:wrap;gap:10px 18px;margin:0}
+  .cred-item{font-size:12px;color:#51606f;background:#fafbfc;border:1px solid #e8edf2;border-radius:6px;
+             padding:8px 10px;min-width:180px}
+  .cred-item strong{display:block;color:#12314f;font-size:12px;margin-bottom:2px}
+  .actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:16px;
+           padding-top:14px;border-top:1px solid #e8edf2}
+  .conn-result{margin-top:10px}
+  .source-block{border:1px solid #e8edf2;border-radius:10px;padding:14px 16px;margin-bottom:14px;background:#fafbfc}
+  .source-block:last-child{margin-bottom:0}
+  .source-title{margin:0 0 4px;font-size:14px;color:#12314f}
+  .source-lead{margin:0 0 14px;font-size:12px;color:#6a7682}
+  .subtabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+  button.subtab{appearance:none;background:#fff;border:1px solid #d0d7de;color:#51606f;
+          border-radius:999px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:600}
+  button.subtab:hover{border-color:#12314f;color:#12314f;background:#fff}
+  button.subtab.active{background:#12314f;border-color:#12314f;color:#fff}
+  button.subtab.active:hover{background:#0f2840;color:#fff}
+  .subpanel{display:none}
+  .subpanel.active{display:block}
 </style>
 
 <div id="setup-banner" class="banner warn" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
   本机是<strong>中间服务器</strong>：从工厂 ERP <strong>只读抽取</strong>数据，再推送到<strong>数据平台</strong>。<br>
-  请按下方三步填写。各类密码只写入本机 <code>config/secrets.env</code>，不会出现在 YAML 里。
+  请按页签填写。各类密码只写入本机 <code>config/secrets.env</code>，不会出现在 YAML 里。
 </div>
 
 <div id="daily-banner" class="banner" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
@@ -39,103 +63,136 @@
 <div id="restart-banner" class="banner" style="display:none"></div>
 
 <!-- 首次配置 -->
-<form id="setup-form" class="card" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
+<form id="setup-form" class="card" novalidate style="display:{% if needs_setup %}block{% else %}none{% endif %}">
   <h2>首次配置</h2>
-  <p class="card-lead">填完并保存后，本机即可按设定从 ERP 抽数并推到数据平台。</p>
+  <p class="card-lead">按页签填完后点「保存并启用」，本机即可从 ERP 抽数并推到数据平台。</p>
 
-  <p class="section-title">一、推送到哪里（数据平台）</p>
-  <label class="field">
-    <span class="field-label">数据平台接收地址</span>
-    <input type="text" name="platform_url" placeholder="http://192.168.1.100:8850" required>
-    <span class="field-hint">
-      填<strong>数据平台那台电脑</strong>的内网 IP + 端口 <code>8850</code>
-      （平台「数据接收服务」的地址）。中间机会把抽到的数据推到这里。<br>
-      不是本机管理页（8851），也不是平台管理页（8849）。示例：<code>http://10.0.0.20:8850</code>
-    </span>
-  </label>
-  <label class="field">
-    <span class="field-label">推送口令（须与平台「接收口令」相同）</span>
-    <input type="password" name="ingest_token" required>
-    <span class="field-hint">
-      与数据平台首次配置里的「接收口令」必须完全一致，否则平台会拒收。
-      建议先在平台机设好再抄到这里，或两边约定同一串长密码。
-    </span>
-  </label>
+  <div class="tabs" role="tablist" aria-label="首次配置分组">
+    <button type="button" class="tab active" data-tabs="setup" data-tab="setup-push">1. 推送目标</button>
+    <button type="button" class="tab" data-tabs="setup" data-tab="setup-erp">2. ERP 连接</button>
+    <button type="button" class="tab" data-tabs="setup" data-tab="setup-local">3. 管理与节奏</button>
+  </div>
 
-  <p class="section-title">二、从哪里抽（工厂 ERP / SQL Server）</p>
-  <label class="field">
-    <span class="field-label">ERP 服务器</span>
-    <input type="text" name="erp_server" placeholder="例如 192.168.1.50 或 DESKTOP\SQLEXPRESS" required>
-    <span class="field-hint">SQL Server 的主机名或 IP。命名实例请整段填写，例如 <code>DESKTOP\SQLEXPRESS</code>。</span>
-  </label>
-  <label class="field">
-    <span class="field-label">ERP 端口</span>
-    <input type="number" name="erp_port" value="1433">
-    <span class="field-hint">默认实例一般填 <code>1433</code>。命名实例请填 <code>0</code>（按实例名连接，不再拼端口）。</span>
-  </label>
-  <label class="field">
-    <span class="field-label">ERP 数据库名</span>
-    <input type="text" name="erp_database" placeholder="E10 业务库名称" required>
-    <span class="field-hint">要抽取的鼎捷 E10（或同类）业务库名称，不是 master 系统库。</span>
-  </label>
-  <label class="field">
-    <span class="field-label">ERP 只读账号</span>
-    <input type="text" name="erp_user" required>
-    <span class="field-hint">仅需查询（SELECT）权限的只读账号，不要用 sa 或可改业务数据的账号。</span>
-  </label>
-  <label class="field">
-    <span class="field-label">ERP 密码</span>
-    <input type="password" name="erp_password" required>
-    <span class="field-hint">只保存在本机 <code>secrets.env</code>，不会写入配置 YAML。</span>
-  </label>
+  <div id="setup-push" class="tab-panel active" data-tabs="setup">
+    <p class="panel-lead">中间机把抽到的数据推到平台「数据接收服务」。口令须与平台首次配置一致。</p>
+    <label class="field">
+      <span class="field-label">数据平台接收地址</span>
+      <input type="text" name="platform_url" placeholder="http://192.168.1.100:8850" required>
+      <span class="field-hint">
+        填<strong>数据平台那台电脑</strong>的内网 IP + 端口 <code>8850</code>。
+        不是本机管理页（8851），也不是平台管理页（8849）。示例：<code>http://10.0.0.20:8850</code>
+      </span>
+    </label>
+    <label class="field">
+      <span class="field-label">推送口令（须与平台「接收口令」相同）</span>
+      <input type="password" name="ingest_token" required>
+      <span class="field-hint">建议先在平台机设好再抄到这里，或两边约定同一串长密码。</span>
+    </label>
+  </div>
 
-  <p class="section-title">三、本机管理与节奏</p>
-  <label class="field">
-    <span class="field-label">管理界面登录密码</span>
-    <input type="password" name="admin_token" required>
-    <span class="field-hint">以后打开本机管理页时输入的密码。可与推送口令不同，请自行保管。</span>
-  </label>
-  <label class="field">
-    <span class="field-label">抽取间隔</span>
-    <input type="text" name="sync_every" value="30m">
-    <span class="field-hint">多久自动抽一轮。<code>30m</code>=30 分钟，<code>1h</code>=1 小时。一般保持默认即可。</span>
-  </label>
+  <div id="setup-erp" class="tab-panel" data-tabs="setup">
+    <p class="panel-lead">只读连接 ERP。账号仅需 SELECT 权限，不要使用 sa 或可改业务数据的账号。</p>
+    <div class="group-grid">
+      <label class="field">
+        <span class="field-label">ERP 服务器</span>
+        <input type="text" name="erp_server" placeholder="例如 192.168.1.50 或 DESKTOP\SQLEXPRESS" required>
+        <span class="field-hint">主机名或 IP。命名实例请整段填写，例如 <code>DESKTOP\SQLEXPRESS</code>。</span>
+      </label>
+      <label class="field">
+        <span class="field-label">ERP 端口</span>
+        <input type="number" name="erp_port" value="1433">
+        <span class="field-hint">默认实例一般填 <code>1433</code>。命名实例请填 <code>0</code>。</span>
+      </label>
+      <label class="field">
+        <span class="field-label">ERP 数据库名</span>
+        <input type="text" name="erp_database" placeholder="E10 业务库名称" required>
+        <span class="field-hint">要抽取的业务库名称，不是 master 系统库。</span>
+      </label>
+      <label class="field">
+        <span class="field-label">ERP 只读账号</span>
+        <input type="text" name="erp_user" required>
+        <span class="field-hint">仅查询权限的只读账号。</span>
+      </label>
+      <label class="field">
+        <span class="field-label">ERP 密码</span>
+        <input type="password" name="erp_password" required>
+        <span class="field-hint">只保存在本机 <code>secrets.env</code>，不会写入配置 YAML。</span>
+      </label>
+    </div>
+  </div>
+
+  <div id="setup-local" class="tab-panel" data-tabs="setup">
+    <p class="panel-lead">管理页登录密码与自动抽取间隔。抽取间隔一般保持默认即可。</p>
+    <div class="group-grid">
+      <label class="field">
+        <span class="field-label">管理界面登录密码</span>
+        <input type="password" name="admin_token" required>
+        <span class="field-hint">以后打开本机管理页时输入。可与推送口令不同。</span>
+      </label>
+      <label class="field">
+        <span class="field-label">抽取间隔</span>
+        <input type="text" name="sync_every" value="30m">
+        <span class="field-hint"><code>30m</code>=30 分钟，<code>1h</code>=1 小时。</span>
+      </label>
+    </div>
+  </div>
+
   <div id="setup-errors" class="errors"></div>
-  <button type="submit">保存并启用</button>
+  <div class="actions">
+    <button type="button" class="tab-nav" data-tabs="setup" data-dir="-1" style="display:none">上一步</button>
+    <button type="button" class="tab-nav" data-tabs="setup" data-dir="1">下一步</button>
+    <button type="submit">保存并启用</button>
+  </div>
 </form>
 
 <!-- 日常配置 -->
-<div id="conn-card" class="card" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
-  <h2>测试数据库连接</h2>
-  <p class="card-lead">只验证 ERP 是否可达与元数据权限，不读取抽取表。本页不显示密码、DSN 或 Token 明文。</p>
-  <div class="conn-box">
-    <button type="button" id="btn-conn-test">测试数据库连接</button>
-    <a href="/metadata?from=config" id="link-metadata" style="margin-left:12px;display:none">下一步：前往元数据扫描选表 →</a>
-    <p id="conn-result" class="meta-line"></p>
-    <p class="field-hint" style="margin-top:8px">抽取表不在本页编辑。连接成功后请到「元数据」扫描，再在「抽取表」确认并保存。</p>
+<div id="daily-card" class="card" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
+  <h2>配置</h2>
+  <p class="card-lead">按页签查看连接、路径与运行参数。抽取表请到「元数据 / 抽取表」管理。</p>
+
+  <div class="tabs" role="tablist" aria-label="日常配置分组">
+    <button type="button" class="tab active" data-tabs="daily" data-tab="daily-conn">连接测试</button>
+    <button type="button" class="tab" data-tabs="daily" data-tab="daily-paths">路径</button>
+    <button type="button" class="tab" data-tabs="daily" data-tab="daily-source">数据源</button>
   </div>
+
+  <div id="daily-conn" class="tab-panel active" data-tabs="daily">
+    <p class="panel-lead">验证 ERP 是否可达与元数据权限。本页不显示密码、DSN 或 Token 明文。</p>
+    <div class="actions" style="margin-top:0;padding-top:0;border-top:0">
+      <button type="button" id="btn-conn-test">测试数据库连接</button>
+      <a href="/metadata?from=config" id="link-metadata" style="display:none">下一步：前往元数据扫描选表 →</a>
+    </div>
+    <p id="conn-result" class="meta-line conn-result"></p>
+  </div>
+
+  <form id="config-form">
+    <div id="daily-paths" class="tab-panel" data-tabs="daily">
+      <p class="panel-lead">模板与本机状态库位置。一般保持安装默认，无需修改。</p>
+      <div class="group-grid">
+        <label class="field">
+          <span class="field-label">模板目录</span>
+          <input type="text" name="templates" id="cfg-templates">
+          <span class="field-hint">业务对象定义目录（通常是本包内的 <code>app\templates</code>）。</span>
+        </label>
+        <label class="field">
+          <span class="field-label">本机状态库路径</span>
+          <input type="text" name="landing" id="cfg-landing">
+          <span class="field-hint">水位/审计本地库路径（推送模式下不在此落业务 raw 表）。</span>
+        </label>
+      </div>
+    </div>
+
+    <div id="daily-source" class="tab-panel" data-tabs="daily">
+      <p class="panel-lead">控制抽取节奏、资源保护与推送目标。保存后请重启抽取进程。</p>
+      <div id="sources-container"></div>
+    </div>
+
+    <div id="config-errors" class="errors"></div>
+    <div class="actions" id="daily-save-actions" style="display:none">
+      <button type="submit">保存配置</button>
+    </div>
+  </form>
 </div>
-
-<form id="config-form" class="card" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
-  <h2>运行参数</h2>
-  <p class="card-lead">调整路径与抽取策略。保存后请重启抽取进程（便携包可再双击一次 <code>data2agent.exe</code>，或重启对应 Windows 服务）。</p>
-
-  <p class="section-title">路径</p>
-  <label class="field">
-    <span class="field-label">模板目录</span>
-    <input type="text" name="templates" id="cfg-templates">
-    <span class="field-hint">业务对象定义所在目录（通常是本包内的 <code>app\templates</code>）。一般不要改。</span>
-  </label>
-  <label class="field">
-    <span class="field-label">本机状态库路径</span>
-    <input type="text" name="landing" id="cfg-landing">
-    <span class="field-hint">中间机存放抽取水位/审计的本地库文件路径（推送模式下不在此落业务 raw 表）。一般不要改。</span>
-  </label>
-
-  <div id="sources-container"></div>
-  <div id="config-errors" class="errors"></div>
-  <button type="submit" style="margin-top:8px">保存配置</button>
-</form>
 
 <script>
 (function () {
@@ -152,12 +209,72 @@
   }
 
   function esc(s) {
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
   }
 
   function field(label, hint, inputHtml) {
     return '<label class="field"><span class="field-label">' + label + '</span>' +
       inputHtml + '<span class="field-hint">' + hint + '</span></label>';
+  }
+
+  function activateTab(tabsKey, tabId) {
+    document.querySelectorAll('.tab[data-tabs="' + tabsKey + '"]').forEach(function (btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-tab') === tabId);
+    });
+    document.querySelectorAll('.tab-panel[data-tabs="' + tabsKey + '"]').forEach(function (panel) {
+      panel.classList.toggle('active', panel.id === tabId);
+    });
+    if (tabsKey === 'setup') syncSetupNav();
+    if (tabsKey === 'daily') syncDailySaveActions();
+  }
+
+  function setupTabIds() {
+    return ['setup-push', 'setup-erp', 'setup-local'];
+  }
+
+  function syncSetupNav() {
+    var ids = setupTabIds();
+    var active = document.querySelector('.tab-panel[data-tabs="setup"].active');
+    var idx = active ? ids.indexOf(active.id) : 0;
+    var prev = document.querySelector('.tab-nav[data-tabs="setup"][data-dir="-1"]');
+    var next = document.querySelector('.tab-nav[data-tabs="setup"][data-dir="1"]');
+    if (prev) prev.style.display = idx > 0 ? 'inline-block' : 'none';
+    if (next) next.style.display = idx >= 0 && idx < ids.length - 1 ? 'inline-block' : 'none';
+  }
+
+  function syncDailySaveActions() {
+    var active = document.querySelector('.tab-panel[data-tabs="daily"].active');
+    var actions = document.getElementById('daily-save-actions');
+    if (!actions) return;
+    // 连接测试页不显示保存；路径/数据源显示
+    actions.style.display = (active && active.id !== 'daily-conn') ? 'flex' : 'none';
+  }
+
+  document.querySelectorAll('.tab[data-tab]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      activateTab(btn.getAttribute('data-tabs'), btn.getAttribute('data-tab'));
+    });
+  });
+
+  document.querySelectorAll('.tab-nav').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var tabsKey = btn.getAttribute('data-tabs');
+      var dir = parseInt(btn.getAttribute('data-dir'), 10);
+      var ids = setupTabIds();
+      var active = document.querySelector('.tab-panel[data-tabs="' + tabsKey + '"].active');
+      var idx = active ? ids.indexOf(active.id) : 0;
+      var next = ids[idx + dir];
+      if (next) activateTab(tabsKey, next);
+    });
+  });
+
+  function activateSubtab(block, subId) {
+    block.querySelectorAll('.subtab').forEach(function (btn) {
+      btn.classList.toggle('active', btn.getAttribute('data-sub') === subId);
+    });
+    block.querySelectorAll('.subpanel').forEach(function (panel) {
+      panel.classList.toggle('active', panel.getAttribute('data-sub') === subId);
+    });
   }
 
   function renderSource(name, src) {
@@ -166,31 +283,66 @@
     var sink = src.sink || {};
     var dsnOk = src.dsn_env_set ? '已配置' : '未配置';
     var tokOk = sink.token_env_set ? '已配置' : '未配置';
+    var sid = 'src-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
     return '<div class="source-block" data-source="' + esc(name) + '">' +
-      '<h2>数据源：' + esc(name) + '</h2>' +
-      '<p class="card-lead">以下控制抽取频率、资源用量和推送地址。ERP 连接串在环境变量/凭据文件中，本页只显示是否已配置。</p>' +
-      field('抽取间隔',
-        '多久自动抽一轮。例：<code>30m</code>、<code>1h</code>。',
-        '<input type="text" data-key="sync_every" value="' + esc(src.sync_every || '') + '">') +
-      field('错峰时间窗（可空）',
-        '仅在这些时段内允许抽取，减轻对 ERP 压力。格式如 <code>22:00-06:00</code>；多个用英文逗号分隔。留空=全天可抽。',
-        '<input type="text" data-key="windows" value="' + esc(w) + '" placeholder="例如 22:00-06:00">') +
-      field('回看窗口',
-        '增量抽取时往回多看多久，避免漏数。例：<code>3d</code>=3 天。',
-        '<input type="text" data-key="lookback" value="' + esc(src.lookback || '') + '">') +
-      field('每批行数',
-        '单次查询最多取多少行。过大可能占 ERP 资源，过小则轮次变多。',
-        '<input type="number" data-key="rate.batch_size" value="' + esc(rate.batch_size != null ? rate.batch_size : '') + '">') +
-      field('限速（行/秒）',
-        '抽取时的大致速度上限，用于保护 ERP。例：<code>2000</code>。',
-        '<input type="number" data-key="rate.rows_per_second" value="' + esc(rate.rows_per_second != null ? rate.rows_per_second : '') + '">') +
-      field('数据平台接收地址',
-        '与首次配置相同：平台机内网地址 + <code>8850</code>。改完后需重启抽取进程。',
-        '<input type="text" data-key="sink.url" value="' + esc(sink.url || '') + '" placeholder="http://平台IP:8850">') +
-      '<p class="meta-line">ERP 连接凭据：' + esc(src.dsn_env || '（未命名）') +
-      ' — ' + dsnOk + '　｜　推送口令环境变量：' + esc(sink.token_env || '') +
-      ' — ' + tokOk + '</p>' +
-      '</div>';
+      '<h3 class="source-title">数据源：' + esc(name) + '</h3>' +
+      '<p class="source-lead">控制该源的抽取节奏、资源用量与推送目标。</p>' +
+      '<div class="subtabs" role="tablist">' +
+        '<button type="button" class="subtab active" data-sub="' + sid + '-pace">抽取节奏</button>' +
+        '<button type="button" class="subtab" data-sub="' + sid + '-rate">资源保护</button>' +
+        '<button type="button" class="subtab" data-sub="' + sid + '-sink">推送到平台</button>' +
+        '<button type="button" class="subtab" data-sub="' + sid + '-cred">凭据状态</button>' +
+      '</div>' +
+
+      '<div class="subpanel active" data-sub="' + sid + '-pace">' +
+        '<div class="group-grid">' +
+          field('抽取间隔',
+            '多久自动抽一轮。例：<code>30m</code>、<code>1h</code>。',
+            '<input type="text" data-key="sync_every" value="' + esc(src.sync_every || '') + '">') +
+          field('错峰时间窗（可空）',
+            '仅在这些时段内允许抽取。格式如 <code>22:00-06:00</code>；多个用英文逗号分隔。留空=全天可抽。',
+            '<input type="text" data-key="windows" value="' + esc(w) + '" placeholder="例如 22:00-06:00">') +
+          field('回看窗口',
+            '增量抽取时往回多看多久，避免漏数。例：<code>3d</code>=3 天。',
+            '<input type="text" data-key="lookback" value="' + esc(src.lookback || '') + '">') +
+        '</div>' +
+      '</div>' +
+
+      '<div class="subpanel" data-sub="' + sid + '-rate">' +
+        '<div class="group-grid">' +
+          field('每批行数',
+            '单次查询最多取多少行。过大可能占 ERP 资源，过小则轮次变多。',
+            '<input type="number" data-key="rate.batch_size" value="' + esc(rate.batch_size != null ? rate.batch_size : '') + '">') +
+          field('限速（行/秒）',
+            '抽取时的大致速度上限。例：<code>2000</code>。',
+            '<input type="number" data-key="rate.rows_per_second" value="' + esc(rate.rows_per_second != null ? rate.rows_per_second : '') + '">') +
+        '</div>' +
+      '</div>' +
+
+      '<div class="subpanel" data-sub="' + sid + '-sink">' +
+        field('数据平台接收地址',
+          '平台机内网地址 + <code>8850</code>。改完后需重启抽取进程。',
+          '<input type="text" data-key="sink.url" value="' + esc(sink.url || '') + '" placeholder="http://平台IP:8850">') +
+      '</div>' +
+
+      '<div class="subpanel" data-sub="' + sid + '-cred">' +
+        '<p class="panel-lead">密码与连接串不在本页展示或修改；请改 secrets.env。</p>' +
+        '<div class="cred-box">' +
+          '<div class="cred-item"><strong>ERP 连接凭据</strong>' + esc(src.dsn_env || '（未命名）') + ' — ' + dsnOk + '</div>' +
+          '<div class="cred-item"><strong>推送口令环境变量</strong>' + esc(sink.token_env || '（未命名）') + ' — ' + tokOk + '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function bindSourceSubtabs() {
+    sourcesEl.querySelectorAll('.source-block').forEach(function (block) {
+      block.querySelectorAll('.subtab').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          activateSubtab(block, btn.getAttribute('data-sub'));
+        });
+      });
+    });
   }
 
   function loadDaily() {
@@ -206,12 +358,30 @@
         Object.keys(x.j.sources || {}).forEach(function (name) {
           html += renderSource(name, x.j.sources[name]);
         });
-        sourcesEl.innerHTML = html || '<p class="card-lead">当前配置中没有数据源。</p>';
+        sourcesEl.innerHTML = html || '<p class="meta-line">当前配置中没有数据源。</p>';
+        bindSourceSubtabs();
+        syncDailySaveActions();
       });
+  }
+
+  function validateSetupForm(form) {
+    var required = form.querySelectorAll('[required]');
+    for (var i = 0; i < required.length; i++) {
+      var el = required[i];
+      if (String(el.value || '').trim()) continue;
+      var panel = el.closest('.tab-panel');
+      if (panel) activateTab('setup', panel.id);
+      el.focus();
+      return '请先填写：' + ((el.previousElementSibling && el.previousElementSibling.textContent) || el.name);
+    }
+    return '';
   }
 
   document.getElementById('setup-form').addEventListener('submit', function (ev) {
     ev.preventDefault();
+    var errBox = document.getElementById('setup-errors');
+    var missing = validateSetupForm(ev.target);
+    if (missing) { errBox.textContent = missing; return; }
     var fd = new FormData(ev.target);
     var body = {};
     fd.forEach(function (v, k) { body[k] = v; });
@@ -284,7 +454,9 @@
       });
   });
 
-  if (!needsSetup) {
+  if (needsSetup) {
+    syncSetupNav();
+  } else {
     loadDaily();
     try {
       var last = JSON.parse(sessionStorage.getItem('d2a_last_connection_test') || 'null');
@@ -323,6 +495,7 @@
           }
         });
     };
+    syncDailySaveActions();
   }
 })();
 </script>
