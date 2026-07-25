@@ -15,6 +15,11 @@ on:
         description: "目标 Python 版本(须与 embeddable / wheel 一致)"
         required: false
         default: "3.14"
+      create_release:
+        description: "创建 GitHub Release(手动触发时勾选才发布,否则仅产 artifact)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -141,8 +146,8 @@ jobs:
             -LauncherExe dist/launchers/platform/data2agent.exe
           Copy-Item "dist/portable/d2a-portable-platform-$v.zip" .
 
-      - name: 上传构建产物(workflow_dispatch)
-        if: github.ref_type != 'tag'
+      - name: 上传构建产物(workflow_dispatch 且不发布)
+        if: github.ref_type != 'tag' && !inputs.create_release
         uses: actions/upload-artifact@v4
         with:
           name: d2a-portable-${{ steps.ver.outputs.version }}
@@ -151,7 +156,7 @@ jobs:
             d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
 
       - name: 生成 Release 正文(含协议兼容性)
-        if: github.ref_type == 'tag'
+        if: github.ref_type == 'tag' || inputs.create_release
         shell: bash
         run: |
           python -m pip install -e ".[ingest]"
@@ -173,12 +178,14 @@ jobs:
               --release-version "${{ steps.ver.outputs.version }}"
           } > release-body.md
 
-      - name: 创建 Release 并上传附件(tag)
-        if: github.ref_type == 'tag'
+      - name: 创建 Release 并上传附件(tag 或手动勾选发布)
+        if: github.ref_type == 'tag' || inputs.create_release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('prerelease-{0}', steps.ver.outputs.version) }}
           files: |
             d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
             d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
           generate_release_notes: true
           body_path: release-body.md
+          prerelease: ${{ github.ref_type != 'tag' }}
