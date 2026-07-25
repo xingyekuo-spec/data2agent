@@ -209,54 +209,6 @@ class HttpPushSink:
             f"建议：检查平台接收端点、网络与 ingest Token 后重试"
         )
 
-    def _begin_with_log(self, source: str, info: TableInfo, mode: SyncMode,
-                        snapshot_id: str | None) -> None:
-        t0 = time.time()
-        try:
-            self.begin_table(source, info, mode=mode, snapshot_id=snapshot_id)
-        except Exception:
-            self._log_push("begin_table", info.name, mode,
-                           status="failed", error_detail=_brief_error_str(),
-                           duration_ms=(time.time() - t0) * 1000)
-            raise
-        self._log_push("begin_table", info.name, mode, status="ok",
-                       duration_ms=(time.time() - t0) * 1000)
-
-    def _write_with_log(self, source: str, info: TableInfo, rows: list[dict],
-                        batch_id: str, mode: SyncMode,
-                        snapshot_id: str | None) -> int:
-        t0 = time.time()
-        try:
-            n = self.write(source, info, rows, batch_id, mode=mode,
-                           snapshot_id=snapshot_id)
-        except Exception:
-            self._log_push("write", info.name, mode, batch_id=batch_id,
-                           rows_count=len(rows), status="failed",
-                           error_detail=_brief_error_str(),
-                           duration_ms=(time.time() - t0) * 1000)
-            raise
-        self._log_push("write", info.name, mode, batch_id=batch_id,
-                       rows_count=n, status="ok",
-                       duration_ms=(time.time() - t0) * 1000)
-        return n
-
-    def _complete_with_log(self, source: str, info: TableInfo, completion_id: str,
-                           rows: int, batches: int, mode: SyncMode,
-                           snapshot_id: str | None) -> None:
-        t0 = time.time()
-        try:
-            self.complete_table(source, info, completion_id, rows, batches,
-                                mode=mode, snapshot_id=snapshot_id)
-        except Exception:
-            self._log_push("complete_table", info.name, mode,
-                           batch_id=completion_id, rows_count=rows,
-                           status="failed", error_detail=_brief_error_str(),
-                           duration_ms=(time.time() - t0) * 1000)
-            raise
-        self._log_push("complete_table", info.name, mode,
-                       batch_id=completion_id, rows_count=rows, status="ok",
-                       duration_ms=(time.time() - t0) * 1000)
-
     def _base_payload(self, source: str, info: TableInfo, mode: SyncMode,
                       snapshot_id: str | None) -> dict:
         return {
@@ -272,32 +224,63 @@ class HttpPushSink:
     def begin_table(self, source: str, info: TableInfo, *, mode: SyncMode,
                     snapshot_id: str | None = None) -> None:
         self.ensure_protocol()
-        payload = self._base_payload(source, info, mode, snapshot_id)
-        self._post_with_retry("/ingest/table-begin", payload)
+        t0 = time.time()
+        try:
+            payload = self._base_payload(source, info, mode, snapshot_id)
+            self._post_with_retry("/ingest/table-begin", payload)
+        except Exception:
+            self._log_push("begin_table", info.name, mode,
+                           status="failed", error_detail=_brief_error_str(),
+                           duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push("begin_table", info.name, mode, status="ok",
+                       duration_ms=(time.time() - t0) * 1000)
 
     def write(self, source: str, info: TableInfo, rows: list[dict], batch_id: str, *,
               mode: SyncMode = "incremental",
               snapshot_id: str | None = None) -> int:
         self.ensure_protocol()
-        payload = {
-            **self._base_payload(source, info, mode, snapshot_id),
-            "batch_id": batch_id,
-            "rows": [{c: normalize_value(r.get(c)) for c, _ in info.columns} for r in rows],
-        }
-        self._post_with_retry("/ingest/batch", payload)
+        t0 = time.time()
+        try:
+            payload = {
+                **self._base_payload(source, info, mode, snapshot_id),
+                "batch_id": batch_id,
+                "rows": [{c: normalize_value(r.get(c)) for c, _ in info.columns} for r in rows],
+            }
+            self._post_with_retry("/ingest/batch", payload)
+        except Exception:
+            self._log_push("write", info.name, mode, batch_id=batch_id,
+                           rows_count=len(rows), status="failed",
+                           error_detail=_brief_error_str(),
+                           duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push("write", info.name, mode, batch_id=batch_id,
+                       rows_count=len(rows), status="ok",
+                       duration_ms=(time.time() - t0) * 1000)
         return len(rows)
 
     def complete_table(self, source: str, info: TableInfo, completion_id: str,
                        rows: int, batches: int, *, mode: SyncMode = "incremental",
                        snapshot_id: str | None = None) -> None:
         self.ensure_protocol()
-        payload = {
-            **self._base_payload(source, info, mode, snapshot_id),
-            "completion_id": completion_id,
-            "rows": rows,
-            "batches": batches,
-        }
-        self._post_with_retry("/ingest/table-complete", payload)
+        t0 = time.time()
+        try:
+            payload = {
+                **self._base_payload(source, info, mode, snapshot_id),
+                "completion_id": completion_id,
+                "rows": rows,
+                "batches": batches,
+            }
+            self._post_with_retry("/ingest/table-complete", payload)
+        except Exception:
+            self._log_push("complete_table", info.name, mode,
+                           batch_id=completion_id, rows_count=rows,
+                           status="failed", error_detail=_brief_error_str(),
+                           duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push("complete_table", info.name, mode,
+                       batch_id=completion_id, rows_count=rows, status="ok",
+                       duration_ms=(time.time() - t0) * 1000)
 
     def abort_table(self, source: str, info: TableInfo, *, mode: SyncMode,
                     snapshot_id: str | None = None) -> None:
