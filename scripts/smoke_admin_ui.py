@@ -166,10 +166,13 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
         _fail(f"middle: connection/test: {r.text[:300]}")
     _ok("middle: /api/connection/test (sqlite 不支持纯 ODBC 探测)")
 
+    # 改异步后:执行成功返回 executed=True + status="started" + run_id
     r = client.post("/api/actions/trigger", headers=h, json={"action": "sync"})
-    if r.status_code != 200 or r.json().get("overlap_warning") is not True:
+    if r.status_code != 200 or r.json().get("executed") is not True:
         _fail(f"middle: trigger sync: {r.text[:200]}")
-    _ok("middle: trigger sync + overlap_warning")
+    body = r.json()
+    run_id = body.get("run_id")
+    _ok(f"middle: trigger sync (async, run_id={run_id})")
 
     r = client.post("/api/actions/trigger", headers=h, json={"action": "reconcile"})
     if r.status_code != 400:
