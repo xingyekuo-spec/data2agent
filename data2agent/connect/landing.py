@@ -512,6 +512,25 @@ CREATE TABLE IF NOT EXISTS d2a_snapshot_batch (
 );
 CREATE INDEX IF NOT EXISTS idx_d2a_snapshot_status
     ON d2a_snapshot (source, table_name, status);
+CREATE TABLE IF NOT EXISTS d2a_http_push_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    run_id INTEGER,
+    step_kind TEXT NOT NULL,       -- begin_table | write | complete_table | abort_table
+    table_name TEXT NOT NULL,
+    mode TEXT NOT NULL,            -- incremental | full_refresh
+    batch_id TEXT,
+    rows_count INTEGER,
+    status TEXT NOT NULL,          -- ok | failed
+    error_detail TEXT,
+    retry_count INTEGER NOT NULL DEFAULT 0,
+    duration_ms REAL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_push_log_source
+    ON d2a_http_push_log (source, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_d2a_push_log_batch
+    ON d2a_http_push_log (batch_id);
 """
 
 
@@ -1384,6 +1403,67 @@ class LandingStore:
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (_now(), source, action, sql, rows, round(duration_ms, 2), batch_id))
         self.con.commit()
+
+    # ---- HTTP 推送记录 ----
+
+    def record_push_log(
+        self, source: str, step_kind: str, table: str, mode: str,
+        *, run_id: int | None = None, batch_id: str | None = None,
+        rows_count: int | None = None, status: str = "ok",
+        error_detail: str | None = None, retry_count: int = 0,
+        duration_ms: float | None = None,
+    ) -> int:
+        """记录一次 HTTP 推送;供 HttpPushSink 调用。"""
+        cur = self.con.execute(
+            "INSERT INTO d2a_http_push_log "
+            "(source, run_id, step_kind, table_name, mode, batch_id, rows_count, "
+            "status, error_detail, retry_count, duration_ms, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (source, run_id, step_kind, table, mode, batch_id, rows_count,
+             status, error_detail, retry_count, duration_ms, _now()))
+        self.con.commit()
+        return cur.lastrowid
+
+    def list_push_logs(
+        self, source: str | None = None, limit: int = 50, offset: int = 0,
+    ) -> tuple[list[sqlite3.Row], int]:
+        """列出推送记录,返回 (rows, total)。"""
+        where = ""
+        params: list = []
+        if source:
+            where = "WHERE source = ?"
+            params.append(source)
+        (total,) = self.con.execute(
+            f"SELECT COUNT(*) FROM d2a_http_push_log {where}", params).fetchone()
+        rows = self.con.execute(
+            f"SELECT * FROM d2a_http_push_log {where} "
+            f"ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset]).fetchall()
+        return rows, total
+
+    def push_log_detail(self, log_id: int) -> sqlite3.Row | None:
+        return self.con.execute(
+            "SELECT * FROM d2a_http_push_log WHERE id = ?", (log_id,)).fetchone()
+
+    def push_log_batch_progress(
+        self, source: str, table_name: str, batch_id: str,
+    ) -> dict:
+        """给定 batch 的推送进度摘要。"""
+        rows = self.con.execute(
+            "SELECT status, COUNT(*) AS cnt, COALESCE(SUM(rows_count), 0) AS total_rows, "
+            "COALESCE(SUM(duration_ms), 0) AS total_ms "
+            "FROM d2a_http_push_log "
+            "WHERE source = ? AND table_name = ? AND batch_id = ? "
+            "GROUP BY status",
+            (source, table_name, batch_id)).fetchall()
+        result: dict = {"ok": 0, "failed": 0, "rows": 0, "duration_ms": 0.0}
+        for r in rows:
+            status_key = "ok" if r["status"] == "ok" else "failed"
+            result[status_key] = r["cnt"]
+            result["rows"] += r["total_rows"] or 0
+            result["duration_ms"] += r["total_ms"] or 0
+        result["total"] = result["ok"] + result["failed"]
+        return result
 
     def start_run(self, source: str, run_type: str, *, commit: bool = True) -> int:
         if run_type not in self.RUN_TYPES:

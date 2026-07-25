@@ -14,13 +14,22 @@ import json
 import time
 import urllib.error
 import urllib.request
-from typing import Callable, Literal, Protocol
+from typing import Callable, Literal, Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .landing import LandingStore
 
 from ..ingest.protocol import INGEST_PROTOCOL_VERSION
 from .adapters.base import TableInfo
 from .landing import LandingStore, normalize_value
 
 SyncMode = Literal["incremental", "full_refresh"]
+
+
+def _brief_error_str() -> str:
+    import sys
+    exc = sys.exc_info()[1]
+    return f"{type(exc).__name__}: {str(exc)[:200]}" if exc else ""
 
 
 class Sink(Protocol):
@@ -111,7 +120,10 @@ class HttpPushSink:
     def __init__(self, url: str, token: str | None = None, *,
                  timeout: float = 30.0, retries: int = 3,
                  post: Callable[[str, dict, str | None, float], None] | None = None,
-                 get_json: Callable[[str, str | None, float], dict] | None = None):
+                 get_json: Callable[[str, str | None, float], dict] | None = None,
+                 landing: "LandingStore | None" = None,
+                 source: str = "",
+                 run_id: int | None = None):
         if not url:
             raise ValueError("HttpPushSink 需要平台接收端点 url")
         self.url = url.rstrip("/")
@@ -121,6 +133,26 @@ class HttpPushSink:
         self._post = post or _urllib_post
         self._get_json = get_json or _urllib_get_json
         self._protocol_checked = False
+        # push log 写入
+        self._landing = landing
+        self._source = source
+        self._run_id = run_id
+
+    def _log_push(self, step_kind: str, table: str, mode: SyncMode,
+                  batch_id: str | None = None, rows_count: int | None = None,
+                  status: str = "ok", error_detail: str | None = None,
+                  retry_count: int = 0, duration_ms: float | None = None) -> None:
+        if self._landing is None:
+            return
+        try:
+            self._landing.record_push_log(
+                source=self._source, step_kind=step_kind, table=table,
+                mode=mode, run_id=self._run_id, batch_id=batch_id,
+                rows_count=rows_count, status=status,
+                error_detail=error_detail, retry_count=retry_count,
+                duration_ms=duration_ms)
+        except Exception:
+            pass  # push log 写入失败不应中断同步
 
     def ensure_protocol(self) -> None:
         """同步前确认本端发送协议落在平台 supported 列表内;否则 fail-fast。
@@ -163,6 +195,7 @@ class HttpPushSink:
 
     def _post_with_retry(self, path: str, payload: dict) -> None:
         last: Exception | None = None
+        t0 = time.time()
         for attempt in range(self.retries):
             try:
                 self._post(f"{self.url}{path}", payload, self.token, self.timeout)
@@ -170,10 +203,59 @@ class HttpPushSink:
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last = e
                 time.sleep(min(2 ** attempt, 10))
+        elapsed = (time.time() - t0) * 1000
         raise RuntimeError(
             f"推送 {path} 失败(重试 {self.retries} 次):{last}。"
             f"建议：检查平台接收端点、网络与 ingest Token 后重试"
         )
+
+    def _begin_with_log(self, source: str, info: TableInfo, mode: SyncMode,
+                        snapshot_id: str | None) -> None:
+        t0 = time.time()
+        try:
+            self.begin_table(source, info, mode=mode, snapshot_id=snapshot_id)
+        except Exception:
+            self._log_push("begin_table", info.name, mode,
+                           status="failed", error_detail=_brief_error_str(),
+                           duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push("begin_table", info.name, mode, status="ok",
+                       duration_ms=(time.time() - t0) * 1000)
+
+    def _write_with_log(self, source: str, info: TableInfo, rows: list[dict],
+                        batch_id: str, mode: SyncMode,
+                        snapshot_id: str | None) -> int:
+        t0 = time.time()
+        try:
+            n = self.write(source, info, rows, batch_id, mode=mode,
+                           snapshot_id=snapshot_id)
+        except Exception:
+            self._log_push("write", info.name, mode, batch_id=batch_id,
+                           rows_count=len(rows), status="failed",
+                           error_detail=_brief_error_str(),
+                           duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push("write", info.name, mode, batch_id=batch_id,
+                       rows_count=n, status="ok",
+                       duration_ms=(time.time() - t0) * 1000)
+        return n
+
+    def _complete_with_log(self, source: str, info: TableInfo, completion_id: str,
+                           rows: int, batches: int, mode: SyncMode,
+                           snapshot_id: str | None) -> None:
+        t0 = time.time()
+        try:
+            self.complete_table(source, info, completion_id, rows, batches,
+                                mode=mode, snapshot_id=snapshot_id)
+        except Exception:
+            self._log_push("complete_table", info.name, mode,
+                           batch_id=completion_id, rows_count=rows,
+                           status="failed", error_detail=_brief_error_str(),
+                           duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push("complete_table", info.name, mode,
+                       batch_id=completion_id, rows_count=rows, status="ok",
+                       duration_ms=(time.time() - t0) * 1000)
 
     def _base_payload(self, source: str, info: TableInfo, mode: SyncMode,
                       snapshot_id: str | None) -> dict:

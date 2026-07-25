@@ -58,14 +58,16 @@ def build_adapter(name: str, scfg: SourceConfig,
     return MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
 
 
-def build_sink(scfg: SourceConfig, landing: LandingStore):
+def build_sink(scfg: SourceConfig, landing: LandingStore, *,
+               source: str = "", run_id: int | None = None):
     """按 sink 配置构建落地出口:local=本地库;http=推给平台(§12.3)。"""
     if scfg.sink.type == "http":
         import os
 
         from .sink import HttpPushSink
         token = os.environ.get(scfg.sink.token_env or "", "") or None
-        return HttpPushSink(scfg.sink.url, token)
+        return HttpPushSink(scfg.sink.url, token,
+                            landing=landing, source=source, run_id=run_id)
     from .sink import LocalSink
     return LocalSink(landing)
 
@@ -126,7 +128,7 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
 
         try:
             adapter = build_adapter(name, scfg, landing)
-            sink = build_sink(scfg, landing)
+            sink = build_sink(scfg, landing, source=name, run_id=run_id)
         except Exception as exc:
             landing.finish_running_run(run_id, status="failed",
                                        detail=_brief_error(exc))

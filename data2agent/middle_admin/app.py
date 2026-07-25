@@ -1215,6 +1215,65 @@ def create_app(
         finally:
             db.con.close()
 
+    # ---- 推送记录 ----
+
+    def _map_push_log_row(r) -> dict:
+        return {
+            "id": r["id"], "source": r["source"], "run_id": r["run_id"],
+            "step_kind": r["step_kind"], "table_name": r["table_name"],
+            "mode": r["mode"], "batch_id": r["batch_id"],
+            "rows_count": r["rows_count"], "status": r["status"],
+            "error_detail": r["error_detail"], "retry_count": r["retry_count"],
+            "duration_ms": r["duration_ms"], "created_at": r["created_at"],
+        }
+
+    @api.get("/push-logs")
+    def push_logs(source: str | None = None, limit: int = 50,
+                  offset: int = 0) -> dict:
+        if not (1 <= limit <= 100):
+            raise http_error(422, "limit 须为 1..100", "调整分页参数")
+        if offset < 0:
+            raise http_error(422, "offset 须 >= 0", "调整分页参数")
+        cfg = reload_config()
+        if source is not None:
+            _name, _scfg = _resolve_source(cfg, source)
+        else:
+            source = None
+        db = LandingStore(cfg.landing)
+        try:
+            rows, total = db.list_push_logs(source=source, limit=limit, offset=offset)
+            return {
+                "push_logs": [_map_push_log_row(r) for r in rows],
+                "total": total, "limit": limit, "offset": offset,
+            }
+        finally:
+            db.con.close()
+
+    @api.get("/push-logs/batch/{batch_id}")
+    def push_log_batch_detail(batch_id: str) -> dict:
+        cfg = reload_config()
+        db = LandingStore(cfg.landing)
+        try:
+            rows = db.con.execute(
+                "SELECT * FROM d2a_http_push_log WHERE batch_id = ? "
+                "ORDER BY created_at, id", (batch_id,)).fetchall()
+            if not rows:
+                raise http_error(404, f"批次 {batch_id} 无推送记录", "确认 batch_id")
+            # 利用第一条记录算进度
+            first = rows[0]
+            progress = db.push_log_batch_progress(
+                first["source"], first["table_name"], batch_id)
+            return {
+                "batch_id": batch_id,
+                "source": first["source"],
+                "table_name": first["table_name"],
+                "mode": first["mode"],
+                "steps": [_map_push_log_row(r) for r in rows],
+                "progress": progress,
+            }
+        finally:
+            db.con.close()
+
     # ---- 内部 ----
 
     def _run_sync_worker(
