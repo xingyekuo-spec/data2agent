@@ -19,6 +19,13 @@
   .badge-ok{background:#e6f4ea;color:#1e7e34}
   .badge-off{background:#fdecea;color:#b42318}
   .badge-warn{background:#fff8e6;color:#8a4b00}
+  .badge-running{background:#e6f0fa;color:#1a56db}
+  .run-row{cursor:pointer}
+  .run-row:hover{background:#f5f7fa}
+  .steps-panel{display:none;margin-top:8px}
+  .steps-panel.open{display:block}
+  .progress-bar{height:4px;background:#e8edf2;border-radius:2px;margin:4px 0;overflow:hidden}
+  .progress-bar-fill{height:100%;background:#1a56db;border-radius:2px;transition:width .3s}
 </style>
 
 <div id="status-panel"
@@ -38,13 +45,24 @@
     <a href="/tables">前往抽取表</a>
   </div>
   <p class="warn" style="margin-top:12px">
-    手动触发可能与 NSSM 计划任务重叠；响应中的 <code>overlap_warning</code> 为 true 时请确认无并发同步。
+    手动触发已改为后台异步执行，不再阻塞页面；右侧运行面板每 2 秒刷新进度。
   </p>
   <div id="trigger-result" class="meta" style="margin-top:10px"></div>
   <div id="test-result" class="meta" style="margin-top:10px"></div>
 </div>
 
+<!-- 运行历史面板 -->
+<div class="card" id="runs-panel">
+  <p class="layer">运行历史</p>
+  <h2>最近运行</h2>
+  <p class="meta" style="margin-bottom:10px">点击行展开查看逐表步骤。最近一条在运行中时每 2 秒自动刷新。</p>
+  <div id="runs-list"><p class="meta">加载中…</p></div>
+</div>
+
 <script>
+var _watchTimer = null;
+var _activeRunId = null;
+
 function esc(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
@@ -54,6 +72,33 @@ function authHeaders() {
   if (token) h['Authorization'] = 'Bearer ' + token;
   return h;
 }
+
+function fmtTime(t) {
+  if (!t) return '—';
+  try { return new Date(t).toLocaleString(); } catch(e) { return t; }
+}
+
+function fmtAge(finished) {
+  if (!finished) return '';
+  try {
+    var ms = Date.now() - new Date(finished).getTime();
+    if (ms < 0) return '';
+    var s = Math.floor(ms / 1000);
+    if (s < 60) return s + 's 前';
+    if (s < 3600) return Math.floor(s / 60) + 'm 前';
+    return Math.floor(s / 3600) + 'h 前';
+  } catch (e) { return ''; }
+}
+
+function badge(status) {
+  var cls = status === 'ok' || status === 'completed' ? 'badge-ok'
+    : status === 'failed' ? 'badge-off'
+    : status === 'running' ? 'badge-running'
+    : status === 'paused' || status === 'started' ? 'badge-warn'
+    : 'badge-off';
+  return '<span class="badge ' + cls + '">' + esc(status) + '</span>';
+}
+
 function renderStatus(data) {
   var html = '';
   (data.sources || []).forEach(function (src) {
@@ -80,6 +125,19 @@ function renderStatus(data) {
             ' · 下次预估: ' + esc(src.next_sync_at || '—') + '</p>';
     html += '<p><span class="badge ' + (inWin ? 'badge-ok' : 'badge-off') + '">' +
             (inWin ? '窗口内' : '窗口外') + '</span></p>';
+
+    if (src.running_run) {
+      var rr = src.running_run;
+      html += '<p class="oknote" style="margin-top:6px">⏳ 同步进行中 — 运行 #' + rr.id +
+              ' 开始于 ' + esc(rr.started_at) + '</p>';
+    }
+    if (src.latest_run) {
+      var lr = src.latest_run;
+      html += '<p class="meta" style="margin-top:6px">最近运行 #' + lr.id +
+              ' ' + badge(lr.status) + ' · ' + esc(lr.tables || 0) + ' 表 · ' +
+              esc(lr.rows || 0) + ' 行' + (lr.finished_at ? ' · ' + fmtAge(lr.finished_at) : '') + '</p>';
+    }
+
     if (src.watermarks && src.watermarks.length) {
       html += '<table><thead><tr><th>表</th><th>水位列</th><th>高水位</th><th>上次同步</th></tr></thead><tbody>';
       src.watermarks.forEach(function (w) {
@@ -94,6 +152,145 @@ function renderStatus(data) {
   });
   return html || '<div class="card"><p class="meta">无源配置</p></div>';
 }
+
+function renderRuns(data) {
+  if (!data.runs || !data.runs.length) return '<p class="meta">暂无运行记录</p>';
+  var html = '<table><thead><tr><th>ID</th><th>源</th><th>状态</th><th>开始</th><th>表数</th><th>行数</th><th>耗时</th></tr></thead><tbody>';
+  data.runs.forEach(function(r) {
+    var duration = r.finished_at && r.started_at
+      ? ((new Date(r.finished_at) - new Date(r.started_at)) / 1000).toFixed(0) + 's'
+      : '—';
+    html += '<tr class="run-row" onclick="toggleSteps(' + r.id + ')">';
+    html += '<td>#' + r.id + '</td><td>' + esc(r.source) + '</td><td>' + badge(r.status) + '</td>';
+    html += '<td>' + fmtTime(r.started_at) + '</td><td>' + (r.tables || 0) + '</td>';
+    html += '<td>' + (r.rows || 0) + '</td><td>' + duration + '</td></tr>';
+    html += '<tr class="steps-panel" id="steps-' + r.id + '"><td colspan="7"><p class="meta">加载步骤中…</p></td></tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+function renderSteps(steps) {
+  if (!steps || !steps.length) return '<p class="meta">无步骤记录</p>';
+  var html = '<table style="margin:0 12px;width:calc(100% - 24px)"><thead><tr>' +
+    '<th>#</th><th>目标</th><th>状态</th><th>行数</th><th>批次</th><th>最后进度</th>' +
+    '</tr></thead><tbody>';
+  steps.forEach(function(s, i) {
+    var hasProgress = s.batches !== null && s.batches !== undefined;
+    var rowsOut = (s.rows_out !== null && s.rows_out !== undefined) ? s.rows_out : (
+      hasProgress ? 0 : '—');
+    var batches = hasProgress ? s.batches : (
+      s.status === 'ok' || s.status === 'paused' || s.status === 'aborted' ? '—' : (
+      s.status === 'running' ? '—' : '—'));
+    var progressTime = s.progressed_at
+      ? fmtTime(s.progressed_at)
+      : (hasProgress ? fmtTime(s.finished_at || s.started_at)
+         : (s.status === 'failed' ? '—' : (
+            s.status === 'running' ? '等待首批完成…' : '历史运行未记录批次进度')));
+    html += '<tr><td>' + (s.ordinal || i + 1) + '</td><td>' + esc(s.target) + '</td>' +
+      '<td>' + badge(s.status) + '</td>' +
+      '<td>' + rowsOut + '</td>' +
+      '<td>' + batches + '</td>' +
+      '<td>' + progressTime + '</td></tr>';
+    if (s.status === 'running' && s.rows_out === null && s.rows_out !== 0) {
+      html += '<tr><td></td><td colspan="5" style="color:#6a7682">⏳ 等待首批完成…</td></tr>';
+    }
+    if (s.status === 'failed' && s.error) {
+      html += '<tr><td></td><td colspan="5" style="color:#b42318;font-size:12px">失败原因: ' + esc(s.error) + '</td></tr>';
+    }
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+var _stepsCache = {};
+function toggleSteps(runId) {
+  var panel = document.getElementById('steps-' + runId);
+  if (!panel) return;
+  if (panel.classList.contains('open')) {
+    panel.classList.remove('open');
+    return;
+  }
+  panel.classList.add('open');
+  if (_stepsCache[runId]) {
+    panel.innerHTML = '<td colspan="7">' + renderSteps(_stepsCache[runId]) + '</td>';
+  } else {
+    loadSteps(runId);
+  }
+}
+
+function loadSteps(runId) {
+  fetch('/api/runs/' + runId, { headers: authHeaders() })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      _stepsCache[runId] = data.steps || [];
+      var panel = document.getElementById('steps-' + runId);
+      if (panel) panel.innerHTML = '<td colspan="7">' + renderSteps(data.steps || []) + '</td>';
+    })
+    .catch(function() {
+      var panel = document.getElementById('steps-' + runId);
+      if (panel) panel.innerHTML = '<td colspan="7"><p class="meta">步骤加载失败</p></td>';
+    });
+}
+
+function watchRun(runId) {
+  _activeRunId = runId;
+  _stepsCache[runId] = null;
+  function poll() {
+    if (_activeRunId !== runId) return;
+    fetch('/api/runs/' + runId, { headers: authHeaders() })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (_activeRunId !== runId) return;
+        _stepsCache[runId] = data.steps || [];
+        var panel = document.getElementById('steps-' + runId);
+        if (panel) {
+          panel.classList.add('open');
+          panel.innerHTML = '<td colspan="7">' + renderSteps(data.steps || []) + '</td>';
+        }
+        var run = data.run;
+        if (run && run.status !== 'running') {
+          stopWatch();
+          htmx.trigger(document.getElementById('status-panel'), 'load');
+          loadRuns();
+        }
+      })
+      .catch(function() { /* 忽略网络错误,下次重试 */ });
+  }
+  poll();
+  if (_watchTimer) clearInterval(_watchTimer);
+  _watchTimer = setInterval(function() {
+    if (_activeRunId !== runId) { stopWatch(); return; }
+    poll();
+  }, 2000);
+}
+
+function stopWatch() {
+  if (_watchTimer) { clearInterval(_watchTimer); _watchTimer = null; }
+  _activeRunId = null;
+}
+
+function loadRuns() {
+  fetch('/api/runs?limit=20', { headers: authHeaders() })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      document.getElementById('runs-list').innerHTML = renderRuns(data);
+      // 如果有 running run，自动开始轮询
+      if (data.runs && data.runs.length) {
+        var running = null;
+        for (var i = 0; i < data.runs.length; i++) {
+          if (data.runs[i].status === 'running') { running = data.runs[i]; break; }
+        }
+        if (running && _activeRunId !== running.id) {
+          watchRun(running.id);
+        }
+      }
+    })
+    .catch(function() {
+      document.getElementById('runs-list').innerHTML = '<p class="meta">加载失败</p>';
+    });
+}
+
 document.body.addEventListener('htmx:afterOnLoad', function (e) {
   if (e.detail.elt.id !== 'status-panel') return;
   try {
@@ -104,18 +301,37 @@ document.body.addEventListener('htmx:afterOnLoad', function (e) {
       '<div class="card"><p class="meta">状态解析失败</p></div>';
   }
 });
+
 document.getElementById('btn-trigger').onclick = async function () {
   var el = document.getElementById('trigger-result');
   el.textContent = '触发中…';
-  var r = await fetch('/api/actions/trigger', {
-    method: 'POST', headers: authHeaders(),
-    body: JSON.stringify({action: 'sync'})
-  });
-  var body = await r.json();
-  el.textContent = (!r.ok || body.executed === false)
-    ? (typeof formatApiError === 'function' ? formatApiError(body, JSON.stringify(body)) : JSON.stringify(body))
-    : JSON.stringify(body);
+  try {
+    var r = await fetch('/api/actions/trigger', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({action: 'sync'})
+    });
+    var body = await r.json();
+    if (body.status === 'started') {
+      el.textContent = '同步已启动 (运行 #' + body.run_id + ') — 查看下方运行面板';
+      loadRuns();
+      watchRun(body.run_id);
+      htmx.trigger(document.getElementById('status-panel'), 'load');
+    } else if (body.reason === 'already_running') {
+      el.textContent = body.run_id
+        ? '已有同步正在运行 (运行 #' + body.run_id + ')，正查看进度'
+        : '已有同步正在启动，请稍后刷新状态';
+      if (body.run_id) watchRun(body.run_id);
+      loadRuns();
+    } else {
+      el.textContent = typeof formatApiError === 'function'
+        ? formatApiError(body, JSON.stringify(body))
+        : JSON.stringify(body);
+    }
+  } catch (e) {
+    el.textContent = '请求失败: ' + e.message;
+  }
 };
+
 document.getElementById('btn-test').onclick = async function () {
   var el = document.getElementById('test-result');
   el.textContent = '测试中…';
@@ -132,5 +348,8 @@ document.getElementById('btn-test').onclick = async function () {
     el.textContent = JSON.stringify(body);
   }
 };
+
+// 页面加载时获取运行历史
+loadRuns();
 </script>
 {% endblock %}

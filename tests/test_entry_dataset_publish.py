@@ -131,7 +131,7 @@ def test_scheduler_auto_publishes_after_sync(synced, pack):
                             "SALES_ORDER_D": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
                             "ITEM_WAREHOUSE": {"mode": "incremental", "watermark": "LAST_MODIFIED_DATE"},
                         })
-    assert sched.run_sync_cycle(SOURCE, scfg, landing2.db_path) is True
+    assert sched.run_sync_cycle(SOURCE, scfg, landing2.db_path).executed is True
     pub = landing2.get_published_dataset(SOURCE)
     assert pub is not None and pub.status == "published"
     assert _legacy_obj_tables(landing2) == []

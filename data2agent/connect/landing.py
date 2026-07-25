@@ -762,6 +762,14 @@ class LandingStore:
         self.con.executescript(_VERSION_FREEZE_TRIGGERS)
         self.con.executescript(_GATEWAY_EVIDENCE_FREEZE_TRIGGERS)
         self.con.executescript(_VALIDATION_FREEZE_TRIGGERS)
+        # v0.5:run_step 逐批进度字段
+        step_cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_run_step)")}
+        if "batches" not in step_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_run_step ADD COLUMN batches INTEGER")
+        if "progressed_at" not in step_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_run_step ADD COLUMN progressed_at TEXT")
         # v0.3:数据集冻结对象清单与模板快照;旧库缺列则补上。
         ds_cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_dataset_version)")}
         if "object_manifest" not in ds_cols:
@@ -1285,10 +1293,12 @@ class LandingStore:
         batch_id: str,
         *,
         force: bool = False,
+        commit: bool = True,
     ) -> None:
         """原子写入统一游标。默认只前进不后退。
 
         key_values=None 表示水位整表完成;list 表示已完成到该复合键边界。
+        commit=False 时不提交,供外层在单事务中与本游标一起提交。
         """
         from .adapters.base import encode_keyset_cursor
 
@@ -1308,7 +1318,8 @@ class LandingStore:
             "watermark_col = excluded.watermark_col, high_water = excluded.high_water, "
             "last_run_at = excluded.last_run_at, last_batch_id = excluded.last_batch_id",
             (source, table, watermark_col, new_raw, _now(), batch_id))
-        self.con.commit()
+        if commit:
+            self.con.commit()
 
     # ---- 隔离区(E4)----
 
@@ -1393,6 +1404,19 @@ class LandingStore:
             "UPDATE d2a_sync_run SET finished_at = ?, tables = ?, rows = ?, "
             "status = ?, detail = ? WHERE id = ?",
             (_now(), tables, rows, status, detail, run_id))
+        if commit:
+            self.con.commit()
+
+    def finish_running_run(
+        self, run_id: int, *, status: str = "failed", detail: str = "",
+        commit: bool = True,
+    ) -> None:
+        """仅在 run 仍为 running 时写入终态;已被 incremental_sync 改为
+        ok/paused/failed 时不动,避免外层异常覆盖已记录的终态。"""
+        self.con.execute(
+            "UPDATE d2a_sync_run SET finished_at = ?, status = ?, detail = ? "
+            "WHERE id = ? AND status = 'running'",
+            (_now(), status, detail, run_id))
         if commit:
             self.con.commit()
 
@@ -1492,7 +1516,7 @@ class LandingStore:
         """
         allowed = {"status", "finished_at", "batch_id", "rows_in", "rows_out",
                    "quarantined", "repaired", "soft_deleted", "watermark_before",
-                   "watermark_after", "error", "error_id"}
+                   "watermark_after", "error", "error_id", "batches", "progressed_at"}
         fields = {k: v for k, v in fields.items() if k in allowed}
         if not fields:
             return
@@ -1508,6 +1532,30 @@ class LandingStore:
         return self.con.execute(
             "SELECT * FROM d2a_run_step WHERE run_id = ? ORDER BY ordinal, id",
             (run_id,)).fetchall()
+
+    def record_sync_batch_progress(
+        self, *, step_id: int, source: str, table: str,
+        watermark_col: str | None = None, watermark: str | None = None,
+        key_values: list | None = None, force_cursor: bool = False,
+        rows_in: int = 0, rows_out: int = 0, batches: int = 0,
+        batch_id: str | None = None, progressed_at: str | None = None,
+    ) -> None:
+        """在同一事务内更新 step 进度与可恢复水位游标,然后提交一次。
+
+        增量表同时推进游标;全量表(watermark_col=None)只更新 step。
+        游标写入使用 commit=False 避免各自提交,最后由本方法统一 commit。
+        """
+        if watermark_col is not None:
+            self.set_sync_cursor(
+                source, table, watermark_col, watermark, key_values,
+                batch_id, force=force_cursor, commit=False)
+        self.con.execute(
+            "UPDATE d2a_run_step SET rows_in = ?, rows_out = ?, batches = ?, "
+            "progressed_at = ?, batch_id = COALESCE(?, batch_id) "
+            "WHERE id = ?",
+            (rows_in, rows_out, batches,
+             progressed_at or _now(), batch_id, step_id))
+        self.con.commit()
 
     # ---- 控制台访问审计(M4)----
 

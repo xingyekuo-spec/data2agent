@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime
 
 from .config import ConnectConfig, SourceConfig, in_window
@@ -18,6 +19,21 @@ from .landing import LandingStore
 from .reconcile import reconcile
 
 log = logging.getLogger("data2agent.connect")
+
+
+@dataclass
+class SyncCycleResult:
+    """run_sync_cycle 返回值:明确表达跳过/执行/锁冲突等状态。"""
+    executed: bool
+    reason: str
+    run_id: int | None = None
+    status: str | None = None       # ok/paused/failed/started
+    note: str = ""
+    suggestion: str | None = None
+
+
+def _brief_error(exc: BaseException) -> str:
+    return f"{type(exc).__name__}: {str(exc)[:200]}"
 
 
 def build_adapter(name: str, scfg: SourceConfig,
@@ -54,44 +70,115 @@ def build_sink(scfg: SourceConfig, landing: LandingStore):
     return LocalSink(landing)
 
 
-def run_sync_cycle(name: str, scfg: SourceConfig,
-                   landing_path: str, templates: str = "templates") -> bool:
-    """一轮 sync(+apply)。返回是否实际执行(窗口外为 False)。
-    若 tables 为空则跳过，不连接 ERP、不报错、不创建失败运行。"""
+def check_sync_preflight(name: str, scfg: SourceConfig) -> SyncCycleResult:
+    """同步前预检(不创建 run,不获取锁):窗口外/tables 为空立即返回。"""
     if not in_window(datetime.now().time(), scfg.windows):
-        log.info("skip source=%s reason=窗口外 windows=%s", name, scfg.windows)
-        return False
-    if not scfg.table_whitelist():
-        log.info("source=%s reason=tables_unconfigured", name)
-        return False
-    landing = LandingStore(landing_path)
-    adapter = build_adapter(name, scfg, landing)
-    sink = build_sink(scfg, landing)
-    watermarks = scfg.table_watermarks()
-    key_columns = scfg.table_key_columns()
-    report = incremental_sync(
-        adapter, landing, name, watermarks,
-        lookback_days=scfg.lookback_days(), sink=sink,
-        key_columns=key_columns,
-        should_continue=lambda: in_window(datetime.now().time(), scfg.windows))
-    log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
-             name, report.run_id, report.total_rows, len(report.tables),
-             report.paused, scfg.sink.type)
-    # sink=http: raw 已推给平台,映射在平台侧跑,不在中间 apply
-    if scfg.apply_after_sync and not report.paused and scfg.sink.type == "local":
-        from ..metamodel.loader import load_pack as _load_pack
-        pack = _load_pack(templates)  # local apply 仍需模板
-        apply_report = build_dataset(landing, pack, name, auto_publish=True)
-        log.info(
-            "apply source=%s objects=%s quarantined=%s aborted=%s "
-            "dataset_version=%s published=%s",
-            name, len(apply_report.results),
-            sum(r.quarantined for r in apply_report.results),
-            [r.object for r in apply_report.results if r.status == "aborted"],
-            apply_report.dataset_version,
-            apply_report.published,
+        return SyncCycleResult(
+            executed=False, reason="outside_window",
+            note="错峰窗口外，未发起（窗口约束同样生效）",
+            suggestion="等待错峰窗口开始，或临时调整 sources.*.windows 后重启抽取进程",
         )
-    return True
+    if not scfg.table_whitelist():
+        return SyncCycleResult(
+            executed=False, reason="tables_unconfigured",
+            note="尚未配置抽取表，未发起同步",
+            suggestion="到「元数据」选表并在「抽取表」页保存计划后再触发同步",
+        )
+    return SyncCycleResult(executed=True, reason="preflight_ok")
+
+
+def run_sync_cycle(name: str, scfg: SourceConfig,
+                   landing_path: str, templates: str = "templates",
+                   run_id: int | None = None,
+                   acquired_lock=None) -> SyncCycleResult:
+    """一轮 sync(+apply)。返回 SyncCycleResult。
+
+    - 自动调度路径(run_id=None):内部创建 run,自行获取锁
+    - 手动触发路径(run_id != None):外部已获取锁 + 创建 run,传入复用
+    """
+    # 1. 预检
+    preflight = check_sync_preflight(name, scfg)
+    if not preflight.executed:
+        return preflight
+
+    landing = LandingStore(landing_path)
+
+    # 2. 锁:自动调度路径自行获取
+    own_lock = None
+    if acquired_lock is None:
+        from .sync_lock import SourceSyncLock  # noqa: E402
+        own_lock = SourceSyncLock.try_acquire(landing_path, name)
+        if own_lock is None:
+            existing = SourceSyncLock.find_running_run(landing_path, name)
+            landing.con.close()
+            return SyncCycleResult(
+                executed=False, reason="already_running", run_id=existing,
+                note="已有同步正在运行" if existing else "已有同步正在启动中",
+                suggestion="等待当前运行完成后再触发",
+            )
+
+    try:
+        # 3. 没有外部 run_id 时自己建(run_sync_cycle 在此处建 run
+        #    属于新协议:所有 pre-increment 错误都会 finish_running_run)
+        own_run = run_id is None
+        if own_run:
+            run_id = landing.start_run(name, "sync")
+
+        try:
+            adapter = build_adapter(name, scfg, landing)
+            sink = build_sink(scfg, landing)
+        except Exception as exc:
+            landing.finish_running_run(run_id, status="failed",
+                                       detail=_brief_error(exc))
+            raise
+
+        watermarks = scfg.table_watermarks()
+        key_columns = scfg.table_key_columns()
+        report = incremental_sync(
+            adapter, landing, name, watermarks,
+            lookback_days=scfg.lookback_days(), sink=sink,
+            key_columns=key_columns,
+            should_continue=lambda: in_window(datetime.now().time(), scfg.windows),
+            run_id=run_id)
+        log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
+                 name, report.run_id, report.total_rows, len(report.tables),
+                 report.paused, scfg.sink.type)
+        # sink=http: raw 已推给平台,映射在平台侧跑,不在中间 apply
+        if scfg.apply_after_sync and not report.paused and scfg.sink.type == "local":
+            from ..metamodel.loader import load_pack as _load_pack
+            pack = _load_pack(templates)
+            apply_report = build_dataset(landing, pack, name, auto_publish=True)
+            log.info(
+                "apply source=%s objects=%s quarantined=%s aborted=%s "
+                "dataset_version=%s published=%s",
+                name, len(apply_report.results),
+                sum(r.quarantined for r in apply_report.results),
+                [r.object for r in apply_report.results if r.status == "aborted"],
+                apply_report.dataset_version,
+                apply_report.published,
+            )
+        status = "paused" if report.paused else "ok"
+        return SyncCycleResult(
+            executed=True, reason="executed", run_id=run_id, status=status,
+            note="窗口越界,批次边界暂停" if report.paused else "",
+        )
+    except Exception as exc:
+        log.exception("sync failed source=%s run=%s", name, run_id)
+        if run_id is not None:
+            try:
+                landing.finish_running_run(run_id, status="failed",
+                                           detail=_brief_error(exc))
+            except Exception:
+                pass
+        return SyncCycleResult(
+            executed=False, reason="failed", run_id=run_id, status="failed",
+            note=str(exc)[:200],
+            suggestion="查看日志排查错误后重试",
+        )
+    finally:
+        if own_lock is not None:
+            own_lock.release()
+        landing.con.close()
 
 
 def run_reconcile_cycle(name: str, scfg: SourceConfig,
@@ -117,7 +204,8 @@ def serve(cfg: ConnectConfig, once: bool = False) -> None:
 
     if once:
         for name, scfg in cfg.sources.items():
-            run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
+            result = run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
+            log.info("once sync source=%s %s", name, result.reason)
             if scfg.reconcile_at is not None:
                 run_reconcile_cycle(name, scfg, cfg.landing)
         return

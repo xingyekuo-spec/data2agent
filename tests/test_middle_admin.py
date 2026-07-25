@@ -196,7 +196,8 @@ def test_trigger_sync_warns_or_runs(middle_env):
     assert r.status_code == 200
     body = r.json()
     assert body.get("action") == "sync"
-    assert body.get("overlap_warning") is True
+    # 改异步后不再固定返回 overlap_warning
+    assert body.get("executed") in (True, False)
 
 
 def test_trigger_rejects_reconcile(middle_env):
@@ -242,6 +243,134 @@ def test_probe_connection_returns_generic_error_without_unbound_local(monkeypatc
     monkeypatch.setitem(sys.modules, "pyodbc", fake_pyodbc)
     result = middle_app._probe_connection_pure("DSN=test")
     assert result == {"status": "failed", "error": "RuntimeError", "detail": "cursor boom"}
+
+
+# ---- 异步触发 + 单飞锁 ----
+
+def test_async_trigger_returns_run_id_immediately(middle_env):
+    """异步触发立即返回 run_id 和 status=started,不阻塞。"""
+    client, _ = middle_env
+    r = client.post("/api/actions/trigger", headers={"Authorization": "Bearer secret"},
+                    json={"action": "sync"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["action"] == "sync"
+    assert body["executed"] is True
+    assert body["status"] == "started"
+    assert isinstance(body["run_id"], int)
+    assert body["run_id"] > 0
+
+
+def test_trigger_returns_already_running_on_second_call(middle_env):
+    """第二次触发在锁未释放时返回 already_running。"""
+    from data2agent.connect.sync_lock import SourceSyncLock
+    from data2agent.connect.config import load_config
+
+    client, cfg_path = middle_env
+    cfg = load_config(cfg_path)
+    name = next(iter(cfg.sources))
+
+    # 手动获取锁模拟后台正在运行
+    lock = SourceSyncLock.try_acquire(cfg.landing, name)
+    assert lock is not None, "应能获取锁"
+    try:
+        r = client.post("/api/actions/trigger", headers={"Authorization": "Bearer secret"},
+                        json={"action": "sync"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["reason"] == "already_running", (
+            f"expected already_running, got {body}")
+        assert body["executed"] is False
+    finally:
+        lock.release()
+
+
+def test_trigger_rejects_unknown_action(middle_env):
+    client, _ = middle_env
+    r = client.post("/api/actions/trigger", headers={"Authorization": "Bearer secret"},
+                    json={"action": "unknown_action"})
+    assert r.status_code == 400
+    body = r.json()
+    detail = body.get("detail", "")
+    if isinstance(detail, dict):
+        detail = detail.get("detail", "")
+    assert "不支持" in detail or "仅支持" in str(body)
+
+
+# ---- 运行 API ----
+
+def test_runs_list_returns_all_sources_when_source_not_specified(middle_env):
+    client, _ = middle_env
+    r = client.get("/api/runs", headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 200
+    body = r.json()
+    assert "runs" in body
+    assert "total" in body
+    assert "limit" in body
+    assert "offset" in body
+    assert isinstance(body["runs"], list)
+    if body["runs"]:
+        run = body["runs"][0]
+        for key in ("id", "source", "status", "started_at", "tables", "rows"):
+            assert key in run, f"run missing key: {key}"
+
+
+def test_runs_list_filters_by_source(middle_env):
+    client, _ = middle_env
+    r = client.get("/api/runs?source=digiwin_e10", headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 200
+    body = r.json()
+    for run in body["runs"]:
+        assert run["source"] == "digiwin_e10"
+
+
+def test_runs_list_unknown_source_returns_404(middle_env):
+    client, _ = middle_env
+    r = client.get("/api/runs?source=nonexistent", headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 404
+
+
+def test_runs_list_rejects_invalid_limit(middle_env):
+    client, _ = middle_env
+    r = client.get("/api/runs?limit=100", headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 422
+
+
+def test_run_detail_returns_steps(middle_env):
+    client, _ = middle_env
+    # 先查列表取一个 run_id
+    r = client.get("/api/runs", headers={"Authorization": "Bearer secret"})
+    runs = r.json()["runs"]
+    if not runs:
+        pytest.skip("没有 run 记录")
+    run_id = runs[0]["id"]
+    r2 = client.get(f"/api/runs/{run_id}", headers={"Authorization": "Bearer secret"})
+    assert r2.status_code == 200
+    body = r2.json()
+    assert "run" in body
+    assert "steps" in body
+    assert body["run"]["id"] == run_id
+    assert isinstance(body["steps"], list)
+
+
+def test_run_detail_404_for_nonexistent_run(middle_env):
+    client, _ = middle_env
+    r = client.get("/api/runs/99999", headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 404
+
+
+def test_run_returned_in_status(middle_env):
+    """验证 /api/status 返回 latest_run 和 running_run 字段。"""
+    client, _ = middle_env
+    r = client.get("/api/status", headers={"Authorization": "Bearer secret"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["schedule_source"] == "derived_from_yaml"
+    for src in body.get("sources", []):
+        # running_run 可能为 null
+        assert "running_run" in src, f"source missing running_run"
+        # latest_run 至少在有 run 记录后不为 null
+        assert "latest_run" in src, f"source missing latest_run"
 
 
 def test_connection_probe_timeout_does_not_wait_for_worker(monkeypatch):

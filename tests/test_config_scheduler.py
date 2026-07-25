@@ -168,12 +168,14 @@ def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
     scfg = SourceConfig(adapter="sqlite_readonly", path=str(src),
                         tables=baseline_tables,
                         windows=[f"{t2:%H:%M}-{t3:%H:%M}"])
-    # run_sync_cycle 不再接收 pack 参数
-    assert sched.run_sync_cycle(SOURCE, scfg, landing.db_path) is False, "窗口外不发起"
+    # run_sync_cycle 现在返回 SyncCycleResult,不再是布尔值
+    result = sched.run_sync_cycle(SOURCE, scfg, landing.db_path)
+    assert result.executed is False, f"窗口外不发起, got reason={result.reason}"
 
     scfg_open = SourceConfig(adapter="sqlite_readonly", path=str(src),
                              tables=baseline_tables)
-    assert sched.run_sync_cycle(SOURCE, scfg_open, landing.db_path) is True
+    result = sched.run_sync_cycle(SOURCE, scfg_open, landing.db_path)
+    assert result.executed is True, f"应执行, got reason={result.reason}"
     assert landing.count(SOURCE, "SALES_ORDER") == 97
     pub = landing.get_published_dataset(SOURCE)
     assert pub is not None and pub.status == "published", "apply_after_sync 应自动发布数据集"

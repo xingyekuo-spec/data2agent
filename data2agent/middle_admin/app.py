@@ -47,7 +47,9 @@ from ..connect.metadata import (
     extraction_plan_keys,
     in_extraction_plan,
 )
-from ..connect.scheduler import run_sync_cycle
+from ..connect.scheduler import check_sync_preflight, run_sync_cycle
+from ..connect.sync_lock import SourceSyncLock
+from ..connect.landing import LandingStore
 
 from .extraction_tables import (
     parse_tables_payload,
@@ -59,6 +61,7 @@ from .extraction_tables import (
 from .status import build_status
 
 _SCAN_STORE = ScanStore()
+_TRIGGER_EXECUTOR = ThreadPoolExecutor(max_workers=1)
 
 _PKG = Path(__file__).resolve().parent
 _ADMIN_TEMPLATES = _PKG.parent / "admin_templates"
@@ -1076,24 +1079,159 @@ def create_app(
             )
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
-        if not scfg.table_whitelist():
+
+        # 1. 预检:窗口外 / tables 为空立即返回,不创建 run
+        preflight = check_sync_preflight(name, scfg)
+        if not preflight.executed:
+            if preflight.reason == "tables_unconfigured":
+                return {
+                    "action": "sync", "source": name, "executed": False,
+                    "reason": preflight.reason, "overlap_warning": True,
+                    "note": preflight.note,
+                    "suggestion": preflight.suggestion,
+                }
             return {
                 "action": "sync", "source": name, "executed": False,
-                "reason": "tables_unconfigured", "overlap_warning": True,
-                "note": "尚未配置抽取表，未发起同步",
-                "suggestion": "到「元数据」选表并在「抽取表」页保存计划后再触发同步",
+                "reason": preflight.reason,
+                "note": preflight.note,
+                "suggestion": preflight.suggestion,
             }
-        executed = run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
+
+        # 2. 跨进程锁:已运行时不排队
+        lock = SourceSyncLock.try_acquire(cfg.landing, name)
+        if lock is None:
+            existing = SourceSyncLock.find_running_run(cfg.landing, name)
+            return {
+                "action": "sync", "source": name, "executed": False,
+                "reason": "already_running", "run_id": existing,
+                "note": "已有同步正在运行" if existing else "已有同步正在启动中",
+                "suggestion": "等待当前运行完成后再触发",
+            }
+
+        # 3. 建 run(锁已持有)→ 后台执行
+        landing = LandingStore(cfg.landing)
+        try:
+            run_id = landing.start_run(name, "sync")
+        except Exception as exc:
+            landing.con.close()
+            lock.release()
+            raise http_error(
+                500, f"无法创建运行记录: {_sanitize_detail(str(exc))}",
+                "重试或检查落地库权限",
+            )
+
+        try:
+            _TRIGGER_EXECUTOR.submit(
+                _run_sync_worker, run_id, name, scfg, cfg.landing, cfg.templates, lock)
+        except Exception as exc:
+            # 线程池无法提交：关闭遗留 run 并释放锁，避免永久 blocking
+            try:
+                landing.finish_running_run(
+                    run_id, status="failed", detail=_sanitize_detail(str(exc)))
+            finally:
+                landing.con.close()
+            lock.release()
+            raise http_error(
+                500, f"无法提交后台同步任务: {_sanitize_detail(str(exc))}",
+                "重启中间机管理进程后重试",
+            )
+
+        landing.con.close()
         return {
-            "action": "sync", "source": name, "executed": executed,
-            "overlap_warning": True,
-            "reason": "executed" if executed else "outside_window",
-            "note": "" if executed else "错峰窗口外，未发起（窗口约束同样生效）",
-            "suggestion": (
-                None if executed
-                else "等待错峰窗口开始，或临时调整 sources.*.windows 后重启抽取进程"
-            ),
+            "action": "sync", "source": name, "run_id": run_id,
+            "executed": True, "status": "started",
+            "note": f"同步已后台启动, 运行 ID #{run_id}",
         }
+
+    # ---- 运行查询 ----
+
+    def _map_run_row(r) -> dict:
+        return {
+            "id": r["id"], "source": r["source"], "status": r["status"],
+            "started_at": r["started_at"], "finished_at": r["finished_at"],
+            "tables": r["tables"], "rows": r["rows"],
+            "detail": r["detail"],
+        }
+
+    def _map_step_row(s) -> dict:
+        return {
+            "id": s["id"], "ordinal": s["ordinal"], "kind": s["kind"],
+            "target": s["target"], "status": s["status"],
+            "started_at": s["started_at"], "finished_at": s["finished_at"],
+            "batch_id": s["batch_id"],
+            "rows_in": s["rows_in"], "rows_out": s["rows_out"],
+            "batches": s["batches"], "progressed_at": s["progressed_at"],
+            "watermark_before": s["watermark_before"],
+            "watermark_after": s["watermark_after"],
+            "error": s["error"],
+        }
+
+    @api.get("/runs")
+    def runs(source: str | None = None, limit: int = 20, offset: int = 0) -> dict:
+        if not (1 <= limit <= 50):
+            raise http_error(422, "limit 须为 1..50", "调整分页参数")
+        if offset < 0:
+            raise http_error(422, "offset 须 >= 0", "调整分页参数")
+        cfg = reload_config()
+        if source is not None:
+            name, _scfg = _resolve_source(cfg, source)
+        else:
+            name = None
+        db = LandingStore(cfg.landing)
+        try:
+            where = "WHERE run_type = 'sync'"
+            params: list[Any] = []
+            if name is not None:
+                where += " AND source = ?"
+                params.append(name)
+            (total,) = db.con.execute(
+                f"SELECT COUNT(*) FROM d2a_sync_run {where}", params).fetchone()
+            rows = db.con.execute(
+                f"SELECT id, source, status, started_at, finished_at, tables, rows, detail "
+                f"FROM d2a_sync_run {where} "
+                f"ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?",
+                [*params, limit, offset])
+            return {
+                "runs": [dict(r) for r in rows],
+                "total": total, "limit": limit, "offset": offset,
+            }
+        finally:
+            db.con.close()
+
+    @api.get("/runs/{run_id}")
+    def run_detail(run_id: int) -> dict:
+        cfg = reload_config()
+        db = LandingStore(cfg.landing)
+        try:
+            r = db.con.execute(
+                "SELECT * FROM d2a_sync_run WHERE id = ?", (run_id,)).fetchone()
+            if r is None:
+                raise http_error(404, f"运行 #{run_id} 不存在", "确认运行 ID")
+            steps = db.steps_for_run(run_id)
+            return {
+                "run": _map_run_row(r),
+                "steps": [_map_step_row(s) for s in steps],
+            }
+        finally:
+            db.con.close()
+
+    # ---- 内部 ----
+
+    def _run_sync_worker(
+        run_id: int, name: str, scfg, landing_path: str, templates: str, lock,
+    ) -> None:
+        try:
+            run_sync_cycle(name, scfg, landing_path, templates,
+                           run_id=run_id, acquired_lock=lock)
+        except Exception as exc:
+            failed_store = LandingStore(landing_path)
+            try:
+                failed_store.finish_running_run(
+                    run_id, status="failed", detail=_sanitize_detail(str(exc)))
+            finally:
+                failed_store.con.close()
+        finally:
+            lock.release()
 
     app.include_router(api)
     # HTML 也走轻量检查:首次配置时放行

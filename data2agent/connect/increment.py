@@ -29,6 +29,34 @@ DEFAULT_LOOKBACK_DAYS = 3
 _WM_FORMATS = ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S",
                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d")
 
+_CREDENTIAL_PATTERN = __import__("re").compile(
+    r"(?i)("
+    r"password\s*[=:]|pwd\s*[=:]|"
+    r"token\s*[=:]|bearer\s+|authorization\s*[:=]|"
+    r"Driver\s*=|Server\s*=|Database\s*=|"
+    r"uid\s*=|user\s+id\s*=|integrated\s+security|"
+    r"connection\s+string|connect\s+string|DSN\s*=|"
+    r"ODBC|pyodbc\.connect|"
+    # SQL DML / DDL / 过程动词:词边界匹配,不依赖后续关键字
+    r"\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|"
+    r"TRUNCATE|EXEC|EXECUTE|MERGE|GRANT|REVOKE|"
+    r"DECLARE|CALL|EXPLAIN|BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b"
+    r")"
+)
+
+
+def _safe_error(exc: BaseException) -> str:
+    """脱敏错误摘要,禁止 DSN / 连接串 / Token / SQL / 凭据泄露。
+
+    命中脱敏关键字 → 通用文本;超过 400 字符 → 截断。
+    """
+    raw = f"{type(exc).__name__}: {str(exc)}"
+    if _CREDENTIAL_PATTERN.search(raw):
+        return "执行失败(详情已脱敏,含凭据/连接串/Token/SQL 关键字)"
+    if len(raw) > 400:
+        return raw[:400] + "…[已截断]"
+    return raw
+
 
 def subtract_lookback(high_water: str, days: float) -> str:
     """按水位值原格式做回看减法(支持 datetime / date 字符串)。"""
@@ -46,21 +74,28 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                      lookback_days: float = DEFAULT_LOOKBACK_DAYS,
                      should_continue: Optional[Callable[[], bool]] = None,
                      sink: Optional[Sink] = None,
-                     key_columns: dict[str, list[str]] | None = None) -> SyncReport:
+                     key_columns: dict[str, list[str]] | None = None,
+                     run_id: int | None = None) -> SyncReport:
     """sink:raw 落地出口。默认 LocalSink(landing)。
     key_columns:表名 → 配置运行键,覆盖数据库主键。
     无水位的表按 full_refresh 快照协议落地。
+
+    当外部已创建 run(如手动触发已预检窗口/锁/create run 后
+    传入 run_id)时,不重复建 run,避免 double-run。
     """
     watermarks = watermarks or {}
     key_columns = key_columns or {}
     sink = sink or LocalSink(landing)
     ensure_proto = getattr(sink, "ensure_protocol", None)
-    if callable(ensure_proto):
-        ensure_proto()
 
-    report = SyncReport(source=source, run_id=landing.start_run(source, "sync"))
+    report = SyncReport(
+        source=source,
+        run_id=run_id or landing.start_run(source, "sync"))
     current_step: int | None = None
     try:
+        if callable(ensure_proto):
+            ensure_proto()
+
         ordinal = 0
         for raw_info in adapter.tables():
             if should_continue and not should_continue():
@@ -124,12 +159,23 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                         last = batch[-1]
                         last_wm = last[wm_col]
                         last_cursor_keys = [last[k] for k in info.pk]
-                        landing.set_sync_cursor(
-                            source, info.name, wm_col, last_wm, last_cursor_keys,
-                            table_batch_id)
+                        landing.record_sync_batch_progress(
+                            step_id=current_step,
+                            source=source, table=info.name,
+                            watermark_col=wm_col, watermark=last_wm,
+                            key_values=last_cursor_keys,
+                            rows_in=rows, rows_out=rows, batches=batches,
+                            batch_id=table_batch_id)
                         seen = str(last_wm)
                         if max_wm is None or seen > max_wm:
                             max_wm = seen
+                    else:
+                        landing.record_sync_batch_progress(
+                            step_id=current_step,
+                            source=source, table=info.name,
+                            watermark_col=None,
+                            rows_in=rows, rows_out=rows, batches=batches,
+                            batch_id=table_batch_id)
                 if interrupted:
                     if is_full:
                         sink.abort_table(
@@ -166,13 +212,14 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
             report.tables.append(TableReport(info.name, rows, batches, table_batch_id,
                                              strategy=strategy, high_water=max_wm))
     except Exception as e:
+        safe = _safe_error(e)
         if current_step is not None:
             try:
-                landing.update_step(current_step, status="failed", error=str(e)[:500])
+                landing.update_step(current_step, status="failed", error=safe)
             except Exception:
                 pass
         landing.finish_run(report.run_id, tables=len(report.tables),
-                           rows=report.total_rows, status="failed", detail=str(e))
+                           rows=report.total_rows, status="failed", detail=safe)
         raise
     landing.finish_run(report.run_id, tables=len(report.tables), rows=report.total_rows,
                        status="paused" if report.paused else "ok",
