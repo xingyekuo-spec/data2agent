@@ -556,6 +556,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     env = os.environ.copy()
+    # Windows 控制台默认 GBK,日志中的 UTF-8 中文 Traceback 会乱码
+    env.setdefault("PYTHONIOENCODING", "utf-8")
     env["D2A_HOME"] = str(home)
     env = _merge_secrets_env(home, env)
     env.update(portable_vue_dist_env(home, env))
