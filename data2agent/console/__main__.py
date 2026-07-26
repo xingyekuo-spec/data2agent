@@ -7,6 +7,7 @@ Token:--token / 环境变量 / home/config/secrets.env 中的 D2A_CONSOLE_TOKEN�
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import os
 import sys
 from pathlib import Path
@@ -94,6 +95,18 @@ def main(argv: list[str] | None = None) -> int:
         config_path=config_path, log_dir=log_dir,
         home=home.root if home else None,
     )
+    if os.environ.get("D2A_STARTUP_TRACE"):
+        faulthandler.enable()
+        faulthandler.dump_traceback_later(
+            60,
+            repeat=False,
+            file=sys.stderr,
+        )
+
+        def _cancel_startup_trace() -> None:
+            faulthandler.cancel_dump_traceback_later()
+
+        app.add_event_handler("startup", _cancel_startup_trace)
     mode = "首次配置模式" if (home and not home.platform_yaml.is_file()) else (
         "完整模式" if config else "只读模式")
     print(f"运维控制台:http://{args.host}:{args.port}/"
