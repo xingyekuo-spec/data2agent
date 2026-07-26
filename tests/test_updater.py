@@ -75,7 +75,6 @@ def _make_portable_zip(tmp_path: Path, version: str, *,
         "app/templates/objects/demo.yaml": b"t",
         "app/console-ui/dist/index.html": b"<html></html>",
         "README.txt": b"r",
-        "启动平台.bat": b"start",
     }
     if missing:
         files.pop(missing)
@@ -188,7 +187,6 @@ def test_download_and_stage_end_to_end(tmp_path):
     pkg_root = home / "data" / "updates" / "staging" / "d2a-portable-platform-v0.6.0"
     assert (pkg_root / "runtime" / "python.exe").is_file()
     assert (home / "升级.bat").is_file()
-    assert (home / "启动平台.bat").is_file()
     ps1 = home / "data" / "updates" / "apply-update.ps1"
     assert ps1.is_file()
     # Windows PowerShell 5.1 需要 BOM 才能正确按 UTF-8 解析

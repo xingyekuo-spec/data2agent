@@ -274,7 +274,6 @@ def _validate_package(pkg_root: Path, *, expected_version: str | None = None) ->
         ("runtime/python.exe", "file"),
         ("app/templates", "dir"),
         ("app/console-ui/dist/index.html", "file"),
-        ("启动平台.bat", "file"),
     ):
         path = pkg_root / rel
         ok = path.is_file() if kind == "file" else path.is_dir()
