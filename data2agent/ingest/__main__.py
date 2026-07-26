@@ -11,7 +11,6 @@ import os
 
 def main() -> int:
     from ..admin_common.secrets_file import load_home_secrets_if_present
-    from ..admin_common.windows_asyncio import patch_windows_socketpair
     load_home_secrets_if_present()
 
     ap = argparse.ArgumentParser(description="data2agent 接收端(Pattern A 平台侧)")
@@ -29,7 +28,6 @@ def main() -> int:
     app = create_app(args.landing, token or None)
     print(f"ingest 接收端:http://{args.host}:{args.port}/ingest"
           f"({'Token 认证' if token else '⚠ 无认证,仅内网可信段'};落地 {args.landing})")
-    patch_windows_socketpair()
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

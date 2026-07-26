@@ -7,7 +7,6 @@ Token:--token / 环境变量 / home/config/secrets.env 中的 D2A_CONSOLE_TOKEN�
 from __future__ import annotations
 
 import argparse
-import faulthandler
 import os
 import sys
 from pathlib import Path
@@ -15,7 +14,6 @@ from pathlib import Path
 from ..admin_common.auth_token import resolve_token
 from ..admin_common.home_layout import HomeLayout, default_home
 from ..admin_common.secrets_file import apply_secrets_to_environ
-from ..admin_common.windows_asyncio import patch_windows_socketpair
 
 
 def _default_log_dir(landing: str, config_path: str | None) -> Path:
@@ -35,29 +33,6 @@ def _warn_if_insecure(host: str, token: str | None) -> None:
             "请设置 D2A_CONSOLE_TOKEN 或 --token",
             file=sys.stderr,
         )
-
-
-def _enable_startup_trace(app) -> None:
-    """Dump a traceback if uvicorn startup hangs, without assuming FastAPI API shape."""
-    faulthandler.enable()
-    faulthandler.dump_traceback_later(
-        60,
-        repeat=False,
-        file=sys.stderr,
-    )
-
-    def _cancel_startup_trace() -> None:
-        faulthandler.cancel_dump_traceback_later()
-
-    add_event_handler = getattr(app, "add_event_handler", None)
-    if callable(add_event_handler):
-        add_event_handler("startup", _cancel_startup_trace)
-        return
-
-    router = getattr(app, "router", None)
-    on_startup = getattr(router, "on_startup", None)
-    if isinstance(on_startup, list):
-        on_startup.append(_cancel_startup_trace)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -119,15 +94,11 @@ def main(argv: list[str] | None = None) -> int:
         config_path=config_path, log_dir=log_dir,
         home=home.root if home else None,
     )
-    if os.environ.get("D2A_STARTUP_TRACE"):
-        _enable_startup_trace(app)
     mode = "首次配置模式" if (home and not home.platform_yaml.is_file()) else (
         "完整模式" if config else "只读模式")
     print(f"运维控制台:http://{args.host}:{args.port}/"
           f"({mode};"
           f"{'Token 认证已启用' if token else '未启用认证,内网部署建议配 D2A_CONSOLE_TOKEN'})")
-    print(f"准备启动 uvicorn 监听 {args.host}:{args.port} ...", flush=True)
-    patch_windows_socketpair()
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

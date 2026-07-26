@@ -7,9 +7,16 @@
 | `d2a-portable-platform-<版本>.zip` | 数据平台 |
 | `d2a-portable-middle-<版本>.zip` | 中间服务器 |
 
-Release workflow 默认使用 Python 3.12 生成 Windows embeddable runtime。
-不要在 Windows 10 现场包上默认使用 Python 3.14；平台端 uvicorn 在部分现场会卡在
-Python/asyncio 的内部 loopback socketpair 初始化。
+### Windows 防火墙前置条件
+
+平台启动前，Windows 防火墙或终端安全软件必须允许便携包中的
+`data2agent.exe` 与 `runtime\python.exe` 访问本机回环网络，并允许所需端口。
+若 `runtime\python.exe` 连自己监听的 `127.0.0.1` 临时端口都会超时，
+asyncio 会在监听管理端口前卡住，启动器最终提示 `8849` 启动超时。
+
+遇到该现象时，先把上述两个程序加入防火墙/终端安全软件允许列表，再排查应用代码。
+不要用替换 Python 版本、改用 `pythonw.exe`、修改子进程控制台模式或替换
+`socket.socketpair` 的方式规避；这些措施无法修复被系统安全策略阻断的回环连接。
 
 ### 发布版本准备
 

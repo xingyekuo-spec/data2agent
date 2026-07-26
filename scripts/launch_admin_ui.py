@@ -226,20 +226,6 @@ def _resolve_python(home: Path) -> Path | None:
     return Path(sys.executable) if Path(sys.executable).is_file() else None
 
 
-def _resolve_service_python(home: Path, fallback: Path) -> Path:
-    if sys.platform == "win32" and os.environ.get("D2A_USE_PYTHONW", "").strip().lower() in {
-        "1", "true", "yes",
-    }:
-        for cand in (
-            fallback.with_name("pythonw.exe"),
-            home / "runtime" / "pythonw.exe",
-            home / "venv" / "Scripts" / "pythonw.exe",
-        ):
-            if cand.is_file():
-                return cand
-    return fallback
-
-
 def _merge_secrets_env(home: Path, env: dict[str, str]) -> dict[str, str]:
     secrets = home / "config" / "secrets.env"
     if not secrets.is_file():
@@ -260,18 +246,6 @@ def _creationflags() -> int:
     return CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
 
-def _child_creationflags() -> int:
-    if sys.platform != "win32":
-        return 0
-    mode = os.environ.get("D2A_SERVICE_LAUNCH_MODE", "console").strip().lower()
-    if mode == "hidden":
-        return 0x08000000
-    if mode == "inherit":
-        return 0
-    CREATE_NEW_CONSOLE = 0x00000010
-    return CREATE_NEW_CONSOLE
-
-
 def _spawn(cmd: list[str], *, home: Path, env: dict[str, str],
            log_name: str | None = None) -> subprocess.Popen:
     # 子进程输出落到 data/logs/<name>.log,现场可诊断(此前吞进 DEVNULL,
@@ -285,19 +259,11 @@ def _spawn(cmd: list[str], *, home: Path, env: dict[str, str],
         cmd,
         cwd=str(home),
         env=env,
-        stdin=subprocess.DEVNULL,
         stdout=out,
         stderr=subprocess.STDOUT if log_name else subprocess.DEVNULL,
-        creationflags=_child_creationflags(),
+        creationflags=_creationflags(),
         start_new_session=(sys.platform != "win32"),
     )
-    if sys.platform == "win32":
-        _supervisor_log(
-            home,
-            "spawned child launch_mode="
-            f"{os.environ.get('D2A_SERVICE_LAUNCH_MODE', 'console')} "
-            f"creationflags={_child_creationflags()}",
-        )
     _CHILDREN.append(proc)
     return proc
 
@@ -679,7 +645,6 @@ def main(argv: list[str] | None = None) -> int:
     # Windows 控制台默认 GBK,日志中的 UTF-8 中文 Traceback 会乱码
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUNBUFFERED", "1")
-    env.setdefault("D2A_STARTUP_TRACE", "1")
     env["D2A_HOME"] = str(home)
     env = _merge_secrets_env(home, env)
     env.update(portable_vue_dist_env(home, env))
@@ -688,9 +653,7 @@ def main(argv: list[str] | None = None) -> int:
     if not admin_already_up:
         try:
             admin_log = "d2a-console" if args.role == "platform" else "d2a-middle-admin"
-            service_py = _resolve_service_python(home, venv_py)
-            admin_cmd = [str(service_py), "-m", cfg["module"], *cfg["extra_args"]]
-            manual_cmd = [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]]
+            admin_cmd = [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]]
             _supervisor_log(home, f"spawning admin cmd={_display_cmd(admin_cmd)}")
             admin_proc = spawn_managed(
                 "admin", admin_cmd, home=home, env=env,
@@ -718,10 +681,10 @@ def main(argv: list[str] | None = None) -> int:
                 reason=reason,
                 host=host,
                 port=port,
-                    home=home,
-                    log_name=admin_log,
-                    cmd=manual_cmd,
-                )
+                home=home,
+                log_name=admin_log,
+                cmd=admin_cmd,
+            )
             _supervisor_log(
                 home,
                 "admin startup failed message="

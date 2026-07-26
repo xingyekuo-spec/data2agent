@@ -1,6 +1,6 @@
 name: release
 # 打 tag(v*)或手动触发 → 测试通过后,打出两台 Windows 便携包(解压即用),上传 GitHub Release。
-# 平台包优先使用 启动平台.bat；data2agent.exe 保留为托盘辅助入口。
+# 每个便携包只有一个入口:data2agent.exe
 # 平台/中间机应用版本可独立升级;仅 ingest 协议不兼容时才须升级中间机。
 on:
   push:
@@ -14,7 +14,7 @@ on:
       py_version:
         description: "目标 Python 版本(须与 embeddable / wheel 一致)"
         required: false
-        default: "3.12"
+        default: "3.14"
       create_release:
         description: "创建 GitHub Release(手动触发时勾选才发布,否则仅产 artifact)"
         type: boolean
@@ -29,7 +29,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  PY_VERSION: ${{ github.event.inputs.py_version || '3.12' }}
+  PY_VERSION: ${{ github.event.inputs.py_version || '3.14' }}
 
 jobs:
   test:
