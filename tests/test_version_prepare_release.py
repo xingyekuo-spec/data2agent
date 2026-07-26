@@ -67,6 +67,7 @@ def test_prepare_release_main_runs_checks_without_git_by_default(tmp_path, monke
 
     assert prepare_release.main(["1.2.3"]) == 0
 
+    assert any("scripts/export_console_openapi.py" in cmd for cmd in calls)
     assert any("scripts/check_release_version.py" in cmd for cmd in calls)
     assert any("pytest" in cmd and "tests/test_version_fake.py" in cmd for cmd in calls)
     assert not any(cmd[:2] == ["git", "commit"] for cmd in calls)

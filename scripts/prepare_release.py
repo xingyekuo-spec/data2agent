@@ -166,6 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("版本文件已是目标版本,无需修改。")
 
+    _run([sys.executable, "scripts/export_console_openapi.py", "console-ui/openapi.json"])
     _run([sys.executable, "scripts/check_release_version.py", "--tag", tag])
     if not args.no_tests:
         _run([sys.executable, "-m", "pytest", *_version_test_paths()])
@@ -176,6 +177,7 @@ def main(argv: list[str] | None = None) -> int:
             "pyproject.toml",
             "console-ui/package.json",
             "console-ui/package-lock.json",
+            "console-ui/openapi.json",
         ])
         if _has_staged_changes():
             _run(["git", "commit", "-m", f"Release {tag}"])
