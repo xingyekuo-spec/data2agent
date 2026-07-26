@@ -6897,7 +6897,7 @@
   },
   "info": {
     "title": "data2agent 运维控制台",
-    "version": "0.5.5"
+    "version": "0.5.6"
   },
   "openapi": "3.1.0",
   "paths": {
