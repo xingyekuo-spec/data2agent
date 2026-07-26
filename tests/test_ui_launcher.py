@@ -124,6 +124,52 @@ class _FakeProc:
         return None if self._alive else 1
 
 
+def test_admin_startup_timeout_default_and_env(monkeypatch):
+    mod = _load_launcher()
+    monkeypatch.delenv("D2A_ADMIN_STARTUP_TIMEOUT", raising=False)
+    assert mod._admin_startup_timeout() == mod.ADMIN_STARTUP_TIMEOUT
+    monkeypatch.setenv("D2A_ADMIN_STARTUP_TIMEOUT", "120")
+    assert mod._admin_startup_timeout() == 120
+    monkeypatch.setenv("D2A_ADMIN_STARTUP_TIMEOUT", "bad")
+    assert mod._admin_startup_timeout() == mod.ADMIN_STARTUP_TIMEOUT
+
+
+def test_admin_startup_timeout_reports_logs_and_manual_command(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    py = tmp_path / "runtime" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_bytes(b"")
+    messages: list[tuple[str, str, bool]] = []
+    waits: list[float] = []
+
+    monkeypatch.setattr(mod, "_msg",
+                        lambda title, text, error=False: messages.append((title, text, error)))
+    monkeypatch.setattr(mod, "_resolve_python", lambda home: py)
+    monkeypatch.setattr(mod, "acquire_single_instance", lambda name: True)
+    monkeypatch.setattr(mod, "release_single_instance", lambda: None)
+    monkeypatch.setattr(mod, "spawn_managed", lambda *a, **k: _FakeProc(alive=True))
+    monkeypatch.setattr(mod, "stop_children", lambda: None)
+
+    def fake_wait_port(host, port, timeout=20.0):
+        waits.append(timeout)
+        return False
+
+    monkeypatch.setattr(mod, "_wait_port", fake_wait_port)
+    code = mod.main([
+        "--role", "platform", "--home", str(tmp_path),
+        "--no-tray", "--no-browser",
+    ])
+
+    assert code == 4
+    assert waits == [mod.ADMIN_STARTUP_TIMEOUT]
+    assert messages and messages[0][2] is True
+    text = messages[0][1]
+    assert "启动超时" in text
+    assert "d2a-console.log" in text
+    assert "d2a-launcher.log" in text
+    assert "-m data2agent.console" in text
+
+
 def test_supervise_restarts_dead_worker(tmp_path, monkeypatch):
     mod = _load_launcher()
     mod._MANAGED.clear()

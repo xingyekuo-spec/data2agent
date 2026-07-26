@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 _DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -68,13 +68,25 @@ class SinkConfig(BaseModel):
 
 
 class TableExtractConfig(BaseModel):
-    model_config = {"extra": "forbid"}
+    model_config = {"extra": "forbid", "populate_by_name": True}
     mode: Literal["incremental", "full_refresh"]
-    schema: str | None = None              # SQL Server schema, 默认 dbo
+    schema_name: str | None = Field(
+        default=None,
+        alias="schema",
+        serialization_alias="schema",
+    )                                      # SQL Server schema, 默认 dbo
     key_columns: list[str] | None = None   # 数据库 PK / 唯一索引 / 业务唯一键
     watermark: str | None = None           # incremental 必填, full_refresh 禁止
     schema_fingerprint: str | None = None  # 已确认字段结构摘要(sha256:...)
     validated_at: str | None = None        # 最近一次现场校验时间
+
+    @property
+    def schema(self) -> str | None:
+        return self.schema_name
+
+    @schema.setter
+    def schema(self, value: str | None) -> None:
+        self.schema_name = value
 
     @model_validator(mode="after")
     def _validate_mode_constraints(self):

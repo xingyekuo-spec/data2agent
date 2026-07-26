@@ -32,6 +32,7 @@ _SUPERVISE_STOP = threading.Event()
 SUPERVISE_INTERVAL = 5.0
 SUPERVISE_MAX_RESTARTS = 5   # within SUPERVISE_WINDOW before giving up
 SUPERVISE_WINDOW = 60.0
+ADMIN_STARTUP_TIMEOUT = 90.0
 
 
 def _msg(title: str, text: str, error: bool = False) -> None:
@@ -66,6 +67,16 @@ def _wait_port(host: str, port: int, timeout: float = 20.0) -> bool:
             return True
         time.sleep(0.25)
     return False
+
+
+def _admin_startup_timeout() -> float:
+    raw = os.environ.get("D2A_ADMIN_STARTUP_TIMEOUT", "").strip()
+    if not raw:
+        return ADMIN_STARTUP_TIMEOUT
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return ADMIN_STARTUP_TIMEOUT
 
 
 def detect_portable_root(start: Path | None = None) -> Path | None:
@@ -125,6 +136,31 @@ def _role_config(role: str, home: Path) -> dict:
             ],
         }
     raise SystemExit(f"unknown role: {role}")
+
+
+def _display_cmd(cmd: list[str]) -> str:
+    return subprocess.list2cmdline([str(part) for part in cmd])
+
+
+def _admin_startup_failure_message(
+    *,
+    reason: str,
+    host: str,
+    port: int,
+    home: Path,
+    log_name: str,
+    cmd: list[str],
+) -> str:
+    logs = home / "data" / "logs"
+    return (
+        f"{reason}(未监听 {host}:{port})。\n"
+        f"Home: {home}\n\n"
+        "请查看日志:\n"
+        f"  {logs / (log_name + '.log')}\n"
+        f"  {logs / 'd2a-launcher.log'}\n\n"
+        "也可在命令行手动启动以查看完整报错:\n"
+        f"  {_display_cmd(cmd)}"
+    )
 
 
 def _resolve_python(home: Path) -> Path | None:
@@ -566,17 +602,35 @@ def main(argv: list[str] | None = None) -> int:
     if not admin_already_up:
         try:
             admin_log = "d2a-console" if args.role == "platform" else "d2a-middle-admin"
-            spawn_managed("admin",
-                          [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]],
-                          home=home, env=env, log_name=admin_log, listen=port)
+            admin_cmd = [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]]
+            admin_proc = spawn_managed(
+                "admin", admin_cmd, home=home, env=env,
+                log_name=admin_log, listen=port)
         except OSError as e:
             release_single_instance()
             _msg(title, f"无法启动:\n{e}", error=True)
             return 3
-        if not _wait_port(host, port, timeout=25.0):
+        timeout = _admin_startup_timeout()
+        if not _wait_port(host, port, timeout=timeout):
+            exit_code = admin_proc.poll()
+            if exit_code is None:
+                reason = f"启动超时(等待 {timeout:g} 秒)"
+            else:
+                reason = f"启动失败(进程已退出,退出码 {exit_code})"
             stop_children()
             release_single_instance()
-            _msg(title, f"启动超时(未监听 {host}:{port})。\nHome: {home}", error=True)
+            _msg(
+                title,
+                _admin_startup_failure_message(
+                    reason=reason,
+                    host=host,
+                    port=port,
+                    home=home,
+                    log_name=admin_log,
+                    cmd=admin_cmd,
+                ),
+                error=True,
+            )
             return 4
 
     # Only start workers when we ourselves brought admin up. If admin was

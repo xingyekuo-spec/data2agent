@@ -1,4 +1,7 @@
 """TableExtractConfig 配置模型测试."""
+import subprocess
+import sys
+
 import pytest
 from pathlib import Path
 from data2agent.connect.config import (
@@ -16,6 +19,27 @@ class TestTableExtractConfig:
         cfg = TableExtractConfig(mode="full_refresh")
         assert cfg.mode == "full_refresh"
         assert cfg.watermark is None
+
+    def test_schema_alias_keeps_yaml_name(self):
+        cfg = TableExtractConfig(mode="full_refresh", schema="dbo")
+        assert cfg.schema == "dbo"
+        assert cfg.schema_name == "dbo"
+        dumped = cfg.model_dump(by_alias=True)
+        assert dumped["schema"] == "dbo"
+        assert "schema_name" not in dumped
+
+    def test_import_has_no_schema_shadow_warning(self):
+        code = (
+            "from data2agent.connect.config import TableExtractConfig; "
+            "print(TableExtractConfig(mode='full_refresh', schema='dbo').schema)"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-W", "error::UserWarning", "-c", code],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert proc.stdout.strip() == "dbo"
 
     def test_rejects_incremental_without_watermark(self):
         with pytest.raises(ValueError, match="watermark"):
