@@ -135,6 +135,33 @@ def test_admin_startup_timeout_default_and_env(monkeypatch):
     assert mod._admin_startup_timeout() == mod.ADMIN_STARTUP_TIMEOUT
 
 
+def test_spawn_detaches_child_stdin(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    calls: list[dict] = []
+
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            calls.append({"cmd": cmd, **kwargs})
+            self.pid = 1
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(mod.subprocess, "Popen", FakePopen)
+    mod._CHILDREN.clear()
+    proc = mod._spawn(
+        ["python", "-m", "data2agent.console"],
+        home=tmp_path,
+        env={},
+        log_name="d2a-console",
+    )
+
+    assert proc.pid == 1
+    assert calls[0]["stdin"] == mod.subprocess.DEVNULL
+    assert calls[0]["stderr"] == mod.subprocess.STDOUT
+    mod._CHILDREN.clear()
+
+
 def test_admin_startup_timeout_reports_logs_and_manual_command(tmp_path, monkeypatch):
     mod = _load_launcher()
     py = tmp_path / "runtime" / "python.exe"

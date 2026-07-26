@@ -99,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"运维控制台:http://{args.host}:{args.port}/"
           f"({mode};"
           f"{'Token 认证已启用' if token else '未启用认证,内网部署建议配 D2A_CONSOLE_TOKEN'})")
+    print(f"准备启动 uvicorn 监听 {args.host}:{args.port} ...", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

@@ -246,6 +246,16 @@ def _creationflags() -> int:
     return CREATE_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
 
 
+def _child_creationflags() -> int:
+    if sys.platform != "win32":
+        return 0
+    # Keep children hidden, but do not create a new process group. Some Windows
+    # Server/desktop builds have shown uvicorn hanging before listen when the
+    # console-subsystem python.exe is started hidden from a PyInstaller GUI
+    # parent with CREATE_NEW_PROCESS_GROUP.
+    return 0x08000000
+
+
 def _spawn(cmd: list[str], *, home: Path, env: dict[str, str],
            log_name: str | None = None) -> subprocess.Popen:
     # 子进程输出落到 data/logs/<name>.log,现场可诊断(此前吞进 DEVNULL,
@@ -259,9 +269,10 @@ def _spawn(cmd: list[str], *, home: Path, env: dict[str, str],
         cmd,
         cwd=str(home),
         env=env,
+        stdin=subprocess.DEVNULL,
         stdout=out,
         stderr=subprocess.STDOUT if log_name else subprocess.DEVNULL,
-        creationflags=_creationflags(),
+        creationflags=_child_creationflags(),
         start_new_session=(sys.platform != "win32"),
     )
     _CHILDREN.append(proc)
