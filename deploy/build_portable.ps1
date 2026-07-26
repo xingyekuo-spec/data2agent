@@ -127,21 +127,25 @@ if ($Role -eq 'platform') {
     }
 }
 
-# --- 5. README (single entry: data2agent.exe, added by release / -LauncherExe) ---
+# --- 5. README (entries added by release / -LauncherExe) ---
 Write-Step 'Write README.txt'
 $v1Note = if ($Role -eq 'platform') {
-    "  5. Vue Console: open http://127.0.0.1:8849/ (requires app\console-ui\dist)."
+    @"
+  5. Stable platform start: double-click 启动平台.bat.
+  6. Tray helper: data2agent.exe can open the UI, but 启动平台.bat is preferred on Windows sites.
+  7. Vue Console: open http://127.0.0.1:8849/ (requires app\console-ui\dist).
+"@
 } else { '' }
 $readme = @"
 data2agent portable ($Role) $Version
 ====================================
 
-Extract anywhere. Double-click data2agent.exe — that is the only entry.
+Extract anywhere.
 
-  1. First run opens the browser setup page.
-  2. Tray icon (system tray): Open admin UI / Quit.
-  3. If already running, double-click only reopens the admin UI.
-  4. Quit from tray stops services started by this app.
+  1. Platform package: double-click 启动平台.bat for the most stable startup.
+  2. Middle package: double-click data2agent.exe.
+  3. First run opens the browser setup page.
+  4. Tray icon (system tray): Open admin UI / Quit.
 $v1Note
 Middle also needs Microsoft ODBC Driver 18 for SQL Server (MSI).
 
@@ -151,10 +155,10 @@ Set-Content -Path (Join-Path $portable 'README.txt') -Value $readme -Encoding ut
 
 # --- 5a. 平台端在线升级入口(单一事实来源:data2agent.updater.apply_script) ---
 if ($Role -eq 'platform') {
-    Write-Step 'Write 升级.bat (platform)'
+    Write-Step 'Write platform batch entries'
     $env:D2A_PORTABLE_OUT = $portable
-    & $runtimePy -c "import os; from pathlib import Path; from data2agent.updater.apply_script import UPDATE_BAT; (Path(os.environ['D2A_PORTABLE_OUT']) / '升级.bat').write_text(UPDATE_BAT, encoding='utf-8')"
-    if ($LASTEXITCODE -ne 0) { throw 'write 升级.bat failed' }
+    & $runtimePy -c "import os; from pathlib import Path; from data2agent.updater.apply_script import START_PLATFORM_BAT, UPDATE_BAT; out = Path(os.environ['D2A_PORTABLE_OUT']); (out / '升级.bat').write_text(UPDATE_BAT, encoding='utf-8'); (out / '启动平台.bat').write_text(START_PLATFORM_BAT, encoding='utf-8')"
+    if ($LASTEXITCODE -ne 0) { throw 'write platform batch entries failed' }
 }
 
 # Keep a user-visible, immutable build label in every extracted package.  The

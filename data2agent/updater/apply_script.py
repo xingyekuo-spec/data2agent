@@ -15,7 +15,14 @@ from pathlib import Path
 #: 「升级.bat」是脚本自身入口,cmd 执行期间被占用,不参与换包——
 #: 它只是转发到 data/updates/apply-update.ps1 的引导,升级后由 console
 #: 在下一次暂存时按最新模板重写)。
-MOVE_ITEMS = ("data2agent.exe", "runtime", "app", "BUILD-INFO.json", "README.txt")
+MOVE_ITEMS = (
+    "data2agent.exe",
+    "runtime",
+    "app",
+    "BUILD-INFO.json",
+    "README.txt",
+    "启动平台.bat",
+)
 
 APPLY_PS1 = r"""# data2agent 平台便携包换包脚本 —— 由 console 在更新就绪时生成,请勿手改。
 # 用法:退出托盘后双击便携包根目录的「升级.bat」;或手动:
@@ -32,7 +39,7 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 # 「升级.bat」不参与换包:它是本脚本的执行入口,cmd 执行期间文件被占用;
 # bat 只是固定引导,新版本如有变化会在下次「检查更新」时由 console 重写。
-$MoveItems = @('data2agent.exe', 'runtime', 'app', 'BUILD-INFO.json', 'README.txt')
+$MoveItems = @('data2agent.exe', 'runtime', 'app', 'BUILD-INFO.json', 'README.txt', '启动平台.bat')
 
 $logDir = Join-Path $InstallDir 'data\logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
@@ -56,6 +63,16 @@ function Test-ConsolePort {
         return $async.AsyncWaitHandle.WaitOne(800) -and $client.Connected
     } catch { return $false } finally { $client.Close() }
 }
+function Stop-PortablePython {
+    Get-CimInstance Win32_Process -Filter "name = 'python.exe' or name = 'pythonw.exe'" -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.CommandLine -like '*data2agent.console*' -and
+            $_.CommandLine -like "*$InstallDir*"
+        } |
+        ForEach-Object {
+            try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+        }
+}
 
 # 已动过的条目(改名或替换),供回滚恢复。条目在「改名 .old 之后、
 # Move 之前」就登记,这样即使 Move 失败,已改名的一半也能被恢复。
@@ -63,6 +80,7 @@ $script:moved = @()
 function Restore-PreviousVersion([string]$reason) {
     Log "回滚: $reason"
     Get-Process -Name 'data2agent' -ErrorAction SilentlyContinue | Stop-Process -Force
+    Stop-PortablePython
     Start-Sleep -Seconds 2
     foreach ($item in $script:moved) {
         $dst = Join-Path $InstallDir $item
@@ -123,10 +141,15 @@ try {
     Fail "换包失败:$_(已自动恢复旧版本,请重试或联系运维)"
 }
 
-# 4. 启动新版本
+# 4. 启动新版本。优先使用稳定入口,绕过 PyInstaller 托盘启动器。
+$startBat = Join-Path $InstallDir '启动平台.bat'
 $exe = Join-Path $InstallDir 'data2agent.exe'
 try {
-    Start-Process -FilePath $exe -WorkingDirectory $InstallDir
+    if (Test-Path $startBat) {
+        Start-Process -FilePath $startBat -WorkingDirectory $InstallDir
+    } else {
+        Start-Process -FilePath $exe -WorkingDirectory $InstallDir
+    }
 } catch {
     Restore-PreviousVersion "新版本启动失败: $_"
     Fail '新版本无法启动,已自动回滚到旧版本'
@@ -143,7 +166,7 @@ while ((Get-Date) -lt $deadline) {
 
 if (-not $ok) {
     Restore-PreviousVersion '健康检查超时'
-    Start-Process -FilePath $exe -WorkingDirectory $InstallDir
+    if (Test-Path $exe) { Start-Process -FilePath $exe -WorkingDirectory $InstallDir }
     Fail '新版本未能正常启动,已自动回滚到旧版本'
 }
 
@@ -169,6 +192,33 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -InstallDir "%~dp
 if errorlevel 1 pause
 """
 
+START_PLATFORM_BAT = """@echo off
+chcp 65001 >nul
+setlocal
+cd /d "%~dp0"
+set "D2A_HOME=%~dp0."
+set "PYTHONIOENCODING=utf-8"
+set "PYTHONUNBUFFERED=1"
+if not exist "%~dp0runtime\\python.exe" (
+  echo.
+  echo   未找到运行环境: %~dp0runtime\\python.exe
+  echo   请确认平台包解压完整。
+  echo.
+  pause
+  exit /b 1
+)
+echo.
+echo   正在启动 data2agent 平台...
+echo   管理界面: http://127.0.0.1:8849/
+echo   关闭本窗口会停止平台服务。
+echo.
+start "" "http://127.0.0.1:8849/"
+"%~dp0runtime\\python.exe" -m data2agent.console --home "%~dp0." --host 127.0.0.1 --port 8849
+echo.
+echo   平台服务已退出。
+pause
+"""
+
 
 def write_update_scripts(home: Path, updates_dir: Path) -> Path:
     """把换包脚本写入 data/updates,启动入口写到 home 根目录;返回 bat 路径。"""
@@ -176,4 +226,5 @@ def write_update_scripts(home: Path, updates_dir: Path) -> Path:
     (updates_dir / "apply-update.ps1").write_text(APPLY_PS1, encoding="utf-8-sig")
     bat = home / "升级.bat"
     bat.write_text(UPDATE_BAT, encoding="utf-8")
+    (home / "启动平台.bat").write_text(START_PLATFORM_BAT, encoding="utf-8")
     return bat

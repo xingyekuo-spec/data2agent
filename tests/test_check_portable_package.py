@@ -200,8 +200,9 @@ def test_check_portable_platform_requires_legacy_health_protocol(tmp_path: Path,
     _write(expected / "objects" / "dead_stock_attribution.yaml")
     shutil.copytree(expected, portable / "app" / "templates")
     _write(portable / "app" / "console-ui" / "dist" / "index.html", "<html></html>")
-    from data2agent.updater.apply_script import UPDATE_BAT
+    from data2agent.updater.apply_script import START_PLATFORM_BAT, UPDATE_BAT
     _write(portable / "升级.bat", UPDATE_BAT)
+    _write(portable / "启动平台.bat", START_PLATFORM_BAT)
     _write(
         portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "console" / "app.py",
         'app.mount("/assets", StaticFiles(directory=assets_dir), name="vue-assets")\n'
