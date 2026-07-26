@@ -32,7 +32,7 @@ _SUPERVISE_STOP = threading.Event()
 SUPERVISE_INTERVAL = 5.0
 SUPERVISE_MAX_RESTARTS = 5   # within SUPERVISE_WINDOW before giving up
 SUPERVISE_WINDOW = 60.0
-ADMIN_STARTUP_TIMEOUT = 90.0
+ADMIN_STARTUP_TIMEOUT = 180.0
 
 
 def _msg(title: str, text: str, error: bool = False) -> None:
@@ -66,6 +66,49 @@ def _wait_port(host: str, port: int, timeout: float = 20.0) -> bool:
         if _port_open(host, port):
             return True
         time.sleep(0.25)
+    return False
+
+
+def _wait_admin_ready(
+    host: str,
+    port: int,
+    proc: subprocess.Popen,
+    *,
+    timeout: float,
+    home: Path,
+) -> bool:
+    start = time.time()
+    deadline = start + timeout
+    next_log = start
+    while time.time() < deadline:
+        if _port_open(host, port):
+            _supervisor_log(
+                home,
+                f"admin ready port={host}:{port} elapsed={time.time() - start:.1f}s",
+            )
+            return True
+        exit_code = proc.poll()
+        if exit_code is not None:
+            _supervisor_log(
+                home,
+                f"admin exited before port ready exit_code={exit_code} "
+                f"elapsed={time.time() - start:.1f}s",
+            )
+            return False
+        now = time.time()
+        if now >= next_log:
+            pid = getattr(proc, "pid", "?")
+            _supervisor_log(
+                home,
+                f"waiting admin port={host}:{port} pid={pid} "
+                f"elapsed={now - start:.1f}s timeout={timeout:g}s",
+            )
+            next_log = now + 5.0
+        time.sleep(0.25)
+    _supervisor_log(
+        home,
+        f"admin startup timeout port={host}:{port} elapsed={time.time() - start:.1f}s",
+    )
     return False
 
 
@@ -255,8 +298,9 @@ def stop_children() -> None:
 def _supervisor_log(home: Path, msg: str) -> None:
     try:
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n"
-        (home / "data" / "logs" / "d2a-launcher.log").open(
-            "a", encoding="utf-8").write(line)
+        logs = home / "data" / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        (logs / "d2a-launcher.log").open("a", encoding="utf-8").write(line)
     except Exception:
         pass
 
@@ -568,9 +612,15 @@ def main(argv: list[str] | None = None) -> int:
     host = "127.0.0.1"
     configured = Path(cfg["config_file"]).is_file()
     url = admin_url(host, port, configured, role=args.role)
+    _supervisor_log(
+        home,
+        f"launcher start role={args.role} home={home} "
+        f"port={port} configured={configured}",
+    )
 
     # Secondary instance: just open the already-running admin UI.
     if not acquire_single_instance(cfg["mutex"]):
+        _supervisor_log(home, "single instance already held")
         if _wait_port(host, port, timeout=20.0):
             if not args.no_browser:
                 open_admin(url)
@@ -594,6 +644,7 @@ def main(argv: list[str] | None = None) -> int:
     env = os.environ.copy()
     # Windows 控制台默认 GBK,日志中的 UTF-8 中文 Traceback 会乱码
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUNBUFFERED", "1")
     env["D2A_HOME"] = str(home)
     env = _merge_secrets_env(home, env)
     env.update(portable_vue_dist_env(home, env))
@@ -603,34 +654,45 @@ def main(argv: list[str] | None = None) -> int:
         try:
             admin_log = "d2a-console" if args.role == "platform" else "d2a-middle-admin"
             admin_cmd = [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]]
+            _supervisor_log(home, f"spawning admin cmd={_display_cmd(admin_cmd)}")
             admin_proc = spawn_managed(
                 "admin", admin_cmd, home=home, env=env,
                 log_name=admin_log, listen=port)
+            _supervisor_log(
+                home,
+                f"spawned admin pid={getattr(admin_proc, 'pid', '?')} "
+                f"log={home / 'data' / 'logs' / (admin_log + '.log')}",
+            )
         except OSError as e:
             release_single_instance()
+            _supervisor_log(home, f"admin spawn failed error={e}")
             _msg(title, f"无法启动:\n{e}", error=True)
             return 3
         timeout = _admin_startup_timeout()
-        if not _wait_port(host, port, timeout=timeout):
+        if not _wait_admin_ready(
+            host, port, admin_proc, timeout=timeout, home=home,
+        ):
             exit_code = admin_proc.poll()
             if exit_code is None:
                 reason = f"启动超时(等待 {timeout:g} 秒)"
             else:
                 reason = f"启动失败(进程已退出,退出码 {exit_code})"
+            failure_message = _admin_startup_failure_message(
+                reason=reason,
+                host=host,
+                port=port,
+                home=home,
+                log_name=admin_log,
+                cmd=admin_cmd,
+            )
+            _supervisor_log(
+                home,
+                "admin startup failed message="
+                + failure_message.replace("\n", " | "),
+            )
             stop_children()
             release_single_instance()
-            _msg(
-                title,
-                _admin_startup_failure_message(
-                    reason=reason,
-                    host=host,
-                    port=port,
-                    home=home,
-                    log_name=admin_log,
-                    cmd=admin_cmd,
-                ),
-                error=True,
-            )
+            _msg(title, failure_message, error=True)
             return 4
 
     # Only start workers when we ourselves brought admin up. If admin was

@@ -119,6 +119,7 @@ class _FakeProc:
 
     def __init__(self, alive: bool = True):
         self._alive = alive
+        self.pid = 12345
 
     def poll(self):
         return None if self._alive else 1
@@ -150,11 +151,11 @@ def test_admin_startup_timeout_reports_logs_and_manual_command(tmp_path, monkeyp
     monkeypatch.setattr(mod, "spawn_managed", lambda *a, **k: _FakeProc(alive=True))
     monkeypatch.setattr(mod, "stop_children", lambda: None)
 
-    def fake_wait_port(host, port, timeout=20.0):
+    def fake_wait_admin_ready(host, port, proc, *, timeout, home):
         waits.append(timeout)
         return False
 
-    monkeypatch.setattr(mod, "_wait_port", fake_wait_port)
+    monkeypatch.setattr(mod, "_wait_admin_ready", fake_wait_admin_ready)
     code = mod.main([
         "--role", "platform", "--home", str(tmp_path),
         "--no-tray", "--no-browser",
@@ -168,6 +169,21 @@ def test_admin_startup_timeout_reports_logs_and_manual_command(tmp_path, monkeyp
     assert "d2a-console.log" in text
     assert "d2a-launcher.log" in text
     assert "-m data2agent.console" in text
+
+
+def test_wait_admin_ready_logs_progress_and_exit(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    monkeypatch.setattr(mod, "_port_open", lambda host, port: False)
+    monkeypatch.setattr(mod.time, "sleep", lambda seconds: None)
+    proc = _FakeProc(alive=False)
+
+    assert mod._wait_admin_ready(
+        "127.0.0.1", 8849, proc, timeout=10, home=tmp_path,
+    ) is False
+
+    log = tmp_path / "data" / "logs" / "d2a-launcher.log"
+    text = log.read_text(encoding="utf-8")
+    assert "admin exited before port ready" in text
 
 
 def test_supervise_restarts_dead_worker(tmp_path, monkeypatch):
