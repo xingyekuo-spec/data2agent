@@ -64,14 +64,23 @@ function Test-ConsolePort {
     } catch { return $false } finally { $client.Close() }
 }
 function Stop-PortablePython {
-    Get-CimInstance Win32_Process -Filter "name = 'python.exe' or name = 'pythonw.exe'" -ErrorAction SilentlyContinue |
-        Where-Object {
-            $_.CommandLine -like '*data2agent.console*' -and
-            $_.CommandLine -like "*$InstallDir*"
-        } |
-        ForEach-Object {
-            try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+    try {
+        $cim = Get-Command Get-CimInstance -ErrorAction SilentlyContinue
+        if (-not $cim) {
+            Log '跳过 Python 进程清理:Get-CimInstance 不可用'
+            return
         }
+        Get-CimInstance Win32_Process -Filter "name = 'python.exe' or name = 'pythonw.exe'" -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.CommandLine -like '*data2agent.console*' -and
+                $_.CommandLine -like "*$InstallDir*"
+            } |
+            ForEach-Object {
+                try { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
+            }
+    } catch {
+        Log "跳过 Python 进程清理: $_"
+    }
 }
 
 # 已动过的条目(改名或替换),供回滚恢复。条目在「改名 .old 之后、
