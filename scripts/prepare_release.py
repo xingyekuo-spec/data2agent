@@ -110,6 +110,21 @@ def _has_changes() -> bool:
     return bool(_capture(["git", "status", "--short"], check=True))
 
 
+def _has_staged_changes() -> bool:
+    return subprocess.run(
+        ["git", "diff", "--cached", "--quiet"],
+        cwd=ROOT,
+        check=False,
+    ).returncode != 0
+
+
+def _version_test_paths() -> list[str]:
+    paths = sorted((ROOT / "tests").glob("test_version*.py"))
+    if not paths:
+        raise SystemExit("未找到版本测试文件: tests/test_version*.py")
+    return [str(path.relative_to(ROOT)) for path in paths]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version", help="目标版本号,例如 0.5.3 或 v0.5.3")
@@ -153,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _run([sys.executable, "scripts/check_release_version.py", "--tag", tag])
     if not args.no_tests:
-        _run([sys.executable, "-m", "pytest", "tests/test_version*.py"])
+        _run([sys.executable, "-m", "pytest", *_version_test_paths()])
 
     if args.commit:
         _run([
@@ -162,7 +177,10 @@ def main(argv: list[str] | None = None) -> int:
             "console-ui/package.json",
             "console-ui/package-lock.json",
         ])
-        _run(["git", "commit", "-m", f"Release {tag}"])
+        if _has_staged_changes():
+            _run(["git", "commit", "-m", f"Release {tag}"])
+        else:
+            print("版本文件没有新的 staged 改动,跳过 release commit。")
     elif changed:
         print("未传 --commit;请检查后手动提交或重新运行并加 --commit。")
 
