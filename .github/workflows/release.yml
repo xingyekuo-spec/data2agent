@@ -123,9 +123,20 @@ jobs:
         run: |
           if ($env:GITHUB_REF_TYPE -eq 'tag') {
             "version=$env:GITHUB_REF_NAME" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          } elseif ("${{ github.event.inputs.ref }}" -match '^v\d+(\.\d+)*') {
+            "version=${{ github.event.inputs.ref }}" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           } else {
             $sha = git rev-parse --short HEAD
             "version=manual-$sha" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          }
+
+      - name: 校验发布版本一致性
+        run: |
+          $v = "${{ steps.ver.outputs.version }}"
+          if ($v -match '^v\d+(\.\d+)*') {
+            python scripts/check_release_version.py --tag $v
+          } else {
+            python scripts/check_release_version.py
           }
 
       - name: 构建 wheel + 启动器 exe

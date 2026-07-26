@@ -7,6 +7,26 @@
 | `d2a-portable-platform-<版本>.zip` | 数据平台 |
 | `d2a-portable-middle-<版本>.zip` | 中间服务器 |
 
+### 发布版本准备
+
+正式发布前用本地脚本统一更新版本号并做校验:
+
+```bash
+python scripts/prepare_release.py 0.5.3
+```
+
+该命令会同步更新 `pyproject.toml`、`console-ui/package.json` 和
+`console-ui/package-lock.json`,并运行版本一致性检查和 `tests/test_version*.py`。
+确认无误后可让脚本创建提交、tag 并推送:
+
+```bash
+python scripts/prepare_release.py 0.5.3 --commit --tag --push
+```
+
+推送 `v0.5.3` tag 后,GitHub `release` workflow 会自动构建平台/中间机便携包、
+生成 `latest.json` 并创建 Release。若只想先做测试包,不要打 tag,在 GitHub
+Actions 手动运行 release workflow 且不勾选创建 Release。
+
 ### 升级策略（现场）
 
 典型现场：**数据平台定期升级，中间机很少动。**
