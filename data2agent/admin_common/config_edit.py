@@ -22,6 +22,7 @@ MIDDLE_EDITABLE = {
     "sources.*.rate.rows_per_second",
     "sources.*.lookback",
     "sources.*.sync_every",
+    "sources.*.sync_start_at",
     "sources.*.sink.url",
 }
 

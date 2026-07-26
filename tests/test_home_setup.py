@@ -49,6 +49,20 @@ def test_new_install_has_empty_tables(tmp_path):
     assert data["sources"]["digiwin_e10"]["tables"] == {}
 
 
+def test_build_middle_yaml_can_set_sync_start_at(tmp_path):
+    home = HomeLayout(tmp_path)
+    home.ensure_dirs()
+    data = build_middle_connect_yaml(
+        home,
+        platform_url="http://10.0.0.1:8850",
+        sync_every="1d",
+        sync_start_at="02:00",
+    )
+    source = data["sources"]["digiwin_e10"]
+    assert source["sync_every"] == "1d"
+    assert source["sync_start_at"] == "02:00"
+
+
 def test_load_home_secrets_if_present(tmp_path, monkeypatch):
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
@@ -104,6 +118,7 @@ def test_middle_browser_setup(tmp_path):
             "erp_port": 1433,
             "ingest_token": "ingest-tok",
             "admin_token": "admin-tok",
+            "sync_start_at": "02:00",
         })
         assert r.status_code == 200 and r.json()["ok"] is True
         assert home.connect_yaml.is_file()
@@ -112,6 +127,8 @@ def test_middle_browser_setup(tmp_path):
         assert secrets["D2A_INGEST_TOKEN"] == "ingest-tok"
         assert "PWD=secret" in secrets["D2A_E10_DSN"]
         assert "password" not in home.connect_yaml.read_text(encoding="utf-8").lower()
+        cfg = load_config(home.connect_yaml)
+        assert cfg.sources["digiwin_e10"].sync_start_at == "02:00"
 
         # after setup, protected APIs need token
         assert client.get("/api/status").status_code == 401

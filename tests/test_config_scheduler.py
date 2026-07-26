@@ -1,6 +1,8 @@
 """抽取框架 E5 测试:配置解析、错峰窗口、批次边界暂停、调度周期。"""
 
-from datetime import date
+import sys
+import types
+from datetime import date, datetime
 from datetime import time as dtime
 from pathlib import Path
 
@@ -8,6 +10,8 @@ import pytest
 
 from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.connect.config import (
+    ConnectConfig,
+    SourceConfig,
     in_window,
     load_config,
     parse_duration_seconds,
@@ -61,6 +65,37 @@ def test_load_config(tmp_path):
     cfg = load_config(cfg_file)
     s = cfg.sources["digiwin_e10"]
     assert s.lookback_days() == 2 and s.sync_every_seconds() == 900
+
+
+def test_load_config_sync_start_at(tmp_path):
+    cfg_file = tmp_path / "connect.yaml"
+    cfg_file.write_text(
+        "landing: l.sqlite\n"
+        "sources:\n"
+        "  digiwin_e10:\n"
+        "    adapter: sqlite_readonly\n"
+        "    path: s.sqlite\n"
+        "    tables: {}\n"
+        "    sync_every: 1d\n"
+        "    sync_start_at: \"02:00\"\n",
+        encoding="utf-8")
+    cfg = load_config(cfg_file)
+    s = cfg.sources["digiwin_e10"]
+    assert s.sync_start_at == "02:00"
+    assert s.sync_start_datetime_after(
+        datetime(2026, 7, 26, 1, 30)) == datetime(2026, 7, 26, 2, 0)
+    assert s.sync_start_datetime_after(
+        datetime(2026, 7, 26, 3, 0)) == datetime(2026, 7, 27, 2, 0)
+
+
+def test_config_rejects_bad_sync_start_at(tmp_path):
+    cfg_file = tmp_path / "connect.yaml"
+    cfg_file.write_text(
+        "sources:\n  e10:\n    adapter: sqlite_readonly\n    path: x\n"
+        "    tables: {}\n"
+        "    sync_start_at: 深夜\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="sync_start_at"):
+        load_config(cfg_file)
 
 
 def test_config_rejects_mssql_without_dsn_env(tmp_path):
@@ -223,3 +258,76 @@ def test_serve_once(env, pack, tmp_path):
     assert landing.count(SOURCE, "QUOTATION") == 180
     runs = landing.con.execute("SELECT COUNT(*) FROM d2a_sync_run").fetchone()[0]
     assert runs >= 3, "一轮 serve --once 应含 sync + apply + reconcile"
+
+
+def test_serve_schedules_first_run_at_sync_start_at(tmp_path, monkeypatch):
+    """自动调度应把首轮锚定到 sync_start_at，而不是服务启动即跑。"""
+    captured = []
+
+    class FakeBlockingScheduler:
+        def add_job(self, func, trigger, args=(), id=None,
+                    max_instances=None, coalesce=None, next_run_time=None):
+            captured.append({
+                "id": id,
+                "func": func.__name__,
+                "seconds": trigger.seconds,
+                "next_run_time": next_run_time,
+                "max_instances": max_instances,
+                "coalesce": coalesce,
+            })
+
+        def start(self):
+            return None
+
+    class FakeIntervalTrigger:
+        def __init__(self, seconds):
+            self.seconds = seconds
+
+    class FakeCronTrigger:
+        def __init__(self, hour, minute):
+            self.hour = hour
+            self.minute = minute
+
+    monkeypatch.setitem(sys.modules, "apscheduler", types.ModuleType("apscheduler"))
+    monkeypatch.setitem(
+        sys.modules, "apscheduler.schedulers",
+        types.ModuleType("apscheduler.schedulers"))
+    monkeypatch.setitem(
+        sys.modules, "apscheduler.triggers",
+        types.ModuleType("apscheduler.triggers"))
+    monkeypatch.setitem(
+        sys.modules, "apscheduler.schedulers.blocking",
+        types.SimpleNamespace(BlockingScheduler=FakeBlockingScheduler))
+    monkeypatch.setitem(
+        sys.modules, "apscheduler.triggers.interval",
+        types.SimpleNamespace(IntervalTrigger=FakeIntervalTrigger))
+    monkeypatch.setitem(
+        sys.modules, "apscheduler.triggers.cron",
+        types.SimpleNamespace(CronTrigger=FakeCronTrigger))
+
+    from data2agent.connect.scheduler import serve
+
+    cfg = ConnectConfig(
+        landing=str(tmp_path / "landing.sqlite"),
+        sources={
+            SOURCE: SourceConfig(
+                adapter="sqlite_readonly",
+                path=str(tmp_path / "source.sqlite"),
+                tables={},
+                sync_every="1d",
+                sync_start_at="02:00",
+            )
+        },
+    )
+    before = datetime.now()
+    serve(cfg)
+
+    assert len(captured) == 1
+    job = captured[0]
+    assert job["id"] == f"sync:{SOURCE}"
+    assert job["func"] == "run_sync_cycle"
+    assert job["seconds"] == 86400
+    assert job["max_instances"] == 1
+    assert job["coalesce"] is True
+    assert job["next_run_time"] >= before
+    assert job["next_run_time"].time() == dtime(2, 0)

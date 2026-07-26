@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from datetime import time as dtime
 from pathlib import Path
 from typing import Literal
@@ -106,6 +106,7 @@ class SourceConfig(BaseModel):
     rate: RateConfig = RateConfig()
     lookback: str = "3d"
     sync_every: str = "30m"
+    sync_start_at: str | None = None       # "HH:MM",首轮自动抽取启动时间;None=服务启动即跑
     reconcile_at: str | None = None       # "HH:MM",每日 L1 对账;None 不排
     apply_after_sync: bool = True         # sink=http 时忽略(映射在平台侧)
     sink: SinkConfig = SinkConfig()
@@ -123,6 +124,22 @@ class SourceConfig(BaseModel):
         for w in v:
             parse_window(w)
         return v
+
+    @field_validator("sync_start_at", mode="before")
+    @classmethod
+    def sync_start_at_parse(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        raw = str(v).strip()
+        if not raw:
+            return None
+        if not re.match(r"^\d{2}:\d{2}$", raw):
+            raise ValueError(f"sync_start_at 格式须为 'HH:MM',got '{v}'")
+        try:
+            dtime.fromisoformat(raw)
+        except ValueError as e:
+            raise ValueError(f"sync_start_at 格式须为 'HH:MM',got '{v}'") from e
+        return raw
 
     @field_validator("tables")
     @classmethod
@@ -170,6 +187,16 @@ class SourceConfig(BaseModel):
 
     def sync_every_seconds(self) -> float:
         return parse_duration_seconds(self.sync_every)
+
+    def sync_start_datetime_after(self, now: datetime) -> datetime:
+        """返回自动调度首轮时间。未配置时保持旧行为:服务启动即跑。"""
+        if self.sync_start_at is None:
+            return now
+        target_time = dtime.fromisoformat(self.sync_start_at)
+        target = datetime.combine(now.date(), target_time)
+        if target < now:
+            target += timedelta(days=1)
+        return target
 
 
 class ConnectConfig(BaseModel):

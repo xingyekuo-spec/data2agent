@@ -42,7 +42,7 @@ def _estimate_next_sync(now: datetime, scfg: SourceConfig, last_run: datetime | 
         nxt = _next_window_start(now, scfg.windows)
         return nxt if nxt is not None else now
     if last_run is None:
-        return now
+        return scfg.sync_start_datetime_after(now)
     return last_run + timedelta(seconds=scfg.sync_every_seconds())
 
 
@@ -100,6 +100,7 @@ def build_status(cfg: ConnectConfig, now: datetime | None = None) -> dict:
             "in_window": in_window(now.time(), scfg.windows),
             "windows": scfg.windows,
             "sync_every": scfg.sync_every,
+            "sync_start_at": scfg.sync_start_at,
             "last_run_at": last_run.isoformat() if last_run else None,
             "next_sync_at": _estimate_next_sync(now, scfg, last_run).isoformat(),
             "watermarks": watermarks,

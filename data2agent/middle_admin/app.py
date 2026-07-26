@@ -148,6 +148,7 @@ class SetupBody(BaseModel):
     ingest_token: str
     admin_token: str
     sync_every: str = "30m"
+    sync_start_at: str | None = None
     lookback: str = "3d"
     batch_size: int = 5000
     rows_per_second: int = 2000
@@ -181,6 +182,7 @@ def _config_subset(cfg: ConnectConfig) -> dict:
                      "rows_per_second": scfg.rate.rows_per_second},
             "lookback": scfg.lookback,
             "sync_every": scfg.sync_every,
+            "sync_start_at": scfg.sync_start_at,
             "tables": {
                 tbl: {
                     "mode": spec.mode,
@@ -491,6 +493,7 @@ def create_app(
             home_layout,
             platform_url=body.platform_url,
             sync_every=body.sync_every,
+            sync_start_at=body.sync_start_at,
             lookback=body.lookback,
             batch_size=body.batch_size,
             rows_per_second=body.rows_per_second,

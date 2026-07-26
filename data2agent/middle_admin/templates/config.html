@@ -132,7 +132,15 @@
       <label class="field">
         <span class="field-label">抽取间隔</span>
         <input type="text" name="sync_every" value="30m">
-        <span class="field-hint"><code>30m</code>=30 分钟，<code>1h</code>=1 小时。</span>
+        <span class="field-hint">
+          支持秒/分钟/小时/天：<code>30s</code>=30 秒，<code>30m</code>=30 分钟，
+          <code>1h</code>=1 小时，<code>1d</code>=1 天。纯数字按秒处理。
+        </span>
+      </label>
+      <label class="field">
+        <span class="field-label">抽取启动时间（可空）</span>
+        <input type="text" name="sync_start_at" placeholder="例如 02:00">
+        <span class="field-hint">填 <code>02:00</code> 表示服务启动后等到下一个 02:00 再跑首轮；留空=服务启动即尝试抽取。</span>
       </label>
     </div>
   </div>
@@ -297,8 +305,11 @@
       '<div class="subpanel active" data-sub="' + sid + '-pace">' +
         '<div class="group-grid">' +
           field('抽取间隔',
-            '多久自动抽一轮。例：<code>30m</code>、<code>1h</code>。',
+            '多久自动抽一轮。支持秒/分钟/小时/天：<code>30s</code>、<code>30m</code>、<code>1h</code>、<code>1d</code>；纯数字按秒处理。',
             '<input type="text" data-key="sync_every" value="' + esc(src.sync_every || '') + '">') +
+          field('抽取启动时间（可空）',
+            '自动调度首轮启动时间，格式 <code>HH:MM</code>。例：<code>02:00</code>；留空=服务启动即尝试抽取。',
+            '<input type="text" data-key="sync_start_at" value="' + esc(src.sync_start_at || '') + '" placeholder="例如 02:00">') +
           field('错峰时间窗（可空）',
             '仅在这些时段内允许抽取。格式如 <code>22:00-06:00</code>；多个用英文逗号分隔。留空=全天可抽。',
             '<input type="text" data-key="windows" value="' + esc(w) + '" placeholder="例如 22:00-06:00">') +
@@ -421,6 +432,8 @@
           src.rate[key.slice(5)] = val === '' ? null : Number(val);
         } else if (key === 'sink.url') {
           src.sink.url = val;
+        } else if (key === 'sync_start_at') {
+          src[key] = val === '' ? null : val;
         } else {
           src[key] = val;
         }

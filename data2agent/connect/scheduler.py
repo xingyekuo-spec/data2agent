@@ -218,18 +218,21 @@ def serve(cfg: ConnectConfig, once: bool = False) -> None:
 
     scheduler = BlockingScheduler()
     for name, scfg in cfg.sources.items():
+        next_run_time = scfg.sync_start_datetime_after(datetime.now())
         scheduler.add_job(
             run_sync_cycle, IntervalTrigger(seconds=scfg.sync_every_seconds()),
             args=(name, scfg, cfg.landing, cfg.templates), id=f"sync:{name}",
             max_instances=1, coalesce=True,
-            next_run_time=datetime.now())
+            next_run_time=next_run_time)
         if scfg.reconcile_at:
             hh, mm = scfg.reconcile_at.split(":")
             scheduler.add_job(
                 run_reconcile_cycle, CronTrigger(hour=int(hh), minute=int(mm)),
                 args=(name, scfg, cfg.landing), id=f"reconcile:{name}",
                 max_instances=1, coalesce=True)
-        log.info("scheduled source=%s sync_every=%s reconcile_at=%s windows=%s tables=%s",
-                 name, scfg.sync_every, scfg.reconcile_at, scfg.windows or "不限",
-                 len(scfg.table_whitelist()))
+        log.info(
+            "scheduled source=%s sync_every=%s sync_start_at=%s "
+            "next_run_time=%s reconcile_at=%s windows=%s tables=%s",
+            name, scfg.sync_every, scfg.sync_start_at, next_run_time.isoformat(),
+            scfg.reconcile_at, scfg.windows or "不限", len(scfg.table_whitelist()))
     scheduler.start()

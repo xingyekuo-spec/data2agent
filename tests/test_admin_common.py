@@ -25,12 +25,17 @@ def test_merge_whitelist_preserves_secrets_and_backs_up(tmp_path):
     ok, errors = merge_whitelist_and_save(
         p,
         MIDDLE_EDITABLE,
-        {"sources": {"digiwin_e10": {"sync_every": "15m", "dsn_env": "HACKED"}}},
+        {"sources": {"digiwin_e10": {
+            "sync_every": "15m",
+            "sync_start_at": "02:00",
+            "dsn_env": "HACKED",
+        }}},
         validate=None,  # 本单元跳过 load_config；后续 Task 接真实校验
     )
     assert ok and not errors
     data = yaml.safe_load(p.read_text(encoding="utf-8"))
     assert data["sources"]["digiwin_e10"]["sync_every"] == "15m"
+    assert data["sources"]["digiwin_e10"]["sync_start_at"] == "02:00"
     assert data["sources"]["digiwin_e10"]["dsn_env"] == "D2A_E10_DSN"
     assert list(tmp_path.glob("connect.yaml.bak*")) or (tmp_path / "connect.yaml.bak").exists()
 

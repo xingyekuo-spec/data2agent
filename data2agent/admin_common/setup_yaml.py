@@ -15,31 +15,33 @@ def build_middle_connect_yaml(
     *,
     platform_url: str,
     sync_every: str = "30m",
+    sync_start_at: str | None = None,
     lookback: str = "3d",
     batch_size: int = 5000,
     rows_per_second: int = 2000,
 ) -> dict:
     templates = str(resolve_templates(home))
     landing = str(home.data_dir / "middle.sqlite")
+    source = {
+        "adapter": "mssql_readonly",
+        "dsn_env": "D2A_E10_DSN",
+        "tables": {},
+        "windows": [],
+        "rate": {"batch_size": batch_size, "rows_per_second": rows_per_second},
+        "lookback": lookback,
+        "sync_every": sync_every,
+        "sink": {
+            "type": "http",
+            "url": platform_url.rstrip("/"),
+            "token_env": "D2A_INGEST_TOKEN",
+        },
+    }
+    if sync_start_at:
+        source["sync_start_at"] = sync_start_at
     return {
         "templates": templates,
         "landing": landing,
-        "sources": {
-            "digiwin_e10": {
-                "adapter": "mssql_readonly",
-                "dsn_env": "D2A_E10_DSN",
-                "tables": {},
-                "windows": [],
-                "rate": {"batch_size": batch_size, "rows_per_second": rows_per_second},
-                "lookback": lookback,
-                "sync_every": sync_every,
-                "sink": {
-                    "type": "http",
-                    "url": platform_url.rstrip("/"),
-                    "token_env": "D2A_INGEST_TOKEN",
-                },
-            }
-        },
+        "sources": {"digiwin_e10": source},
     }
 
 

@@ -151,6 +151,7 @@ function renderStatus(data) {
 
     html += '<h2 style="margin-top:16px">运行</h2>';
     html += '<p class="meta">同步间隔: ' + esc(src.sync_every || '—') +
+            ' · 启动时间: ' + esc(src.sync_start_at || '启动即跑') +
             ' · 窗口: ' + esc((src.windows || []).join(', ') || '全天') + '</p>';
     html += '<p class="meta">上次运行: ' + esc(src.last_run_at || '—') +
             ' · 下次预估: ' + esc(src.next_sync_at || '—') + '</p>';
