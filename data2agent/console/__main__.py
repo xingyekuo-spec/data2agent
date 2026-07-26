@@ -36,6 +36,29 @@ def _warn_if_insecure(host: str, token: str | None) -> None:
         )
 
 
+def _enable_startup_trace(app) -> None:
+    """Dump a traceback if uvicorn startup hangs, without assuming FastAPI API shape."""
+    faulthandler.enable()
+    faulthandler.dump_traceback_later(
+        60,
+        repeat=False,
+        file=sys.stderr,
+    )
+
+    def _cancel_startup_trace() -> None:
+        faulthandler.cancel_dump_traceback_later()
+
+    add_event_handler = getattr(app, "add_event_handler", None)
+    if callable(add_event_handler):
+        add_event_handler("startup", _cancel_startup_trace)
+        return
+
+    router = getattr(app, "router", None)
+    on_startup = getattr(router, "on_startup", None)
+    if isinstance(on_startup, list):
+        on_startup.append(_cancel_startup_trace)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="data2agent 运维控制台")
     ap.add_argument("--home", default=None,
@@ -96,17 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         home=home.root if home else None,
     )
     if os.environ.get("D2A_STARTUP_TRACE"):
-        faulthandler.enable()
-        faulthandler.dump_traceback_later(
-            60,
-            repeat=False,
-            file=sys.stderr,
-        )
-
-        def _cancel_startup_trace() -> None:
-            faulthandler.cancel_dump_traceback_later()
-
-        app.add_event_handler("startup", _cancel_startup_trace)
+        _enable_startup_trace(app)
     mode = "首次配置模式" if (home and not home.platform_yaml.is_file()) else (
         "完整模式" if config else "只读模式")
     print(f"运维控制台:http://{args.host}:{args.port}/"
