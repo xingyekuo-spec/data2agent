@@ -7,6 +7,10 @@
 | `d2a-portable-platform-<版本>.zip` | 数据平台 |
 | `d2a-portable-middle-<版本>.zip` | 中间服务器 |
 
+Release workflow 默认使用 Python 3.12 生成 Windows embeddable runtime。
+不要在 Windows 10 现场包上默认使用 Python 3.14；平台端 uvicorn 在部分现场会卡在
+Python/asyncio 的内部 loopback socketpair 初始化。
+
 ### 发布版本准备
 
 正式发布前用本地脚本统一更新版本号并做校验:
