@@ -162,7 +162,7 @@ def test_spawn_detaches_child_stdin(tmp_path, monkeypatch):
     mod._CHILDREN.clear()
 
 
-def test_resolve_service_python_prefers_pythonw_on_windows(tmp_path, monkeypatch):
+def test_resolve_service_python_uses_python_exe_by_default_on_windows(tmp_path, monkeypatch):
     mod = _load_launcher()
     runtime = tmp_path / "runtime"
     runtime.mkdir()
@@ -171,6 +171,20 @@ def test_resolve_service_python_prefers_pythonw_on_windows(tmp_path, monkeypatch
     pyw = runtime / "pythonw.exe"
     pyw.write_bytes(b"")
     monkeypatch.setattr(mod.sys, "platform", "win32")
+
+    assert mod._resolve_service_python(tmp_path, py) == py
+
+
+def test_resolve_service_python_can_use_pythonw_on_windows(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    py = runtime / "python.exe"
+    py.write_bytes(b"")
+    pyw = runtime / "pythonw.exe"
+    pyw.write_bytes(b"")
+    monkeypatch.setattr(mod.sys, "platform", "win32")
+    monkeypatch.setenv("D2A_USE_PYTHONW", "1")
 
     assert mod._resolve_service_python(tmp_path, py) == pyw
 
@@ -186,13 +200,27 @@ def test_resolve_service_python_falls_back_without_pythonw(tmp_path, monkeypatch
     assert mod._resolve_service_python(tmp_path, py) == py
 
 
+def test_child_creationflags_windows_defaults_to_new_console(monkeypatch):
+    mod = _load_launcher()
+    monkeypatch.setattr(mod.sys, "platform", "win32")
+    monkeypatch.delenv("D2A_SERVICE_LAUNCH_MODE", raising=False)
+
+    assert mod._child_creationflags() == 0x00000010
+
+
+def test_child_creationflags_windows_hidden_opt_in(monkeypatch):
+    mod = _load_launcher()
+    monkeypatch.setattr(mod.sys, "platform", "win32")
+    monkeypatch.setenv("D2A_SERVICE_LAUNCH_MODE", "hidden")
+
+    assert mod._child_creationflags() == 0x08000000
+
+
 def test_admin_startup_timeout_reports_logs_and_manual_command(tmp_path, monkeypatch):
     mod = _load_launcher()
     py = tmp_path / "runtime" / "python.exe"
     py.parent.mkdir(parents=True)
     py.write_bytes(b"")
-    pyw = tmp_path / "runtime" / "pythonw.exe"
-    pyw.write_bytes(b"")
     messages: list[tuple[str, str, bool]] = []
     waits: list[float] = []
     spawned: list[tuple[list[str], dict]] = []
@@ -223,7 +251,7 @@ def test_admin_startup_timeout_reports_logs_and_manual_command(tmp_path, monkeyp
 
     assert code == 4
     assert waits == [mod.ADMIN_STARTUP_TIMEOUT]
-    assert spawned[0][0][0] == str(pyw)
+    assert spawned[0][0][0] == str(py)
     assert spawned[0][1]["env"]["D2A_STARTUP_TRACE"] == "1"
     assert messages and messages[0][2] is True
     text = messages[0][1]

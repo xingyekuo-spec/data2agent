@@ -54,10 +54,10 @@ def bounded_socketpair(
 
 
 def patch_windows_socketpair() -> bool:
-    """Install bounded socketpair on Windows unless disabled; return whether patched."""
+    """Install bounded socketpair on Windows when explicitly enabled."""
     if sys.platform != "win32":
         return False
-    if os.environ.get("D2A_PATCH_SOCKETPAIR", "1").strip().lower() in {"0", "false", "no"}:
+    if os.environ.get("D2A_PATCH_SOCKETPAIR", "0").strip().lower() not in {"1", "true", "yes"}:
         return False
     socket.socketpair = bounded_socketpair
     print("Windows socketpair startup patch enabled", flush=True)

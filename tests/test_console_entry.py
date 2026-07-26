@@ -63,10 +63,22 @@ def test_windows_socketpair_patch_can_be_disabled(monkeypatch):
     assert windows_asyncio.socket.socketpair is original
 
 
-def test_windows_socketpair_patch_installs_bounded_pair(monkeypatch):
+def test_windows_socketpair_patch_disabled_by_default(monkeypatch):
     original = socket.socketpair
     monkeypatch.setattr(windows_asyncio.sys, "platform", "win32")
     monkeypatch.delenv("D2A_PATCH_SOCKETPAIR", raising=False)
+    monkeypatch.setattr(windows_asyncio.socket, "socketpair", original)
+
+    patched = windows_asyncio.patch_windows_socketpair()
+
+    assert patched is False
+    assert windows_asyncio.socket.socketpair is original
+
+
+def test_windows_socketpair_patch_installs_bounded_pair(monkeypatch):
+    original = socket.socketpair
+    monkeypatch.setattr(windows_asyncio.sys, "platform", "win32")
+    monkeypatch.setenv("D2A_PATCH_SOCKETPAIR", "1")
     monkeypatch.setattr(windows_asyncio.socket, "socketpair", original)
 
     patched = windows_asyncio.patch_windows_socketpair()

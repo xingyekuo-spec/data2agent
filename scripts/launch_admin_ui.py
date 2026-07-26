@@ -227,7 +227,9 @@ def _resolve_python(home: Path) -> Path | None:
 
 
 def _resolve_service_python(home: Path, fallback: Path) -> Path:
-    if sys.platform == "win32":
+    if sys.platform == "win32" and os.environ.get("D2A_USE_PYTHONW", "").strip().lower() in {
+        "1", "true", "yes",
+    }:
         for cand in (
             fallback.with_name("pythonw.exe"),
             home / "runtime" / "pythonw.exe",
@@ -261,11 +263,13 @@ def _creationflags() -> int:
 def _child_creationflags() -> int:
     if sys.platform != "win32":
         return 0
-    # Keep children hidden, but do not create a new process group. Some Windows
-    # Server/desktop builds have shown uvicorn hanging before listen when the
-    # console-subsystem python.exe is started hidden from a PyInstaller GUI
-    # parent with CREATE_NEW_PROCESS_GROUP.
-    return 0x08000000
+    mode = os.environ.get("D2A_SERVICE_LAUNCH_MODE", "console").strip().lower()
+    if mode == "hidden":
+        return 0x08000000
+    if mode == "inherit":
+        return 0
+    CREATE_NEW_CONSOLE = 0x00000010
+    return CREATE_NEW_CONSOLE
 
 
 def _spawn(cmd: list[str], *, home: Path, env: dict[str, str],
@@ -287,6 +291,13 @@ def _spawn(cmd: list[str], *, home: Path, env: dict[str, str],
         creationflags=_child_creationflags(),
         start_new_session=(sys.platform != "win32"),
     )
+    if sys.platform == "win32":
+        _supervisor_log(
+            home,
+            "spawned child launch_mode="
+            f"{os.environ.get('D2A_SERVICE_LAUNCH_MODE', 'console')} "
+            f"creationflags={_child_creationflags()}",
+        )
     _CHILDREN.append(proc)
     return proc
 
