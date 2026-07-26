@@ -12,6 +12,7 @@ import sys
 from ..admin_common.auth_token import resolve_token
 from ..admin_common.home_layout import HomeLayout, default_home
 from ..admin_common.secrets_file import apply_secrets_to_environ
+from ..admin_common.windows_asyncio import patch_windows_socketpair
 
 
 def _warn_if_insecure(host: str, token: str | None) -> None:
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     setup = "首次配置模式" if (home and not home.connect_yaml.is_file()) else (
         "Token 已启用" if token else "未启用认证")
     print(f"中间机管理:http://{args.host}:{args.port} ({setup})")
+    patch_windows_socketpair()
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

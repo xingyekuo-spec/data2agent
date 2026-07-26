@@ -14,6 +14,7 @@ from pathlib import Path
 
 def main() -> int:
     from ..admin_common.secrets_file import load_home_secrets_if_present
+    from ..admin_common.windows_asyncio import patch_windows_socketpair
     load_home_secrets_if_present()
 
     ap = argparse.ArgumentParser(description="data2agent MCP Server(lite,只读 stdio)")
@@ -85,6 +86,7 @@ def main() -> int:
           f"限流 {args.rate_per_minute}/分钟;审计 {audit_path})")
 
     import uvicorn
+    patch_windows_socketpair()
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 

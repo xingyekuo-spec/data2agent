@@ -15,6 +15,7 @@ from pathlib import Path
 from ..admin_common.auth_token import resolve_token
 from ..admin_common.home_layout import HomeLayout, default_home
 from ..admin_common.secrets_file import apply_secrets_to_environ
+from ..admin_common.windows_asyncio import patch_windows_socketpair
 
 
 def _default_log_dir(landing: str, config_path: str | None) -> Path:
@@ -126,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
           f"({mode};"
           f"{'Token 认证已启用' if token else '未启用认证,内网部署建议配 D2A_CONSOLE_TOKEN'})")
     print(f"准备启动 uvicorn 监听 {args.host}:{args.port} ...", flush=True)
+    patch_windows_socketpair()
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 
