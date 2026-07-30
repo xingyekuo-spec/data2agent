@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+
 import re
 import threading
 import time
@@ -361,12 +363,26 @@ def is_odbc_timeout_message(message: str) -> bool:
     ))
 
 
+_LOG = logging.getLogger("data2agent.middle.metadata")
+_DSN_PAIR_RE = re.compile(
+    r"(server|pwd|password|uid|user id|database|dbq|address|addr)\s*=\s*[^;]+",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_for_log(message: str) -> str:
+    """日志用脱敏:屏蔽连接串键值对,截断长度。"""
+    return _DSN_PAIR_RE.sub(r"\1=***", str(message))[:500]
+
+
 def map_odbc_error(exc: BaseException) -> MetadataError:
     """将 ODBC/驱动异常映射为稳定、脱敏的 MetadataError。
 
     对外消息不得包含 DSN、服务器地址、库名、账号或密码片段。
+    原始错误(脱敏后)写入日志,否则兜底分支无从排查。
     """
     low = str(exc).lower()
+    _LOG.warning("odbc error (sanitized): %s", _sanitize_for_log(str(exc)))
 
     if any(k in low for k in ("login failed", "authentication", "password", "18456")):
         return MetadataError(

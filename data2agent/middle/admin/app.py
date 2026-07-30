@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -63,6 +64,7 @@ from .status import build_status
 
 _SCAN_STORE = ScanStore()
 _TRIGGER_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+log = logging.getLogger("data2agent.middle.admin")
 
 _PKG = Path(__file__).resolve().parent
 _ADMIN_TEMPLATES = _PKG.parents[1] / "shared" / "admin_templates"
@@ -856,15 +858,20 @@ def create_app(
                 ),
             )
         except MetadataDiscoveryUnsupported as e:
+            log.warning("metadata scan %s unsupported: %s", scan_id, e)
             _SCAN_STORE.fail(
                 scan_id, e.code, str(e),
                 suggestion=getattr(e, "suggestion", None),
             )
         except MetadataError as e:
+            log.warning("metadata scan %s failed: code=%s detail=%s",
+                        scan_id, e.code, e.message)
             status = "timeout" if e.code == "timeout" else "failed"
             _SCAN_STORE.fail(
                 scan_id, e.code, e.message, status=status, suggestion=e.suggestion)
         except Exception as e:
+            log.error("metadata scan %s error: %s",
+                      scan_id, _sanitize_detail(str(e)), exc_info=True)
             _SCAN_STORE.fail(
                 scan_id, type(e).__name__, _sanitize_detail(str(e)),
                 suggestion="查看管理界面日志中的脱敏错误后重试",
