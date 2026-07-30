@@ -13,7 +13,7 @@ from data2agent.connect.adapters.base import TableInfo
 from data2agent.connect.landing import LandingStore
 from data2agent.connect.sink import HttpPushSink, ProtocolVersionError
 from data2agent.ingest.app import create_app
-from data2agent.ingest.protocol import (
+from data2agent.protocol.ingest import (
     INGEST_PROTOCOL_VERSION,
     SUPPORTED_INGEST_PROTOCOL_VERSIONS,
     health_protocol_fields,
@@ -87,7 +87,7 @@ def test_legacy_middle_equality_against_current_platform_health(tmp_path: Path):
 
 def test_legacy_middle_survives_new_active_when_v2_is_still_supported(monkeypatch):
     """平台 active 升至 v3 但仍支持 v2 时，已部署 v2 中间机可继续推送。"""
-    import data2agent.ingest.protocol as protocol
+    import data2agent.protocol.ingest as protocol
 
     monkeypatch.setattr(protocol, "INGEST_PROTOCOL_VERSION", "3")
     monkeypatch.setattr(protocol, "SUPPORTED_INGEST_PROTOCOL_VERSIONS", ("2", "3"))

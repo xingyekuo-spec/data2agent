@@ -15,7 +15,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from ..ingest.protocol import SUPPORTED_INGEST_PROTOCOL_VERSIONS
+from ..protocol.ingest import SUPPORTED_INGEST_PROTOCOL_VERSIONS
 from .apply_script import write_update_scripts
 from .manifest import (
     UpdateError,

@@ -282,7 +282,7 @@ def test_reconcile_monthly_stats_error_writes_failed_step(tmp_path):
 
 
 def _batch(batch_id: str, rows: list[dict]) -> dict:
-    from data2agent.ingest.protocol import INGEST_PROTOCOL_VERSION
+    from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION
     return {
         "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
         "source": SOURCE,

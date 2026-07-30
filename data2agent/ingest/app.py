@@ -1,7 +1,7 @@
 """ingest FastAPI 应用:增量 upsert + 全量快照 begin/batch/complete。
 
 安全:可选 Bearer Token(--token / D2A_INGEST_TOKEN);无 Token 为开放(仅内网可信段)。
-协议见 ingest.protocol:应用版本可独立升级;推送契约由 supported 协议列表声明。
+协议见 data2agent.protocol.ingest:应用版本可独立升级;推送契约由 supported 协议列表声明。
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 
 from ..connect.adapters.base import TableInfo
 from ..connect.landing import LandingStore, raw_table_name
-from .protocol import (
+from ..protocol.ingest import (
     BatchBody,
     TableAbortBody,
     TableBeginBody,

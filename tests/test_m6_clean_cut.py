@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from data2agent.ingest.protocol import INGEST_PROTOCOL_VERSION
+from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 PROD = ROOT / "data2agent"
@@ -27,7 +27,7 @@ def _iter_prod_py() -> list[Path]:
 
 def test_ingest_protocol_version_is_v2():
     assert INGEST_PROTOCOL_VERSION == "2"
-    from data2agent.ingest.protocol import SUPPORTED_INGEST_PROTOCOL_VERSIONS
+    from data2agent.protocol.ingest import SUPPORTED_INGEST_PROTOCOL_VERSIONS
 
     assert SUPPORTED_INGEST_PROTOCOL_VERSIONS == ("2",)
     sink = (PROD / "connect" / "sink.py").read_text(encoding="utf-8")
@@ -35,7 +35,7 @@ def test_ingest_protocol_version_is_v2():
     assert "ensure_protocol" in sink
     assert "supported_ingest_protocol_versions" in sink
     assert "health_protocol_fields" in ingest_app
-    proto = (PROD / "ingest" / "protocol.py").read_text(encoding="utf-8")
+    proto = (PROD / "protocol" / "ingest.py").read_text(encoding="utf-8")
     assert 'INGEST_PROTOCOL_VERSION = "2"' in proto
     assert "SUPPORTED_INGEST_PROTOCOL_VERSIONS" in proto
 

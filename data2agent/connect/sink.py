@@ -19,7 +19,7 @@ from typing import Callable, Literal, Protocol, TYPE_CHECKING
 if TYPE_CHECKING:
     from .landing import LandingStore
 
-from ..ingest.protocol import INGEST_PROTOCOL_VERSION
+from ..protocol.ingest import INGEST_PROTOCOL_VERSION
 from .adapters.base import TableInfo
 from .landing import LandingStore, normalize_value
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.ingest.protocol import SUPPORTED_INGEST_PROTOCOL_VERSIONS
+from data2agent.protocol.ingest import SUPPORTED_INGEST_PROTOCOL_VERSIONS
 from data2agent.updater.core import UpdateManager
 from data2agent.updater.manifest import (
     UpdateError,

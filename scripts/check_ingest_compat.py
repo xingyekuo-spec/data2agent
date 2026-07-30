@@ -45,7 +45,7 @@ def _utf8_stdio() -> None:
         if reconfigure is not None:
             reconfigure(encoding="utf-8", errors="replace")
 
-from data2agent.ingest.protocol import (  # noqa: E402
+from data2agent.protocol.ingest import (  # noqa: E402
     INGEST_PROTOCOL_VERSION,
     LEGACY_HEALTH_INGEST_PROTOCOL_VERSION,
     SUPPORTED_INGEST_PROTOCOL_VERSIONS,
