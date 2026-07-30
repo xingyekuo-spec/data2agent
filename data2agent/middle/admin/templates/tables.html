@@ -44,7 +44,7 @@
   .modal table{font-size:13px;table-layout:fixed}
   .modal .field-in{width:100%;padding:6px 8px;border:1px solid #d0d7de;border-radius:5px;
                    font-size:12px;box-sizing:border-box;background:#fff}
-  .modal .wm-wrap[hidden]{display:none!important}
+  .modal .wm-wrap[hidden],.modal .sd-wrap[hidden]{display:none!important}
 </style>
 
 <div class="card">
@@ -76,7 +76,7 @@
     <thead>
       <tr>
         <th class="check"><span class="meta">选</span></th>
-        <th>表</th><th>模式</th><th>键</th><th>水位</th><th>校验</th><th></th>
+        <th>表</th><th>模式</th><th>键</th><th>水位</th><th>开始日期</th><th>校验</th><th></th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -137,6 +137,7 @@ function cleanSpec(spec){
   if(spec.schema) out.schema=spec.schema;
   if(spec.key_columns&&spec.key_columns.length) out.key_columns=spec.key_columns;
   if(spec.watermark) out.watermark=spec.watermark;
+  if(spec.start_date) out.start_date=spec.start_date;
   if(spec.schema_fingerprint) out.schema_fingerprint=spec.schema_fingerprint;
   if(spec.validated_at) out.validated_at=spec.validated_at;
   return out;
@@ -241,6 +242,7 @@ function render(){
         (checked?' checked':'')+'></td>'+
       '<td>'+esc((s.schema||'')+'.'+name)+'</td><td>'+esc(s.mode)+'</td><td>'+
       esc((s.key_columns||[]).join(', ')||'—')+'</td><td>'+esc(s.watermark||'—')+'</td><td>'+
+      esc(s.start_date||'—')+'</td><td>'+
       esc(st?(st.status+(st.suggestion?(' · '+st.suggestion):'')):'—')+
       '</td><td class="actions">'+
       '<button type="button" class="text" data-edit="'+esc(name)+'">编辑</button>'+
@@ -255,15 +257,17 @@ function syncEditModeFields(){
   document.querySelectorAll('#edit-table tr[data-table]').forEach(function(tr){
     var mode=tr.querySelector('select.cf-mode');
     var wm=tr.querySelector('.wm-wrap');
+    var sd=tr.querySelector('.sd-wrap');
     var dash=tr.querySelector('.wm-dash');
     if(!mode||!wm) return;
     var inc=mode.value==='incremental';
     wm.hidden=!inc;
+    if(sd) sd.hidden=!inc;
     if(dash) dash.hidden=inc;
   });
 }
 function renderEditTable(names){
-  var html='<table><thead><tr><th>表</th><th>模式</th><th>键</th><th>水位</th></tr></thead><tbody>';
+  var html='<table><thead><tr><th>表</th><th>模式</th><th>键</th><th>水位</th><th>开始日期</th></tr></thead><tbody>';
   names.forEach(function(name){
     var s=tables[name]||{};
     var meta=editMeta[name]||{};
@@ -277,6 +281,11 @@ function renderEditTable(names){
       '</select></td>'+
       '<td>'+keySelectHtml(meta, s.key_columns||[])+'</td>'+
       '<td><span class="wm-wrap"'+(inc?'':' hidden')+'>'+wmSelectHtml(meta, s.watermark||'')+
+      '</span><span class="meta wm-dash"'+(inc?' hidden':'')+'>—</span></td>'+
+      '<td><span class="sd-wrap"'+(inc?'':' hidden')+'>'+
+        '<input type="text" class="field-in cf-start-date" placeholder="YYYY-MM-DD(可选)"'+
+        ' value="'+escAttr(s.start_date||'')+'">'+
+        '<div class="meta">从此日期起抽,不抽更早历史</div>'+
       '</span><span class="meta wm-dash"'+(inc?' hidden':'')+'>—</span></td></tr>';
   });
   html+='</tbody></table>';
@@ -291,11 +300,13 @@ function collectEditsFromForm(){
     var schema=(tr.getAttribute('data-schema')||'').trim();
     var keys=parseKeyOptionValue((tr.querySelector('select.cf-keys')||{}).value||'');
     var wm=((tr.querySelector('select.cf-wm')||{}).value||'').trim();
+    var startDate=((tr.querySelector('.cf-start-date')||{}).value||'').trim();
     var prev=tables[name]||{};
     var spec={mode:mode};
     if(schema) spec.schema=schema;
     if(keys.length) spec.key_columns=keys;
     if(mode==='incremental' && wm) spec.watermark=wm;
+    if(mode==='incremental' && startDate) spec.start_date=startDate;
     if(prev.schema_fingerprint) spec.schema_fingerprint=prev.schema_fingerprint;
     out[name]=cleanSpec(spec);
   });

@@ -194,3 +194,36 @@ def test_keyset_handles_watermark_ties(source_db, pack, landing):
     (n,) = landing.con.execute(
         f'SELECT COUNT(*) FROM "{raw_table_name(SOURCE, "QUOTATION")}"').fetchone()
     assert n == len(src_ids), "keyset 分页不得产生重复行"
+
+
+def test_initial_sync_respects_start_date(pack, source_db, landing):
+    """首轮同步带 start_date:只抽起始日期之后的行,不抽历史全量。"""
+    src = sqlite3.connect(source_db)
+    (total, _min_wm, _max_wm) = src.execute(
+        'SELECT COUNT(*), MIN(LAST_MODIFIED_DATE), MAX(LAST_MODIFIED_DATE) '
+        'FROM "CUSTOMER"').fetchone()
+    # 取中位偏后的起始日期,确保过滤生效
+    (start,) = src.execute(
+        'SELECT LAST_MODIFIED_DATE FROM "CUSTOMER" '
+        'ORDER BY LAST_MODIFIED_DATE LIMIT 1 OFFSET ?', (total // 2,)).fetchone()
+    (want_rows,) = src.execute(
+        'SELECT COUNT(*) FROM "CUSTOMER" WHERE LAST_MODIFIED_DATE >= ?',
+        (start,)).fetchone()
+    src.close()
+    assert 0 < want_rows < total
+
+    report = _sync(source_db, pack, landing,
+                   run_id=landing.start_run(SOURCE, "sync"),
+                   only_tables={"CUSTOMER"},
+                   start_dates={"CUSTOMER": start})
+    assert report.tables[0].rows == want_rows, "首轮应只抽起始日期之后的行"
+    # 预估行数同口径
+    steps = landing.steps_for_run(report.run_id)
+    assert steps[0]["expected_rows"] == want_rows
+    # 落地行均不早于起始日期
+    rows = landing.con.execute(
+        f'SELECT MIN(LAST_MODIFIED_DATE) FROM "{raw_table_name(SOURCE, "CUSTOMER")}"').fetchone()
+    assert rows[0] >= start
+    # 水位已建立:第二轮走增量,不会重扫全量
+    cur = landing.get_sync_cursor(SOURCE, "CUSTOMER")
+    assert cur is not None and cur[0] is not None

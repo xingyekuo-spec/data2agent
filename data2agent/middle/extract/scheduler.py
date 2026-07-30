@@ -144,7 +144,8 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
             key_columns=key_columns,
             should_continue=lambda: in_window(datetime.now().time(), scfg.windows),
             run_id=run_id,
-            only_tables=set(tables) if tables else None)
+            only_tables=set(tables) if tables else None,
+            start_dates=scfg.table_start_dates())
         log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
                  name, report.run_id, report.total_rows, len(report.tables),
                  report.paused, scfg.sink.type)

@@ -188,3 +188,37 @@ class TestUnknownFields:
     def test_table_config_rejects_unknown_field(self):
         with pytest.raises(ValueError):
             TableExtractConfig(mode="incremental", watermark="X", enabled=True)
+
+
+class TestStartDate:
+    def test_incremental_accepts_start_date(self):
+        cfg = TableExtractConfig(mode="incremental", watermark="LAST_MODIFIED_DATE",
+                                 start_date="2015-01-01")
+        assert cfg.start_date == "2015-01-01"
+
+    def test_incremental_accepts_start_datetime(self):
+        cfg = TableExtractConfig(mode="incremental", watermark="LAST_MODIFIED_DATE",
+                                 start_date="2015-01-01 08:30:00")
+        assert cfg.start_date == "2015-01-01 08:30:00"
+
+    def test_full_refresh_rejects_start_date(self):
+        with pytest.raises(ValueError, match="full_refresh 模式不允许配置 start_date"):
+            TableExtractConfig(mode="full_refresh", start_date="2015-01-01")
+
+    def test_rejects_bad_start_date_format(self):
+        with pytest.raises(ValueError, match="非法 start_date"):
+            TableExtractConfig(mode="incremental", watermark="WM",
+                               start_date="2015/01/01")
+
+    def test_table_start_dates_collects_incremental_only(self):
+        scfg = SourceConfig.model_validate({
+            "adapter": "sqlite_readonly",
+            "path": "x.sqlite",
+            "tables": {
+                "A": {"mode": "incremental", "watermark": "WM",
+                      "start_date": "2015-01-01"},
+                "B": {"mode": "incremental", "watermark": "WM"},
+                "C": {"mode": "full_refresh"},
+            },
+        })
+        assert scfg.table_start_dates() == {"A": "2015-01-01"}

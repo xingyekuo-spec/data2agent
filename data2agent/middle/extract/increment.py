@@ -76,17 +76,21 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                      sink: Optional[Sink] = None,
                      key_columns: dict[str, list[str]] | None = None,
                      run_id: int | None = None,
-                     only_tables: set[str] | None = None) -> SyncReport:
+                     only_tables: set[str] | None = None,
+                     start_dates: dict[str, str] | None = None) -> SyncReport:
     """sink:raw 落地出口。默认 LocalSink(landing)。
     key_columns:表名 → 配置运行键,覆盖数据库主键。
     无水位的表按 full_refresh 快照协议落地。
     only_tables:限定只同步这些表(失败表定向重试);None=全部白名单表。
+    start_dates:表名 → 抽取起始日期;首轮从此日期起扫(不抽历史全量),
+    后续增量取下界 max(水位-回看, start_date)。
 
     当外部已创建 run(如手动触发已预检窗口/锁/create run 后
     传入 run_id)时,不重复建 run,避免 double-run。
     """
     watermarks = watermarks or {}
     key_columns = key_columns or {}
+    start_dates = start_dates or {}
     sink = sink or LocalSink(landing)
     ensure_proto = getattr(sink, "ensure_protocol", None)
 
@@ -130,9 +134,11 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
             high_water = None
             strategy = "full_refresh"
             if not is_full:
+                start_date = start_dates.get(raw_info.name)
                 cursor = landing.get_sync_cursor(source, info.name)
                 if cursor is None:
-                    strategy, since, high_water = "initial", None, None
+                    # 首轮:配置 start_date 则从其起扫,不抽历史全量
+                    strategy, since, high_water = "initial", start_date, None
                 else:
                     cur_w, cur_k = cursor
                     high_water = str(cur_w) if cur_w is not None else None
@@ -142,13 +148,16 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     else:
                         strategy = "increment"
                         since = subtract_lookback(str(cur_w), lookback_days)
+                        # 起始日期作为下界(ISO 格式字典序可比较)
+                        if start_date and (since is None or since < start_date):
+                            since = start_date
 
             rows = batches = 0
             max_wm = high_water
             interrupted = False
             # 同步前预估行数(进度分母);预估失败不阻断同步,页面退化为仅行数
             try:
-                expect_since = since if strategy == "increment" else (
+                expect_since = since if strategy in ("initial", "increment") else (
                     high_water if strategy == "resume" else None)
                 expected = adapter.count_for_sync(info, wm_col, expect_since)
                 landing.update_step(current_step, expected_rows=expected)

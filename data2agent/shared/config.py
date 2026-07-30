@@ -77,6 +77,7 @@ class TableExtractConfig(BaseModel):
     )                                      # SQL Server schema, 默认 dbo
     key_columns: list[str] | None = None   # 数据库 PK / 唯一索引 / 业务唯一键
     watermark: str | None = None           # incremental 必填, full_refresh 禁止
+    start_date: str | None = None          # 抽取起始日期(仅 incremental;首轮从此日期起扫)
     schema_fingerprint: str | None = None  # 已确认字段结构摘要(sha256:...)
     validated_at: str | None = None        # 最近一次现场校验时间
 
@@ -98,6 +99,14 @@ class TableExtractConfig(BaseModel):
         if self.watermark is not None:
             if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", self.watermark):
                 raise ValueError(f"非法水位列名 '{self.watermark}'(须为 SQL 标识符)")
+        if self.start_date is not None:
+            if self.mode == "full_refresh":
+                raise ValueError("full_refresh 模式不允许配置 start_date(无水位列可过滤)")
+            if not re.match(r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$",
+                            self.start_date):
+                raise ValueError(
+                    f"非法 start_date '{self.start_date}'"
+                    f"(格式:YYYY-MM-DD 或 YYYY-MM-DD HH:MM[:SS])")
         if self.key_columns is not None:
             ident = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
             for col in self.key_columns:
@@ -192,6 +201,16 @@ class SourceConfig(BaseModel):
             table: spec.key_columns
             for table, spec in self.tables.items()
             if spec.key_columns
+        }
+
+    def table_start_dates(self) -> dict[str, str]:
+        """各表抽取起始日期(仅 incremental 且配置了 start_date)。"""
+        if self.tables is None:
+            return {}
+        return {
+            table: spec.start_date
+            for table, spec in self.tables.items()
+            if spec.mode == "incremental" and spec.start_date
         }
 
     def lookback_days(self) -> float:

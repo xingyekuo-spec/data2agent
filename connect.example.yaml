@@ -11,6 +11,14 @@ sources:
 
     # 抽取表与同步策略。首次安装为空；通过中间机管理页面连接后扫描并选择。
     # 具体表清单由 docs/dict/digiwin_e10.md 记录，不随包携带。
+    # 单表示例(增量表可用 start_date 跳过历史老数据):
+    # tables:
+    #   SALES_ORDER:
+    #     mode: incremental
+    #     watermark: LAST_MODIFIED_DATE
+    #     start_date: "2015-01-01"   # 可选:首轮从此日期起扫,不抽更早历史
+    #   CURRENCY:
+    #     mode: full_refresh          # full_refresh 无水位列,不支持 start_date
     tables: {}
 
     windows: []                     # 生产示例:["22:00-06:30"];空 = 不限

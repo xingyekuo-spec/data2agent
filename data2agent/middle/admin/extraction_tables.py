@@ -54,6 +54,7 @@ def table_spec_to_dict(spec: TableExtractConfig) -> dict[str, Any]:
         "schema": spec.schema,
         "key_columns": list(spec.key_columns) if spec.key_columns else None,
         "watermark": spec.watermark,
+        "start_date": spec.start_date,
         "schema_fingerprint": spec.schema_fingerprint,
         "validated_at": spec.validated_at,
     }
