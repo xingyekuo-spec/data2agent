@@ -20,6 +20,15 @@ on:
         type: boolean
         required: false
         default: false
+      roles:
+        description: "构建哪些便携包(仅手动触发生效;tag 发布总是全部)"
+        type: choice
+        required: false
+        default: both
+        options:
+          - both
+          - middle
+          - platform
 
 permissions:
   contents: write
@@ -146,6 +155,7 @@ jobs:
           .\deploy\build_ui_launchers.ps1 -OutDir dist/launchers
 
       - name: 下载依赖并组装中间机便携包
+        if: github.ref_type == 'tag' || inputs.roles != 'platform'
         run: |
           $v = "${{ steps.ver.outputs.version }}"
           $py = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
@@ -161,6 +171,7 @@ jobs:
           Copy-Item "dist/portable/d2a-portable-middle-$v.zip" .
 
       - name: 下载依赖并组装平台机便携包
+        if: github.ref_type == 'tag' || inputs.roles != 'middle'
         run: |
           $v = "${{ steps.ver.outputs.version }}"
           $py = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
