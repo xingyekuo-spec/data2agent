@@ -44,7 +44,7 @@ data2agent/
 ```
 
 依赖方向仅允许 `middle → shared → protocol` 与 `platform → shared → protocol`;
-两端之间禁止互相 import(契约测试见 `tests/test_architecture_layers.py`)。
+两端之间禁止互相 import(契约测试见 `tests/contract/test_architecture_layers.py`)。
 
 ## 开发者本地快速开始
 

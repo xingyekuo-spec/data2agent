@@ -27,7 +27,7 @@ python scripts/prepare_release.py 0.5.3
 ```
 
 该命令会同步更新 `pyproject.toml`、`console-ui/package.json` 和
-`console-ui/package-lock.json`,并运行版本一致性检查和 `tests/test_version*.py`。
+`console-ui/package-lock.json`,并运行版本一致性检查和 `tests/*/test_version*.py`。
 确认无误后可让脚本创建提交、tag 并推送:
 
 ```bash

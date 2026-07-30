@@ -119,9 +119,10 @@ def _has_staged_changes() -> bool:
 
 
 def _version_test_paths() -> list[str]:
-    paths = sorted((ROOT / "tests").glob("test_version*.py"))
+    # 版本测试分布在 tests/shared 与 tests/contract,跨子目录通配
+    paths = sorted((ROOT / "tests").glob("*/test_version*.py"))
     if not paths:
-        raise SystemExit("未找到版本测试文件: tests/test_version*.py")
+        raise SystemExit("未找到版本测试文件: tests/*/test_version*.py")
     return [str(path.relative_to(ROOT)) for path in paths]
 
 

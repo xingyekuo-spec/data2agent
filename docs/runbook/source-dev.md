@@ -82,7 +82,7 @@ python -m data2agent.middle.extract status
 
 ```bash
 # 单元/API 测试（不依赖真实 SQL Server；在仓库根目录执行）
-.venv/bin/python -m pytest tests/test_metadata_discoverer.py tests/test_middle_metadata_api.py -q
+.venv/bin/python -m pytest tests/middle/test_metadata_discoverer.py tests/middle/test_middle_metadata_api.py -q
 
 # 真实 SQL Server：在仓库根目录启动 compose（会 seed 并跑 tests/integration/mssql）
 docker compose -f tests/integration/mssql/docker-compose.yml up \

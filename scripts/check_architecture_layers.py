@@ -9,7 +9,7 @@
 - 允许的方向:middle → shared → protocol,platform → shared → protocol。
 
 用法:python scripts/check_architecture_layers.py(无输出退出码 0 表示通过)。
-CI 由 tests/test_architecture_layers.py 调用同一实现。
+CI 由 tests/contract/test_architecture_layers.py 调用同一实现。
 """
 
 from __future__ import annotations
