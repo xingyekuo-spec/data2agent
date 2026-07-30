@@ -638,6 +638,15 @@ async function loadTables(){
   var r=await fetch('/api/metadata/tables?'+qs.toString(),{headers:authHeaders()});
   var body=await r.json();
   if(!r.ok){
+    var code=body&&body.detail&&body.detail.code;
+    if(r.status===409 && code==='metadata_stale'){
+      // 从未扫描(或服务重启后内存缓存已清):自动发起扫描,而非红字报错
+      document.getElementById('table-list').innerHTML=
+        '<p class="meta">尚未扫描 ERP 元数据,正在自动开始扫描…</p>';
+      if(!currentScan){ startScan(); }
+      syncBatchBar();
+      return;
+    }
     visibleRows=[];
     document.getElementById('table-list').innerHTML='<p class="err">'+
       esc(typeof formatApiError==='function'?formatApiError(body,'加载失败'):
