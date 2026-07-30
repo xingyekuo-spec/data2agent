@@ -19,6 +19,26 @@
   <!-- Tab:按表概览 -->
   <div id="tab-by-table">
     <p class="hint">每张表最近批次的推送状态;点击行跳转到该表的推送明细。</p>
+    <div class="toolbar">
+      <label>状态
+        <select id="bt-status-filter" onchange="renderByTableFiltered()">
+          <option value="">全部状态</option>
+          <option value="completed">已推送完成</option>
+          <option value="pushing">推送中</option>
+          <option value="failed">推送失败</option>
+        </select>
+      </label>
+      <label>源
+        <select id="bt-source-filter" onchange="renderByTableFiltered()">
+          <option value="">全部源</option>
+        </select>
+      </label>
+      <label>表名
+        <input type="text" id="bt-name-filter" placeholder="模糊搜索"
+               oninput="renderByTableFiltered()">
+      </label>
+      <span class="meta" id="bt-count" style="margin-left:auto"></span>
+    </div>
     <div id="by-table-list"><p class="meta">加载中…</p></div>
   </div>
 
@@ -61,6 +81,25 @@ function switchTab(name) {
   document.getElementById('tab-detail').hidden = isTable;
   document.getElementById('tab-btn-by-table').classList.toggle('active', isTable);
   document.getElementById('tab-btn-detail').classList.toggle('active', !isTable);
+}
+
+var _byTableData = [];
+
+function renderByTableFiltered() {
+  var status = document.getElementById('bt-status-filter').value;
+  var source = document.getElementById('bt-source-filter').value;
+  var kw = document.getElementById('bt-name-filter').value.trim().toLowerCase();
+  var list = _byTableData.filter(function (t) {
+    if (status && t.status !== status) return false;
+    if (source && t.source !== source) return false;
+    if (kw && t.table_name.toLowerCase().indexOf(kw) < 0) return false;
+    return true;
+  });
+  document.getElementById('bt-count').textContent =
+    list.length + ' / ' + _byTableData.length + ' 张表';
+  document.getElementById('by-table-list').innerHTML = list.length
+    ? renderByTable({ tables: list })
+    : '<p class="meta">无匹配的表,请调整筛选条件</p>';
 }
 
 function tableStatusBadge(t) {
@@ -109,18 +148,28 @@ function loadByTable() {
   fetch('/api/push-logs/by-table', { headers: authHeaders() })
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      document.getElementById('by-table-list').innerHTML = renderByTable(data);
-      // 表过滤器选项
-      var sel = document.getElementById('table-filter');
+      _byTableData = data.tables || [];
+      // 源过滤器选项
+      var sel = document.getElementById('bt-source-filter');
       var current = sel.value;
+      var sources = {};
+      _byTableData.forEach(function (t) { sources[t.source] = true; });
+      sel.innerHTML = '<option value="">全部源</option>';
+      Object.keys(sources).sort().forEach(function (s) {
+        sel.innerHTML += '<option value="' + esc(s) + '"' + (s === current ? ' selected' : '') + '>' + esc(s) + '</option>';
+      });
+      renderByTableFiltered();
+      // 明细 Tab 的表过滤器选项
+      var tsel = document.getElementById('table-filter');
+      var tcurrent = tsel.value;
       var tables = {};
-      (data.tables || []).forEach(function (t) { tables[t.table_name] = true; });
+      _byTableData.forEach(function (t) { tables[t.table_name] = true; });
       var keys = Object.keys(tables).sort();
       if (keys.length) {
-        sel.style.display = '';
-        sel.innerHTML = '<option value="">全部表</option>';
+        tsel.style.display = '';
+        tsel.innerHTML = '<option value="">全部表</option>';
         keys.forEach(function (t) {
-          sel.innerHTML += '<option value="' + esc(t) + '"' + (t === current ? ' selected' : '') + '>' + esc(t) + '</option>';
+          tsel.innerHTML += '<option value="' + esc(t) + '"' + (t === tcurrent ? ' selected' : '') + '>' + esc(t) + '</option>';
         });
       }
     })
