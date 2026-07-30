@@ -1426,13 +1426,18 @@ class LandingStore:
 
     def list_push_logs(
         self, source: str | None = None, limit: int = 50, offset: int = 0,
+        table: str | None = None,
     ) -> tuple[list[sqlite3.Row], int]:
-        """列出推送记录,返回 (rows, total)。"""
-        where = ""
+        """列出推送记录,返回 (rows, total)。可按 source / table 过滤。"""
+        conds: list[str] = []
         params: list = []
         if source:
-            where = "WHERE source = ?"
+            conds.append("source = ?")
             params.append(source)
+        if table:
+            conds.append("table_name = ?")
+            params.append(table)
+        where = f"WHERE {' AND '.join(conds)}" if conds else ""
         (total,) = self.con.execute(
             f"SELECT COUNT(*) FROM d2a_http_push_log {where}", params).fetchone()
         rows = self.con.execute(
@@ -1440,6 +1445,56 @@ class LandingStore:
             f"ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
             params + [limit, offset]).fetchall()
         return rows, total
+
+    def push_log_table_summaries(self, source: str | None = None) -> list[dict]:
+        """按表汇总推送状态:每 (source, table) 取最近批次,判定是否推送完成。
+
+        status:completed(complete_table 已成功)/ failed(最近批次含失败步骤)/
+        pushing(批次未完结)。rows 仅累计 write 成功行数(与批次进度口径一致)。
+        """
+        where = "WHERE batch_id IS NOT NULL"
+        params: list = []
+        if source:
+            where += " AND source = ?"
+            params.append(source)
+        latest = self.con.execute(
+            f"SELECT source, table_name, batch_id, MAX(created_at) AS last_at "
+            f"FROM d2a_http_push_log {where} "
+            f"GROUP BY source, table_name, batch_id", params).fetchall()
+        # 每表保留 last_at 最新的批次
+        by_table: dict[tuple[str, str], sqlite3.Row] = {}
+        for r in latest:
+            key = (r["source"], r["table_name"])
+            if key not in by_table or r["last_at"] > by_table[key]["last_at"]:
+                by_table[key] = r
+        summaries: list[dict] = []
+        for (src, table), r in by_table.items():
+            progress = self.push_log_batch_progress(src, table, r["batch_id"])
+            mode_row = self.con.execute(
+                "SELECT mode FROM d2a_http_push_log WHERE batch_id = ? "
+                "ORDER BY id LIMIT 1", (r["batch_id"],)).fetchone()
+            if progress["completed"]:
+                status = "completed"
+            elif progress["failed"]:
+                status = "failed"
+            else:
+                status = "pushing"
+            summaries.append({
+                "source": src,
+                "table_name": table,
+                "batch_id": r["batch_id"],
+                "mode": mode_row["mode"] if mode_row else None,
+                "status": status,
+                "completed": progress["completed"],
+                "steps_ok": progress["ok"],
+                "steps_failed": progress["failed"],
+                "rows": progress["rows"],
+                "write_ok_batches": progress["write_ok_batches"],
+                "duration_ms": progress["duration_ms"],
+                "last_at": r["last_at"],
+            })
+        summaries.sort(key=lambda s: s["last_at"], reverse=True)
+        return summaries
 
     def push_log_detail(self, log_id: int) -> sqlite3.Row | None:
         return self.con.execute(

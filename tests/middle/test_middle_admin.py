@@ -423,6 +423,59 @@ def test_push_logs_api_returns_correct_batch_progress(middle_env):
     assert progress["completed"] is True
 
 
+def test_push_logs_by_table_summarizes_completion(middle_env):
+    """按表汇总:每表最近批次判定 已完成/失败/推送中;明细支持 table 过滤。"""
+    from data2agent.shared.config import load_config
+
+    client, cfg_path = middle_env
+    cfg = load_config(cfg_path)
+    db = LandingStore(cfg.landing)
+    try:
+        # CUSTOMER:最近批次已完成
+        for kind, rows, status in (
+            ("write", 10, "ok"), ("complete_table", 10, "ok"),
+        ):
+            db.record_push_log(
+                SOURCE, kind, "CUSTOMER", "incremental",
+                batch_id="tbl-ok-1", rows_count=rows, status=status,
+            )
+        # ITEM:最近批次含失败步骤且未完结
+        db.record_push_log(
+            SOURCE, "write", "ITEM", "incremental",
+            batch_id="tbl-bad-1", rows_count=3, status="failed",
+        )
+        # QUOTATION:只有 write 成功,未收到 complete_table → 推送中
+        db.record_push_log(
+            SOURCE, "write", "QUOTATION", "incremental",
+            batch_id="tbl-run-1", rows_count=8, status="ok",
+        )
+    finally:
+        db.con.close()
+    headers = {"Authorization": "Bearer secret"}
+
+    r = client.get("/api/push-logs/by-table", headers=headers)
+    assert r.status_code == 200
+    by_name = {t["table_name"]: t for t in r.json()["tables"]}
+    assert by_name["CUSTOMER"]["status"] == "completed"
+    assert by_name["CUSTOMER"]["completed"] is True
+    assert by_name["CUSTOMER"]["rows"] == 10
+    assert by_name["ITEM"]["status"] == "failed"
+    assert by_name["ITEM"]["steps_failed"] == 1
+    assert by_name["QUOTATION"]["status"] == "pushing"
+    assert by_name["QUOTATION"]["completed"] is False
+
+    # table 过滤明细
+    r2 = client.get("/api/push-logs?table=ITEM", headers=headers)
+    assert r2.status_code == 200
+    logs = r2.json()["push_logs"]
+    assert logs and all(p["table_name"] == "ITEM" for p in logs)
+    # 组合 source + table 过滤
+    r3 = client.get(
+        f"/api/push-logs?source={SOURCE}&table=CUSTOMER", headers=headers)
+    assert r3.status_code == 200
+    assert all(p["table_name"] == "CUSTOMER" for p in r3.json()["push_logs"])
+
+
 def test_connection_probe_timeout_does_not_wait_for_worker(monkeypatch):
     def slow_probe(_dsn: str, timeout: int = 10) -> dict:
         time.sleep(0.15)

@@ -2,30 +2,34 @@
 {% block title %}状态 — 中间机管理{% endblock %}
 {% block content %}
 <style>
-  .actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
+  .actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
   .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
   .more-link{font-size:13px;display:inline-block;margin-top:8px}
+  .src-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .src-head h2{margin:0;flex:1}
+  .src-kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:4px 16px;
+          font-size:13px;color:#51606f;margin:10px 0}
+  .src-kv b{color:#12314f;font-weight:600}
+  details.wm{margin-top:8px}
+  details.wm summary{cursor:pointer;font-size:13px;color:#0b6bcb}
+  details.wm[open] summary{margin-bottom:4px}
+  #status-panel .card{padding:14px 20px}
 </style>
+
+<div class="card">
+  <div class="actions">
+    <button type="button" id="btn-trigger">立即触发同步</button>
+    <button type="button" id="btn-test">测试 ERP 连接</button>
+    <span id="trigger-result" class="meta"></span>
+    <span id="test-result" class="meta"></span>
+  </div>
+</div>
 
 <div id="status-panel"
      hx-get="/api/status"
      hx-trigger="load, every 5s"
      hx-swap="none">
   <div class="card"><p class="meta">加载状态中…</p></div>
-</div>
-
-<div class="card">
-  <p class="layer">操作</p>
-  <h2>连接与同步</h2>
-  <div class="actions">
-    <button type="button" id="btn-trigger">立即触发同步</button>
-    <button type="button" id="btn-test">测试 ERP 连接</button>
-  </div>
-  <p class="warn" style="margin-top:12px">
-    手动触发为后台异步执行,不阻塞页面;触发后可到 <a href="/runs">运行</a> 页查看逐表进度。
-  </p>
-  <div id="trigger-result" class="meta" style="margin-top:10px"></div>
-  <div id="test-result" class="meta" style="margin-top:10px"></div>
 </div>
 
 <div class="summary-grid">
@@ -52,55 +56,55 @@ function renderStatus(data) {
   (data.sources || []).forEach(function (src) {
     var inWin = src.in_window;
     var configured = !!src.tables_configured;
+    var wmCount = (src.watermarks || []).length;
+
     html += '<div class="card">';
-    html += '<p class="layer">源 ' + esc(src.source) + '</p>';
+    // 头部:源名 + 状态徽章
+    html += '<div class="src-head"><h2>源 ' + esc(src.source) + '</h2>';
+    html += '<span class="badge ' + (inWin ? 'badge-ok' : 'badge-off') + '">' +
+            (inWin ? '窗口内' : '窗口外') + '</span>';
+    html += configured
+      ? '<span class="badge badge-ok">已配置 ' + wmCount + ' 表</span>'
+      : '<span class="badge badge-warn">未配置抽取表</span>';
+    if (src.running_run) {
+      html += '<span class="badge badge-running">同步中 #' + src.running_run.id + '</span>';
+    }
+    html += '</div>';
 
-    html += '<h2>连接</h2>';
-    html += '<p class="meta">DSN 由 secrets / 环境变量提供;本页不显示密码、连接串或 Token。</p>';
-    html += '<p class="meta">请用「测试 ERP 连接」确认可达。连接成功但未选表时不是运行失败。</p>';
-
-    html += '<h2 style="margin-top:16px">配置</h2>';
-    if (configured) {
-      html += '<p class="oknote">已配置抽取表。可在 <a href="/tables">抽取计划</a> 查看与调整。</p>';
-    } else {
-      html += '<p class="warn">已连接,尚未配置抽取表。自动和手动同步都会跳过,不会连接 ERP。' +
+    if (!configured) {
+      html += '<p class="warn" style="margin-top:10px">尚未配置抽取表,同步会跳过且不会连接 ERP。' +
               '请到 <a href="/metadata">元数据</a> 选表后在 <a href="/tables">抽取计划</a> 保存。</p>';
     }
 
-    html += '<h2 style="margin-top:16px">运行</h2>';
-    html += '<p class="meta">同步间隔: ' + esc(src.sync_every || '—') +
-            ' · 启动时间: ' + esc(src.sync_start_at || '启动即跑') +
-            ' · 窗口: ' + esc((src.windows || []).join(', ') || '全天') + '</p>';
-    html += '<p class="meta">上次运行: ' + esc(src.last_run_at || '—') +
-            ' · 下次预估: ' + esc(src.next_sync_at || '—') + '</p>';
-    html += '<p><span class="badge ' + (inWin ? 'badge-ok' : 'badge-off') + '">' +
-            (inWin ? '窗口内' : '窗口外') + '</span></p>';
+    // 关键指标一行网格
+    html += '<div class="src-kv">';
+    html += '<span>调度 <b>' + esc(src.sync_every || '—') + '</b></span>';
+    html += '<span>窗口 <b>' + esc((src.windows || []).join(', ') || '全天') + '</b></span>';
+    html += '<span>上次运行 <b>' + esc(src.last_run_at || '—') + '</b></span>';
+    html += '<span>下次预估 <b>' + esc(src.next_sync_at || '—') + '</b></span>';
+    html += '</div>';
 
-    if (src.running_run) {
-      var rr = src.running_run;
-      html += '<p class="oknote" style="margin-top:6px">⏳ 同步进行中 — ' +
-              '<a href="/runs?watch=' + rr.id + '">运行 #' + rr.id + '</a>' +
-              ' 开始于 ' + esc(rr.started_at) + '</p>';
-    }
+    // 最近运行一行
     if (src.latest_run) {
       var lr = src.latest_run;
-      html += '<p class="meta" style="margin-top:6px">最近运行 #' + lr.id +
+      html += '<p class="meta" style="margin:4px 0">最近运行 #' + lr.id +
               ' ' + badge(lr.status) + ' · ' + esc(lr.tables || 0) + ' 表 · ' +
-              esc(lr.rows || 0) + ' 行' + (lr.finished_at ? ' · ' + fmtAge(lr.finished_at) : '') + '</p>';
+              esc(lr.rows || 0) + ' 行' + (lr.finished_at ? ' · ' + fmtAge(lr.finished_at) : '') +
+              ' <a href="/runs?watch=' + lr.id + '">详情</a></p>';
       if (lr.status === 'failed' && lr.detail) {
-        html += '<p class="meta" style="color:#b42318;margin-top:4px">❌ ' + esc(lr.detail) + '</p>';
+        html += '<p class="meta" style="color:#b42318;margin:4px 0">❌ ' + esc(lr.detail) + '</p>';
       }
     }
 
-    if (src.watermarks && src.watermarks.length) {
+    // 水位默认折叠
+    if (wmCount) {
+      html += '<details class="wm"><summary>水位(' + wmCount + ' 张表)</summary>';
       html += '<table class="data"><thead><tr><th>表</th><th>水位列</th><th>高水位</th><th>上次同步</th></tr></thead><tbody>';
       src.watermarks.forEach(function (w) {
         html += '<tr><td>' + esc(w.table_name) + '</td><td>' + esc(w.watermark_col) +
                 '</td><td>' + esc(w.high_water) + '</td><td>' + esc(w.last_run_at || '—') + '</td></tr>';
       });
-      html += '</tbody></table>';
-    } else {
-      html += '<p class="meta">尚无水位记录(全量表或不曾成功增量)。</p>';
+      html += '</tbody></table></details>';
     }
     html += '</div>';
   });
@@ -179,13 +183,13 @@ document.getElementById('btn-trigger').onclick = async function () {
     });
     var body = await r.json();
     if (body.status === 'started') {
-      el.innerHTML = '同步已启动 — <a href="/runs?watch=' + body.run_id + '">查看运行 #' + body.run_id + ' 进度</a>';
+      el.innerHTML = '已启动 — <a href="/runs?watch=' + body.run_id + '">运行 #' + body.run_id + '</a>';
       htmx.trigger(document.getElementById('status-panel'), 'load');
       loadRunsSummary();
     } else if (body.reason === 'already_running') {
       el.innerHTML = body.run_id
-        ? '已有同步正在运行 — <a href="/runs?watch=' + body.run_id + '">查看运行 #' + body.run_id + '</a>'
-        : '已有同步正在启动,请稍后刷新状态';
+        ? '已在运行 — <a href="/runs?watch=' + body.run_id + '">#' + body.run_id + '</a>'
+        : '正在启动,稍后自动刷新';
       loadRunsSummary();
     } else {
       el.textContent = formatApiError(body, JSON.stringify(body));

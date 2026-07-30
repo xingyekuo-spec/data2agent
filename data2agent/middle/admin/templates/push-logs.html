@@ -10,26 +10,37 @@
 </style>
 
 <div class="card">
-  <p class="meta" style="margin-bottom:0">
-    仅当中间机配置了 <code>sink.type: http</code> 推送至平台时才有记录。
-    点击批次展开详情，包含进度百分比、逐步骤日志与错误信息。
-  </p>
-</div>
-
-<div class="card" id="push-logs-panel">
-  <div class="toolbar">
-    <select id="source-filter" onchange="loadPushLogs()">
-      <option value="">全部源</option>
-    </select>
-    <select id="limit-select" onchange="loadPushLogs()">
-      <option value="20">20 条</option>
-      <option value="50" selected>50 条</option>
-      <option value="100">100 条</option>
-    </select>
-    <button type="button" onclick="loadPushLogs()" style="padding:4px 12px;border:1px solid #e8edf2;border-radius:6px;background:#fff;cursor:pointer;font-size:13px">刷新</button>
-    <span class="meta" id="push-total" style="margin-left:auto"></span>
+  <div class="tabs">
+    <button type="button" class="tab active" id="tab-btn-by-table" onclick="switchTab('by-table')">按表概览</button>
+    <button type="button" class="tab" id="tab-btn-detail" onclick="switchTab('detail')">推送明细</button>
+    <span class="meta" style="margin-left:auto;align-self:center">仅 sink.type=http 时有记录</span>
   </div>
-  <div id="push-logs-list"><p class="meta">加载中…</p></div>
+
+  <!-- Tab:按表概览 -->
+  <div id="tab-by-table">
+    <p class="hint">每张表最近批次的推送状态;点击行跳转到该表的推送明细。</p>
+    <div id="by-table-list"><p class="meta">加载中…</p></div>
+  </div>
+
+  <!-- Tab:推送明细 -->
+  <div id="tab-detail" hidden>
+    <div class="toolbar">
+      <select id="table-filter" onchange="loadPushLogs()" style="display:none">
+        <option value="">全部表</option>
+      </select>
+      <select id="source-filter" onchange="loadPushLogs()">
+        <option value="">全部源</option>
+      </select>
+      <select id="limit-select" onchange="loadPushLogs()">
+        <option value="20">20 条</option>
+        <option value="50" selected>50 条</option>
+        <option value="100">100 条</option>
+      </select>
+      <button type="button" onclick="loadPushLogs()" style="padding:4px 12px;border:1px solid #e8edf2;border-radius:6px;background:#fff;cursor:pointer;font-size:13px">刷新</button>
+      <span class="meta" id="push-total" style="margin-left:auto"></span>
+    </div>
+    <div id="push-logs-list"><p class="meta">加载中…</p></div>
+  </div>
 </div>
 
 <!-- 批次详情弹窗 -->
@@ -44,6 +55,80 @@
 </div>
 
 <script>
+function switchTab(name) {
+  var isTable = name === 'by-table';
+  document.getElementById('tab-by-table').hidden = !isTable;
+  document.getElementById('tab-detail').hidden = isTable;
+  document.getElementById('tab-btn-by-table').classList.toggle('active', isTable);
+  document.getElementById('tab-btn-detail').classList.toggle('active', !isTable);
+}
+
+function tableStatusBadge(t) {
+  if (t.status === 'completed') return '<span class="badge badge-ok">已推送完成</span>';
+  if (t.status === 'failed') return '<span class="badge badge-off">推送失败</span>';
+  return '<span class="badge badge-running">推送中</span>';
+}
+
+function renderByTable(data) {
+  var list = data.tables || [];
+  if (!list.length) return '<p class="meta">暂无推送记录</p>';
+  var html = '<table class="data"><thead><tr><th>源</th><th>表</th><th>模式</th><th>推送状态</th>' +
+    '<th>已推送行数</th><th>步骤(成功/失败)</th><th>耗时</th><th>最近推送</th></tr></thead><tbody>';
+  list.forEach(function (t) {
+    var dur = t.duration_ms != null ? (t.duration_ms / 1000).toFixed(1) + 's' : '—';
+    html += '<tr class="run-row" onclick="filterTable(\'' + esc(t.source) + '\',\'' + esc(t.table_name) + '\')">';
+    html += '<td>' + esc(t.source) + '</td>';
+    html += '<td><b>' + esc(t.table_name) + '</b></td>';
+    html += '<td>' + esc(t.mode || '—') + '</td>';
+    html += '<td>' + tableStatusBadge(t) + '</td>';
+    html += '<td>' + (t.rows || 0) + '</td>';
+    html += '<td>' + t.steps_ok + ' / ' + (t.steps_failed ? '<span style="color:#b42318">' + t.steps_failed + '</span>' : '0') + '</td>';
+    html += '<td>' + dur + '</td>';
+    html += '<td>' + fmtTime(t.last_at) + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+function filterTable(source, table) {
+  var sel = document.getElementById('table-filter');
+  sel.style.display = '';
+  // 确保选项存在并选中
+  var found = false;
+  for (var i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === table) { found = true; break; }
+  }
+  if (!found) sel.innerHTML += '<option value="' + esc(table) + '">' + esc(table) + '</option>';
+  sel.value = table;
+  loadPushLogs();
+  switchTab('detail');
+  document.getElementById('tab-detail').scrollIntoView({ behavior: 'smooth' });
+}
+
+function loadByTable() {
+  fetch('/api/push-logs/by-table', { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      document.getElementById('by-table-list').innerHTML = renderByTable(data);
+      // 表过滤器选项
+      var sel = document.getElementById('table-filter');
+      var current = sel.value;
+      var tables = {};
+      (data.tables || []).forEach(function (t) { tables[t.table_name] = true; });
+      var keys = Object.keys(tables).sort();
+      if (keys.length) {
+        sel.style.display = '';
+        sel.innerHTML = '<option value="">全部表</option>';
+        keys.forEach(function (t) {
+          sel.innerHTML += '<option value="' + esc(t) + '"' + (t === current ? ' selected' : '') + '>' + esc(t) + '</option>';
+        });
+      }
+    })
+    .catch(function () {
+      document.getElementById('by-table-list').innerHTML = '<p class="meta">按表概览加载失败</p>';
+    });
+}
+
 function renderPushLogs(data) {
   var list = data.push_logs;
   document.getElementById('push-total').textContent = '共 ' + (data.total || 0) + ' 条';
@@ -72,9 +157,11 @@ function renderPushLogs(data) {
 
 function loadPushLogs() {
   var source = document.getElementById('source-filter').value;
+  var table = document.getElementById('table-filter').value;
   var limit = document.getElementById('limit-select').value;
   var url = '/api/push-logs?limit=' + limit;
   if (source) url += '&source=' + encodeURIComponent(source);
+  if (table) url += '&table=' + encodeURIComponent(table);
   fetch(url, { headers: authHeaders() })
     .then(function(r) { return r.json(); })
     .then(function(data) {
@@ -148,6 +235,7 @@ function closePushDetail() {
   document.getElementById('push-detail-body').innerHTML = '';
 }
 
+loadByTable();
 loadPushLogs();
 </script>
 {% endblock %}

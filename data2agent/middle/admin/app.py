@@ -1240,8 +1240,8 @@ def create_app(
         }
 
     @api.get("/push-logs")
-    def push_logs(source: str | None = None, limit: int = 50,
-                  offset: int = 0) -> dict:
+    def push_logs(source: str | None = None, table: str | None = None,
+                  limit: int = 50, offset: int = 0) -> dict:
         if not (1 <= limit <= 100):
             raise http_error(422, "limit 须为 1..100", "调整分页参数")
         if offset < 0:
@@ -1253,11 +1253,26 @@ def create_app(
             source = None
         db = LandingStore(cfg.landing)
         try:
-            rows, total = db.list_push_logs(source=source, limit=limit, offset=offset)
+            rows, total = db.list_push_logs(
+                source=source, table=table, limit=limit, offset=offset)
             return {
                 "push_logs": [_map_push_log_row(r) for r in rows],
                 "total": total, "limit": limit, "offset": offset,
             }
+        finally:
+            db.con.close()
+
+    @api.get("/push-logs/by-table")
+    def push_logs_by_table(source: str | None = None) -> dict:
+        """按表汇总推送状态:每表最近批次是否推送完成。"""
+        cfg = reload_config()
+        if source is not None:
+            _name, _scfg = _resolve_source(cfg, source)
+        else:
+            source = None
+        db = LandingStore(cfg.landing)
+        try:
+            return {"tables": db.push_log_table_summaries(source=source)}
         finally:
             db.con.close()
 
