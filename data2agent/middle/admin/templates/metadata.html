@@ -617,11 +617,16 @@ async function pollScan(){
     (body.finished_at?(' · 完成于 '+esc(body.finished_at)):'');
   if(body.status==='running'){ setTimeout(pollScan,800); return; }
   if(body.status==='failed'||body.status==='timeout'){
-    document.getElementById('scan-err').textContent=
-      (typeof formatApiError==='function'
+    var scanErrText=(typeof formatApiError==='function'
         ? formatApiError(body, body.error_detail||body.error_code||body.status)
         : ((body.error_detail||body.error_code||body.status)+
            (body.error_suggestion||body.suggestion?(' — 建议：'+(body.error_suggestion||body.suggestion)):'')));
+    document.getElementById('scan-err').textContent=scanErrText;
+    // 扫描失败:把真实原因显示在表列表区(主视觉),不再加载列表(避免次生 409 盖住原因)
+    document.getElementById('table-list').innerHTML=
+      '<p class="err">元数据扫描未成功:'+esc(scanErrText)+'</p>';
+    syncBatchBar();
+    return;
   }
   loadTables();
 }
@@ -640,10 +645,16 @@ async function loadTables(){
   if(!r.ok){
     var code=body&&body.detail&&body.detail.code;
     if(r.status===409 && code==='metadata_stale'){
-      // 从未扫描(或服务重启后内存缓存已清):自动发起扫描,而非红字报错
-      document.getElementById('table-list').innerHTML=
-        '<p class="meta">尚未扫描 ERP 元数据,正在自动开始扫描…</p>';
-      if(!currentScan){ startScan(); }
+      // 从未扫描(或服务重启后内存缓存已清):自动发起扫描,而非红字报错;
+      // 但本次会话刚扫描过且未成功(currentScan 仍在),不再自动重扫
+      if(currentScan){
+        document.getElementById('table-list').innerHTML=
+          '<p class="err">最近一次扫描未成功,请查看上方扫描错误后重试。</p>';
+      } else {
+        document.getElementById('table-list').innerHTML=
+          '<p class="meta">尚未扫描 ERP 元数据,正在自动开始扫描…</p>';
+        startScan();
+      }
       syncBatchBar();
       return;
     }
