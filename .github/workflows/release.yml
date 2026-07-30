@@ -169,7 +169,7 @@ jobs:
             "setuptools>=68" "wheel" `
             "pydantic>=2.7" "pyyaml>=6.0" `
             "pyodbc>=5.1" "apscheduler>=3.10" `
-            "mcp>=1.0" "fastapi>=0.110" "uvicorn>=0.29"
+            "mcp>=1.0,<2.0" "fastapi>=0.110" "uvicorn>=0.29"
           .\deploy\build_portable.ps1 -Role platform -Version $v `
             -OutDir dist/portable -WheelsDir stage/wheels-platform -PyFullVersion $py `
             -LauncherExe dist/launchers/platform/data2agent.exe
