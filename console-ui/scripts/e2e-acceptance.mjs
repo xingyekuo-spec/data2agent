@@ -74,8 +74,8 @@ print(json.dumps({k: db.execute(sql).fetchone()[0] for k, sql in queries.items()
 function postIngestBatch(landing) {
   const script = `
 from fastapi.testclient import TestClient
-from data2agent.ingest.app import create_app
-from data2agent.ingest.protocol import INGEST_PROTOCOL_VERSION
+from data2agent.platform.ingest.app import create_app
+from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION
 
 client = TestClient(create_app(${JSON.stringify(landing)}))
 body = {
@@ -212,12 +212,12 @@ sources:
 landing: ${landing}
 `,
   )
-  sh(PYTHON, ['-m', 'data2agent.connect', 'sync', '--config', middleConfig], { cwd: ROOT })
+  sh(PYTHON, ['-m', 'data2agent.middle.extract', 'sync', '--config', middleConfig], { cwd: ROOT })
   sh(PYTHON, [
-    '-m', 'data2agent.connect', 'apply',
+    '-m', 'data2agent.middle.extract', 'apply',
     '--source', SOURCE, '--landing', landing, '--templates', join(ROOT, 'templates'),
   ], { cwd: ROOT })
-  sh(PYTHON, ['-m', 'data2agent.connect', 'reconcile', '--config', middleConfig], { cwd: ROOT })
+  sh(PYTHON, ['-m', 'data2agent.middle.extract', 'reconcile', '--config', middleConfig], { cwd: ROOT })
   postIngestBatch(landing)
   // M4:补一条 legacy 运行(无 run_type / 无 step)
   const legacyInsert = "import sqlite3;c=sqlite3.connect('" + landing + "');"
@@ -227,7 +227,7 @@ landing: ${landing}
   sh(PYTHON, ['-c', legacyInsert])
   const consoleProc = startProc(
     PYTHON,
-    ['-m', 'data2agent.console', '--config', platformConfig,
+    ['-m', 'data2agent.platform.console', '--config', platformConfig,
       '--port', String(CONSOLE_PORT), '--token', 'e2e-token'],
     'console',
   )
@@ -251,8 +251,9 @@ landing: ${landing}
     await page.locator('[data-testid="pipeline-flow"]').waitFor({ state: 'visible' })
     const statusOf = async (name) =>
       page.locator('.flow__node', { hasText: name }).first().getAttribute('data-status')
-    expect((await statusOf('erp')) === 'healthy', 'Real:erp healthy')
-    expect((await statusOf('extract')) === 'healthy', 'Real:extract healthy')
+    // erp / extract 节点已在当前版本隐藏(见 PipelineView hiddenPipelineNodeIds)
+    expect((await page.locator('.flow__node', { hasText: 'erp' }).count()) === 0, 'Real:erp 节点已隐藏')
+    expect((await page.locator('.flow__node', { hasText: 'extract' }).count()) === 0, 'Real:extract 节点已隐藏')
     expect((await statusOf('push')) === 'failed', 'Real:push 接收端未启动 failed')
     expect((await statusOf('mapping')) === 'warning', 'Real:mapping warning(全部 draft)')
     expect((await statusOf('mcp')) === 'failed', 'Real:mcp failed(未启动)')
@@ -832,9 +833,12 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
     await page.locator('[data-testid="raw-catalog"]').waitFor({ state: 'visible' })
     expect(true, 'M5:回归-M4 数据浏览可用')
 
-    // 回归:Jinja2 /v0 仍可访问(FastAPI 路由,非 Vite)
-    const v0Chk = await page.request.get(`http://localhost:${CONSOLE_PORT}/v0`)
-    expect(v0Chk.status() === 200, 'M5:回归-/v0 200')
+    // 回归:legacy Jinja2 /v0 302 重定向到 Vue Console /(契约见 smoke_admin_ui)
+    const v0Chk = await page.request.get(`http://localhost:${CONSOLE_PORT}/v0`, {
+      headers: { Authorization: 'Bearer e2e-token' },
+      maxRedirects: 0,
+    })
+    expect(v0Chk.status() === 302 && v0Chk.headers()['location'] === '/', 'M5:回归-/v0 302 → /')
     // 管道页仍可用
     await page.goto(`http://localhost:${REAL_UI_PORT}/`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="stat-grid"]').waitFor({ state: 'visible' })

@@ -410,7 +410,7 @@ def build_plan(args: argparse.Namespace) -> list[list[Task]]:
         if args.module == "frontend":
             return [
                 [_frontend_quality(build=True)],
-                [_e2e("Mock")],
+                [_e2e("Real")],
             ]
         targets = _expand_tests(MODULE_TESTS[args.module])
         tasks = [
@@ -422,7 +422,7 @@ def build_plan(args: argparse.Namespace) -> list[list[Task]]:
         ]
         if args.module == "console":
             tasks.append(_frontend_quality(build=False))
-            return [tasks, [_e2e("Mock")]]
+            return [tasks, [_e2e("Real")]]
         return [tasks]
 
     phases: list[list[Task]] = [
@@ -430,7 +430,7 @@ def build_plan(args: argparse.Namespace) -> list[list[Task]]:
             _backend_checks(workers=args.workers, include_smoke=True),
             _frontend_quality(build=True),
         ],
-        [_e2e("Mock"), _e2e("Real")],
+        [_e2e("Real")],
     ]
     if args.mode == "release":
         phases.extend(
