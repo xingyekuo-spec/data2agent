@@ -57,10 +57,14 @@ class MssqlReadOnlyAdapter(SourceAdapter):
         )
 
     def _page_sql(self, table: TableInfo, limit: int, offset: int) -> str:
+        # ROW_NUMBER 分页:兼容 SQL Server 2008 R2(不支持 OFFSET/FETCH,2012+)
         cols = ", ".join(f"[{c}]" for c, _ in table.columns)
         order = ", ".join(f"[{k}]" for k in table.pk) or "(SELECT NULL)"
-        return (f"SELECT {cols} FROM [{table.name}] ORDER BY {order} "
-                f"OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY")
+        return (
+            f"SELECT TOP {int(limit)} {cols} FROM ("
+            f"SELECT {cols}, ROW_NUMBER() OVER (ORDER BY {order}) AS _d2a_rn "
+            f"FROM [{table.name}]"
+            f") AS _d2a_p WHERE _d2a_rn > {int(offset)} ORDER BY _d2a_rn")
 
     def _quote(self, ident: str) -> str:
         return f"[{ident}]"

@@ -300,3 +300,26 @@ def test_app_default_schema_does_not_hardcode_adapter_branch():
     assert "discoverer_default_schema" in text
     assert 'scfg.adapter == "sqlite_readonly"' not in text
     assert 'adapter == "sqlite_readonly" else "dbo"' not in text
+
+
+def test_mssql_pagination_sql_2008r2_compatible():
+    """SQL Server 2008 R2 不支持 OFFSET/FETCH(2012+):
+    发现器列表分页与适配器全量分页必须用 ROW_NUMBER。"""
+    import inspect
+    from data2agent.middle.extract.discoverers.mssql import MssqlMetadataDiscoverer
+    from data2agent.middle.extract.adapters.mssql import MssqlReadOnlyAdapter
+
+    disc_src = inspect.getsource(MssqlMetadataDiscoverer.list_tables)
+    assert "ROW_NUMBER()" in disc_src
+    assert "OFFSET ?" not in disc_src and "FETCH NEXT" not in disc_src
+
+    adapter = MssqlReadOnlyAdapter.__new__(MssqlReadOnlyAdapter)
+    from data2agent.shared.store.table import TableInfo
+    info = TableInfo(name="SALES_ORDER",
+                     columns=[("ID", "int"), ("CODE", "text")], pk=["ID"])
+    sql = adapter._page_sql(info, 5000, 10000)
+    assert "ROW_NUMBER()" in sql
+    assert " OFFSET " not in sql and "FETCH NEXT" not in sql
+    assert "TOP 5000" in sql and "_d2a_rn > 10000" in sql
+    # 子查询必须带别名(SQL Server 要求派生表有别名)
+    assert " AS _d2a_p " in sql

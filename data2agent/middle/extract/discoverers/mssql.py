@@ -112,16 +112,21 @@ class MssqlMetadataDiscoverer:
         total = int(count_row["c"])
         rows = self._fetch(
             f"""
-            SELECT t.TABLE_SCHEMA, t.TABLE_NAME, t.TABLE_TYPE
-            FROM INFORMATION_SCHEMA.TABLES t
-            WHERE {where_sql}
-            ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME
-            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+            SELECT * FROM (
+                SELECT t.TABLE_SCHEMA, t.TABLE_NAME, t.TABLE_TYPE,
+                       ROW_NUMBER() OVER (
+                           ORDER BY t.TABLE_SCHEMA, t.TABLE_NAME) AS _d2a_rn
+                FROM INFORMATION_SCHEMA.TABLES t
+                WHERE {where_sql}
+            ) AS _d2a_p
+            WHERE _d2a_rn > ? AND _d2a_rn <= ?
+            ORDER BY _d2a_rn
             """,
-            tuple(params) + (offset, limit),
+            tuple(params) + (offset, offset + limit),
         )
         # 列表只返回目录项;不在此调用 get_table。
         # 详情/键/水位由扫描任务或详情接口拉取,失败才能计入 table_errors / partial。
+        # 分页用 ROW_NUMBER:兼容 SQL Server 2008 R2(不支持 OFFSET/FETCH,2012+)
         summaries = [
             TableSummary(
                 schema=r["TABLE_SCHEMA"],
