@@ -45,19 +45,21 @@
   <!-- Tab:推送明细 -->
   <div id="tab-detail" hidden>
     <div class="toolbar">
-      <select id="table-filter" onchange="loadPushLogs()" style="display:none">
+      <select id="table-filter" onchange="resetAndLoadDetail()" style="display:none">
         <option value="">全部表</option>
       </select>
-      <select id="source-filter" onchange="loadPushLogs()">
+      <select id="source-filter" onchange="resetAndLoadDetail()">
         <option value="">全部源</option>
       </select>
-      <select id="limit-select" onchange="loadPushLogs()">
+      <select id="limit-select" onchange="resetAndLoadDetail()">
         <option value="20">20 条</option>
         <option value="50" selected>50 条</option>
         <option value="100">100 条</option>
       </select>
       <button type="button" onclick="loadPushLogs()" style="padding:4px 12px;border:1px solid #e8edf2;border-radius:6px;background:#fff;cursor:pointer;font-size:13px">刷新</button>
-      <span class="meta" id="push-total" style="margin-left:auto"></span>
+      <span class="meta" id="page-info" style="margin-left:auto"></span>
+      <button type="button" id="prev-page" onclick="gotoPage(-1)">‹ 上一页</button>
+      <button type="button" id="next-page" onclick="gotoPage(1)">下一页 ›</button>
     </div>
     <div id="push-logs-list"><p class="meta">加载中…</p></div>
   </div>
@@ -139,6 +141,7 @@ function filterTable(source, table) {
   }
   if (!found) sel.innerHTML += '<option value="' + esc(table) + '">' + esc(table) + '</option>';
   sel.value = table;
+  _page = 1;
   loadPushLogs();
   switchTab('detail');
   document.getElementById('tab-detail').scrollIntoView({ behavior: 'smooth' });
@@ -178,10 +181,31 @@ function loadByTable() {
     });
 }
 
+var _page = 1;
+var _knownSources = {};
+
+function resetAndLoadDetail() {
+  _page = 1;
+  loadPushLogs();
+}
+
+function gotoPage(delta) {
+  _page = Math.max(1, _page + delta);
+  loadPushLogs();
+}
+
+function updatePager(total, limit) {
+  var pages = Math.max(1, Math.ceil(total / limit));
+  if (_page > pages) _page = pages;
+  document.getElementById('page-info').textContent =
+    '第 ' + _page + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
+  document.getElementById('prev-page').disabled = _page <= 1;
+  document.getElementById('next-page').disabled = _page >= pages;
+}
+
 function renderPushLogs(data) {
   var list = data.push_logs;
-  document.getElementById('push-total').textContent = '共 ' + (data.total || 0) + ' 条';
-  if (!list || !list.length) return '<p class="meta">暂无推送记录（仅在 sink.type=http 时有记录）</p>';
+  if (!list || !list.length) return '<p class="meta">暂无推送记录(仅在 sink.type=http 时有记录)</p>';
   var html = '<table class="data"><thead><tr><th>ID</th><th>源</th><th>表</th><th>步骤</th><th>批次</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
   list.forEach(function(p) {
     var duration = p.duration_ms != null ? (p.duration_ms / 1000).toFixed(1) + 's' : '—';
@@ -207,20 +231,21 @@ function renderPushLogs(data) {
 function loadPushLogs() {
   var source = document.getElementById('source-filter').value;
   var table = document.getElementById('table-filter').value;
-  var limit = document.getElementById('limit-select').value;
-  var url = '/api/push-logs?limit=' + limit;
+  var limit = parseInt(document.getElementById('limit-select').value, 10);
+  var url = '/api/push-logs?limit=' + limit + '&offset=' + ((_page - 1) * limit);
   if (source) url += '&source=' + encodeURIComponent(source);
   if (table) url += '&table=' + encodeURIComponent(table);
   fetch(url, { headers: authHeaders() })
     .then(function(r) { return r.json(); })
     .then(function(data) {
       document.getElementById('push-logs-list').innerHTML = renderPushLogs(data);
+      updatePager(data.total || 0, limit);
+      // 源过滤器选项跨页累积
+      (data.push_logs || []).forEach(function(p) { _knownSources[p.source] = true; });
       var sel = document.getElementById('source-filter');
       var current = sel.value;
-      var sources = {};
-      (data.push_logs || []).forEach(function(p) { sources[p.source] = true; });
       sel.innerHTML = '<option value="">全部源</option>';
-      Object.keys(sources).sort().forEach(function(s) {
+      Object.keys(_knownSources).sort().forEach(function(s) {
         sel.innerHTML += '<option value="' + esc(s) + '"' + (s === current ? ' selected' : '') + '>' + esc(s) + '</option>';
       });
     })

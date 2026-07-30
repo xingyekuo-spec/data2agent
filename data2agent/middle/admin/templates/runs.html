@@ -7,19 +7,21 @@
   <p class="hint">点击行展开逐表步骤;存在运行中的运行时,每 2 秒自动刷新进度。</p>
   <div class="toolbar">
     <label>源
-      <select id="source-filter" onchange="loadRuns()">
+      <select id="source-filter" onchange="resetAndLoad()">
         <option value="">全部源</option>
       </select>
     </label>
-    <label>条数
-      <select id="limit-select" onchange="loadRuns()">
+    <label>每页
+      <select id="limit-select" onchange="resetAndLoad()">
+        <option value="10">10 条</option>
         <option value="20" selected>20 条</option>
         <option value="50">50 条</option>
-        <option value="100">100 条</option>
       </select>
     </label>
     <button type="button" onclick="loadRuns()">刷新</button>
-    <span class="meta" id="runs-total" style="margin-left:auto"></span>
+    <span class="meta" id="page-info" style="margin-left:auto"></span>
+    <button type="button" id="prev-page" onclick="gotoPage(-1)">‹ 上一页</button>
+    <button type="button" id="next-page" onclick="gotoPage(1)">下一页 ›</button>
   </div>
   <div id="runs-list"><p class="meta">加载中…</p></div>
 </div>
@@ -28,10 +30,29 @@
 var _watchTimer = null;
 var _activeRunId = null;
 var _stepsCache = {};
+var _page = 1;
+var _knownSources = {};
+
+function resetAndLoad() {
+  _page = 1;
+  loadRuns();
+}
+
+function gotoPage(delta) {
+  _page = Math.max(1, _page + delta);
+  loadRuns();
+}
+
+function updatePager(total, limit) {
+  var pages = Math.max(1, Math.ceil(total / limit));
+  if (_page > pages) _page = pages;
+  document.getElementById('page-info').textContent =
+    '第 ' + _page + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
+  document.getElementById('prev-page').disabled = _page <= 1;
+  document.getElementById('next-page').disabled = _page >= pages;
+}
 
 function renderRuns(data) {
-  document.getElementById('runs-total').textContent =
-    data.runs ? '最近 ' + data.runs.length + ' 条' : '';
   if (!data.runs || !data.runs.length) return '<p class="meta">暂无运行记录</p>';
   var html = '<table class="data"><thead><tr>' +
     '<th>ID</th><th>源</th><th>状态</th><th>开始</th><th>表数</th><th>行数</th><th>耗时</th>' +
@@ -147,20 +168,20 @@ function stopWatch() {
 
 function loadRuns() {
   var source = document.getElementById('source-filter').value;
-  var limit = document.getElementById('limit-select').value;
-  var url = '/api/runs?limit=' + limit;
+  var limit = parseInt(document.getElementById('limit-select').value, 10);
+  var url = '/api/runs?limit=' + limit + '&offset=' + ((_page - 1) * limit);
   if (source) url += '&source=' + encodeURIComponent(source);
   fetch(url, { headers: authHeaders() })
     .then(function (r) { return r.json(); })
     .then(function (data) {
       document.getElementById('runs-list').innerHTML = renderRuns(data);
-      // 源过滤器选项由返回数据累积
+      updatePager(data.total || 0, limit);
+      // 源过滤器选项跨页累积(分页后当前页可能只含部分源)
+      (data.runs || []).forEach(function (r) { _knownSources[r.source] = true; });
       var sel = document.getElementById('source-filter');
       var current = sel.value;
-      var sources = {};
-      (data.runs || []).forEach(function (r) { sources[r.source] = true; });
       sel.innerHTML = '<option value="">全部源</option>';
-      Object.keys(sources).sort().forEach(function (s) {
+      Object.keys(_knownSources).sort().forEach(function (s) {
         sel.innerHTML += '<option value="' + esc(s) + '"' + (s === current ? ' selected' : '') + '>' + esc(s) + '</option>';
       });
       // 有 running 的运行时自动跟踪进度
