@@ -57,7 +57,7 @@ jobs:
           fi
           git fetch --no-tags origin main 2>/dev/null || true
           python scripts/check_ingest_compat.py --base-ref "$BASE_REF"
-          python -m pytest tests/test_ingest_protocol_compat.py -q --tb=short
+          python -m pytest tests/contract/test_ingest_protocol_compat.py -q --tb=short
 
   # M6 Release 门槛:真实 SQL Server 元数据 / 业务键 / 快照替换必须在打包前通过。
   # module backend 使用 not integration，不能替代本 job。
@@ -88,7 +88,7 @@ jobs:
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
       - name: 换包/回滚脚本验收(pwsh 端到端)
-        run: python -m pytest tests/test_update_apply_script.py -v
+        run: python -m pytest tests/platform/test_update_apply_script.py -v
 
   package:
     needs: [test, mssql-integration, update-apply-e2e]

@@ -32,9 +32,9 @@ def test_connect_change_selects_erp_tests_only():
     phases = _quick(["data2agent/middle/extract/increment.py"])
     assert _task_names(phases) == {"Python affected"}
     command = phases[0][0].commands[0].argv
-    assert "tests/test_connect.py" in command
-    assert "tests/test_table_config.py" in command
-    assert "tests/test_console.py" not in command
+    assert "tests/middle/test_connect.py" in command
+    assert "tests/middle/test_table_config.py" in command
+    assert "tests/platform/test_console.py" not in command
 
 
 def test_shared_store_change_falls_back_to_full_backend():

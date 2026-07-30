@@ -58,8 +58,8 @@ jobs:
               - 'data2agent/updater/**'
               - 'data2agent/console/**'
               - 'deploy/**'
-              - 'tests/test_updater.py'
-              - 'tests/test_update_apply_script.py'
+              - 'tests/platform/test_updater.py'
+              - 'tests/platform/test_update_apply_script.py'
               - 'pyproject.toml'
               - '.github/workflows/ci.yml'
               - '.github/workflows/release.yml'
@@ -97,7 +97,7 @@ jobs:
             git fetch --no-tags origin main 2>/dev/null || true
           fi
           python scripts/check_ingest_compat.py --base-ref "$BASE_REF"
-          python -m pytest tests/test_ingest_protocol_compat.py -q --tb=short
+          python -m pytest tests/contract/test_ingest_protocol_compat.py -q --tb=short
 
   # 换包脚本(apply-update.ps1)真实运行环境是 Windows:文件锁/部分换包/
   # 回滚路径只能在 windows-latest 验收,更新相关路径变更时随 PR 运行,
@@ -120,7 +120,7 @@ jobs:
           cache-dependency-path: pyproject.toml
       - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
       - name: 换包/回滚脚本验收(pwsh 端到端)
-        run: python -m pytest tests/test_update_apply_script.py -v
+        run: python -m pytest tests/platform/test_update_apply_script.py -v
 
   frontend:
     needs: changes
