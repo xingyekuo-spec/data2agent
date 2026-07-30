@@ -9,11 +9,11 @@ import yaml
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
-from data2agent.connect.increment import incremental_sync  # noqa: E402
-from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.middle_admin.app import create_app  # noqa: E402
-from data2agent.metamodel.loader import load_pack  # noqa: E402
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
+from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
+from data2agent.shared.store.landing import LandingStore  # noqa: E402
+from data2agent.middle.admin.app import create_app  # noqa: E402
+from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 from tests.helpers import watermarks_from_pack, whitelist_from_pack  # noqa: E402
 
@@ -140,14 +140,14 @@ def test_put_requires_revision_and_is_atomic(env):
 
 def test_live_connection_failed_is_not_ready(env, monkeypatch):
     """ERP 不可达时不得返回 ready / 不得保存并写入 validated_at。"""
-    from data2agent.connect import metadata as md
+    from data2agent.middle.extract import metadata as md
 
     def boom(_scfg):
         raise md.MetadataError("connection_failed", "数据库访问失败")
 
     monkeypatch.setattr(md, "build_discoverer", boom)
     # extraction_tables imports build_discoverer at module level — patch there too
-    import data2agent.middle_admin.extraction_tables as et
+    import data2agent.middle.admin.extraction_tables as et
     monkeypatch.setattr(et, "build_discoverer", boom)
 
     client, cfg = env
@@ -203,8 +203,8 @@ def test_successful_live_put_stamps_validated_at(env):
 
 def test_put_ignores_client_live_false(env, monkeypatch):
     """PUT 不得因客户端 live:false 跳过现场校验而保存。"""
-    from data2agent.connect import metadata as md
-    import data2agent.middle_admin.extraction_tables as et
+    from data2agent.middle.extract import metadata as md
+    import data2agent.middle.admin.extraction_tables as et
 
     def boom(_scfg):
         raise md.MetadataError("connection_failed", "数据库访问失败")

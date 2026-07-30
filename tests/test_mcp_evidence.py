@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from data2agent.mcp_server.evidence import (
+from data2agent.shared.store.evidence import (
     METRIC_SUMMARY_MAX_ITEMS,
     OBJECT_SUMMARY_MAX_ROWS,
     SUMMARY_MAX_BYTES,

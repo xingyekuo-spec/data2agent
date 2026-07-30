@@ -12,12 +12,12 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from data2agent.connect.config import PlatformConfig  # noqa: E402
-from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.console import observability as obs  # noqa: E402
-from data2agent.metamodel.dataset_publish_contract import make_build_table  # noqa: E402
-from data2agent.metamodel.loader import load_pack  # noqa: E402
-from data2agent.metamodel.versioning import (  # noqa: E402
+from data2agent.shared.config import PlatformConfig  # noqa: E402
+from data2agent.shared.store.landing import LandingStore  # noqa: E402
+from data2agent.platform.console import observability as obs  # noqa: E402
+from data2agent.shared.metamodel.dataset_publish_contract import make_build_table  # noqa: E402
+from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
+from data2agent.shared.metamodel.versioning import (  # noqa: E402
     DatasetVersionRecord,
     ObjectVersionRecord,
 )

@@ -9,11 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore, raw_table_name
+from data2agent.shared.store.landing import LandingStore, raw_table_name
 from tests.helpers import whitelist_from_pack
-from data2agent.metamodel.loader import load_pack
+from data2agent.shared.metamodel.loader import load_pack
 
 DSN = os.environ.get("D2A_IT_MSSQL_DSN")
 SA_DSN = os.environ.get("D2A_IT_MSSQL_SA_DSN")
@@ -36,7 +36,7 @@ def landing(tmp_path):
 
 
 def _adapter(pack, **kw):
-    from data2agent.connect.adapters.mssql import MssqlReadOnlyAdapter
+    from data2agent.middle.extract.adapters.mssql import MssqlReadOnlyAdapter
     return MssqlReadOnlyAdapter(DSN, whitelist_from_pack(pack, SOURCE), **kw)
 
 
@@ -77,7 +77,7 @@ def test_incremental_picks_up_change(pack, landing):
 def test_reconcile_catches_physical_delete(pack, landing):
     import pyodbc
 
-    from data2agent.connect.reconcile import reconcile
+    from data2agent.middle.extract.reconcile import reconcile
 
     _sync(pack, landing)
     sa = pyodbc.connect(SA_DSN + ";DATABASE=d2a_e10")
@@ -94,7 +94,7 @@ def test_reconcile_catches_physical_delete(pack, landing):
 def test_readonly_account_and_guard(pack):
     import pyodbc
 
-    from data2agent.connect.adapters.base import ReadOnlyViolation
+    from data2agent.middle.extract.adapters.base import ReadOnlyViolation
 
     adapter = _adapter(pack)
     with pytest.raises(ReadOnlyViolation):

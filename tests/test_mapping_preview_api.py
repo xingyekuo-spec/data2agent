@@ -12,16 +12,16 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.dataset_publish import build_dataset
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.shared.store.dataset_publish import build_dataset
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore
-from data2agent.connect.mapping_preview import MASKED, PreviewError
+from data2agent.shared.store.landing import LandingStore
+from data2agent.shared.store.mapping_preview import MASKED, PreviewError
 from tests.helpers import whitelist_from_pack
-from data2agent.console.app import create_app
-from data2agent.console.contracts import MappingPreviewError, MappingPreviewResponse
-from data2agent.metamodel.loader import load_pack
+from data2agent.platform.console.app import create_app
+from data2agent.platform.console.contracts import MappingPreviewError, MappingPreviewResponse
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -322,7 +322,7 @@ def test_draft_preview_with_diff(env):
 
 def test_no_current_plus_draft_unavailable_diff(env, monkeypatch):
     monkeypatch.setattr(
-        "data2agent.connect.mapping_preview._current_binding",
+        "data2agent.shared.store.mapping_preview._current_binding",
         lambda *args, **kwargs: None,
     )
     draft = {
@@ -396,7 +396,7 @@ def test_raw_table_not_found_404(env):
 
 def test_current_binding_unavailable_409(env, monkeypatch):
     monkeypatch.setattr(
-        "data2agent.connect.mapping_preview._current_binding",
+        "data2agent.shared.store.mapping_preview._current_binding",
         lambda *args, **kwargs: None,
     )
     r = _client(env).post(PREVIEW_URL, json=_body(), headers=_auth())
@@ -408,7 +408,7 @@ def test_raw_unavailable_409(env, monkeypatch):
         raise PreviewError("raw_unavailable", "landing locked")
 
     monkeypatch.setattr(
-        "data2agent.console.app.preview_mapping", boom)
+        "data2agent.platform.console.app.preview_mapping", boom)
     r = _client(env).post(PREVIEW_URL, json=_body(), headers=_auth())
     _assert_preview_error(r, status=409, reason_code="raw_unavailable")
     assert "landing locked" not in r.text
@@ -433,7 +433,7 @@ def test_preview_failed_500(env, monkeypatch):
         raise RuntimeError("secret sql SELECT * FROM raw_x")
 
     monkeypatch.setattr(
-        "data2agent.console.app.preview_mapping", boom)
+        "data2agent.platform.console.app.preview_mapping", boom)
     r = _client(env).post(PREVIEW_URL, json=_body(), headers=_auth())
     err = _assert_preview_error(r, status=500, reason_code="preview_failed")
     assert "secret" not in r.text
@@ -702,7 +702,7 @@ def test_preview_side_effect_barrier(env, monkeypatch):
     ).status_code == 422
     # 500
     monkeypatch.setattr(
-        "data2agent.console.app.preview_mapping",
+        "data2agent.platform.console.app.preview_mapping",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     assert client.post(PREVIEW_URL, json=_body(), headers=_auth()).status_code == 500
@@ -750,7 +750,7 @@ def test_client_disconnect_write_barrier(env, monkeypatch):
     def boom(*args, **kwargs):
         raise ClientDisconnect()
 
-    monkeypatch.setattr("data2agent.console.app.preview_mapping", boom)
+    monkeypatch.setattr("data2agent.platform.console.app.preview_mapping", boom)
     r = _client(env).post(PREVIEW_URL, json=_body(), headers=_auth())
     # 断开视作内部失败安全出口,不得泄漏异常类名
     assert r.status_code == 500

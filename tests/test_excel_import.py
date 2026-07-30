@@ -5,18 +5,18 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.excel_import import (
+from data2agent.middle.extract.excel_import import (
     import_tabular,
     load_mapping,
     read_tabular,
     render_mapping_yaml,
     suggest_mapping,
 )
-from data2agent.connect.landing import LandingStore, raw_table_name
-from data2agent.connect.mapping_apply import apply_objects
-from data2agent.mcp_server.core import QueryService
-from data2agent.mcp_server.evidence import EvidenceContext
-from data2agent.metamodel.loader import load_pack
+from data2agent.shared.store.landing import LandingStore, raw_table_name
+from data2agent.shared.store.mapping_apply import apply_objects
+from data2agent.platform.mcp_server.core import QueryService
+from data2agent.shared.store.evidence import EvidenceContext
+from data2agent.shared.metamodel.loader import load_pack
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "excel_quotation"
@@ -129,7 +129,7 @@ def test_end_to_end_apply_and_gateway(csv_file, pack, quotation, tmp_path):
     assert "中标" in reason["reason"]
 
     # M2: gateway 只读 published 快照;将 excel apply 候选提升为唯一 published。
-    from data2agent.metamodel.versioning import (
+    from data2agent.shared.metamodel.versioning import (
         DatasetVersionRecord,
         ObjectVersionRecord,
         binding_hash,

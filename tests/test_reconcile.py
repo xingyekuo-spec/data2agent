@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore, raw_table_name
-from data2agent.connect.reconcile import month_segments, reconcile
+from data2agent.shared.store.landing import LandingStore, raw_table_name
+from data2agent.middle.extract.reconcile import month_segments, reconcile
 from tests.helpers import whitelist_from_pack
-from data2agent.metamodel.loader import load_pack
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]

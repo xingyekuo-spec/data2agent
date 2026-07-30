@@ -10,24 +10,24 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
-from data2agent.connect.config import load_config  # noqa: E402
-from data2agent.connect.dataset_publish import (  # noqa: E402
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
+from data2agent.shared.config import load_config  # noqa: E402
+from data2agent.shared.store.dataset_publish import (  # noqa: E402
     build_dataset,
     resolve_published_snapshot,
 )
-from data2agent.connect.increment import incremental_sync  # noqa: E402
+from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore  # noqa: E402
+from data2agent.shared.store.landing import LandingStore  # noqa: E402
 from tests.helpers import whitelist_from_pack  # noqa: E402
-from data2agent.console.app import create_app  # noqa: E402
-from data2agent.console.contracts import (  # noqa: E402
+from data2agent.platform.console.app import create_app  # noqa: E402
+from data2agent.platform.console.contracts import (  # noqa: E402
     OverviewResponse,
     PipelineResponse,
 )
-from data2agent.mcp_server.core import QueryService  # noqa: E402
-from data2agent.mcp_server.evidence import EvidenceContext  # noqa: E402
-from data2agent.metamodel.loader import load_pack  # noqa: E402
+from data2agent.platform.mcp_server.core import QueryService  # noqa: E402
+from data2agent.shared.store.evidence import EvidenceContext  # noqa: E402
+from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]

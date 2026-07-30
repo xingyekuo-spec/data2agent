@@ -4,9 +4,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from data2agent.connect.landing import LandingStore
-from data2agent.console.app import create_app
-from data2agent.console.contracts import DatasetDetail, DatasetSummary
+from data2agent.shared.store.landing import LandingStore
+from data2agent.platform.console.app import create_app
+from data2agent.platform.console.contracts import DatasetDetail, DatasetSummary
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
@@ -149,8 +149,8 @@ def test_datasets_published_requires_published_at(tmp_path):
     import pytest
     from fastapi import HTTPException
 
-    from data2agent.console.app import _map_dataset_summary, _map_object_version
-    from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+    from data2agent.platform.console.app import _map_dataset_summary, _map_object_version
+    from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
     with pytest.raises(HTTPException) as ds_exc:
         _map_dataset_summary(DatasetVersionRecord(

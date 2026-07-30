@@ -9,7 +9,7 @@ from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION
 
 ROOT = Path(__file__).resolve().parents[1]
 PROD = ROOT / "data2agent"
-TEMPLATES = PROD / "middle_admin" / "templates"
+TEMPLATES = PROD / "middle" / "admin" / "templates"
 
 # 允许出现在测试断言文案中的旧字段名;生产包禁止。
 _FORBIDDEN_PROD = (
@@ -30,8 +30,8 @@ def test_ingest_protocol_version_is_v2():
     from data2agent.protocol.ingest import SUPPORTED_INGEST_PROTOCOL_VERSIONS
 
     assert SUPPORTED_INGEST_PROTOCOL_VERSIONS == ("2",)
-    sink = (PROD / "connect" / "sink.py").read_text(encoding="utf-8")
-    ingest_app = (PROD / "ingest" / "app.py").read_text(encoding="utf-8")
+    sink = (PROD / "middle" / "extract" / "sink.py").read_text(encoding="utf-8")
+    ingest_app = (PROD / "platform" / "ingest" / "app.py").read_text(encoding="utf-8")
     assert "ensure_protocol" in sink
     assert "supported_ingest_protocol_versions" in sink
     assert "health_protocol_fields" in ingest_app
@@ -51,7 +51,7 @@ def test_production_code_has_no_legacy_cutover_symbols():
 
 
 def test_cli_has_no_full_or_migrate_flags():
-    main = (PROD / "connect" / "__main__.py").read_text(encoding="utf-8")
+    main = (PROD / "middle" / "extract" / "__main__.py").read_text(encoding="utf-8")
     assert "--full" not in main
     assert "migrate-config" not in main
     assert "full_sync" not in main

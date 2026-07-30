@@ -30,6 +30,22 @@
 平台机在 `/setup` 完成首次配置。中间机在 `/config` 配连接后，经 `/metadata` 扫描选表、
 `/tables` 确认保存抽取计划（默认空清单）。推送链路验收见 [push-validation](docs/runbook/push-validation.md)。
 
+## 代码结构
+
+两端(monorepo 内的逻辑分层,由 `scripts/check_architecture_layers.py` 强制):
+
+```
+data2agent/
+├── protocol/    # 跨机契约:ingest 推送协议模型与版本协商(两端唯一共享接口)
+├── middle/      # 中间端产物:admin(:8851 管理界面)+ extract(只读抽取/调度/推送)
+├── platform/    # 平台端产物:ingest(接收端)+ console(:8849)+ mcp_server + updater
+└── shared/      # 共享领域层:store(落地/映射/发布/证据)、metamodel、config、
+                 #   scenarios、admin(界面公共件)——不得依赖任何端目录
+```
+
+依赖方向仅允许 `middle → shared → protocol` 与 `platform → shared → protocol`;
+两端之间禁止互相 import(契约测试见 `tests/test_architecture_layers.py`)。
+
 ## 开发者本地快速开始
 
 完整源码开发运行步骤见 [docs/runbook/source-dev.md](docs/runbook/source-dev.md)。
@@ -39,11 +55,11 @@ pip install -e ".[dev,mcp,console,ingest,connect,middle_admin,excel]"
 python scripts/verify.py quick                    # 日常:按 Git 变更选择测试
 python scripts/verify.py module erp               # 模块完成:ERP/抽取回归
 python scripts/verify.py full                     # 合并前:完整回归(含前端与 E2E)
-python -m data2agent.metamodel.validate templates # 模板校验
+python -m data2agent.shared.metamodel.validate templates # 模板校验
 python -m tests.fixtures.e10.seed --db /tmp/e10.sqlite   # 生成 E10-like 参考库(测试用)
-python -m data2agent.connect sync --config connect.example.yaml   # 抽取:水位增量 → 落地库(只读/白名单/审计)
-python -m data2agent.connect apply                # 映射:raw_* → 物化对象层 obj_*(隔离区 + 熔断)
-python -m data2agent.console --landing landing/factory.sqlite --templates templates
+python -m data2agent.middle.extract sync --config connect.example.yaml   # 抽取:水位增量 → 落地库(只读/白名单/审计)
+python -m data2agent.middle.extract apply                # 映射:raw_* → 物化对象层 obj_*(隔离区 + 熔断)
+python -m data2agent.platform.console --landing landing/factory.sqlite --templates templates
 ```
 
 ## 设计文档

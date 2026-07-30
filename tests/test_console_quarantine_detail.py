@@ -9,9 +9,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from data2agent.connect.landing import LandingStore
-from data2agent.console.app import create_app
-from data2agent.console.contracts import QuarantineDetail
+from data2agent.shared.store.landing import LandingStore
+from data2agent.platform.console.app import create_app
+from data2agent.platform.console.contracts import QuarantineDetail
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"

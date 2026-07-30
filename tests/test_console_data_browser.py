@@ -6,13 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore
+from data2agent.shared.store.landing import LandingStore
 from tests.helpers import whitelist_from_pack
-from data2agent.console import data_browser as br
-from data2agent.metamodel.loader import load_pack
+from data2agent.platform.console import data_browser as br
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -230,7 +230,7 @@ def test_browse_truncation_marks_fields(tmp_path):
 # 不再对原始错误文本做正则脱敏(Python !r 单引号/双引号/数值 repr
 # 无一可全局可靠屏蔽),改为返回结构化安全摘要。
 
-from data2agent.metamodel.schema import ObjectTemplate, Property, SourceBinding, TemplatePack
+from data2agent.shared.metamodel.schema import ObjectTemplate, Property, SourceBinding, TemplatePack
 
 
 def _make_pack_with_binding() -> TemplatePack:

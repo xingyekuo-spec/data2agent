@@ -56,16 +56,16 @@ sources:
 
 ```bash
 # 验证配置可加载
-python -c "from data2agent.connect.config import load_config; load_config('connect.yaml'); print('OK')"
+python -c "from data2agent.middle.extract.config import load_config; load_config('connect.yaml'); print('OK')"
 
 # 单次抽取(策略来自 tables;无 --full)
-python -m data2agent.connect sync --config connect.yaml
+python -m data2agent.middle.extract sync --config connect.yaml
 
 # 常驻调度;--once 立即跑一轮后退出
-python -m data2agent.connect serve --config connect.yaml --once
+python -m data2agent.middle.extract serve --config connect.yaml --once
 
 # 查看同步状态
-python -m data2agent.connect status
+python -m data2agent.middle.extract status
 ```
 
 `serve` 常驻后按 `sync_every` 周期调度。修改 `connect.yaml` 后需重启服务才能生效。

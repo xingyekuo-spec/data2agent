@@ -11,15 +11,15 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
-from data2agent.connect.config import PlatformConfig  # noqa: E402
-from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
-from data2agent.connect.increment import incremental_sync  # noqa: E402
-from data2agent.connect.landing import LandingStore  # noqa: E402
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
+from data2agent.shared.config import PlatformConfig  # noqa: E402
+from data2agent.shared.store.dataset_publish import build_dataset  # noqa: E402
+from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
+from data2agent.shared.store.landing import LandingStore  # noqa: E402
 from tests.helpers import watermarks_from_pack, whitelist_from_pack  # noqa: E402
-from data2agent.console.app import create_app  # noqa: E402
-from data2agent.console.contracts import PipelineResponse  # noqa: E402
-from data2agent.metamodel.loader import load_pack  # noqa: E402
+from data2agent.platform.console.app import create_app  # noqa: E402
+from data2agent.platform.console.contracts import PipelineResponse  # noqa: E402
+from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,7 +71,7 @@ def test_pipeline_seven_nodes_fixed_order_and_overall(env):
 
 def test_pipeline_mcp_probe_ok_but_data_still_rules(env, monkeypatch):
     # 服务健康 ≠ 数据健康:MCP 探测 200 也不能把 draft warning 抹绿
-    import data2agent.console.app as console_app
+    import data2agent.platform.console.app as console_app
 
     monkeypatch.setattr(console_app, "_probe_http", lambda *a, **k: (True, "http"))
     monkeypatch.setattr(console_app, "_probe_tcp", lambda *a, **k: (True, "tcp"))

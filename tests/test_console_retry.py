@@ -8,15 +8,15 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore
-from data2agent.connect.mapping_apply import MappingCircuitBreaker
+from data2agent.shared.store.landing import LandingStore
+from data2agent.shared.store.mapping_apply import MappingCircuitBreaker
 from tests.helpers import whitelist_from_pack
-from data2agent.console.app import create_app
-from data2agent.console.contracts import RetryActionError, RetryActionResult
-from data2agent.metamodel.loader import load_pack
+from data2agent.platform.console.app import create_app
+from data2agent.platform.console.contracts import RetryActionError, RetryActionResult
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,7 +52,7 @@ def env(tmp_path):
 
 
 def _client(landing: LandingStore, cfg_file: Path) -> TestClient:
-    from data2agent.connect.config import load_config
+    from data2agent.shared.config import load_config
     cfg = load_config(cfg_file)
     return TestClient(create_app(
         landing.db_path, ROOT / "templates", cfg))
@@ -63,7 +63,7 @@ def _client_no_config(landing: LandingStore) -> TestClient:
 
 
 def _client_with_token(landing: LandingStore, cfg_file: Path) -> TestClient:
-    from data2agent.connect.config import load_config
+    from data2agent.shared.config import load_config
     cfg = load_config(cfg_file)
     return TestClient(create_app(
         landing.db_path, ROOT / "templates", cfg, token="t"))
@@ -176,7 +176,7 @@ class TestRetryPreflight:
         landing, _cfg_file, pack = env
         obj = pack.objects[0].object
         # 创建仅含未知 source 的临时 config
-        from data2agent.connect.config import ConnectConfig, SourceConfig
+        from data2agent.shared.config import ConnectConfig, SourceConfig
         cfg = ConnectConfig(
             templates=str(ROOT / "templates"),
             landing=landing.db_path,
@@ -207,7 +207,7 @@ class TestRetryPreflight:
         for b in pack.objects[0].bindings:
             b.status = "disabled"  # type: ignore[misc]
 
-        import data2agent.console.app as app_module
+        import data2agent.platform.console.app as app_module
         monkeypatch.setattr(app_module, "load_pack", lambda _path: pack)
 
         before = self._run_count(landing)
@@ -256,7 +256,7 @@ class TestRetryCircuitBreaker:
                 total=10, mapped=0, quarantined=10, batch_id="test-batch")
 
         monkeypatch.setattr(
-            "data2agent.connect.dataset_publish.apply_object", _raise_breaker)
+            "data2agent.shared.store.dataset_publish.apply_object", _raise_breaker)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -281,7 +281,7 @@ class TestRetryCircuitBreaker:
                 total=10, mapped=0, quarantined=10, batch_id="test-batch")
 
         monkeypatch.setattr(
-            "data2agent.connect.dataset_publish.apply_object", _raise_breaker)
+            "data2agent.shared.store.dataset_publish.apply_object", _raise_breaker)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -302,7 +302,7 @@ class TestRetryCircuitBreaker:
                 total=10, mapped=0, quarantined=10, batch_id="test-batch")
 
         monkeypatch.setattr(
-            "data2agent.connect.dataset_publish.apply_object", _raise_breaker)
+            "data2agent.shared.store.dataset_publish.apply_object", _raise_breaker)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -329,7 +329,7 @@ class TestRetryExecutionFailure:
             raise RuntimeError("simulated apply failure")
 
         monkeypatch.setattr(
-            "data2agent.connect.dataset_publish.apply_object", _raise_error)
+            "data2agent.shared.store.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -349,7 +349,7 @@ class TestRetryExecutionFailure:
             raise RuntimeError("simulated apply failure")
 
         monkeypatch.setattr(
-            "data2agent.connect.dataset_publish.apply_object", _raise_error)
+            "data2agent.shared.store.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -368,7 +368,7 @@ class TestRetryExecutionFailure:
             raise RuntimeError("simulated apply failure")
 
         monkeypatch.setattr(
-            "data2agent.connect.dataset_publish.apply_object", _raise_error)
+            "data2agent.shared.store.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -388,7 +388,7 @@ class TestRetryExecutionFailure:
             raise RuntimeError("long traceback\n  File 'x.py', line 42\n    do_stuff()")
 
         monkeypatch.setattr(
-            "data2agent.connect.dataset_publish.apply_object", _raise_error)
+            "data2agent.shared.store.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -492,7 +492,7 @@ class TestRetryEvidence:
                 total=10, mapped=0, quarantined=10, batch_id="test-batch")
 
         monkeypatch.setattr(
-            "data2agent.connect.dataset_publish.apply_object", _raise_breaker)
+            "data2agent.shared.store.dataset_publish.apply_object", _raise_breaker)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})
@@ -507,7 +507,7 @@ class TestRetryEvidence:
             raise RuntimeError("fail")
 
         monkeypatch.setattr(
-            "data2agent.connect.dataset_publish.apply_object", _raise_error)
+            "data2agent.shared.store.dataset_publish.apply_object", _raise_error)
 
         client = _client(landing, cfg_file)
         r = client.post("/api/actions/retry", json={"source": SOURCE, "object": obj})

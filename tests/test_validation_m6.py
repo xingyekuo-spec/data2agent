@@ -7,17 +7,17 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
-from data2agent.connect.adapters.base import TableInfo
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.dataset_publish import build_dataset
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.adapters.base import TableInfo
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.shared.store.dataset_publish import build_dataset
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore
+from data2agent.shared.store.landing import LandingStore
 from tests.helpers import whitelist_from_pack
-from data2agent.console.app import create_app
-from data2agent.console.contracts import ValidationReportResponse
-from data2agent.console.validation import build_validation_report
-from data2agent.metamodel.loader import load_pack
+from data2agent.platform.console.app import create_app
+from data2agent.platform.console.contracts import ValidationReportResponse
+from data2agent.platform.console.validation import build_validation_report
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -152,7 +152,7 @@ class TestNextExpectedRun:
     """_next_expected_run 窗口感知计算。"""
 
     def _cfg(self, sync_every="30m", windows=None):
-        from data2agent.connect.config import SourceConfig
+        from data2agent.shared.config import SourceConfig
         return SourceConfig(
             adapter="sqlite_readonly", path="x",
             tables={"CUSTOMER": {"mode": "incremental", "watermark": "UPD"}},
@@ -160,14 +160,14 @@ class TestNextExpectedRun:
         )
 
     def test_no_windows_next_is_last_plus_sync_every(self):
-        from data2agent.console.validation import _next_expected_run
+        from data2agent.platform.console.validation import _next_expected_run
         from datetime import datetime
         cfg = self._cfg(sync_every="30m")
         result = _next_expected_run(datetime(2026, 7, 23, 10, 0, 0), cfg)
         assert result == datetime(2026, 7, 23, 10, 30, 0)
 
     def test_window_skips_to_opening(self):
-        from data2agent.console.validation import _next_expected_run
+        from data2agent.platform.console.validation import _next_expected_run
         from datetime import datetime
         cfg = self._cfg(sync_every="30m", windows=["22:00-06:30"])
         # 上次 06:20 → candidate 06:50 → 不在窗口 → 步进到 22:00
@@ -175,7 +175,7 @@ class TestNextExpectedRun:
         assert result == datetime(2026, 7, 23, 22, 0, 0)
 
     def test_window_mid_run_stays(self):
-        from data2agent.console.validation import _next_expected_run
+        from data2agent.platform.console.validation import _next_expected_run
         from datetime import datetime
         cfg = self._cfg(sync_every="30m", windows=["22:00-06:30"])
         # 上次 23:00 → candidate 23:30 → 仍在窗口
@@ -183,7 +183,7 @@ class TestNextExpectedRun:
         assert result == datetime(2026, 7, 23, 23, 30, 0)
 
     def test_long_sync_every_not_zero_loop(self):
-        from data2agent.console.validation import _next_expected_run
+        from data2agent.platform.console.validation import _next_expected_run
         from datetime import datetime
         cfg = self._cfg(sync_every="8d", windows=["22:00-06:30"])
         # 上次 7/23 08:00(窗口外) → candidate 7/31 08:00 → 不在窗口 → 跳到 22:00
@@ -194,7 +194,7 @@ class TestRawPresence:
     """raw_presence 检查:存在性与诚实局限性。"""
 
     def test_recent_sync_passes(self, published_landing):
-        from data2agent.console.validation import build_validation_report
+        from data2agent.platform.console.validation import build_validation_report
         pack = load_pack(ROOT / "templates")
         run_id = published_landing.start_run(SOURCE, "sync")
         # 为全部抽取表创建 step 记录
@@ -213,7 +213,7 @@ class TestRawPresence:
 
     def test_table_without_sync_record_is_unverified(self, tmp_path):
         """缺少同步记录的表应报告 warning,不能假装正常。"""
-        from data2agent.console.validation import build_validation_report
+        from data2agent.platform.console.validation import build_validation_report
         pack = load_pack(ROOT / "templates")
         landing = LandingStore(tmp_path / "landing.sqlite")
 
@@ -242,7 +242,7 @@ class TestRawPresence:
 
     def test_other_source_does_not_pollute(self, tmp_path):
         """其他数据源的 step 记录不影响当前源的逐表新鲜度。"""
-        from data2agent.console.validation import build_validation_report
+        from data2agent.platform.console.validation import build_validation_report
         pack = load_pack(ROOT / "templates")
         landing = LandingStore(tmp_path / "landing.sqlite")
 

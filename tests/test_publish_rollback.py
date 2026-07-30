@@ -7,20 +7,20 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.dataset_publish import (
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.shared.store.dataset_publish import (
     build_dataset,
     publish_dataset,
     resolve_published_snapshot,
     rollback_dataset,
 )
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore
+from data2agent.shared.store.landing import LandingStore
 from tests.helpers import whitelist_from_pack
-from data2agent.metamodel.dataset_publish_contract import make_build_table
-from data2agent.metamodel.loader import load_pack
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.metamodel.dataset_publish_contract import make_build_table
+from data2agent.shared.metamodel.loader import load_pack
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,8 +81,8 @@ def test_publish_idempotent_when_already_current(landing, pack):
 def test_publish_in_txn_recheck_idempotent_not_500(landing, pack, monkeypatch):
     staged = _stage(landing, pack)
     calls = {"n": 0}
-    import data2agent.connect.dataset_publish as dp
-    from data2agent.metamodel.dataset_publish_contract import ActionDecision
+    import data2agent.shared.store.dataset_publish as dp
+    from data2agent.shared.metamodel.dataset_publish_contract import ActionDecision
 
     real = dp.evaluate_publish
 
@@ -109,8 +109,8 @@ def test_publish_in_txn_recheck_idempotent_not_500(landing, pack, monkeypatch):
 def test_publish_in_txn_recheck_conflict_maps_409(landing, pack, monkeypatch):
     staged = _stage(landing, pack)
     calls = {"n": 0}
-    import data2agent.connect.dataset_publish as dp
-    from data2agent.metamodel.dataset_publish_contract import ActionDecision
+    import data2agent.shared.store.dataset_publish as dp
+    from data2agent.shared.metamodel.dataset_publish_contract import ActionDecision
 
     real = dp.evaluate_publish
 
@@ -368,7 +368,7 @@ def test_gc_failure_does_not_undo_publish(landing, pack, monkeypatch):
         raise RuntimeError("gc explode")
 
     monkeypatch.setattr(
-        "data2agent.connect.dataset_publish._gc_retired_physical_tables", boom,
+        "data2agent.shared.store.dataset_publish._gc_retired_physical_tables", boom,
     )
     result = publish_dataset(landing, v3.dataset_version)
     assert result.outcome == "ok"
@@ -418,7 +418,7 @@ def test_gc_does_not_tombstone_when_drop_fails(landing, pack, monkeypatch):
         return False
 
     monkeypatch.setattr(
-        "data2agent.connect.dataset_publish._drop_table_best_effort", drop_fail,
+        "data2agent.shared.store.dataset_publish._drop_table_best_effort", drop_fail,
     )
     assert publish_dataset(landing, v3.dataset_version).executed is True
 

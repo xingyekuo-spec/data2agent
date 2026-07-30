@@ -9,8 +9,8 @@ import os
 
 import pytest
 
-from data2agent.connect.config import SourceConfig, TableExtractConfig
-from data2agent.connect.metadata import build_discoverer
+from data2agent.shared.config import SourceConfig, TableExtractConfig
+from data2agent.middle.extract.metadata import build_discoverer
 
 DSN = os.environ.get("D2A_IT_MSSQL_DSN")
 pytestmark = pytest.mark.skipif(

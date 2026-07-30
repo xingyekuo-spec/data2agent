@@ -9,16 +9,16 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from data2agent.connect.landing import LandingStore
-from data2agent.console.app import _compute_rate_state, _compute_serving_state, create_app
-from data2agent.console.contracts import (
+from data2agent.shared.store.landing import LandingStore
+from data2agent.platform.console.app import _compute_rate_state, _compute_serving_state, create_app
+from data2agent.platform.console.contracts import (
     DEFAULT_BREAKER_THRESHOLD,
     QuarantineGroup,
     QuarantineRecord,
 )
-from data2agent.metamodel.dataset_publish_contract import make_build_table
-from data2agent.metamodel.loader import load_pack
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.metamodel.dataset_publish_contract import make_build_table
+from data2agent.shared.metamodel.loader import load_pack
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
@@ -859,7 +859,7 @@ class TestUnknownObjectRetryGating:
     @pytest.fixture()
     def db_with_config(self, tmp_path):
         """提供 config 的 fixture,避免 '只读模式' 先触发。"""
-        from data2agent.connect.config import ConnectConfig, SourceConfig
+        from data2agent.shared.config import ConnectConfig, SourceConfig
         landing = LandingStore(tmp_path / "landing.sqlite")
         cfg = ConnectConfig(
             templates=str(ROOT / "templates"),

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.base import (
+from data2agent.middle.extract.adapters.base import (
     RuntimeKeyError,
     TableInfo,
     apply_configured_keys,
@@ -15,9 +15,9 @@ from data2agent.connect.adapters.base import (
     encode_keyset_cursor,
     resolve_runtime_keys,
 )
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.increment import incremental_sync
-from data2agent.connect.landing import LandingStore, raw_table_name
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.middle.extract.increment import incremental_sync
+from data2agent.shared.store.landing import LandingStore, raw_table_name
 
 
 SOURCE = "demo"

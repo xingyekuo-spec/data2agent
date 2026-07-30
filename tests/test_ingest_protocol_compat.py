@@ -9,10 +9,10 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
-from data2agent.connect.adapters.base import TableInfo
-from data2agent.connect.landing import LandingStore
-from data2agent.connect.sink import HttpPushSink, ProtocolVersionError
-from data2agent.ingest.app import create_app
+from data2agent.middle.extract.adapters.base import TableInfo
+from data2agent.shared.store.landing import LandingStore
+from data2agent.middle.extract.sink import HttpPushSink, ProtocolVersionError
+from data2agent.platform.ingest.app import create_app
 from data2agent.protocol.ingest import (
     INGEST_PROTOCOL_VERSION,
     SUPPORTED_INGEST_PROTOCOL_VERSIONS,

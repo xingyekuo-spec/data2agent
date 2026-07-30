@@ -13,18 +13,18 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.dataset_publish import (
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.shared.store.dataset_publish import (
     build_dataset,
     publish_dataset,
     rollback_dataset,
 )
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore, raw_table_name
+from data2agent.shared.store.landing import LandingStore, raw_table_name
 from tests.helpers import whitelist_from_pack
-from data2agent.metamodel.loader import load_pack
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.metamodel.loader import load_pack
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,7 +111,7 @@ def test_publish_blocks_incomplete_lineage(landing, pack):
 
 def test_validate_skips_lineage_for_null_schema_version(landing, pack):
     """lineage_schema_version=NULL 的对象不触发 lineage 完整性校验。"""
-    from data2agent.connect.dataset_publish import _validate_version_tables
+    from data2agent.shared.store.dataset_publish import _validate_version_tables
 
     result = build_dataset(landing, pack, SOURCE, auto_publish=False)
     assert result.outcome == "ok"
@@ -168,7 +168,7 @@ def test_rollback_restores_lineage(landing, pack):
 
 def test_rollback_validates_target_lineage(landing, pack):
     """rollback 校验目标版本的 lineage 完整性(与 publish 相同路径)。"""
-    from data2agent.connect.dataset_publish import _validate_version_tables
+    from data2agent.shared.store.dataset_publish import _validate_version_tables
 
     r1 = build_dataset(landing, pack, SOURCE, auto_publish=True)
     assert r1.outcome == "ok"

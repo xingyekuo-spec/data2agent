@@ -29,7 +29,7 @@ def test_docs_only_change_runs_no_application_tests():
 
 
 def test_connect_change_selects_erp_tests_only():
-    phases = _quick(["data2agent/connect/config.py"])
+    phases = _quick(["data2agent/middle/extract/increment.py"])
     assert _task_names(phases) == {"Python affected"}
     command = phases[0][0].commands[0].argv
     assert "tests/test_connect.py" in command
@@ -37,8 +37,14 @@ def test_connect_change_selects_erp_tests_only():
     assert "tests/test_console.py" not in command
 
 
+def test_shared_store_change_falls_back_to_full_backend():
+    # shared/ 被两端共用,无法限定模块时全量回归
+    phases = _quick(["data2agent/shared/store/landing.py"])
+    assert "Python" in _task_names(phases)
+
+
 def test_console_change_selects_backend_and_frontend():
-    phases = _quick(["data2agent/console/app.py"])
+    phases = _quick(["data2agent/platform/console/app.py"])
     assert _task_names(phases) == {"Python affected", "Vue Console"}
 
 

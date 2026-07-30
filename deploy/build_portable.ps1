@@ -151,11 +151,11 @@ Keep this folder intact (runtime\ must stay next to data2agent.exe).
 "@
 Set-Content -Path (Join-Path $portable 'README.txt') -Value $readme -Encoding utf8
 
-# --- 5a. 平台端在线升级入口(单一事实来源:data2agent.updater.apply_script) ---
+# --- 5a. 平台端在线升级入口(单一事实来源:data2agent.platform.updater.apply_script) ---
 if ($Role -eq 'platform') {
     Write-Step 'Write 升级.bat (platform)'
     $env:D2A_PORTABLE_OUT = $portable
-    & $runtimePy -c "import os; from pathlib import Path; from data2agent.updater.apply_script import UPDATE_BAT; (Path(os.environ['D2A_PORTABLE_OUT']) / '升级.bat').write_text(UPDATE_BAT, encoding='utf-8')"
+    & $runtimePy -c "import os; from pathlib import Path; from data2agent.platform.updater.apply_script import UPDATE_BAT; (Path(os.environ['D2A_PORTABLE_OUT']) / '升级.bat').write_text(UPDATE_BAT, encoding='utf-8')"
     if ($LASTEXITCODE -ne 0) { throw 'write 升级.bat failed' }
 }
 
@@ -178,7 +178,7 @@ $buildInfo = [ordered]@{
 if ($Role -eq 'platform') {
     $protocolJson = & $runtimePy -c @"
 import json
-from data2agent.ingest.protocol import (
+from data2agent.protocol.ingest import (
     INGEST_PROTOCOL_VERSION,
     LEGACY_HEALTH_INGEST_PROTOCOL_VERSION,
     SUPPORTED_INGEST_PROTOCOL_VERSIONS,
@@ -195,7 +195,7 @@ print(json.dumps({
     $buildInfo['legacy_health_ingest_protocol_version'] = $proto.legacy_health_ingest_protocol_version
     $buildInfo['supported_ingest_protocol_versions'] = $proto.supported_ingest_protocol_versions
 } else {
-    $sendVer = & $runtimePy -c "from data2agent.ingest.protocol import INGEST_PROTOCOL_VERSION; print(INGEST_PROTOCOL_VERSION)"
+    $sendVer = & $runtimePy -c "from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION; print(INGEST_PROTOCOL_VERSION)"
     if ($LASTEXITCODE -ne 0) { throw 'cannot read middle send ingest protocol' }
     $buildInfo['send_ingest_protocol_version'] = $sendVer.Trim()
 }

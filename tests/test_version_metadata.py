@@ -4,9 +4,9 @@ import sqlite3
 
 import pytest
 
-from data2agent.connect.landing import LandingStore
-from data2agent.metamodel.schema import SourceBinding
-from data2agent.metamodel.versioning import (
+from data2agent.shared.store.landing import LandingStore
+from data2agent.shared.metamodel.schema import SourceBinding
+from data2agent.shared.metamodel.versioning import (
     DatasetVersionRecord,
     ObjectVersionRecord,
     binding_hash,

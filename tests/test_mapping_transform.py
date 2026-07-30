@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from data2agent.connect.mapping_apply import transform_object_rows
-from data2agent.connect.mapping_transform import (
+from data2agent.shared.store.mapping_apply import transform_object_rows
+from data2agent.shared.store.mapping_transform import (
     DEFAULT_BREAKER_THRESHOLD,
     evaluate_object_rows,
     format_quarantine_reason,
     would_trip_breaker,
 )
-from data2agent.mapping import FieldExpr
-from data2agent.metamodel.schema import (
+from data2agent.shared.mapping import FieldExpr
+from data2agent.shared.metamodel.schema import (
     DeriveRule,
     DerivedField,
     ObjectTemplate,

@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.base import RuntimeKeyError, resolve_runtime_keys
-from data2agent.connect.adapters.mssql import MssqlReadOnlyAdapter
-from data2agent.connect.config import SourceConfig, TableExtractConfig
-from data2agent.connect.metadata import build_discoverer
-from data2agent.metamodel.loader import load_pack
+from data2agent.middle.extract.adapters.base import RuntimeKeyError, resolve_runtime_keys
+from data2agent.middle.extract.adapters.mssql import MssqlReadOnlyAdapter
+from data2agent.shared.config import SourceConfig, TableExtractConfig
+from data2agent.middle.extract.metadata import build_discoverer
+from data2agent.shared.metamodel.loader import load_pack
 from tests.helpers import whitelist_from_pack
 
 DSN = os.environ.get("D2A_IT_MSSQL_DSN")

@@ -7,12 +7,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from data2agent.connect.landing import LandingStore
-from data2agent.console.app import create_app
-from data2agent.console.contracts import TemplateMetric, TemplateObject
-from data2agent.metamodel.dataset_publish_contract import make_build_table
-from data2agent.metamodel.loader import load_pack
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.store.landing import LandingStore
+from data2agent.platform.console.app import create_app
+from data2agent.platform.console.contracts import TemplateMetric, TemplateObject
+from data2agent.shared.metamodel.dataset_publish_contract import make_build_table
+from data2agent.shared.metamodel.loader import load_pack
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"
@@ -427,7 +427,7 @@ class TestTemplatesMetrics:
         """certified status → calibrated calibration_state。"""
         # 当前模板没有 certified 指标,但映射逻辑应正确
         # 测试映射字典完整性
-        from data2agent.console.app import create_app as _create_app
+        from data2agent.platform.console.app import create_app as _create_app
         # 验证映射逻辑:通过 endpoint 实际返回的 calibration_state
         client = _client(db)
         body = client.get("/api/templates/metrics").json()

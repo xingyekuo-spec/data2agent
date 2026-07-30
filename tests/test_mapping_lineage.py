@@ -13,20 +13,20 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.dataset_publish import build_dataset
-from data2agent.connect.field_lineage import (
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.shared.store.dataset_publish import build_dataset
+from data2agent.shared.store.field_lineage import (
     ApplyVersionContext,
     canonical_object_key_json,
     object_key_token,
 )
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore, raw_table_name
-from data2agent.connect.mapping_apply import apply_object, apply_objects
+from data2agent.shared.store.landing import LandingStore, raw_table_name
+from data2agent.shared.store.mapping_apply import apply_object, apply_objects
 from tests.helpers import whitelist_from_pack
-from data2agent.metamodel.loader import load_pack
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.metamodel.loader import load_pack
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -196,7 +196,7 @@ def test_legacy_apply_no_lineage(landing, pack):
 
 def test_apply_object_without_context_no_lineage(landing, pack):
     """单对象 apply 无 context 时不写 lineage,行为与 M2 一致。"""
-    from data2agent.metamodel.dataset_publish_contract import make_build_table
+    from data2agent.shared.metamodel.dataset_publish_contract import make_build_table
     import uuid
 
     tpl = pack.objects[0]
@@ -222,7 +222,7 @@ def test_build_dataset_second_build_independent(landing, pack):
     assert r1.outcome == "ok"
 
     # 发布第一个
-    from data2agent.connect.dataset_publish import publish_dataset
+    from data2agent.shared.store.dataset_publish import publish_dataset
     pub = publish_dataset(landing, r1.dataset_version)
     assert pub.outcome == "ok"
 

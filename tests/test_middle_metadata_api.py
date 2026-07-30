@@ -12,7 +12,7 @@ import yaml
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.middle_admin.app import create_app  # noqa: E402
+from data2agent.middle.admin.app import create_app  # noqa: E402
 
 
 def _sample_db(path: Path) -> None:
@@ -33,7 +33,7 @@ def _sample_db(path: Path) -> None:
 
 @pytest.fixture()
 def meta_env(tmp_path: Path):
-    from data2agent.middle_admin import app as middle_app
+    from data2agent.middle.admin import app as middle_app
     middle_app._SCAN_STORE.clear()
     src = tmp_path / "source.sqlite"
     _sample_db(src)
@@ -130,7 +130,7 @@ def test_running_scan_does_not_hide_completed_cache(meta_env):
     _wait_scan(client, first, h)
 
     # 人为占用活动槽:直接 begin 一个 running 记录
-    from data2agent.middle_admin import app as middle_app
+    from data2agent.middle.admin import app as middle_app
     blocking = middle_app._SCAN_STORE.try_begin("digiwin_e10")
     listed = client.get("/api/metadata/tables", headers=h)
     assert listed.status_code == 200
@@ -164,8 +164,8 @@ def test_in_extraction_plan_uses_schema(meta_env):
     assert detail["in_extraction_plan"] is True
 
     # 同名不同 schema 不应命中
-    from data2agent.connect.metadata import extraction_plan_keys, in_extraction_plan
-    from data2agent.connect.config import load_config
+    from data2agent.middle.extract.metadata import extraction_plan_keys, in_extraction_plan
+    from data2agent.shared.config import load_config
     planned = extraction_plan_keys(
         load_config(cfg).sources["digiwin_e10"].tables, default_schema="main")
     assert not in_extraction_plan("audit", "CUSTOMER", planned, default_schema="main")
@@ -173,8 +173,8 @@ def test_in_extraction_plan_uses_schema(meta_env):
 
 def test_scan_marks_partial_when_get_table_fails(meta_env, monkeypatch):
     """详情失败必须进入 table_errors / partial,不得伪装 completed 空列表。"""
-    from data2agent.connect.discoverers.sqlite import SqliteMetadataDiscoverer
-    from data2agent.connect.metadata import MetadataError, TableSummary
+    from data2agent.middle.extract.discoverers.sqlite import SqliteMetadataDiscoverer
+    from data2agent.middle.extract.metadata import MetadataError, TableSummary
 
     client, _ = meta_env
     h = {"Authorization": "Bearer secret"}

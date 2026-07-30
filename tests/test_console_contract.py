@@ -15,16 +15,16 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.admin_common.home_layout import HomeLayout  # noqa: E402
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
-from data2agent.connect.config import load_config  # noqa: E402
-from data2agent.connect.dataset_publish import build_dataset  # noqa: E402
-from data2agent.connect.increment import incremental_sync  # noqa: E402
+from data2agent.shared.admin.home_layout import HomeLayout  # noqa: E402
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
+from data2agent.shared.config import load_config  # noqa: E402
+from data2agent.shared.store.dataset_publish import build_dataset  # noqa: E402
+from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore  # noqa: E402
+from data2agent.shared.store.landing import LandingStore  # noqa: E402
 from tests.helpers import whitelist_from_pack  # noqa: E402
-from data2agent.console.app import create_app  # noqa: E402
-from data2agent.console.contracts import (  # noqa: E402
+from data2agent.platform.console.app import create_app  # noqa: E402
+from data2agent.platform.console.contracts import (  # noqa: E402
     ActionExecutionResult,
     ApplyActionResult,
     AuditRecord,
@@ -39,7 +39,7 @@ from data2agent.console.contracts import (  # noqa: E402
     SetupStatusResponse,
     SetupSuccessResponse,
 )
-from data2agent.metamodel.loader import load_pack  # noqa: E402
+from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -366,7 +366,7 @@ def test_retry_422_string_and_validation_list(env):
 
 
 def test_setup_response_union_narrowable(tmp_path):
-    from data2agent.admin_common.secrets_file import restore_environ
+    from data2agent.shared.admin.secrets_file import restore_environ
 
     home = HomeLayout(tmp_path)
     home.ensure_dirs()

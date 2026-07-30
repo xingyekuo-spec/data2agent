@@ -13,8 +13,8 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.console.app import create_app  # noqa: E402
-from data2agent.console.contracts import MappingPreviewError  # noqa: E402
+from data2agent.platform.console.app import create_app  # noqa: E402
+from data2agent.platform.console.contracts import MappingPreviewError  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 PREVIEW_PATH = "/api/mappings/{object}/preview"

@@ -29,7 +29,7 @@ ERP -> 中间服务器 -> 数据平台 -> MCP HTTP -> 外部 Agent
 源码运行方式:
 
 ```bash
-D2A_MCP_TOKEN=<MCP_TOKEN> python -m data2agent.mcp_server \
+D2A_MCP_TOKEN=<MCP_TOKEN> python -m data2agent.platform.mcp_server \
   --transport http \
   --db landing/factory.sqlite \
   --templates templates \

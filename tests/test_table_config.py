@@ -4,7 +4,7 @@ import sys
 
 import pytest
 from pathlib import Path
-from data2agent.connect.config import (
+from data2agent.shared.config import (
     TableExtractConfig, SourceConfig, ConnectConfig, load_config
 )
 
@@ -30,7 +30,7 @@ class TestTableExtractConfig:
 
     def test_import_has_no_schema_shadow_warning(self):
         code = (
-            "from data2agent.connect.config import TableExtractConfig; "
+            "from data2agent.shared.config import TableExtractConfig; "
             "print(TableExtractConfig(mode='full_refresh', schema='dbo').schema)"
         )
         proc = subprocess.run(

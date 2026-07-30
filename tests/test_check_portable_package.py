@@ -34,8 +34,8 @@ def test_check_portable_middle_ok(tmp_path: Path, monkeypatch):
         "commit": "test",
     }))
 
-    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
-    src = ROOT / "data2agent" / "middle_admin" / "templates"
+    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle" / "admin"
+    src = ROOT / "data2agent" / "middle" / "admin" / "templates"
     shutil.copytree(src, pkg / "templates")
     _write(pkg / "__init__.py", "")
 
@@ -65,8 +65,8 @@ def test_check_portable_middle_rejects_missing_metadata(tmp_path: Path, monkeypa
         "send_ingest_protocol_version": "2",
         "commit": "test",
     }))
-    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
-    src = ROOT / "data2agent" / "middle_admin" / "templates"
+    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle" / "admin"
+    src = ROOT / "data2agent" / "middle" / "admin" / "templates"
     shutil.copytree(src, pkg / "templates")
     (pkg / "templates" / "metadata.html").unlink()
     _write(pkg / "__init__.py", "")
@@ -99,8 +99,8 @@ def test_check_portable_rejects_erp_configs_anywhere(tmp_path: Path, monkeypatch
         "send_ingest_protocol_version": "2",
         "commit": "test",
     }))
-    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
-    src = ROOT / "data2agent" / "middle_admin" / "templates"
+    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle" / "admin"
+    src = ROOT / "data2agent" / "middle" / "admin" / "templates"
     shutil.copytree(src, pkg / "templates")
     _write(pkg / "__init__.py", "")
     _write(portable / "app" / "erp-configs" / "e10.yaml", "tables: [CUSTOMER]\n")
@@ -133,8 +133,8 @@ def test_check_portable_rejects_showroom_anywhere(tmp_path: Path, monkeypatch):
         "send_ingest_protocol_version": "2",
         "commit": "test",
     }))
-    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
-    src = ROOT / "data2agent" / "middle_admin" / "templates"
+    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle" / "admin"
+    src = ROOT / "data2agent" / "middle" / "admin" / "templates"
     shutil.copytree(src, pkg / "templates")
     _write(pkg / "__init__.py", "")
     _write(
@@ -175,8 +175,8 @@ def test_check_portable_middle_rejects_supported_list(tmp_path: Path, monkeypatc
             }
         ),
     )
-    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle_admin"
-    src = ROOT / "data2agent" / "middle_admin" / "templates"
+    pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle" / "admin"
+    src = ROOT / "data2agent" / "middle" / "admin" / "templates"
     shutil.copytree(src, pkg / "templates")
     _write(pkg / "__init__.py", "")
     monkeypatch.setattr(
@@ -200,10 +200,10 @@ def test_check_portable_platform_requires_legacy_health_protocol(tmp_path: Path,
     _write(expected / "objects" / "dead_stock_attribution.yaml")
     shutil.copytree(expected, portable / "app" / "templates")
     _write(portable / "app" / "console-ui" / "dist" / "index.html", "<html></html>")
-    from data2agent.updater.apply_script import UPDATE_BAT
+    from data2agent.platform.updater.apply_script import UPDATE_BAT
     _write(portable / "升级.bat", UPDATE_BAT)
     _write(
-        portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "console" / "app.py",
+        portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "platform" / "console" / "app.py",
         'app.mount("/assets", StaticFiles(directory=assets_dir), name="vue-assets")\n'
         "def legacy_v1_index():\n    pass\n",
     )

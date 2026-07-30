@@ -13,23 +13,23 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.config import load_config
-from data2agent.connect.dataset_publish import build_dataset
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.shared.config import load_config
+from data2agent.shared.store.dataset_publish import build_dataset
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore
+from data2agent.shared.store.landing import LandingStore
 from tests.helpers import whitelist_from_pack
-from data2agent.console.app import create_app
-from data2agent.console.contracts import (
+from data2agent.platform.console.app import create_app
+from data2agent.platform.console.contracts import (
     McpCallBody,
     McpLabError,
     McpQueryMeta,
     ProposalRequest,
     ProposalResponse,
 )
-from data2agent.mcp_server.evidence import EvidenceContext
-from data2agent.metamodel.loader import load_pack
+from data2agent.shared.store.evidence import EvidenceContext
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -393,7 +393,7 @@ def test_query_service_recreation_keeps_persisted_evidence_usable(env, tmp_path)
 
 def test_mcp_call_invalid_filters_shape_returns_invalid_params(env):
     """filters 非对象不得伪装为 mcp_unavailable。"""
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     r = client.post("/api/debug/mcp-call", json={
@@ -417,7 +417,7 @@ def test_mcp_call_invalid_filters_shape_returns_invalid_params(env):
 )
 def test_mcp_call_malformed_params_return_invalid_params(env, params):
     """工具参数类型错误统一 422 invalid_params,不得 500/503/误报 unknown_target。"""
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     r = client.post("/api/debug/mcp-call", json={
@@ -439,7 +439,7 @@ def test_mcp_call_malformed_params_return_invalid_params(env, params):
 )
 def test_mcp_call_object_catalog_rejects_bad_params(env, params):
     """未指定 object 的目录查询仍须校验其余参数,不得伪装成 200 目录。"""
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     r = client.post("/api/debug/mcp-call", json={
@@ -454,8 +454,8 @@ def test_mcp_lab_endpoints_return_mcp_lab_error_when_needs_setup(tmp_path):
     """未完成首次配置时 mcp-call/proposal 须返回 McpLabError,而非裸 detail。"""
     import shutil
 
-    from data2agent.admin_common.home_layout import HomeLayout
-    from data2agent.console.contracts import McpLabError
+    from data2agent.shared.admin.home_layout import HomeLayout
+    from data2agent.platform.console.contracts import McpLabError
 
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
@@ -496,7 +496,7 @@ def test_openapi_mcp_call_declares_mcp_lab_error_statuses(tmp_path):
 
 def test_proposal_empty_evidence_returns_mcp_lab_error(env):
     """空 evidence 须返回 McpLabError.invalid_params,而非裸 FastAPI 422。"""
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     r = client.post("/api/gateway/proposals", json={
@@ -511,7 +511,7 @@ def test_proposal_empty_evidence_returns_mcp_lab_error(env):
 
 
 def test_gateway_routes_require_valid_session_header(env):
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     bad_call = client.post("/api/debug/mcp-call", json={
@@ -539,7 +539,7 @@ def test_gateway_routes_require_valid_session_header(env):
 
 def test_resolve_vue_dist_under_portable_home(tmp_path, monkeypatch):
     """便携布局 home/app/console-ui/dist 应可被 resolve_vue_dist 发现。"""
-    from data2agent.console.app import resolve_vue_dist
+    from data2agent.platform.console.app import resolve_vue_dist
 
     home = tmp_path / "portable"
     dist = home / "app" / "console-ui" / "dist"
@@ -549,7 +549,7 @@ def test_resolve_vue_dist_under_portable_home(tmp_path, monkeypatch):
     monkeypatch.setenv("D2A_HOME", str(home))
     # 避免仓库内真实 dist 抢先命中
     monkeypatch.setattr(
-        "data2agent.console.app._REPO_ROOT", tmp_path / "not-a-repo")
+        "data2agent.platform.console.app._REPO_ROOT", tmp_path / "not-a-repo")
     assert resolve_vue_dist() == dist.resolve()
 
 
@@ -595,7 +595,7 @@ def test_mcp_call_meta_includes_duration_and_persisted_evidence(env):
 
 
 def test_mcp_call_unknown_target_returns_mcp_lab_error(env):
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     r = client.post("/api/debug/mcp-call", json={
@@ -608,7 +608,7 @@ def test_mcp_call_unknown_target_returns_mcp_lab_error(env):
 
 
 def test_mcp_call_not_published_returns_mcp_lab_error(tmp_path):
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     landing = LandingStore(tmp_path / "empty.sqlite")
     app = create_app(str(landing.db_path), ROOT / "templates")
@@ -622,7 +622,7 @@ def test_mcp_call_not_published_returns_mcp_lab_error(tmp_path):
 
 
 def test_proposal_gateway_validates_digest_and_returns_proposal(env):
-    from data2agent.console.contracts import McpLabError, ProposalResponse
+    from data2agent.platform.console.contracts import McpLabError, ProposalResponse
 
     client, _app, _cfg = _client(env)
     q = client.post("/api/debug/mcp-call", json={
@@ -662,7 +662,7 @@ def test_proposal_gateway_validates_digest_and_returns_proposal(env):
 
 
 def test_gateway_detail_routes_fail_closed_before_evidence_store(env):
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     query_resp = client.get("/api/gateway/queries/qry_test", headers=_session_headers())
@@ -677,7 +677,7 @@ def test_gateway_detail_routes_fail_closed_before_evidence_store(env):
 
 
 def test_proposal_gateway_no_side_effects(env):
-    from data2agent.connect.dataset_publish import resolve_published_snapshot
+    from data2agent.shared.store.dataset_publish import resolve_published_snapshot
 
     client, _app, cfg = _client(env)
     landing = LandingStore(cfg.landing)
@@ -738,7 +738,7 @@ def test_query_detail_returns_persisted_evidence(env):
 
 
 def test_query_detail_rejects_cross_session(env):
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     q = client.post("/api/debug/mcp-call", json={
@@ -756,7 +756,7 @@ def test_query_detail_rejects_cross_session(env):
 
 
 def test_query_detail_missing_returns_not_found(env):
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     missing = client.get(
@@ -800,7 +800,7 @@ def test_proposal_detail_returns_frozen_snapshot(env):
 
 
 def test_proposal_detail_rejects_cross_session(env):
-    from data2agent.console.contracts import McpLabError
+    from data2agent.platform.console.contracts import McpLabError
 
     client, _app, _cfg = _client(env)
     q = client.post("/api/debug/mcp-call", json={

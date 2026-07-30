@@ -6,8 +6,8 @@ import sqlite3
 
 import pytest
 
-from data2agent.connect.landing import LandingStore
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.store.landing import LandingStore
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 _OLD_DATASET_DDL = """
 CREATE TABLE d2a_dataset_version (

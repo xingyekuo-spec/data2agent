@@ -8,17 +8,17 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.connect.adapters.base import TableInfo  # noqa: E402
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
-from data2agent.connect.increment import incremental_sync  # noqa: E402
+from data2agent.middle.extract.adapters.base import TableInfo  # noqa: E402
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
+from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore, raw_table_name  # noqa: E402
-from data2agent.connect.sink import HttpPushSink, LocalSink  # noqa: E402
+from data2agent.shared.store.landing import LandingStore, raw_table_name  # noqa: E402
+from data2agent.middle.extract.sink import HttpPushSink, LocalSink  # noqa: E402
 from tests.helpers import whitelist_from_pack  # noqa: E402
-from data2agent.console.validation import build_validation_report  # noqa: E402
-from data2agent.ingest.app import create_app  # noqa: E402
+from data2agent.platform.console.validation import build_validation_report  # noqa: E402
+from data2agent.platform.ingest.app import create_app  # noqa: E402
 from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION  # noqa: E402
-from data2agent.metamodel.loader import load_pack  # noqa: E402
+from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -318,7 +318,7 @@ def test_protocol_version_mismatch_fail_fast(tmp_path):
         post=lambda *a, **k: None,
         get_json=lambda *a, **k: {"ok": True, "ingest_protocol_version": "1"},
     )
-    from data2agent.connect.sink import ProtocolVersionError
+    from data2agent.middle.extract.sink import ProtocolVersionError
     with pytest.raises(ProtocolVersionError, match="协议版本不一致"):
         incremental_sync(TinyAdapter(), middle, SOURCE, watermarks={}, sink=sink)
 

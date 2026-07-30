@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from data2agent.protocol.ingest import SUPPORTED_INGEST_PROTOCOL_VERSIONS
-from data2agent.updater.core import UpdateManager
-from data2agent.updater.manifest import (
+from data2agent.platform.updater.core import UpdateManager
+from data2agent.platform.updater.manifest import (
     UpdateError,
     UpdateManifest,
     is_newer_version,
@@ -21,7 +21,7 @@ from data2agent.updater.manifest import (
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.console.app import create_app  # noqa: E402
+from data2agent.platform.console.app import create_app  # noqa: E402
 
 SUPPORTED = list(SUPPORTED_INGEST_PROTOCOL_VERSIONS)
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.metamodel.loader import load_pack
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.schema import TABLES, dict_markdown
 from tests.fixtures.e10.seed import build, write_db
 

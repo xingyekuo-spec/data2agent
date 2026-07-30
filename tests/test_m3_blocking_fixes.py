@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.base import RuntimeKeyError, encode_keyset_cursor
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.increment import incremental_sync
-from data2agent.connect.landing import LandingStore, raw_table_name
-from data2agent.connect.reconcile import reconcile
+from data2agent.middle.extract.adapters.base import RuntimeKeyError, encode_keyset_cursor
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.middle.extract.increment import incremental_sync
+from data2agent.shared.store.landing import LandingStore, raw_table_name
+from data2agent.middle.extract.reconcile import reconcile
 
 
 SOURCE = "demo"
@@ -176,7 +176,7 @@ def test_reconcile_soft_deletes_composite_key(tmp_path: Path):
 
 def test_backfill_uses_configured_runtime_keys(tmp_path: Path, monkeypatch):
     """通过 CLI 路径同款逻辑验证:resolve + ensure + upsert 使用配置键。"""
-    from data2agent.connect.adapters.base import resolve_runtime_keys
+    from data2agent.middle.extract.adapters.base import resolve_runtime_keys
 
     src = tmp_path / "src.sqlite"
     con = sqlite3.connect(src)
@@ -214,9 +214,9 @@ def test_backfill_uses_configured_runtime_keys(tmp_path: Path, monkeypatch):
 
 def test_status_views_expose_watermark_scalar_not_cursor_json(tmp_path: Path):
     """对外状态只返回水位时间,不透传含业务键的 JSON 游标。"""
-    from data2agent.connect.adapters.base import encode_keyset_cursor
-    from data2agent.middle_admin.status import build_status
-    from data2agent.connect.config import ConnectConfig
+    from data2agent.middle.extract.adapters.base import encode_keyset_cursor
+    from data2agent.middle.admin.status import build_status
+    from data2agent.shared.config import ConnectConfig
 
     landing = LandingStore(tmp_path / "landing.sqlite")
     raw = encode_keyset_cursor("2026-07-11 09:00:00", ["SKU-001", "W1"])
@@ -256,7 +256,7 @@ def test_status_views_expose_watermark_scalar_not_cursor_json(tmp_path: Path):
 
 
 def test_apply_configured_keys_rejects_duplicates():
-    from data2agent.connect.adapters.base import (
+    from data2agent.middle.extract.adapters.base import (
         TableInfo, apply_configured_keys, RuntimeKeyError,
     )
     info = TableInfo(

@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.landing import LandingStore
-from data2agent.mcp_server.evidence import (
+from data2agent.shared.store.landing import LandingStore
+from data2agent.shared.store.evidence import (
     EvidenceStore,
     GatewayAuditRecord,
     ProposalEvidenceRecord,

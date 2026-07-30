@@ -154,7 +154,7 @@ transform(map/join/derived) / result_value / extract_batch_id / map_batch_id
 ## 8. 调度与运行(scheduler.py + __main__.py)
 
 - apscheduler 按源调度;**错峰窗口**(如 `windows: ["22:00-06:30"]`)硬约束:窗口外不发起,运行中越界则在批次边界优雅暂停、下窗口续跑(水位机制天然支持断点);
-- CLI(`python -m data2agent.connect`):`sync --config <connect.yaml> [--source <name>]`(抽取范围/策略仅来自 `tables`,不再接受 `--full`)/ `apply` / `backfill --config ... --table --from --to` / `reconcile --config ... [--deep]` / `serve --config ... [--once]`(常驻调度)/ `status` / `quarantine list|retry` / `excel-suggest` / `excel-import`;已删除 `migrate-config` 与 CLI 全量覆盖入口;
+- CLI(`python -m data2agent.middle.extract`):`sync --config <connect.yaml> [--source <name>]`(抽取范围/策略仅来自 `tables`,不再接受 `--full`)/ `apply` / `backfill --config ... --table --from --to` / `reconcile --config ... [--deep]` / `serve --config ... [--once]`(常驻调度)/ `status` / `quarantine list|retry` / `excel-suggest` / `excel-import`;已删除 `migrate-config` 与 CLI 全量覆盖入口;
 - 每轮汇总进 `d2a_sync_run`(起止、行数、隔离数、对账结果),结构化日志输出。
 
 ## 9. 配置(connect.yaml)
@@ -295,7 +295,7 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
 - 落地出口抽象为 Sink(`connect/sink.py`):`LocalSink`(写本地库,同机/开发默认)、
   `HttpPushSink`(POST 给平台;中间服务器用,stdlib urllib 零额外依赖、值推送前归一化、
   失败指数退避重试);`incremental_sync` 默认 `LocalSink(landing)`,行为向后兼容;
-- 平台接收端 `data2agent.ingest`(FastAPI):`POST /ingest/batch` 只负责幂等落地;
+- 平台接收端 `data2agent.platform.ingest`(FastAPI):`POST /ingest/batch` 只负责幂等落地;
   中间机在一张表的全部批次成功后再 `POST /ingest/table-complete`。完成事件包含表结构、
   行数与批次数，零行表也必须发送，平台据此创建空 Raw 表并保存表级新鲜度证据;
 - connect.yaml 加 `sink: {type: http, url, token_env}`;**中间用 http sink 时本地只留

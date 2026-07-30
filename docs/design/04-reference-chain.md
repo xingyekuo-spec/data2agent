@@ -26,8 +26,8 @@ landing-sqlite SQLite 落地库(raw_* + 物化对象表)
 ```bash
 python -m tests.fixtures.e10.seed --db /tmp/e10.sqlite
 # 配置 connect.yaml 指向该库后:
-python -m data2agent.connect sync --config connect.yaml
-python -m data2agent.connect apply --config connect.yaml
+python -m data2agent.middle.extract sync --config connect.yaml
+python -m data2agent.middle.extract apply --config connect.yaml
 ```
 
 SQL Server 集成:

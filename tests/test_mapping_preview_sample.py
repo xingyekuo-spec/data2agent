@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.base import TableInfo
-from data2agent.connect.landing import LandingStore, raw_table_name
-from data2agent.connect.mapping_preview import (
+from data2agent.middle.extract.adapters.base import TableInfo
+from data2agent.shared.store.landing import LandingStore, raw_table_name
+from data2agent.shared.store.mapping_preview import (
     FrozenSample,
     PreviewSampleError,
     freeze_sample,
@@ -16,8 +16,8 @@ from data2agent.connect.mapping_preview import (
     make_sample_row_id,
     preview_read_tx,
 )
-from data2agent.mapping import build_select
-from data2agent.metamodel.schema import ObjectTemplate, SourceBinding
+from data2agent.shared.mapping import build_select
+from data2agent.shared.metamodel.schema import ObjectTemplate, SourceBinding
 
 SOURCE = "demo_src"
 ANCHOR = "ITEM"

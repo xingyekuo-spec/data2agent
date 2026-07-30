@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 import yaml
 
-from data2agent.connect.config import SourceConfig, TableExtractConfig, load_config
-from data2agent.connect.metadata import (
+from data2agent.shared.config import SourceConfig, TableExtractConfig, load_config
+from data2agent.middle.extract.metadata import (
     ColumnMeta,
     MetadataDiscoveryUnsupported,
     MetadataError,
@@ -25,7 +25,7 @@ from data2agent.connect.metadata import (
     schema_fingerprint,
     suggest_watermark_candidates,
 )
-import data2agent.connect.discoverers  # noqa: F401
+import data2agent.middle.extract.discoverers  # noqa: F401
 
 
 def _write_sample_db(path: Path) -> None:
@@ -288,7 +288,7 @@ def test_empty_tables_config_can_build_discoverer(tmp_path: Path):
 
 
 def test_metadata_module_has_no_mssql_system_sql():
-    text = Path("data2agent/connect/metadata.py").read_text(encoding="utf-8")
+    text = Path("data2agent/middle/extract/metadata.py").read_text(encoding="utf-8")
     assert "INFORMATION_SCHEMA" not in text
     assert "sys.tables" not in text
     assert "mssql_readonly" not in text
@@ -296,7 +296,7 @@ def test_metadata_module_has_no_mssql_system_sql():
 
 
 def test_app_default_schema_does_not_hardcode_adapter_branch():
-    text = Path("data2agent/middle_admin/app.py").read_text(encoding="utf-8")
+    text = Path("data2agent/middle/admin/app.py").read_text(encoding="utf-8")
     assert "discoverer_default_schema" in text
     assert 'scfg.adapter == "sqlite_readonly"' not in text
     assert 'adapter == "sqlite_readonly" else "dbo"' not in text

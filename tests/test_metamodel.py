@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.metamodel.loader import load_pack
-from data2agent.metamodel.schema import ObjectTemplate
+from data2agent.shared.metamodel.loader import load_pack
+from data2agent.shared.metamodel.schema import ObjectTemplate
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -46,7 +46,7 @@ def test_bindings_start_as_draft():
 
 def test_binding_status_disabled_accepted():
     """status=disabled 必须能通过 schema 校验(否则模板加载抛错 → API 500)。"""
-    from data2agent.metamodel.schema import SourceBinding
+    from data2agent.shared.metamodel.schema import SourceBinding
 
     assert SourceBinding(source="e10", tables=["T"], status="disabled").enabled is False
     assert SourceBinding(source="e10", tables=["T"]).enabled is True
@@ -58,7 +58,7 @@ def test_disabled_binding_excluded_from_extraction():
     """禁用 binding 不进白名单、不推导水位;共享表若另有启用 binding 仍保留。"""
     from tests.helpers import watermarks_from_pack
     from tests.helpers import whitelist_from_pack
-    from data2agent.metamodel.schema import TemplatePack
+    from data2agent.shared.metamodel.schema import TemplatePack
 
     quotation = ObjectTemplate(
         object="Q", display_name="报价", domain="销售", keys=["a"],

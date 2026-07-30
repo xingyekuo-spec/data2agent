@@ -7,19 +7,19 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.dataset_publish import build_dataset
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.shared.store.dataset_publish import build_dataset
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore, raw_table_name
+from data2agent.shared.store.landing import LandingStore, raw_table_name
 from tests.helpers import whitelist_from_pack
-from data2agent.metamodel.dataset_publish_contract import (
+from data2agent.shared.metamodel.dataset_publish_contract import (
     evaluate_publish,
     is_dataset_ready,
     make_build_table,
 )
-from data2agent.metamodel.loader import load_pack
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.metamodel.loader import load_pack
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -349,7 +349,7 @@ def test_auto_publish_via_build_dataset(landing, pack):
 
 def test_building_claim_atomic_survives_concurrent_recover(landing, pack, monkeypatch):
     """building 与 running Run 同事务提交后,并发 recover 只能看到 active_build。"""
-    from data2agent.connect import dataset_publish as dp
+    from data2agent.shared.store import dataset_publish as dp
 
     recover_codes: list[str | None] = []
     saw_active_run: list[bool] = []

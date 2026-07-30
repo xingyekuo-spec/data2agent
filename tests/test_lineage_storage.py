@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.field_lineage import (
+from data2agent.shared.store.field_lineage import (
     LINEAGE_SCHEMA_VERSION,
     FieldLineageInputRow,
     FieldLineageNode,
@@ -25,8 +25,8 @@ from data2agent.connect.field_lineage import (
     encode_value_evidence,
     object_key_token,
 )
-from data2agent.connect.landing import LandingStore
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.store.landing import LandingStore
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 SOURCE = "test_src"
 OBJ = "SalesOrderLine"

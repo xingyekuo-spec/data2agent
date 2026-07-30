@@ -7,20 +7,20 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.dataset_publish import build_dataset
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.shared.store.dataset_publish import build_dataset
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore
+from data2agent.shared.store.landing import LandingStore
 from tests.helpers import whitelist_from_pack
-from data2agent.mcp_server.core import MASK, QueryService
-from data2agent.mcp_server.evidence import (
+from data2agent.platform.mcp_server.core import MASK, QueryService
+from data2agent.shared.store.evidence import (
     EvidenceContext,
     EvidenceStore,
     QueryEvidenceRecord,
     canonical_json_dumps,
 )
-from data2agent.metamodel.loader import load_pack
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -365,7 +365,7 @@ def test_mcp_tool_wiring(svc):
     pytest.importorskip("mcp")
     import asyncio
 
-    from data2agent.mcp_server.server import create_server
+    from data2agent.platform.mcp_server.server import create_server
 
     server = create_server(svc.db_path, ROOT / "templates")
     tools = asyncio.run(server.list_tools())
@@ -374,7 +374,7 @@ def test_mcp_tool_wiring(svc):
 
 def test_mcp_session_context_tracks_session_objects_without_retaining_them():
     """旧 ServerSession 释放后，其 evidence session 不能被新连接继承。"""
-    from data2agent.mcp_server.server import _SessionEvidenceContextResolver
+    from data2agent.platform.mcp_server.server import _SessionEvidenceContextResolver
 
     class FakeSession:
         pass

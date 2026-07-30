@@ -8,14 +8,14 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore, raw_table_name
+from data2agent.shared.store.landing import LandingStore, raw_table_name
 from tests.helpers import whitelist_from_pack
-from data2agent.console.app import create_app
-from data2agent.console.contracts import ApplyActionResult, RetryActionResult
-from data2agent.metamodel.loader import load_pack
+from data2agent.platform.console.app import create_app
+from data2agent.platform.console.contracts import ApplyActionResult, RetryActionResult
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,7 +66,7 @@ def _cfg_file(tmp_path: Path, src: Path, landing: LandingStore) -> Path:
 
 
 def test_cli_apply_default_publishes(synced, tmp_path, monkeypatch):
-    from data2agent.connect import __main__ as cli
+    from data2agent.middle.extract import __main__ as cli
 
     _src, landing, _pack = synced
     monkeypatch.setattr(
@@ -86,7 +86,7 @@ def test_cli_apply_default_publishes(synced, tmp_path, monkeypatch):
 
 
 def test_cli_apply_stage_only_does_not_publish(synced, monkeypatch):
-    from data2agent.connect import __main__ as cli
+    from data2agent.middle.extract import __main__ as cli
 
     _src, landing, _pack = synced
     monkeypatch.setattr(
@@ -115,8 +115,8 @@ def test_cli_apply_stage_only_does_not_publish(synced, monkeypatch):
 
 
 def test_scheduler_auto_publishes_after_sync(synced, pack):
-    from data2agent.connect import scheduler as sched
-    from data2agent.connect.config import SourceConfig
+    from data2agent.middle.extract import scheduler as sched
+    from data2agent.shared.config import SourceConfig
 
     src, landing, _ = synced
     # Fresh landing so sync+apply run together
@@ -141,7 +141,7 @@ def test_scheduler_auto_publishes_after_sync(synced, pack):
 
 
 def test_console_apply_publish_true(synced, tmp_path):
-    from data2agent.connect.config import load_config
+    from data2agent.shared.config import load_config
 
     src, landing, _pack = synced
     cfg = load_config(_cfg_file(tmp_path, src, landing))
@@ -158,7 +158,7 @@ def test_console_apply_publish_true(synced, tmp_path):
 
 
 def test_console_apply_publish_false_stage_only(synced, tmp_path):
-    from data2agent.connect.config import load_config
+    from data2agent.shared.config import load_config
 
     src, landing, _pack = synced
     cfg = load_config(_cfg_file(tmp_path, src, landing))
@@ -176,9 +176,9 @@ def test_console_apply_publish_false_stage_only(synced, tmp_path):
 
 
 def test_console_apply_failure_keeps_published(synced, tmp_path, monkeypatch):
-    from data2agent.connect.config import load_config
-    from data2agent.connect.dataset_publish import build_dataset
-    from data2agent.connect.mapping_apply import MappingCircuitBreaker
+    from data2agent.shared.config import load_config
+    from data2agent.shared.store.dataset_publish import build_dataset
+    from data2agent.shared.store.mapping_apply import MappingCircuitBreaker
 
     src, landing, pack = synced
     first = build_dataset(landing, pack, SOURCE, auto_publish=True)
@@ -191,7 +191,7 @@ def test_console_apply_failure_keeps_published(synced, tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(
-        "data2agent.connect.dataset_publish.apply_object", _boom,
+        "data2agent.shared.store.dataset_publish.apply_object", _boom,
     )
     cfg = load_config(_cfg_file(tmp_path, src, landing))
     client = TestClient(create_app(landing.db_path, ROOT / "templates", cfg))
@@ -209,8 +209,8 @@ def test_console_apply_failure_keeps_published(synced, tmp_path, monkeypatch):
 
 
 def test_console_retry_rebuilds_full_dataset_and_publishes(synced, tmp_path):
-    from data2agent.connect.config import load_config
-    from data2agent.connect.dataset_publish import build_dataset
+    from data2agent.shared.config import load_config
+    from data2agent.shared.store.dataset_publish import build_dataset
 
     src, landing, pack = synced
     first = build_dataset(landing, pack, SOURCE, auto_publish=True)
@@ -242,8 +242,8 @@ def test_console_retry_rebuilds_full_dataset_and_publishes(synced, tmp_path):
 
 
 def test_cli_quarantine_retry_rebuilds_full_dataset(synced, monkeypatch):
-    from data2agent.connect import __main__ as cli
-    from data2agent.connect.dataset_publish import build_dataset
+    from data2agent.middle.extract import __main__ as cli
+    from data2agent.shared.store.dataset_publish import build_dataset
 
     _src, landing, pack = synced
     first = build_dataset(landing, pack, SOURCE, auto_publish=True)
@@ -273,9 +273,9 @@ def test_cli_quarantine_retry_rebuilds_full_dataset(synced, monkeypatch):
 
 def test_retry_failure_keeps_published_and_quarantine_retryable(synced, tmp_path, monkeypatch):
     """失败时旧 published 不变;隔离记录保持可重试(未被成功发布前取代)。"""
-    from data2agent.connect.config import load_config
-    from data2agent.connect.dataset_publish import build_dataset
-    from data2agent.connect.mapping_apply import MappingCircuitBreaker
+    from data2agent.shared.config import load_config
+    from data2agent.shared.store.dataset_publish import build_dataset
+    from data2agent.shared.store.mapping_apply import MappingCircuitBreaker
 
     src, landing, pack = synced
     # Seed a quarantine row on Quotation
@@ -302,7 +302,7 @@ def test_retry_failure_keeps_published_and_quarantine_retryable(synced, tmp_path
         )
 
     monkeypatch.setattr(
-        "data2agent.connect.dataset_publish.apply_object", _boom,
+        "data2agent.shared.store.dataset_publish.apply_object", _boom,
     )
     cfg = load_config(_cfg_file(tmp_path, src, landing))
     client = TestClient(create_app(landing.db_path, ROOT / "templates", cfg))
@@ -318,7 +318,7 @@ def test_retry_failure_keeps_published_and_quarantine_retryable(synced, tmp_path
 
 
 def test_publish_supersedes_prior_quarantine_stage_only_does_not(synced):
-    from data2agent.connect.dataset_publish import build_dataset
+    from data2agent.shared.store.dataset_publish import build_dataset
 
     _src, landing, pack = synced
     landing.quarantine_add(
@@ -342,13 +342,13 @@ def test_publish_supersedes_prior_quarantine_stage_only_does_not(synced):
 
 
 def test_retry_forwards_build_conflict_reason_code(synced, tmp_path, monkeypatch):
-    from data2agent.connect.config import load_config
-    from data2agent.connect.dataset_publish import BuildDatasetResult
-    from data2agent.console.contracts import RetryActionError
+    from data2agent.shared.config import load_config
+    from data2agent.shared.store.dataset_publish import BuildDatasetResult
+    from data2agent.platform.console.contracts import RetryActionError
 
     _src, landing, pack = synced
     monkeypatch.setattr(
-        "data2agent.console.app.build_dataset",
+        "data2agent.platform.console.app.build_dataset",
         lambda *_a, **_k: BuildDatasetResult(
             source=SOURCE,
             dataset_version=None,

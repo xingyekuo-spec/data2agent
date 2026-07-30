@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.mcp_server.http import (
+from data2agent.platform.mcp_server.http import (
     BearerAuthMiddleware,
     RateLimiter,
     jsonl_audit_sink,
 )
-from data2agent.mcp_server.evidence import EvidenceContext
+from data2agent.shared.store.evidence import EvidenceContext
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -66,13 +66,13 @@ def test_bearer_auth_middleware():
 def test_audit_sink_records_tool_calls(tmp_path):
     from datetime import date
 
-    from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-    from data2agent.connect.dataset_publish import build_dataset
-    from data2agent.connect.increment import incremental_sync
-    from data2agent.connect.landing import LandingStore
-    from data2agent.mcp_server.core import QueryService
+    from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+    from data2agent.shared.store.dataset_publish import build_dataset
+    from data2agent.middle.extract.increment import incremental_sync
+    from data2agent.shared.store.landing import LandingStore
+    from data2agent.platform.mcp_server.core import QueryService
     from tests.helpers import watermarks_from_pack, whitelist_from_pack
-    from data2agent.metamodel.loader import load_pack
+    from data2agent.shared.metamodel.loader import load_pack
     from tests.fixtures.e10.seed import build, write_db
 
     src = tmp_path / "source.sqlite"

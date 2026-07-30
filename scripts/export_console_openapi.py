@@ -20,7 +20,7 @@ if str(ROOT) not in sys.path:
 
 
 def dump_openapi() -> str:
-    from data2agent.console.app import create_app
+    from data2agent.platform.console.app import create_app
 
     # Landing path is never opened during OpenAPI generation; keep it ephemeral.
     with tempfile.TemporaryDirectory(prefix="d2a-openapi-") as td:

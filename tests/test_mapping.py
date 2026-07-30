@@ -2,14 +2,14 @@
 
 import pytest
 
-from data2agent.mapping import (
+from data2agent.shared.mapping import (
     FieldExpr,
     build_select,
     build_select_plan,
     parse_field_expr,
     split_row_provenance,
 )
-from data2agent.metamodel.schema import ObjectTemplate, SourceBinding
+from data2agent.shared.metamodel.schema import ObjectTemplate, SourceBinding
 
 
 def test_parse_plain():

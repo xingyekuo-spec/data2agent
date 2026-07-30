@@ -7,22 +7,22 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.base import TableInfo
-from data2agent.connect.landing import LandingStore
-from data2agent.connect.mapping_preview import (
+from data2agent.middle.extract.adapters.base import TableInfo
+from data2agent.shared.store.landing import LandingStore
+from data2agent.shared.store.mapping_preview import (
     MASKED,
     SAMPLE_DUPLICATE_WARNING,
     PreviewError,
     preview_mapping,
 )
-from data2agent.connect.mapping_transform import (
+from data2agent.shared.store.mapping_transform import (
     DEFAULT_BREAKER_THRESHOLD,
     evaluate_object_rows,
     transform_object_rows,
     would_trip_breaker,
 )
-from data2agent.mapping import parse_field_expr
-from data2agent.metamodel.schema import (
+from data2agent.shared.mapping import parse_field_expr
+from data2agent.shared.metamodel.schema import (
     DeriveRule,
     DerivedField,
     ObjectTemplate,
@@ -30,7 +30,7 @@ from data2agent.metamodel.schema import (
     SourceBinding,
     TemplatePack,
 )
-from data2agent.metamodel.versioning import binding_hash
+from data2agent.shared.metamodel.versioning import binding_hash
 
 SOURCE = "demo_src"
 ANCHOR = "ITEM"
@@ -147,7 +147,7 @@ def test_preview_rows_match_evaluate_object_rows(tmp_path):
     assert result.current.summary.mapped == result.candidate.summary.mapped
     assert result.current.summary.quarantined == 1  # STATUS=9 unmapped
 
-    from data2agent.connect.mapping_preview import (
+    from data2agent.shared.store.mapping_preview import (
         _run_binding_eval,
         freeze_sample,
         preview_read_tx,
@@ -722,7 +722,7 @@ def test_transform_wrapper_still_matches_after_derived_hits(tmp_path):
 
 def test_cross_table_same_column_name_is_masked(tmp_path):
     """跨表同名列不得因 current 的 A.NAME 让草稿 B.NAME 绕过脱敏。"""
-    from data2agent.connect.landing import raw_table_name
+    from data2agent.shared.store.landing import raw_table_name
 
     pack = _pack()
     # current 锚表白名单之外:通过同源其它对象声明 JOIN 表。

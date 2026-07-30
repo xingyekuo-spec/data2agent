@@ -6,10 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.base import TableInfo
-from data2agent.connect.landing import LandingStore, raw_table_name
-from data2agent.metamodel.loader import load_pack
-from data2agent.scenarios.dead_stock import RESULT_TABLE, materialize_dead_stock_item
+from data2agent.middle.extract.adapters.base import TableInfo
+from data2agent.shared.store.landing import LandingStore, raw_table_name
+from data2agent.shared.metamodel.loader import load_pack
+from data2agent.shared.scenarios.dead_stock import RESULT_TABLE, materialize_dead_stock_item
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = "digiwin_e10"

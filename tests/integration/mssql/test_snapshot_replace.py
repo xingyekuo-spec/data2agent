@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.mssql import MssqlReadOnlyAdapter
-from data2agent.connect.increment import incremental_sync
-from data2agent.connect.landing import LandingStore, raw_table_name
+from data2agent.middle.extract.adapters.mssql import MssqlReadOnlyAdapter
+from data2agent.middle.extract.increment import incremental_sync
+from data2agent.shared.store.landing import LandingStore, raw_table_name
 
 DSN = os.environ.get("D2A_IT_MSSQL_DSN")
 SA_DSN = os.environ.get("D2A_IT_MSSQL_SA_DSN")

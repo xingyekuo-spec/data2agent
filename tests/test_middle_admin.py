@@ -13,15 +13,15 @@ import yaml
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
-from data2agent.connect.increment import incremental_sync  # noqa: E402
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
+from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore  # noqa: E402
-from data2agent.connect.mapping_apply import apply_objects  # noqa: E402
+from data2agent.shared.store.landing import LandingStore  # noqa: E402
+from data2agent.shared.store.mapping_apply import apply_objects  # noqa: E402
 from tests.helpers import whitelist_from_pack  # noqa: E402
-import data2agent.middle_admin.app as middle_app  # noqa: E402
-from data2agent.middle_admin.app import create_app  # noqa: E402
-from data2agent.metamodel.loader import load_pack  # noqa: E402
+import data2agent.middle.admin.app as middle_app  # noqa: E402
+from data2agent.middle.admin.app import create_app  # noqa: E402
+from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -282,8 +282,8 @@ def test_async_trigger_returns_run_id_immediately(middle_env):
 
 def test_trigger_returns_already_running_on_second_call(middle_env):
     """第二次触发在锁未释放时返回 already_running。"""
-    from data2agent.connect.sync_lock import SourceSyncLock
-    from data2agent.connect.config import load_config
+    from data2agent.middle.extract.sync_lock import SourceSyncLock
+    from data2agent.shared.config import load_config
 
     client, cfg_path = middle_env
     cfg = load_config(cfg_path)
@@ -394,7 +394,7 @@ def test_run_returned_in_status(middle_env):
 
 def test_push_logs_api_returns_correct_batch_progress(middle_env):
     """推送记录列表与批次详情暴露真实 write 行数和完成状态。"""
-    from data2agent.connect.config import load_config
+    from data2agent.shared.config import load_config
 
     client, cfg_path = middle_env
     cfg = load_config(cfg_path)

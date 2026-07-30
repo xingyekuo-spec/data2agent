@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from data2agent.console.contracts import (
+from data2agent.platform.console.contracts import (
     AccessAuditItem,
     DerivedField,
     DeriveRule,
@@ -136,7 +136,7 @@ def test_quarantine_detail_extends_record():
 
 def test_quarantine_detail_with_truncations():
     now = _utc_now()
-    from data2agent.console.contracts import FieldTruncation
+    from data2agent.platform.console.contracts import FieldTruncation
 
     detail = QuarantineDetail(
         id=2,

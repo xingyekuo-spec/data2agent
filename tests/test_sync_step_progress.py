@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.increment import incremental_sync, _safe_error
-from data2agent.connect.landing import LandingStore
-from data2agent.metamodel.loader import load_pack
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.middle.extract.increment import incremental_sync, _safe_error
+from data2agent.shared.store.landing import LandingStore
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 from tests.helpers import watermarks_from_pack, whitelist_from_pack
 

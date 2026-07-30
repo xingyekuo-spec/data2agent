@@ -181,7 +181,7 @@ def _role_config(role: str, home: Path) -> dict:
             "title": "data2agent 中间机",
             "mutex": "Local\\data2agent-middle-launcher",
             "port": port,
-            "module": "data2agent.middle_admin",
+            "module": "data2agent.middle.admin",
             "config_file": home / "config" / "connect.yaml",
             "extra_args": [
                 "--home", str(home),
@@ -195,7 +195,7 @@ def _role_config(role: str, home: Path) -> dict:
             "title": "data2agent 平台",
             "mutex": "Local\\data2agent-platform-launcher",
             "port": port,
-            "module": "data2agent.console",
+            "module": "data2agent.platform.console",
             "config_file": home / "config" / "platform.yaml",
             "extra_args": [
                 "--home", str(home),
@@ -454,7 +454,7 @@ def worker_commands(role: str, home: Path, python: Path) -> list[tuple[str, int 
         cfg = home / "config" / "connect.yaml"
         if not cfg.is_file():
             return []
-        return [("connector", None, [py, "-m", "data2agent.connect", "serve",
+        return [("connector", None, [py, "-m", "data2agent.middle.extract", "serve",
                                      "--config", str(cfg)])]
 
     cfg = home / "config" / "platform.yaml"
@@ -463,13 +463,13 @@ def worker_commands(role: str, home: Path, python: Path) -> list[tuple[str, int 
     landing = str(home / "data" / "factory.sqlite")
     templates = str(home / "app" / "templates")
     return [
-        ("ingest", 8850, [py, "-m", "data2agent.ingest",
+        ("ingest", 8850, [py, "-m", "data2agent.platform.ingest",
                           "--landing", landing, "--host", "0.0.0.0", "--port", "8850"]),
         # apply 是纯落地库操作:不接受 --config,须显式给 --templates(cwd 无 templates)
-        ("apply", None, [py, "-m", "data2agent.connect", "apply",
+        ("apply", None, [py, "-m", "data2agent.middle.extract", "apply",
                          "--landing", landing, "--templates", templates,
                          "--every", "1800"]),
-        ("mcp", 8848, [py, "-m", "data2agent.mcp_server",
+        ("mcp", 8848, [py, "-m", "data2agent.platform.mcp_server",
                        "--db", landing, "--templates", templates,
                        "--transport", "http", "--host", "0.0.0.0", "--port", "8848"]),
     ]
@@ -493,7 +493,7 @@ def ensure_landing_db(python: Path, landing: Path, *, home: Path,
     landing.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [str(python), "-c",
-         "import sys; from data2agent.connect.landing import LandingStore; "
+         "import sys; from data2agent.shared.store.landing import LandingStore; "
          "LandingStore(sys.argv[1])", str(landing)],
         cwd=str(home), env=env, capture_output=True, check=False,
         creationflags=_creationflags(),

@@ -56,7 +56,7 @@ _SMOKE_TABLES = """
 
 
 def _prepare(tmp: Path) -> Path:
-    from data2agent.connect.landing import LandingStore
+    from data2agent.shared.store.landing import LandingStore
     from tests.fixtures.e10.seed import build, write_db
 
     src = tmp / "e10.sqlite"
@@ -88,7 +88,7 @@ def _prepare(tmp: Path) -> Path:
 def smoke_middle(cfg: Path, log_path: Path) -> None:
     from fastapi.testclient import TestClient
 
-    from data2agent.middle_admin.app import create_app
+    from data2agent.middle.admin.app import create_app
 
     token = "smoke-token"
     client = TestClient(create_app(cfg, token=token, log_path=log_path))
@@ -183,8 +183,8 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
 def smoke_console(cfg: Path, log_dir: Path) -> None:
     from fastapi.testclient import TestClient
 
-    from data2agent.connect.config import load_config, PlatformConfig
-    from data2agent.console.app import create_app
+    from data2agent.shared.config import load_config, PlatformConfig
+    from data2agent.platform.console.app import create_app
 
     token = "smoke-token"
     loaded = load_config(cfg)

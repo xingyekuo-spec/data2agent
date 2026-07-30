@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.updater.apply_script import write_update_scripts
-from data2agent.updater.core import UpdateManager
+from data2agent.platform.updater.apply_script import write_update_scripts
+from data2agent.platform.updater.core import UpdateManager
 from tests.test_updater import _make_portable_zip
 
 PWSH = shutil.which("pwsh")
@@ -177,5 +177,5 @@ def test_zip_contains_no_config_or_data_dirs(tmp_path):
     UpdateManager(home).stage(zip_path, expected_version="v0.6.0")
     write_update_scripts(home, home / "data" / "updates")
     # 白名单不含 config/data,脚本 MOVE_ITEMS 断言
-    from data2agent.updater.apply_script import APPLY_PS1
+    from data2agent.platform.updater.apply_script import APPLY_PS1
     assert "'config'" not in APPLY_PS1 and "'data'" not in APPLY_PS1

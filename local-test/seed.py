@@ -12,8 +12,8 @@
 
 随后可启动完整链路:
 
-    python -m data2agent.console --landing local-test/data/landing.sqlite --templates templates
-    python -m data2agent.connect sync --config local-test/config/connect.yaml
+    python -m data2agent.platform.console --landing local-test/data/landing.sqlite --templates templates
+    python -m data2agent.middle.extract sync --config local-test/config/connect.yaml
 """
 
 from __future__ import annotations
@@ -41,12 +41,12 @@ def main() -> int:
             print(f"removed {path.relative_to(ROOT)}")
 
     run([sys.executable, "-m", "tests.fixtures.e10.seed", "--db", str(DATA / "source.sqlite")])
-    run([sys.executable, "-m", "data2agent.connect", "sync", "--config", CONFIG])
-    run([sys.executable, "-m", "data2agent.connect", "apply",
+    run([sys.executable, "-m", "data2agent.middle.extract", "sync", "--config", CONFIG])
+    run([sys.executable, "-m", "data2agent.middle.extract", "apply",
          "--landing", "local-test/data/landing.sqlite", "--templates", "templates"])
 
     print("\n完成。启动管理界面:")
-    print("  python -m data2agent.console "
+    print("  python -m data2agent.platform.console "
           "--landing local-test/data/landing.sqlite --templates templates")
     return 0
 

@@ -1,4 +1,4 @@
-"""Moved from data2agent.connect.sync / increment — test-only utilities.
+"""Moved from data2agent.middle.extract.sync / increment — test-only utilities.
 
 Production code no longer derives whitelist or watermarks from template packs.
 Use `SourceConfig.table_whitelist()` and `SourceConfig.table_watermarks()` instead.
@@ -6,8 +6,8 @@ Use `SourceConfig.table_whitelist()` and `SourceConfig.table_watermarks()` inste
 
 from __future__ import annotations
 
-from data2agent.mapping import parse_field_expr
-from data2agent.metamodel.schema import TemplatePack
+from data2agent.shared.mapping import parse_field_expr
+from data2agent.shared.metamodel.schema import TemplatePack
 
 
 def whitelist_from_pack(pack: TemplatePack, source: str) -> set[str]:

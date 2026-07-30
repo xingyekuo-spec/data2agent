@@ -27,7 +27,7 @@ _INNER_CHECK = r"""
 import os, re, tempfile
 from pathlib import Path
 from fastapi.testclient import TestClient
-from data2agent.console.app import create_app, resolve_vue_dist
+from data2agent.platform.console.app import create_app, resolve_vue_dist
 
 dist = resolve_vue_dist()
 assert dist is not None, "resolve_vue_dist returned None"

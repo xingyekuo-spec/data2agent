@@ -148,7 +148,7 @@ def _backend_checks(
                 _cmd(
                     _python(),
                     "-m",
-                    "data2agent.metamodel.validate",
+                    "data2agent.shared.metamodel.validate",
                     "templates",
                 ),
             )
@@ -305,18 +305,39 @@ def _quick_plan(
         if parts[0] == "data2agent":
             if len(parts) < 2 or parts[1] == "__init__.py":
                 backend_full = True
-            elif parts[1] == "connect":
-                backend_scopes.add("erp")
-            elif parts[1] in {"console", "admin_common", "middle_admin"}:
-                backend_scopes.add("console")
-                frontend = True
-            elif parts[1] == "mcp_server":
-                backend_scopes.add("mcp")
-            elif parts[1] == "metamodel":
-                backend_scopes.add("metamodel")
-                template_validation = True
-            elif parts[1] == "scenarios":
-                backend_scopes.add("scenario")
+            elif parts[1] == "protocol":
+                # 跨机契约:影响两端,全量回归
+                backend_full = True
+            elif parts[1] == "middle":
+                if len(parts) > 2 and parts[2] == "admin":
+                    backend_scopes.add("console")
+                    frontend = True
+                else:
+                    backend_scopes.add("erp")
+            elif parts[1] == "platform":
+                sub = parts[2] if len(parts) > 2 else ""
+                if sub == "console":
+                    backend_scopes.add("console")
+                    frontend = True
+                elif sub == "mcp_server":
+                    backend_scopes.add("mcp")
+                elif sub == "ingest":
+                    backend_scopes.add("erp")
+                else:
+                    backend_full = True
+            elif parts[1] == "shared":
+                sub = parts[2] if len(parts) > 2 else ""
+                if sub == "metamodel":
+                    backend_scopes.add("metamodel")
+                    template_validation = True
+                elif sub == "scenarios":
+                    backend_scopes.add("scenario")
+                elif sub in {"admin", "admin_templates"}:
+                    backend_scopes.add("console")
+                    frontend = True
+                else:
+                    # store / mapping / config 被两端共用,全量回归
+                    backend_full = True
             else:
                 backend_full = True
             continue
@@ -362,7 +383,7 @@ def _quick_plan(
                     _cmd(
                         _python(),
                         "-m",
-                        "data2agent.metamodel.validate",
+                        "data2agent.shared.metamodel.validate",
                         "templates",
                     )
                 )

@@ -6,7 +6,7 @@
 
 ```bash
 python local-test/seed.py        # 重建源库 + 落地库(可重复执行)
-python -m data2agent.console --landing local-test/data/landing.sqlite --templates templates
+python -m data2agent.platform.console --landing local-test/data/landing.sqlite --templates templates
 ```
 
 浏览器打开 http://127.0.0.1:8849/ 即可看到已有数据的控制台。
@@ -14,8 +14,8 @@ python -m data2agent.console --landing local-test/data/landing.sqlite --template
 ## 重新跑一轮抽取
 
 ```bash
-python -m data2agent.connect sync --config local-test/config/connect.yaml
-python -m data2agent.connect apply --landing local-test/data/landing.sqlite --templates templates
+python -m data2agent.middle.extract sync --config local-test/config/connect.yaml
+python -m data2agent.middle.extract apply --landing local-test/data/landing.sqlite --templates templates
 ```
 
 ## 说明

@@ -155,7 +155,7 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
 
 ---
 
-### 3. `data2agent/connect/increment.py` 与 `data2agent/connect/landing.py` — 外部 `run_id` 与逐批进度
+### 3. `data2agent/middle/extract/increment.py` 与 `data2agent/shared/store/landing.py` — 外部 `run_id` 与逐批进度
 
 #### A. `d2a_run_step` 增加可选进度字段
 
@@ -278,7 +278,7 @@ document.getElementById('btn-trigger').onclick = async function () {
 - 新增 SQLite 迁移回归：旧版 `d2a_run_step` 数据库启动后可添加进度字段，旧 run 的空字段可被 API 正确返回
 
 ### 集成测试
-1. 启动中间机管理：`python -m data2agent.middle_admin --home ...`
+1. 启动中间机管理：`python -m data2agent.middle.admin --home ...`
 2. 打开状态页面 `http://127.0.0.1:8851/status`
 3. 点击"立即触发同步"，确认不再一直显示"触发中"
 4. 确认页面显示 `run_id` 和运行状态，状态面板自动刷新

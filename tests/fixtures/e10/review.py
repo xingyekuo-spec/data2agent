@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from data2agent.mcp_server.core import QueryService
+from data2agent.platform.mcp_server.core import QueryService
 
 
 def build_review(svc: QueryService, customer: str, keyword: str,

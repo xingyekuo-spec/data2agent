@@ -6,14 +6,14 @@ import json
 
 import pytest
 
-from data2agent.connect.dataset_publish import (
+from data2agent.shared.store.dataset_publish import (
     PublishedSnapshotError,
     resolve_published_snapshot,
 )
-from data2agent.connect.landing import LandingStore
-from data2agent.metamodel.dataset_publish_contract import make_build_table
-from data2agent.metamodel.schema import ObjectTemplate, Property, TemplatePack
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.store.landing import LandingStore
+from data2agent.shared.metamodel.dataset_publish_contract import make_build_table
+from data2agent.shared.metamodel.schema import ObjectTemplate, Property, TemplatePack
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 
 def _pack(*names: str) -> TemplatePack:

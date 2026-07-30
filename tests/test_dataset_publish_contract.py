@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from data2agent.metamodel.dataset_publish_contract import (
+from data2agent.shared.metamodel.dataset_publish_contract import (
     ActionDecision,
     can_transition_dataset,
     can_transition_object,
@@ -15,7 +15,7 @@ from data2agent.metamodel.dataset_publish_contract import (
     make_build_table,
     validate_build_table,
 )
-from data2agent.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
+from data2agent.shared.metamodel.versioning import DatasetVersionRecord, ObjectVersionRecord
 
 
 def _ds(
@@ -261,7 +261,7 @@ def test_rollback_idempotent_and_not_found():
 
 
 def test_apply_action_body_is_dedicated_and_defaults_publish_true():
-    from data2agent.console.contracts import ActionBody, ApplyActionBody, ApplyActionResult, RetryActionResult
+    from data2agent.platform.console.contracts import ActionBody, ApplyActionBody, ApplyActionResult, RetryActionResult
 
     body = ApplyActionBody(source="src_a")
     assert body.publish is True
@@ -295,8 +295,8 @@ def test_apply_action_body_is_dedicated_and_defaults_publish_true():
 
 
 def test_run_types_include_publish_and_rollback():
-    from data2agent.connect.landing import LandingStore
-    from data2agent.console import contracts
+    from data2agent.shared.store.landing import LandingStore
+    from data2agent.platform.console import contracts
 
     assert "publish" in LandingStore.RUN_TYPES
     assert "rollback" in LandingStore.RUN_TYPES

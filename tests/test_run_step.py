@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.landing import LandingStore
+from data2agent.shared.store.landing import LandingStore
 
 ROOT = Path(__file__).resolve().parents[1]
 

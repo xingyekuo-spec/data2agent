@@ -8,19 +8,19 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.connect.adapters.sqlite import SqliteReadOnlyAdapter
-from data2agent.connect.config import (
+from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
+from data2agent.shared.config import (
     ConnectConfig,
     SourceConfig,
     in_window,
     load_config,
     parse_duration_seconds,
 )
-from data2agent.connect.increment import incremental_sync
+from data2agent.middle.extract.increment import incremental_sync
 from tests.helpers import watermarks_from_pack
-from data2agent.connect.landing import LandingStore
+from data2agent.shared.store.landing import LandingStore
 from tests.helpers import whitelist_from_pack
-from data2agent.metamodel.loader import load_pack
+from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -180,8 +180,8 @@ def test_pause_at_batch_boundary_then_resume(env, pack):
 # ---- 调度周期 ----
 
 def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
-    from data2agent.connect import scheduler as sched
-    from data2agent.connect.config import SourceConfig
+    from data2agent.middle.extract import scheduler as sched
+    from data2agent.shared.config import SourceConfig
 
     from datetime import datetime, timedelta
 
@@ -218,8 +218,8 @@ def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
 
 def test_serve_once(env, pack, tmp_path):
     pytest.importorskip("apscheduler")
-    from data2agent.connect.config import load_config
-    from data2agent.connect.scheduler import serve
+    from data2agent.shared.config import load_config
+    from data2agent.middle.extract.scheduler import serve
 
     src, _ = env
     cfg_file = tmp_path / "connect.yaml"
@@ -305,7 +305,7 @@ def test_serve_schedules_first_run_at_sync_start_at(tmp_path, monkeypatch):
         sys.modules, "apscheduler.triggers.cron",
         types.SimpleNamespace(CronTrigger=FakeCronTrigger))
 
-    from data2agent.connect.scheduler import serve
+    from data2agent.middle.extract.scheduler import serve
 
     cfg = ConnectConfig(
         landing=str(tmp_path / "landing.sqlite"),

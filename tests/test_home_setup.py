@@ -7,14 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.admin_common.home_layout import HomeLayout, resolve_templates
-from data2agent.admin_common.secrets_file import apply_secrets_to_environ, load_secrets, save_secrets
-from data2agent.admin_common.setup_yaml import (
+from data2agent.shared.admin.home_layout import HomeLayout, resolve_templates
+from data2agent.shared.admin.secrets_file import apply_secrets_to_environ, load_secrets, save_secrets
+from data2agent.shared.admin.setup_yaml import (
     build_middle_connect_yaml,
     build_odbc_dsn,
     write_yaml,
 )
-from data2agent.connect.config import load_config
+from data2agent.shared.config import load_config
 
 
 def test_secrets_roundtrip(tmp_path, monkeypatch):
@@ -69,7 +69,7 @@ def test_load_home_secrets_if_present(tmp_path, monkeypatch):
     save_secrets(home.secrets_env, {"D2A_INGEST_TOKEN": "from-file"})
     monkeypatch.setenv("D2A_HOME", str(tmp_path))
     monkeypatch.delenv("D2A_INGEST_TOKEN", raising=False)
-    from data2agent.admin_common.secrets_file import load_home_secrets_if_present
+    from data2agent.shared.admin.secrets_file import load_home_secrets_if_present
     assert load_home_secrets_if_present() == home.secrets_env
     assert os.environ["D2A_INGEST_TOKEN"] == "from-file"
 
@@ -89,8 +89,8 @@ def test_middle_browser_setup(tmp_path):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
-    from data2agent.admin_common.secrets_file import restore_environ
-    from data2agent.middle_admin.app import create_app
+    from data2agent.shared.admin.secrets_file import restore_environ
+    from data2agent.middle.admin.app import create_app
 
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
@@ -141,8 +141,8 @@ def test_platform_browser_setup(tmp_path):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
-    from data2agent.admin_common.secrets_file import restore_environ
-    from data2agent.console.app import create_app
+    from data2agent.shared.admin.secrets_file import restore_environ
+    from data2agent.platform.console.app import create_app
 
     home = HomeLayout(tmp_path)
     home.ensure_dirs()

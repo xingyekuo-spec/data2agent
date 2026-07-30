@@ -16,15 +16,15 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from data2agent.connect.field_lineage import (  # noqa: E402
+from data2agent.shared.store.field_lineage import (  # noqa: E402
     canonical_object_key_json,
     is_valid_lineage_key_token,
     object_key_token,
     object_key_token_from_pairs,
     require_lineage_key_token,
 )
-from data2agent.console.app import create_app  # noqa: E402
-from data2agent.console.contracts import (  # noqa: E402
+from data2agent.platform.console.app import create_app  # noqa: E402
+from data2agent.platform.console.contracts import (  # noqa: E402
     ObjectLineageError,
     ObjectLineageResponse,
 )

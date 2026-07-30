@@ -24,7 +24,7 @@ def test_role_config_uses_home(tmp_path):
     mod = _load_launcher()
     mid = mod._role_config("middle", tmp_path)
     assert mid["port"] == 8851
-    assert mid["module"] == "data2agent.middle_admin"
+    assert mid["module"] == "data2agent.middle.admin"
     assert "--home" in mid["extra_args"]
     assert mid["config_file"] == tmp_path / "config" / "connect.yaml"
     assert "middle" in mid["mutex"]
@@ -191,7 +191,7 @@ def test_admin_startup_timeout_reports_logs_and_manual_command(tmp_path, monkeyp
     assert "启动超时" in text
     assert "d2a-console.log" in text
     assert "d2a-launcher.log" in text
-    assert "-m data2agent.console" in text
+    assert "-m data2agent.platform.console" in text
 
 
 def test_wait_admin_ready_logs_progress_and_exit(tmp_path, monkeypatch):

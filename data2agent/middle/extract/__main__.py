@@ -1,0 +1,334 @@
+"""抽取 CLI:python -m data2agent.connect {sync|reconcile|apply|backfill|serve|status|quarantine}
+
+sync       --config connect.yaml [--source name];抽取范围/模式来自 tables 配置
+reconcile  --config connect.yaml [--deep] 分段对账 L1;抓物理删除与不动水位的原地改动
+apply      映射应用:raw_* → 数据集候选并默认发布(隔离区 + 熔断);
+           --stage-only 只构建候选;--every N 秒常驻循环(拆机部署平台侧)
+backfill   --config connect.yaml --table T --from F --to T(upsert 幂等,不动水位)
+serve      --config connect.yaml [--once] 按 connect.yaml 调度常驻(错峰窗口硬约束)
+status     水位 / 最近运行 / 隔离区概览
+quarantine list 查看隔离明细;retry 修复后完整重建数据集并自动发布
+excel-suggest 读 Excel/CSV 表头,生成 列→属性 映射建议(人工确认一次)
+excel-import  按映射文件导入报价历史到落地库(之后 apply 物化)
+"""
+
+from __future__ import annotations
+
+import argparse
+
+from ...shared.metamodel.loader import load_pack
+from ...shared.store.dataset_publish import build_dataset
+from .increment import incremental_sync
+from ...shared.store.landing import LandingStore
+from ...shared.store.mapping_apply import DEFAULT_BREAKER_THRESHOLD
+from .reconcile import reconcile
+
+
+def _add_common(sp: argparse.ArgumentParser) -> None:
+    sp.add_argument("--config", required=True, help="connect.yaml 路径(抽取配置唯一来源)")
+    sp.add_argument("--source", default="digiwin_e10", help="数据源名")
+
+
+def _build(args, ap):
+    """构建适配器、落地库和水位映射。所有抽取操作必须通过 --config 获取 tables 配置。"""
+    from ...shared.config import load_config
+    cfg = load_config(args.config)
+    if args.source not in cfg.sources:
+        ap.error(f"配置中没有源 '{args.source}',可用: {sorted(cfg.sources)}")
+    scfg = cfg.sources[args.source]
+    whitelist = scfg.table_whitelist()
+    watermarks = scfg.table_watermarks()
+
+    landing = LandingStore(cfg.landing)
+    hook = lambda action, sql, rows, ms: landing.log_audit(args.source, action, sql, rows, ms)  # noqa: E731
+    kwargs = dict(batch_size=scfg.rate.batch_size,
+                  rows_per_second=scfg.rate.rows_per_second,
+                  audit_hook=hook)
+
+    import os as _os
+    if scfg.adapter == "sqlite_readonly":
+        from .adapters.sqlite import SqliteReadOnlyAdapter
+        path = scfg.path or _os.environ.get(scfg.dsn_env or "", "")
+        adapter = SqliteReadOnlyAdapter(path, whitelist, **kwargs)
+    else:
+        from .adapters.mssql import MssqlReadOnlyAdapter
+        dsn = _os.environ.get(scfg.dsn_env or "", "")
+        if not dsn:
+            ap.error(f"环境变量 {scfg.dsn_env} 为空")
+        adapter = MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
+    return None, adapter, landing, watermarks, scfg, cfg
+
+
+def main() -> int:
+    from ...shared.admin.secrets_file import load_home_secrets_if_present
+    load_home_secrets_if_present()
+
+    ap = argparse.ArgumentParser(description="data2agent 抽取(只读:增量 / 全量 / 对账)")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    sp = sub.add_parser("sync", help="同步到落地库(按 tables.*.mode:增量或全量快照)")
+    _add_common(sp)
+
+    rp = sub.add_parser("reconcile", help="分段对账(L1;--deep 全段修复)")
+    _add_common(rp)
+    rp.add_argument("--deep", action="store_true",
+                    help="全段 L2 修复(兜底不动水位的原地改动)")
+
+    mp = sub.add_parser("apply", help="映射应用:raw_* → 数据集候选/发布(隔离区 + 熔断)")
+    mp.add_argument("--source", default="digiwin_e10", help="binding 数据源名")
+    mp.add_argument("--landing", default="landing/factory.sqlite", help="落地库路径")
+    mp.add_argument("--templates", default="templates", help="模板包目录")
+    mp.add_argument("--threshold", type=float, default=DEFAULT_BREAKER_THRESHOLD,
+                    help=f"熔断阈值(隔离率,默认 {DEFAULT_BREAKER_THRESHOLD * 100:.0f}%%)")
+    mp.add_argument("--stage-only", action="store_true",
+                    help="只构建候选数据集,不自动发布(默认成功即发布)")
+    mp.add_argument("--every", type=float, default=None,
+                    help="常驻循环:每隔 N 秒重跑一次(拆机部署平台侧用,"
+                         "配合 Windows 服务 / systemd 常驻;不填 = 跑一次退出")
+
+    bp = sub.add_parser("backfill", help="指定表的水位区间重抽(不动水位)")
+    _add_common(bp)
+    bp.add_argument("--table", required=True, help="源表名(须有水位声明)")
+    bp.add_argument("--from", dest="wm_from", required=True, help="水位起(含)")
+    bp.add_argument("--to", dest="wm_to", required=True, help="水位止(不含)")
+
+    vp = sub.add_parser("serve", help="按 connect.yaml 调度常驻(窗口硬约束)")
+    vp.add_argument("--config", default="connect.yaml", help="配置文件路径")
+    vp.add_argument("--once", action="store_true", help="立即各跑一轮后退出(仍尊重窗口)")
+
+    tp = sub.add_parser("status", help="水位 / 最近运行 / 隔离区概览")
+    tp.add_argument("--landing", default="landing/factory.sqlite")
+    tp.add_argument("--source", default="digiwin_e10")
+
+    qp = sub.add_parser("quarantine", help="隔离区查看与重试")
+    qp.add_argument("action", choices=["list", "retry"])
+    qp.add_argument("--object", help="对象名(retry 必填;list 可选过滤)")
+    qp.add_argument("--source", default="digiwin_e10")
+    qp.add_argument("--landing", default="landing/factory.sqlite")
+    qp.add_argument("--templates", default="templates")
+
+    xs = sub.add_parser("excel-suggest", help="生成 Excel/CSV 列映射建议(YAML)")
+    xs.add_argument("--file", required=True, help="Excel(.xlsx)或 CSV 文件")
+    xs.add_argument("--object", required=True, help="目标对象(如 Quotation)")
+    xs.add_argument("--sheet", help="工作表名(默认第一个)")
+    xs.add_argument("--header-row", type=int, default=1)
+    xs.add_argument("--templates", default="templates")
+    xs.add_argument("--out", help="写入路径(缺省打印到终端)")
+
+    xi = sub.add_parser("excel-import", help="按映射文件导入到落地库")
+    xi.add_argument("--file", required=True)
+    xi.add_argument("--map", dest="map_file", required=True, help="确认后的映射 YAML")
+    xi.add_argument("--source", default="excel_quotation", help="binding 数据源名")
+    xi.add_argument("--landing", default="landing/factory.sqlite")
+    xi.add_argument("--templates", default="templates")
+
+    args = ap.parse_args()
+
+    if args.cmd == "excel-suggest":
+        from .excel_import import read_tabular, render_mapping_yaml, suggest_mapping
+        pack = load_pack(args.templates)
+        tpl = next((o for o in pack.objects if o.object == args.object), None)
+        if tpl is None:
+            ap.error(f"未知对象 {args.object},可用:{sorted(pack.object_names())}")
+        headers, rows = read_tabular(args.file, args.sheet, args.header_row)
+        text = render_mapping_yaml(tpl, suggest_mapping(headers, tpl),
+                                   args.sheet, args.header_row)
+        if args.out:
+            from pathlib import Path
+            Path(args.out).write_text(text, encoding="utf-8")
+            print(f"映射建议已写入 {args.out}(共 {len(rows)} 行数据;请人工确认后 excel-import)")
+        else:
+            print(text)
+        return 0
+
+    if args.cmd == "excel-import":
+        from .excel_import import import_tabular, load_mapping
+        pack = load_pack(args.templates)
+        mapping = load_mapping(args.map_file)
+        tpl = next((o for o in pack.objects if o.object == mapping["object"]), None)
+        if tpl is None:
+            ap.error(f"映射文件的对象 {mapping['object']} 不在模板中")
+        report = import_tabular(
+            LandingStore(args.landing), tpl, args.source, args.file,
+            mapping["columns"], mapping.get("sheet"), mapping.get("header_row", 1))
+        print(f"导入完成:{report.file} → raw_{report.source}__{report.table}"
+              f"({report.imported}/{report.total} 行,batch {report.batch_id})")
+        for row_no, reason in report.skipped:
+            print(f"  - 跳过第 {row_no} 行:{reason}")
+        print(f"下一步:python -m data2agent.connect apply --source {args.source}"
+              "(校验 / 隔离 / 熔断在该步生效)")
+        return 0
+
+    if args.cmd == "serve":
+        from ...shared.config import load_config
+        from .scheduler import serve
+        serve(load_config(args.config), once=args.once)
+        return 0
+
+    if args.cmd == "status":
+        return _status(args)
+
+    if args.cmd == "quarantine":
+        return _quarantine(args, ap)
+
+    if args.cmd == "apply":
+        return _apply_loop(args)
+
+    pack, adapter, landing, watermarks, scfg, cfg = _build(args, ap)
+
+    if args.cmd == "backfill":
+        wm_col = watermarks.get(args.table)
+        if wm_col is None:
+            ap.error(f"表 {args.table} 不在配置的增量表中,无法按区间回补。"
+                     f"增量表: {sorted(watermarks)}")
+        from .adapters.base import resolve_runtime_keys
+        raw_info = adapter.table_info(args.table)
+        info = resolve_runtime_keys(
+            raw_info, scfg.table_key_columns().get(args.table), require_keys=True)
+        adapter.validate_runtime_keys(info)
+        landing.ensure_raw_table(args.source, info)
+        import uuid
+        batch_id = uuid.uuid4().hex[:12]
+        rows = sum(
+            landing.upsert_rows(args.source, info, batch, batch_id)
+            for batch in adapter.read_segment(info, wm_col, args.wm_from, args.wm_to))
+        print(f"回补完成:{args.table} [{args.wm_from}, {args.wm_to}) 共 {rows} 行"
+              "(水位未变动;如需刷新对象层请再跑 apply)")
+        return 0
+
+    if args.cmd == "sync":
+        report = incremental_sync(
+            adapter, landing, args.source, watermarks,
+            lookback_days=scfg.lookback_days(),
+            key_columns=scfg.table_key_columns(),
+        )
+        print(f"同步完成:run #{report.run_id},{len(report.tables)} 表,"
+              f"共 {report.total_rows} 行 → {cfg.landing}")
+        for t in report.tables:
+            wm = f"  水位 → {t.high_water}" if t.high_water else ""
+            print(f"  - {t.table:<16} {t.rows:>6} 行 / {t.batches} 批  [{t.strategy}]{wm}")
+        return 0
+
+    report = reconcile(
+        adapter, landing, args.source, watermarks, deep=args.deep,
+        key_columns=scfg.table_key_columns(),
+    )
+    mode = "deep" if args.deep else "L1"
+    print(f"对账完成({mode}):run #{report.run_id},检查 {len(report.segments)} 段,"
+          f"不一致 {len(report.mismatched)} 段,软删 {report.total_soft_deleted} 行")
+    for s in report.segments:
+        if not s.consistent or s.repaired_rows or s.soft_deleted:
+            mark = "≠" if not s.consistent else "="
+            print(f"  - {s.table:<16} {s.segment}  源 {s.src_count} {mark} 落地 {s.dst_count}"
+                  f"  重抽 {s.repaired_rows} 行, 软删 {s.soft_deleted} 行")
+    return 0
+
+
+def _run_apply_once(args) -> bool:
+    """跑一轮 apply,打印结果。返回是否有对象熔断(供循环模式判断是否继续)。"""
+    pack = load_pack(args.templates)
+    result = build_dataset(
+        LandingStore(args.landing), pack, args.source,
+        auto_publish=not getattr(args, "stage_only", False),
+        threshold=args.threshold,
+    )
+    for r in result.results:
+        mark = "⚠ 熔断" if r.status == "aborted" else "ok"
+        print(f"  - {r.object:<16} 映射 {r.mapped:>5} 行, 隔离 {r.quarantined} 行  [{mark}]")
+    aborted = [r.object for r in result.results if r.status in ("aborted", "failed")]
+    if aborted or result.outcome != "ok":
+        print(f"映射中止对象:{aborted or ['(数据集构建失败)']}(候选未发布,"
+              "明细见 d2a_quarantine)")
+        if result.dataset_version:
+            print(f"  dataset_version={result.dataset_version} published={result.published}")
+        return True
+    mode = "已发布" if result.published else "仅候选(stage-only)"
+    print(f"映射应用完成:{len(result.results)} 个对象 → {args.landing}"
+          f" [{mode}] version={result.dataset_version}")
+    return False
+
+
+def _apply_loop(args) -> int:
+    """拆机部署平台侧:ingest 只收 raw,没有进程会周期性 apply,故 --every 提供常驻循环。
+    单次模式(不传 --every)行为与此前一致,退出码沿用熔断即非零的约定。"""
+    if args.every is None:
+        return 1 if _run_apply_once(args) else 0
+
+    import time
+    from datetime import datetime
+    print(f"apply 常驻循环:每 {args.every:.0f} 秒一轮(Ctrl+C 或服务停止退出)")
+    while True:
+        print(f"-- {datetime.now().isoformat(timespec='seconds')} --")
+        try:
+            _run_apply_once(args)
+        except Exception as e:  # noqa: BLE001 - 常驻循环:单轮异常不应打断服务,下一轮重试
+            print(f"本轮 apply 异常(将于下一轮重试):{e}")
+        time.sleep(args.every)
+
+
+def _status(args) -> int:
+    landing = LandingStore(args.landing)
+    print(f"== 水位状态(source={args.source})==")
+    rows = landing.list_sync_watermarks(args.source)
+    for r in rows:
+        print(f"  {r['table_name']:<16} {r['watermark_col']} → {r['high_water']}"
+              f"  (最近 {r['last_run_at']})")
+    if not rows:
+        print("  (尚无水位状态,先跑 sync)")
+    print("== 最近运行 ==")
+    for r in landing.con.execute(
+            "SELECT id, started_at, finished_at, status, tables, rows, detail "
+            "FROM d2a_sync_run WHERE source = ? ORDER BY id DESC LIMIT 5", (args.source,)):
+        print(f"  #{r['id']} {r['started_at']} → {r['finished_at']} [{r['status']}]"
+              f" tables={r['tables']} rows={r['rows']} {r['detail'] or ''}")
+    print("== 隔离区(未处理)==")
+    q = landing.con.execute(
+        "SELECT object, COUNT(*) n FROM d2a_quarantine "
+        "WHERE source = ? AND resolved_at IS NULL GROUP BY object", (args.source,)).fetchall()
+    for r in q:
+        print(f"  {r['object']}: {r['n']} 行")
+    if not q:
+        print("  (空)")
+    return 0
+
+
+def _quarantine(args, ap) -> int:
+    landing = LandingStore(args.landing)
+    if args.action == "list":
+        where, params = "source = ? AND resolved_at IS NULL", [args.source]
+        if args.object:
+            where += " AND object = ?"
+            params.append(args.object)
+        rows = landing.con.execute(
+            f"SELECT id, object, keys_json, reason, created_at FROM d2a_quarantine "
+            f"WHERE {where} ORDER BY id", params).fetchall()
+        for r in rows:
+            print(f"  #{r['id']} [{r['object']}] {r['keys_json']}  {r['reason']}"
+                  f"  ({r['created_at']})")
+        print(f"共 {len(rows)} 行未处理")
+        return 0
+    # retry:修好源数据 / binding 后,重建完整数据集并自动发布(object 仅定位/审计)
+    if not args.object:
+        ap.error("quarantine retry 需要 --object")
+    from ...shared.metamodel.loader import load_pack as _load
+    pack = _load(args.templates)
+    tpl = next((o for o in pack.objects if o.object == args.object), None)
+    if tpl is None:
+        ap.error(f"未知对象 {args.object}")
+    result = build_dataset(landing, pack, args.source, auto_publish=True)
+    focus = next((r for r in result.results if r.object == args.object), None)
+    if result.outcome != "ok" or not result.published:
+        print(f"重试失败(数据集未发布):{result.error or result.reason_code or result.outcome}")
+        if focus is not None:
+            print(f"  焦点对象 {focus.object}: 映射 {focus.mapped} 行,"
+                  f" 隔离 {focus.quarantined} 行 [{focus.status}]")
+        return 1
+    mapped = focus.mapped if focus else 0
+    quarantined = focus.quarantined if focus else 0
+    print(f"重试完成:{args.object} 映射 {mapped} 行, 仍隔离 {quarantined} 行"
+          f" (dataset_version={result.dataset_version})")
+    return 0 if quarantined == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

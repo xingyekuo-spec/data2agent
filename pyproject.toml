@@ -32,10 +32,10 @@ include = ["data2agent*"]
 
 [tool.setuptools.package-data]
 data2agent = [
-  "admin_templates/*.html",
-  "admin_templates/static/*.js",
-  "middle_admin/templates/*.html",
-  "middle_admin/static/*.js",
+  "shared/admin_templates/*.html",
+  "shared/admin_templates/static/*.js",
+  "middle/admin/templates/*.html",
+  "middle/admin/static/*.js",
 ]
 
 [tool.pytest.ini_options]

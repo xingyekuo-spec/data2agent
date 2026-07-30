@@ -2,12 +2,12 @@ from pathlib import Path
 
 import yaml
 
-from data2agent.admin_common.auth_token import resolve_token
-from data2agent.admin_common.config_edit import (
+from data2agent.shared.admin.auth_token import resolve_token
+from data2agent.shared.admin.config_edit import (
     MIDDLE_EDITABLE,
     merge_whitelist_and_save,
 )
-from data2agent.admin_common.logs import tail_lines
+from data2agent.shared.admin.logs import tail_lines
 
 
 def test_merge_whitelist_preserves_secrets_and_backs_up(tmp_path):

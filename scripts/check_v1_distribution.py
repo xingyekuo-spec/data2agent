@@ -35,7 +35,7 @@ def check_fastapi_mount(dist: Path | None) -> list[str]:
     errors: list[str] = []
     try:
         from fastapi.testclient import TestClient
-        from data2agent.console.app import create_app
+        from data2agent.platform.console.app import create_app
     except Exception as e:  # pragma: no cover
         return [f"无法导入 create_app: {e}"]
 
