@@ -21,7 +21,7 @@
     <p class="hint">每张表最近批次的推送状态;点击行跳转到该表的推送明细。</p>
     <div class="toolbar">
       <label>状态
-        <select id="bt-status-filter" onchange="renderByTableFiltered()">
+        <select id="bt-status-filter" onchange="btResetAndRender()">
           <option value="">全部状态</option>
           <option value="completed">已推送完成</option>
           <option value="pushing">推送中</option>
@@ -29,15 +29,24 @@
         </select>
       </label>
       <label>源
-        <select id="bt-source-filter" onchange="renderByTableFiltered()">
+        <select id="bt-source-filter" onchange="btResetAndRender()">
           <option value="">全部源</option>
         </select>
       </label>
       <label>表名
         <input type="text" id="bt-name-filter" placeholder="模糊搜索"
-               oninput="renderByTableFiltered()">
+               oninput="btResetAndRender()">
       </label>
-      <span class="meta" id="bt-count" style="margin-left:auto"></span>
+      <label>每页
+        <select id="bt-limit" onchange="btResetAndRender()">
+          <option value="10" selected>10 张</option>
+          <option value="20">20 张</option>
+          <option value="50">50 张</option>
+        </select>
+      </label>
+      <span class="meta" id="bt-page-info" style="margin-left:auto"></span>
+      <button type="button" id="bt-prev-page" onclick="btGotoPage(-1)">‹ 上一页</button>
+      <button type="button" id="bt-next-page" onclick="btGotoPage(1)">下一页 ›</button>
     </div>
     <div id="by-table-list"><p class="meta">加载中…</p></div>
   </div>
@@ -86,6 +95,17 @@ function switchTab(name) {
 }
 
 var _byTableData = [];
+var _btPage = 1;
+
+function btResetAndRender() {
+  _btPage = 1;
+  renderByTableFiltered();
+}
+
+function btGotoPage(delta) {
+  _btPage = Math.max(1, _btPage + delta);
+  renderByTableFiltered();
+}
 
 function renderByTableFiltered() {
   var status = document.getElementById('bt-status-filter').value;
@@ -97,10 +117,17 @@ function renderByTableFiltered() {
     if (kw && t.table_name.toLowerCase().indexOf(kw) < 0) return false;
     return true;
   });
-  document.getElementById('bt-count').textContent =
-    list.length + ' / ' + _byTableData.length + ' 张表';
-  document.getElementById('by-table-list').innerHTML = list.length
-    ? renderByTable({ tables: list })
+  // 客户端分页(概览数据每表一行,已全量在前端)
+  var limit = parseInt(document.getElementById('bt-limit').value, 10);
+  var pages = Math.max(1, Math.ceil(list.length / limit));
+  if (_btPage > pages) _btPage = pages;
+  var pageRows = list.slice((_btPage - 1) * limit, _btPage * limit);
+  document.getElementById('bt-page-info').textContent =
+    '第 ' + _btPage + ' / ' + pages + ' 页 · 共 ' + list.length + ' 张表';
+  document.getElementById('bt-prev-page').disabled = _btPage <= 1;
+  document.getElementById('bt-next-page').disabled = _btPage >= pages;
+  document.getElementById('by-table-list').innerHTML = pageRows.length
+    ? renderByTable({ tables: pageRows })
     : '<p class="meta">无匹配的表,请调整筛选条件</p>';
 }
 
