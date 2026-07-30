@@ -1,0 +1,342 @@
+{% extends "layout.html" %}
+{% block title %}错误处理 — 中间机管理{% endblock %}
+{% block content %}
+<style>
+  .banner{background:#e8f4fd;border:1px solid #b6d9f5;color:#0b4a6f;border-radius:8px;
+          padding:12px 14px;margin-bottom:16px;font-size:13px;line-height:1.5}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  .chip{border:1px solid #d0d7de;border-radius:999px;padding:4px 12px;font-size:13px;
+        cursor:pointer;background:#fff;color:#51606f}
+  .chip.active{background:#12314f;color:#fff;border-color:#12314f}
+  .alert-card{background:#fff;border-radius:10px;padding:14px 18px;margin-bottom:12px;
+              box-shadow:0 1px 3px rgba(16,34,54,.08);border-left:4px solid #b42318}
+  .alert-card.cat-连接失败,.alert-card.cat-网络超时{border-left-color:#d97706}
+  .alert-card.cat-认证权限{border-left-color:#7c3aed}
+  .alert-card.cat-数据异常{border-left-color:#b42318}
+  .alert-card.cat-平台不可达{border-left-color:#1a56db}
+  .alert-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .alert-head h3{font-size:14px;margin:0;color:#12314f;flex:1}
+  .cat-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;
+             background:#fdecea;color:#b42318}
+  .cat-badge.cat-连接失败,.cat-badge.cat-网络超时{background:#fff8e6;color:#8a4b00}
+  .cat-badge.cat-认证权限{background:#f3e8fd;color:#7c3aed}
+  .cat-badge.cat-平台不可达{background:#e6f0fa;color:#1a56db}
+  .alert-detail{font-size:13px;color:#51606f;margin:8px 0;line-height:1.6}
+  .alert-detail .err-text{color:#b42318;font-size:12px}
+  .alert-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .alert-actions button{font-size:12px;padding:5px 12px}
+  .btn-ghost{background:#fff;color:#12314f;border:1px solid #d0d7de}
+  .btn-ghost:hover{background:#f6f8fa}
+  .streak{font-size:12px;color:#b42318;font-weight:600}
+  .handled-note{font-size:12px;color:#1e7e34}
+  details.handled{margin-top:6px}
+  details.handled summary{cursor:pointer;font-size:13px;color:#51606f}
+  .preview-tag{font-size:11px;color:#8a4b00;background:#fff8e6;border-radius:4px;padding:1px 6px}
+</style>
+
+<div class="banner">
+  <b>方案预览</b> — 本页用于验证错误处理机制设计:告警数据来自真实运行/推送记录;
+  错误分类与连续失败轮数为前端实时计算;「认领 / 静默」暂存于本浏览器;
+  「重试失败的表 / 立即重推」为方案预览(正式后端动作待评估后落地)。
+</div>
+
+<div class="card">
+  <div class="chips" id="cat-chips"></div>
+  <div id="alerts-list"><p class="meta">加载告警中…</p></div>
+  <details class="handled" id="handled-wrap" style="display:none">
+    <summary id="handled-summary">已处理(认领/静默)</summary>
+    <div id="handled-list" style="margin-top:10px"></div>
+  </details>
+</div>
+
+<!-- 动作说明弹窗 -->
+<div id="action-overlay" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeAction()">
+  <div class="modal-card" style="max-width:560px">
+    <div class="modal-header">
+      <h2 id="action-title">动作预览</h2>
+      <button class="modal-close" onclick="closeAction()">&times;</button>
+    </div>
+    <div id="action-body"></div>
+  </div>
+</div>
+
+<script>
+var _alerts = [];
+var _catFilter = '';
+var _actions = {};  // alertKey -> {action:'ack'|'snooze', at:ms}
+
+// ---- 本地动作存储(方案预览:验证认领/静默交互) ----
+function loadActions() {
+  try { _actions = JSON.parse(localStorage.getItem('d2a_error_actions') || '{}'); }
+  catch (e) { _actions = {}; }
+  // 静默 24h 过期
+  var now = Date.now();
+  Object.keys(_actions).forEach(function (k) {
+    var a = _actions[k];
+    if (a.action === 'snooze' && now - a.at > 24 * 3600 * 1000) delete _actions[k];
+  });
+}
+function saveActions() {
+  try { localStorage.setItem('d2a_error_actions', JSON.stringify(_actions)); } catch (e) {}
+}
+
+// ---- 错误分类(前端启发式,验证分类规则) ----
+function classify(text) {
+  var t = (text || '').toLowerCase();
+  if (/白名单|whitelist|权限|denied|拒绝|readonly|只读/.test(t)) return '认证权限';
+  if (/超时|timeout|timed out/.test(t)) return '网络超时';
+  if (/连接|connect|odbc|网络|unreachable|econn/.test(t)) return '连接失败';
+  if (/推送|503|502|平台|ingest/.test(t)) return '平台不可达';
+  if (/水位|运行键|null|唯一|duplicate|列不存在|结构/.test(t)) return '数据异常';
+  return '其他';
+}
+
+// ---- 告警组装 ----
+function alertKey(a) { return a.source + '|' + (a.table || '-') + '|' + a.category; }
+
+function buildAlerts(runsData, failedStepsByRun, pushTables) {
+  var alerts = [];
+  // 1) 推送失败(按表)
+  (pushTables || []).forEach(function (t) {
+    if (t.status !== 'failed') return;
+    alerts.push({
+      kind: 'push', source: t.source, table: t.table_name,
+      category: '平台不可达',
+      title: '表 ' + t.table_name + ' 推送至平台失败',
+      detail: '最近批次含 ' + t.steps_failed + ' 个失败步骤;水位未前进,下一轮会自动补推。',
+      streak: null, last_at: t.last_at,
+      actions: ['repush', 'ack', 'snooze'],
+    });
+  });
+  // 2) 运行失败(按表聚合连续轮数)
+  var byTable = {};
+  (runsData.runs || []).forEach(function (r) {
+    if (r.status !== 'failed') return;
+    var steps = failedStepsByRun[r.id] || [];
+    steps.forEach(function (s) {
+      var key = r.source + '|' + s.target;
+      if (!byTable[key]) byTable[key] = { source: r.source, table: s.target, runs: [], error: s.error };
+      byTable[key].runs.push(r.id);
+      if (s.error) byTable[key].error = s.error;
+    });
+  });
+  Object.keys(byTable).forEach(function (key) {
+    var a = byTable[key];
+    alerts.push({
+      kind: 'extract', source: a.source, table: a.table,
+      category: classify(a.error),
+      title: '表 ' + a.table + ' 抽取连续失败',
+      detail: null, errText: a.error,
+      streak: a.runs.length,
+      last_at: null,
+      actions: ['retry-tables', 'ack', 'snooze'],
+    });
+  });
+  // 3) 源级运行失败(无表级步骤信息的整轮失败)
+  (runsData.runs || []).forEach(function (r) {
+    if (r.status !== 'failed') return;
+    var steps = failedStepsByRun[r.id];
+    if (steps && steps.length) return;  // 已有表级告警
+    alerts.push({
+      kind: 'run', source: r.source, table: null,
+      category: classify(r.detail),
+      title: '源 ' + r.source + ' 运行 #' + r.id + ' 失败',
+      detail: null, errText: r.detail,
+      streak: null, last_at: r.started_at,
+      actions: ['retry-run', 'ack', 'snooze'],
+    });
+  });
+  return alerts;
+}
+
+// ---- 渲染 ----
+var CATS = ['全部', '连接失败', '网络超时', '认证权限', '数据异常', '平台不可达', '其他'];
+
+function renderChips() {
+  var counts = {};
+  _alerts.forEach(function (a) {
+    if (_actions[alertKey(a)]) return;
+    counts[a.category] = (counts[a.category] || 0) + 1;
+  });
+  var total = Object.values(counts).reduce(function (x, y) { return x + y; }, 0);
+  var html = '';
+  CATS.forEach(function (c) {
+    var n = c === '全部' ? total : (counts[c] || 0);
+    if (c !== '全部' && !n) return;
+    var active = (_catFilter === c || (c === '全部' && !_catFilter)) ? ' active' : '';
+    html += '<span class="chip' + active + '" onclick="setCatFilter(\'' + (c === '全部' ? '' : c) + '\')">' + c + ' ' + n + '</span>';
+  });
+  document.getElementById('cat-chips').innerHTML = html || '<span class="meta">无告警</span>';
+}
+
+function setCatFilter(c) { _catFilter = c; renderAll(); }
+
+var ACTION_LABELS = {
+  'retry-tables': '重试失败的表',
+  'retry-run': '重试该运行',
+  'repush': '立即重推',
+  'ack': '认领',
+  'snooze': '静默 24h',
+};
+var PREVIEW_ACTIONS = { 'retry-tables': 1, 'retry-run': 1, 'repush': 1 };
+
+function renderAlert(a, handled) {
+  var key = alertKey(a);
+  var act = _actions[key];
+  var html = '<div class="alert-card cat-' + a.category + '">';
+  html += '<div class="alert-head">';
+  html += '<span class="cat-badge cat-' + a.category + '">' + a.category + '</span>';
+  html += '<h3>' + esc(a.title) + '</h3>';
+  if (a.streak && a.streak > 1) html += '<span class="streak">连续 ' + a.streak + ' 轮失败</span>';
+  html += '</div>';
+  html += '<div class="alert-detail">';
+  html += '源 ' + esc(a.source) + (a.last_at ? ' · 最近 ' + fmtTime(a.last_at) : '');
+  if (a.detail) html += '<br>' + esc(a.detail);
+  if (a.errText) html += '<br><span class="err-text">' + esc(a.errText) + '</span>';
+  html += '</div>';
+  if (handled && act) {
+    html += '<p class="handled-note">' + (act.action === 'ack' ? '✓ 已认领' : '🔕 已静默') +
+            ' · ' + fmtTime(new Date(act.at).toISOString()) +
+            ' · <a href="javascript:void(0)" onclick="undoAction(\'' + key + '\')">撤销</a></p>';
+  } else {
+    html += '<div class="alert-actions">';
+    a.actions.forEach(function (ac) {
+      var preview = PREVIEW_ACTIONS[ac] ? ' <span class="preview-tag">方案预览</span>' : '';
+      html += '<button class="btn-ghost" onclick="doAction(\'' + key + '\',\'' + ac + '\')">' +
+              ACTION_LABELS[ac] + preview + '</button>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+function renderAll() {
+  renderChips();
+  var open = _alerts.filter(function (a) {
+    if (_actions[alertKey(a)]) return false;
+    return !_catFilter || a.category === _catFilter;
+  });
+  document.getElementById('alerts-list').innerHTML = open.length
+    ? open.map(function (a) { return renderAlert(a, false); }).join('')
+    : '<p class="meta">当前无未处理告警 ✅</p>';
+  var handled = _alerts.filter(function (a) { return !!_actions[alertKey(a)]; });
+  document.getElementById('handled-wrap').style.display = handled.length ? '' : 'none';
+  document.getElementById('handled-summary').textContent = '已处理(认领/静默)· ' + handled.length;
+  document.getElementById('handled-list').innerHTML =
+    handled.map(function (a) { return renderAlert(a, true); }).join('');
+}
+
+// ---- 动作 ----
+function findAlert(key) {
+  for (var i = 0; i < _alerts.length; i++) if (alertKey(_alerts[i]) === key) return _alerts[i];
+  return null;
+}
+
+function doAction(key, action) {
+  var a = findAlert(key);
+  if (action === 'ack' || action === 'snooze') {
+    _actions[key] = { action: action, at: Date.now() };
+    saveActions();
+    renderAll();
+    return;
+  }
+  // 方案预览动作:说明正式行为,并提供当前可用的真实替代
+  var plans = {
+    'retry-tables': {
+      title: '重试失败的表(方案预览)',
+      body: '<p>正式方案:按运行中标记为失败的表<b>定向重抽</b>(其余表不重跑),后端将新增 ' +
+            '<code>POST /api/runs/{id}/retry-failed</code>。</p>' +
+            '<p>当前可用替代:立即触发一次完整同步(幂等,水位保证安全)。</p>',
+      fallback: '立即触发同步',
+    },
+    'retry-run': {
+      title: '重试该运行(方案预览)',
+      body: '<p>正式方案:以相同范围重新执行该运行。</p>' +
+            '<p>当前可用替代:立即触发一次完整同步(幂等)。</p>',
+      fallback: '立即触发同步',
+    },
+    'repush': {
+      title: '立即重推(方案预览)',
+      body: '<p>正式方案:对失败的推送批次立即重推,不等下一轮调度;后端将记录真实 retry_count。</p>' +
+            '<p>当前机制:水位未前进,<b>下一轮同步会自动补推</b>;也可立即触发同步加速。</p>',
+      fallback: '立即触发同步',
+    },
+  };
+  var plan = plans[action];
+  document.getElementById('action-title').textContent = plan.title;
+  document.getElementById('action-body').innerHTML = plan.body +
+    '<div class="alert-actions" style="margin-top:16px">' +
+    '<button onclick="runFallback(\'' + key + '\')">' + plan.fallback + '</button>' +
+    '<button class="btn-ghost" onclick="closeAction()">仅查看,不执行</button></div>';
+  document.getElementById('action-overlay').style.display = 'flex';
+}
+
+function runFallback(key) {
+  var a = findAlert(key);
+  closeAction();
+  fetch('/api/actions/trigger', {
+    method: 'POST', headers: authHeaders(),
+    body: JSON.stringify({ action: 'sync', source: a ? a.source : null })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (body) {
+      if (body.status === 'started') {
+        location.href = '/runs?watch=' + body.run_id;
+      } else {
+        alert(formatApiError(body, '触发失败'));
+      }
+    })
+    .catch(function (e) { alert('请求失败: ' + e.message); });
+}
+
+function undoAction(key) {
+  delete _actions[key];
+  saveActions();
+  renderAll();
+}
+
+function closeAction() {
+  document.getElementById('action-overlay').style.display = 'none';
+}
+
+// ---- 数据加载 ----
+function loadAlerts() {
+  loadActions();
+  fetch('/api/runs?limit=50', { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (runsData) {
+      var failedRuns = (runsData.runs || []).filter(function (r) { return r.status === 'failed'; }).slice(0, 10);
+      var stepFetches = failedRuns.map(function (r) {
+        return fetch('/api/runs/' + r.id, { headers: authHeaders() })
+          .then(function (x) { return x.json(); })
+          .then(function (d) {
+            return {
+              id: r.id,
+              failed: (d.steps || []).filter(function (s) { return s.status === 'failed'; }),
+            };
+          })
+          .catch(function () { return { id: r.id, failed: [] }; });
+      });
+      return Promise.all(stepFetches).then(function (stepsList) {
+        var byRun = {};
+        stepsList.forEach(function (s) { byRun[s.id] = s.failed; });
+        return { runsData: runsData, byRun: byRun };
+      });
+    })
+    .then(function (ctx) {
+      return fetch('/api/push-logs/by-table', { headers: authHeaders() })
+        .then(function (r) { return r.json(); })
+        .then(function (push) {
+          _alerts = buildAlerts(ctx.runsData, ctx.byRun, push.tables || []);
+          renderAll();
+        });
+    })
+    .catch(function () {
+      document.getElementById('alerts-list').innerHTML = '<p class="meta">告警加载失败</p>';
+    });
+}
+
+loadAlerts();
+</script>
+{% endblock %}
