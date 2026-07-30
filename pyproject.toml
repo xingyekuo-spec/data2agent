@@ -13,7 +13,7 @@ dependencies = [
 [project.optional-dependencies]
 connect = ["pyodbc>=5.1", "apscheduler>=3.10"]
 postgres = ["psycopg[binary]>=3.1"]            # 落地库改用 PostgreSQL 时(后续切片,当前 SQLite 不需要)
-mcp = ["mcp>=1.0"]
+mcp = ["mcp>=1.0,<2.0"]  # 2.0 起 FastMCP 拆出为独立包,mcp.server.fastmcp 已移除
 console = ["fastapi>=0.110", "uvicorn>=0.29"]
 middle_admin = ["fastapi>=0.110", "uvicorn>=0.29", "jinja2>=3.0"]
 ingest = ["fastapi>=0.110", "uvicorn>=0.29"]   # 平台侧接收端(Pattern A)
