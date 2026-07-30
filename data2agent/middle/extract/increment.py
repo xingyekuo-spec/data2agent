@@ -142,6 +142,14 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
             rows = batches = 0
             max_wm = high_water
             interrupted = False
+            # 同步前预估行数(进度分母);预估失败不阻断同步,页面退化为仅行数
+            try:
+                expect_since = since if strategy == "increment" else (
+                    high_water if strategy == "resume" else None)
+                expected = adapter.count_for_sync(info, wm_col, expect_since)
+                landing.update_step(current_step, expected_rows=expected)
+            except Exception:
+                pass
             try:
                 for batch in adapter.read_increment(
                     info, since=since, watermark_col=wm_col, resume_after=resume_after,

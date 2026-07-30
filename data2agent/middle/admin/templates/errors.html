@@ -36,7 +36,7 @@
 
 <div class="banner">
   <b>方案预览</b> — 本页用于验证错误处理机制设计:告警数据来自真实运行/推送记录;
-  错误分类与连续失败轮数为前端实时计算;「认领 / 静默」暂存于本浏览器;
+  错误分类与连续失败轮数为前端实时计算;「静默」暂存于本浏览器;
   「重试失败的表 / 立即重推」为方案预览(正式后端动作待评估后落地)。
 </div>
 
@@ -44,7 +44,7 @@
   <div class="chips" id="cat-chips"></div>
   <div id="alerts-list"><p class="meta">加载告警中…</p></div>
   <details class="handled" id="handled-wrap" style="display:none">
-    <summary id="handled-summary">已处理(认领/静默)</summary>
+    <summary id="handled-summary">已处理(静默)</summary>
     <div id="handled-list" style="margin-top:10px"></div>
   </details>
 </div>
@@ -63,9 +63,9 @@
 <script>
 var _alerts = [];
 var _catFilter = '';
-var _actions = {};  // alertKey -> {action:'ack'|'snooze', at:ms}
+var _actions = {};  // alertKey -> {action:'snooze', at:ms}
 
-// ---- 本地动作存储(方案预览:验证认领/静默交互) ----
+// ---- 本地动作存储(方案预览:验证静默交互) ----
 function loadActions() {
   try { _actions = JSON.parse(localStorage.getItem('d2a_error_actions') || '{}'); }
   catch (e) { _actions = {}; }
@@ -105,7 +105,7 @@ function buildAlerts(runsData, failedStepsByRun, pushTables) {
       title: '表 ' + t.table_name + ' 推送至平台失败',
       detail: '最近批次含 ' + t.steps_failed + ' 个失败步骤;水位未前进,下一轮会自动补推。',
       streak: null, last_at: t.last_at,
-      actions: ['repush', 'ack', 'snooze'],
+      actions: ['repush', 'snooze'],
     });
   });
   // 2) 运行失败(按表聚合连续轮数)
@@ -129,7 +129,7 @@ function buildAlerts(runsData, failedStepsByRun, pushTables) {
       detail: null, errText: a.error,
       streak: a.runs.length,
       last_at: null,
-      actions: ['retry-tables', 'ack', 'snooze'],
+      actions: ['retry-tables', 'snooze'],
     });
   });
   // 3) 源级运行失败(无表级步骤信息的整轮失败)
@@ -143,7 +143,7 @@ function buildAlerts(runsData, failedStepsByRun, pushTables) {
       title: '源 ' + r.source + ' 运行 #' + r.id + ' 失败',
       detail: null, errText: r.detail,
       streak: null, last_at: r.started_at,
-      actions: ['retry-run', 'ack', 'snooze'],
+      actions: ['retry-run', 'snooze'],
     });
   });
   return alerts;
@@ -175,7 +175,6 @@ var ACTION_LABELS = {
   'retry-tables': '重试失败的表',
   'retry-run': '重试该运行',
   'repush': '立即重推',
-  'ack': '认领',
   'snooze': '静默 24h',
 };
 var PREVIEW_ACTIONS = { 'retry-tables': 1, 'retry-run': 1, 'repush': 1 };
@@ -195,7 +194,7 @@ function renderAlert(a, handled) {
   if (a.errText) html += '<br><span class="err-text">' + esc(a.errText) + '</span>';
   html += '</div>';
   if (handled && act) {
-    html += '<p class="handled-note">' + (act.action === 'ack' ? '✓ 已认领' : '🔕 已静默') +
+    html += '<p class="handled-note">' + '🔕 已静默' +
             ' · ' + fmtTime(new Date(act.at).toISOString()) +
             ' · <a href="javascript:void(0)" onclick="undoAction(\'' + key + '\')">撤销</a></p>';
   } else {
@@ -222,7 +221,7 @@ function renderAll() {
     : '<p class="meta">当前无未处理告警 ✅</p>';
   var handled = _alerts.filter(function (a) { return !!_actions[alertKey(a)]; });
   document.getElementById('handled-wrap').style.display = handled.length ? '' : 'none';
-  document.getElementById('handled-summary').textContent = '已处理(认领/静默)· ' + handled.length;
+  document.getElementById('handled-summary').textContent = '已处理(静默)· ' + handled.length;
   document.getElementById('handled-list').innerHTML =
     handled.map(function (a) { return renderAlert(a, true); }).join('');
 }
@@ -235,7 +234,7 @@ function findAlert(key) {
 
 function doAction(key, action) {
   var a = findAlert(key);
-  if (action === 'ack' || action === 'snooze') {
+  if (action === 'snooze') {
     _actions[key] = { action: action, at: Date.now() };
     saveActions();
     renderAll();

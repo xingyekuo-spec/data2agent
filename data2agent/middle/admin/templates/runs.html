@@ -71,14 +71,31 @@ function renderRuns(data) {
   return html;
 }
 
+function renderProgress(s) {
+  // 有预估行数:进度条 + x/y (百分比);无预估(旧运行/预估失败):退化显示行数
+  if (s.expected_rows === null || s.expected_rows === undefined) {
+    var rowsOut = (s.rows_out !== null && s.rows_out !== undefined) ? s.rows_out : '—';
+    return '<span class="meta">' + rowsOut + ' 行</span>';
+  }
+  var done = s.rows_out || 0;
+  var pct = s.expected_rows > 0
+    ? Math.min(100, Math.round(done / s.expected_rows * 100))
+    : (s.status === 'ok' ? 100 : 0);
+  var color = s.status === 'failed' ? '#b42318' : '#1a56db';
+  return '<div style="min-width:140px">' +
+    '<div class="progress-bar" style="width:120px;display:inline-block;vertical-align:middle">' +
+    '<div class="progress-bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' +
+    '<span class="meta" style="margin-left:6px">' + done + '/' + s.expected_rows +
+    ' (' + pct + '%)</span></div>';
+}
+
 function renderSteps(steps) {
   if (!steps || !steps.length) return '<p class="meta">无步骤记录</p>';
   var html = '<table class="data" style="margin:0 12px;width:calc(100% - 24px)"><thead><tr>' +
-    '<th>#</th><th>目标</th><th>状态</th><th>行数</th><th>批次</th><th>最后进度</th>' +
+    '<th>#</th><th>目标</th><th>状态</th><th>进度</th><th>批次</th><th>最后进度</th>' +
     '</tr></thead><tbody>';
   steps.forEach(function (s, i) {
     var hasProgress = s.batches !== null && s.batches !== undefined;
-    var rowsOut = (s.rows_out !== null && s.rows_out !== undefined) ? s.rows_out : (hasProgress ? 0 : '—');
     var batches = hasProgress ? s.batches : '—';
     var progressTime = s.progressed_at
       ? fmtTime(s.progressed_at)
@@ -87,7 +104,7 @@ function renderSteps(steps) {
             : (s.status === 'running' ? '等待首批完成…' : '历史运行未记录批次进度')));
     html += '<tr><td>' + (s.ordinal || i + 1) + '</td><td>' + esc(s.target) + '</td>' +
       '<td>' + badge(s.status) + '</td>' +
-      '<td>' + rowsOut + '</td>' +
+      '<td>' + renderProgress(s) + '</td>' +
       '<td>' + batches + '</td>' +
       '<td>' + progressTime + '</td></tr>';
     if (s.status === 'running' && s.rows_out === null && s.rows_out !== 0) {

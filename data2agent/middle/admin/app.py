@@ -1177,6 +1177,7 @@ def create_app(
             "batch_id": s["batch_id"],
             "rows_in": s["rows_in"], "rows_out": s["rows_out"],
             "batches": s["batches"], "progressed_at": s["progressed_at"],
+            "expected_rows": s["expected_rows"],
             "watermark_before": s["watermark_before"],
             "watermark_after": s["watermark_after"],
             "error": s["error"],

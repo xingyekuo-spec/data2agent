@@ -54,6 +54,46 @@ def test_watermarks_from_pack(pack):
     assert "CURRENCY" not in wms, "未声明水位的维表应走 full_refresh"
 
 
+def test_sync_records_expected_rows_for_progress(pack, source_db, landing):
+    """同步前预估行数写入步骤:增量表按水位口径,full_refresh 表为整表行数。"""
+    report = _sync(source_db, pack, landing, run_id=landing.start_run(SOURCE, "sync"))
+    assert report.total_rows > 0
+    steps = landing.steps_for_run(report.run_id)
+    assert steps, "应记录表级步骤"
+    src = sqlite3.connect(source_db)
+    try:
+        for s in steps:
+            assert s["expected_rows"] is not None, f"{s['target']} 缺预估行数"
+            wm_col = {"CUSTOMER", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"}
+            if s["target"] in wm_col:
+                # 首轮增量 = 全表扫描,预估 = 整表行数
+                (want,) = src.execute(
+                    f'SELECT COUNT(*) FROM "{s["target"]}"').fetchone()
+            else:
+                (want,) = src.execute(
+                    f'SELECT COUNT(*) FROM "{s["target"]}"').fetchone()
+            assert s["expected_rows"] == want
+            assert s["rows_out"] == s["expected_rows"], "完成后进度应为 100%"
+    finally:
+        src.close()
+
+
+def test_count_for_sync_increment_filter(pack, source_db):
+    """增量预估带水位过滤:COUNT(WHERE wm >= since) 与读取同口径。"""
+    adapter = _adapter(source_db, pack)
+    info = adapter.table_info("CUSTOMER")
+    total = adapter.count_for_sync(info, WM)
+    (all_rows,) = sqlite3.connect(source_db).execute(
+        'SELECT COUNT(*) FROM "CUSTOMER"').fetchone()
+    assert total == all_rows
+    since = "2026-07-05"
+    est = adapter.count_for_sync(info, WM, since)
+    (want,) = sqlite3.connect(source_db).execute(
+        'SELECT COUNT(*) FROM "CUSTOMER" WHERE LAST_MODIFIED_DATE >= ?',
+        (since,)).fetchone()
+    assert est == want
+
+
 def test_subtract_lookback():
     assert subtract_lookback("2026-07-10 08:30:00", 3) == "2026-07-07 08:30:00"
     assert subtract_lookback("2026-07-10", 3) == "2026-07-07"

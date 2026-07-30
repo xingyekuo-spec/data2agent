@@ -789,6 +789,10 @@ class LandingStore:
         if "progressed_at" not in step_cols:
             self.con.execute(
                 "ALTER TABLE d2a_run_step ADD COLUMN progressed_at TEXT")
+        if "expected_rows" not in step_cols:
+            # 同步前预估行数(COUNT 查询);NULL=旧运行或未预估,页面退化显示行数
+            self.con.execute(
+                "ALTER TABLE d2a_run_step ADD COLUMN expected_rows INTEGER")
         # v0.3:数据集冻结对象清单与模板快照;旧库缺列则补上。
         ds_cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_dataset_version)")}
         if "object_manifest" not in ds_cols:
@@ -1663,7 +1667,8 @@ class LandingStore:
         """
         allowed = {"status", "finished_at", "batch_id", "rows_in", "rows_out",
                    "quarantined", "repaired", "soft_deleted", "watermark_before",
-                   "watermark_after", "error", "error_id", "batches", "progressed_at"}
+                   "watermark_after", "error", "error_id", "batches", "progressed_at",
+                   "expected_rows"}
         fields = {k: v for k, v in fields.items() if k in allowed}
         if not fields:
             return

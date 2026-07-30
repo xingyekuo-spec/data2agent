@@ -182,6 +182,24 @@ class SourceAdapter(ABC):
         (row,) = self._audited_fetch(sql, action="reconcile")
         return row["c"]
 
+    def count_for_sync(self, table: TableInfo, watermark_col: str | None,
+                       since=None) -> int:
+        """同步前预估行数(进度百分比分母)。
+
+        - 无水位表 / since=None:整表 COUNT(首轮全量、full_refresh);
+        - 增量:COUNT(WHERE wm >= since),与读取同口径(含回看边界);
+        - resume 续传:传高水位值即可,会略高估(含该水位已完成行),
+          进度只作参考,不影响数据正确性。
+        """
+        self._check_table(table.name)
+        if watermark_col is None or since is None:
+            return self.table_count(table)
+        wm = self._quote(watermark_col)
+        sql = (f"SELECT COUNT(*) AS c FROM {self._quote(table.name)} "
+               f"WHERE {wm} >= ?")
+        (row,) = self._audited_fetch(sql, (since,), action="count_estimate")
+        return row["c"]
+
     def _increment_sql(self, table: TableInfo, watermark_col: str,
                        *, resume: bool, filtered: bool, bounded: bool = False) -> str:
         """水位增量 SELECT(keyset,支持复合运行键),占位符按 qmark。
