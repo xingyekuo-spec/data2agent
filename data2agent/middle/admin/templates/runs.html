@@ -4,7 +4,7 @@
 <div class="card">
   <p class="layer">运行历史</p>
   <h2>同步运行</h2>
-  <p class="hint">点击行展开逐表步骤;存在运行中的运行时,每 2 秒自动刷新进度。</p>
+  <p class="hint">点击「详情」查看该运行的逐表步骤;存在运行中的运行时,弹窗每 2 秒自动刷新进度。</p>
   <div class="toolbar">
     <label>源
       <select id="source-filter" onchange="resetAndLoad()">
@@ -26,10 +26,20 @@
   <div id="runs-list"><p class="meta">加载中…</p></div>
 </div>
 
+<!-- 运行详情弹窗 -->
+<div id="run-detail-overlay" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeRunDetail()">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h2 id="run-detail-title">运行详情</h2>
+      <button class="modal-close" onclick="closeRunDetail()">&times;</button>
+    </div>
+    <div id="run-detail-body"><p class="meta">加载中…</p></div>
+  </div>
+</div>
+
 <script>
 var _watchTimer = null;
 var _activeRunId = null;
-var _stepsCache = {};
 var _page = 1;
 var _knownSources = {};
 
@@ -55,17 +65,19 @@ function updatePager(total, limit) {
 function renderRuns(data) {
   if (!data.runs || !data.runs.length) return '<p class="meta">暂无运行记录</p>';
   var html = '<table class="data"><thead><tr>' +
-    '<th>ID</th><th>源</th><th>状态</th><th>开始</th><th>表数</th><th>行数</th><th>耗时</th>' +
+    '<th>ID</th><th>源</th><th>状态</th><th>开始</th><th>表数</th><th>行数</th><th>耗时</th><th>操作</th>' +
     '</tr></thead><tbody>';
   data.runs.forEach(function (r) {
     var duration = r.finished_at && r.started_at
       ? ((new Date(r.finished_at) - new Date(r.started_at)) / 1000).toFixed(0) + 's'
       : '—';
-    html += '<tr class="run-row" onclick="toggleSteps(' + r.id + ')">';
+    html += '<tr>';
     html += '<td>#' + r.id + '</td><td>' + esc(r.source) + '</td><td>' + badge(r.status) + '</td>';
     html += '<td>' + fmtTime(r.started_at) + '</td><td>' + (r.tables || 0) + '</td>';
-    html += '<td>' + (r.rows || 0) + '</td><td>' + duration + '</td></tr>';
-    html += '<tr class="steps-panel" id="steps-' + r.id + '"><td colspan="7"><p class="meta">加载步骤中…</p></td></tr>';
+    html += '<td>' + (r.rows || 0) + '</td><td>' + duration + '</td>';
+    html += '<td><button type="button" class="btn-ghost" style="font-size:12px;padding:4px 10px" ' +
+            'onclick="openRunDetail(' + r.id + ')">详情</button></td>';
+    html += '</tr>';
   });
   html += '</tbody></table>';
   return html;
@@ -118,64 +130,67 @@ function renderSteps(steps) {
   return html;
 }
 
-function toggleSteps(runId) {
-  var panel = document.getElementById('steps-' + runId);
-  if (!panel) return;
-  if (panel.classList.contains('open')) {
-    panel.classList.remove('open');
-    return;
+function renderRunInfo(run) {
+  var duration = run.finished_at && run.started_at
+    ? ((new Date(run.finished_at) - new Date(run.started_at)) / 1000).toFixed(0) + 's'
+    : '—';
+  var html = '<div class="src-kv" style="margin-bottom:10px">';
+  html += '<span>源 <b>' + esc(run.source) + '</b></span>';
+  html += '<span>状态 <b>' + badge(run.status) + '</b></span>';
+  html += '<span>表数 <b>' + (run.tables || 0) + '</b></span>';
+  html += '<span>行数 <b>' + (run.rows || 0) + '</b></span>';
+  html += '<span>开始 <b>' + fmtTime(run.started_at) + '</b></span>';
+  html += '<span>耗时 <b>' + duration + '</b></span>';
+  html += '</div>';
+  if (run.detail) {
+    html += '<p class="meta" style="color:#b42318;margin:0 0 10px">' + esc(run.detail) + '</p>';
   }
-  panel.classList.add('open');
-  if (_stepsCache[runId]) {
-    panel.innerHTML = '<td colspan="7">' + renderSteps(_stepsCache[runId]) + '</td>';
-  } else {
-    loadSteps(runId);
-  }
+  return html;
 }
 
-function loadSteps(runId) {
+function renderRunDetail(data) {
+  return renderRunInfo(data.run || {}) + renderSteps(data.steps || []);
+}
+
+function openRunDetail(runId) {
+  _activeRunId = runId;
+  document.getElementById('run-detail-overlay').style.display = 'flex';
+  document.getElementById('run-detail-title').textContent = '运行 #' + runId;
+  document.getElementById('run-detail-body').innerHTML = '<p class="meta">加载中…</p>';
   fetch('/api/runs/' + runId, { headers: authHeaders() })
     .then(function (r) { return r.json(); })
     .then(function (data) {
-      _stepsCache[runId] = data.steps || [];
-      var panel = document.getElementById('steps-' + runId);
-      if (panel) panel.innerHTML = '<td colspan="7">' + renderSteps(data.steps || []) + '</td>';
+      if (_activeRunId !== runId) return;
+      document.getElementById('run-detail-body').innerHTML = renderRunDetail(data);
+      // 运行中:弹窗内 2s 轮询进度
+      if (data.run && data.run.status === 'running') startPolling(runId);
     })
     .catch(function () {
-      var panel = document.getElementById('steps-' + runId);
-      if (panel) panel.innerHTML = '<td colspan="7"><p class="meta">步骤加载失败</p></td>';
+      document.getElementById('run-detail-body').innerHTML = '<p class="meta">详情加载失败</p>';
     });
 }
 
-function watchRun(runId) {
-  _activeRunId = runId;
-  _stepsCache[runId] = null;
-  function poll() {
-    if (_activeRunId !== runId) return;
+function startPolling(runId) {
+  if (_watchTimer) clearInterval(_watchTimer);
+  _watchTimer = setInterval(function () {
+    if (_activeRunId !== runId) { stopWatch(); return; }
     fetch('/api/runs/' + runId, { headers: authHeaders() })
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (_activeRunId !== runId) return;
-        _stepsCache[runId] = data.steps || [];
-        var panel = document.getElementById('steps-' + runId);
-        if (panel) {
-          panel.classList.add('open');
-          panel.innerHTML = '<td colspan="7">' + renderSteps(data.steps || []) + '</td>';
-        }
-        var run = data.run;
-        if (run && run.status !== 'running') {
+        document.getElementById('run-detail-body').innerHTML = renderRunDetail(data);
+        if (data.run && data.run.status !== 'running') {
           stopWatch();
           loadRuns();
         }
       })
       .catch(function () { /* 忽略网络错误,下次重试 */ });
-  }
-  poll();
-  if (_watchTimer) clearInterval(_watchTimer);
-  _watchTimer = setInterval(function () {
-    if (_activeRunId !== runId) { stopWatch(); return; }
-    poll();
   }, 2000);
+}
+
+function closeRunDetail() {
+  document.getElementById('run-detail-overlay').style.display = 'none';
+  stopWatch();
 }
 
 function stopWatch() {
@@ -201,29 +216,25 @@ function loadRuns() {
       Object.keys(_knownSources).sort().forEach(function (s) {
         sel.innerHTML += '<option value="' + esc(s) + '"' + (s === current ? ' selected' : '') + '>' + esc(s) + '</option>';
       });
-      // 有 running 的运行时自动跟踪进度
+      // 有 running 的运行时自动打开详情弹窗跟踪进度
       var running = null;
       (data.runs || []).forEach(function (r) {
         if (!running && r.status === 'running') running = r;
       });
-      if (running && _activeRunId !== running.id) watchRun(running.id);
+      if (running && _activeRunId !== running.id) openRunDetail(running.id);
     })
     .catch(function () {
       document.getElementById('runs-list').innerHTML = '<p class="meta">加载失败</p>';
     });
 }
 
-// 供状态页触发后跳转:?watch=<run_id> 直接展开并跟踪该运行
+// 供状态页触发后跳转:?watch=<run_id> 直接打开详情弹窗并跟踪
 (function () {
   var m = location.search.match(/[?&]watch=(\d+)/);
   loadRuns();
   if (m) {
     var runId = parseInt(m[1], 10);
-    setTimeout(function () {
-      var panel = document.getElementById('steps-' + runId);
-      if (panel) { panel.classList.add('open'); }
-      watchRun(runId);
-    }, 400);
+    setTimeout(function () { openRunDetail(runId); }, 400);
   }
 })();
 </script>
