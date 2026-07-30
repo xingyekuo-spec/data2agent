@@ -36,6 +36,19 @@ ADMIN_STARTUP_TIMEOUT = 180.0
 
 
 def _msg(title: str, text: str, error: bool = False) -> None:
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            MB_OK = 0x00000000
+            MB_ICONERROR = 0x00000010
+            MB_ICONINFORMATION = 0x00000040
+            MB_TOPMOST = 0x00040000
+            flags = MB_OK | MB_TOPMOST | (MB_ICONERROR if error else MB_ICONINFORMATION)
+            ctypes.windll.user32.MessageBoxW(None, text, title, flags)  # type: ignore[attr-defined]
+            return
+        except Exception:
+            pass
     try:
         import tkinter as tk
         from tkinter import messagebox
@@ -50,6 +63,18 @@ def _msg(title: str, text: str, error: bool = False) -> None:
         root.destroy()
     except Exception:
         print(f"{title}: {text}", file=sys.stderr)
+
+
+def _notify(icon: object, title: str, text: str) -> bool:
+    try:
+        notify = getattr(icon, "notify")
+    except Exception:
+        return False
+    try:
+        notify(text, title)
+        return True
+    except Exception:
+        return False
 
 
 def _port_open(host: str, port: int) -> bool:
@@ -544,7 +569,8 @@ def run_tray(*, title: str, url: str, home: Path | None = None) -> int:
             body = (f"{up}/{total} 正常。\n异常:{', '.join(down)}\n\n"
                     "日志见 data\\logs\\(d2a-launcher.log 记录重启),"
                     "也可在管理界面「日志」页查看。")
-        _msg(title, body)
+        if not _notify(icon, title, body):
+            _msg(title, body)
 
     def on_quit(icon, item):  # noqa: ARG001
         _SUPERVISE_STOP.set()

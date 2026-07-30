@@ -245,6 +245,25 @@ def test_probe_connection_returns_generic_error_without_unbound_local(monkeypatc
     assert result == {"status": "failed", "error": "RuntimeError", "detail": "cursor boom"}
 
 
+def test_probe_connection_maps_chinese_odbc_timeout(monkeypatch):
+    class FakeOdbcError(Exception):
+        pass
+
+    def raise_timeout(*_args, **_kwargs):
+        raise FakeOdbcError(
+            "('08001', '[08001] [Microsoft][ODBC Driver 18 for SQL Server]"
+            "TCP 提供程序: 等待的操作过时。\\r\\n (258); 登录超时已过期')",
+        )
+
+    fake_pyodbc = types.SimpleNamespace(
+        Error=FakeOdbcError,
+        connect=raise_timeout,
+    )
+    monkeypatch.setitem(sys.modules, "pyodbc", fake_pyodbc)
+    result = middle_app._probe_connection_pure("DSN=test")
+    assert result["error"] == "timeout"
+
+
 # ---- 异步触发 + 单飞锁 ----
 
 def test_async_trigger_returns_run_id_immediately(middle_env):

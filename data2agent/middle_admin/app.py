@@ -46,6 +46,7 @@ from ..connect.metadata import (
     discoverer_default_schema,
     extraction_plan_keys,
     in_extraction_plan,
+    is_odbc_timeout_message,
 )
 from ..connect.scheduler import check_sync_preflight, run_sync_cycle
 from ..connect.sync_lock import SourceSyncLock
@@ -285,7 +286,7 @@ def _probe_connection_pure(dsn: str, timeout: int = 10) -> dict:
         msg = str(e)
         if "login" in msg.lower() or "password" in msg.lower():
             return {"status": "failed", "error": "auth", "detail": _sanitize_detail(msg)}
-        if "timeout" in msg.lower():
+        if is_odbc_timeout_message(msg):
             return {"status": "failed", "error": "timeout", "detail": _sanitize_detail(msg)}
         return {"status": "failed", "error": type(e).__name__, "detail": _sanitize_detail(msg)}
     except Exception as e:

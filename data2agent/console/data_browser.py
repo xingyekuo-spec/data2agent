@@ -302,14 +302,15 @@ def object_column_meta(db: LandingStore, tpl: ObjectTemplate,
 
 def raw_catalog(db: LandingStore, pack: TemplatePack,
                 cfg_sources: list[str]) -> tuple[list[dict[str, Any]], list[str]]:
-    """raw 目录(items, warnings);计数失败为 null + 警告,不伪装 0。"""
+    """raw 目录(items, warnings);列出允许 source 下实际存在的 raw 表。
+
+    表名不再要求出现在对象模板 binding 中:现场抽取计划可能先于对象模板扩展。
+    计数失败为 null + 警告,不伪装 0。
+    """
     items: list[dict[str, Any]] = []
     warnings: list[str] = []
     for source in configured_sources(cfg_sources, db):
-        table_whitelist = set(allowed_raw_tables(pack, source))
         for table in raw_tables(db, source):
-            if table not in table_whitelist:
-                continue
             physical = physical_raw(source, table)
             rows: int | None = None
             latest_batch: str | None = None

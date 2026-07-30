@@ -352,6 +352,15 @@ def _ensure_discoverers_registered() -> None:
     from . import discoverers as _discoverers  # noqa: F401
 
 
+def is_odbc_timeout_message(message: str) -> bool:
+    low = message.lower()
+    return any(k in low for k in (
+        "timeout", "timed out", "hyt00", "08s01",
+        "登录超时", "连接超时", "查询超时", "操作过时", "等待的操作过时",
+        "(258)", "error 258",
+    ))
+
+
 def map_odbc_error(exc: BaseException) -> MetadataError:
     """将 ODBC/驱动异常映射为稳定、脱敏的 MetadataError。
 
@@ -363,7 +372,7 @@ def map_odbc_error(exc: BaseException) -> MetadataError:
         return MetadataError(
             "connection_failed", "数据库认证失败",
             "核对只读账号与密码，确认账号未被锁定且允许从中间机主机登录")
-    if any(k in low for k in ("timeout", "timed out", "hyt00", "08s01")):
+    if is_odbc_timeout_message(str(exc)):
         return MetadataError(
             "timeout", "数据库连接或查询超时",
             "检查网络与数据库负载，必要时增大超时并在低峰重试")

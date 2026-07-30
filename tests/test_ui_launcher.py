@@ -114,6 +114,29 @@ def test_port_open_localhost_negative():
     assert mod._port_open("127.0.0.1", 1) is False
 
 
+def test_notify_uses_icon_notification_api():
+    mod = _load_launcher()
+    calls: list[tuple[str, str]] = []
+
+    class Icon:
+        def notify(self, message, title):
+            calls.append((message, title))
+
+    assert mod._notify(Icon(), "data2agent 平台", "后台进程全部正常(1/1)。") is True
+    assert calls == [("后台进程全部正常(1/1)。", "data2agent 平台")]
+
+
+def test_notify_returns_false_when_notification_unavailable():
+    mod = _load_launcher()
+
+    class BrokenIcon:
+        def notify(self, message, title):
+            raise RuntimeError("notification backend unavailable")
+
+    assert mod._notify(object(), "title", "body") is False
+    assert mod._notify(BrokenIcon(), "title", "body") is False
+
+
 class _FakeProc:
     """poll() returns None while 'alive', else an exit code."""
 

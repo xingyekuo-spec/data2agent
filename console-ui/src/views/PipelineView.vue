@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 管道页(M3):桌面横向 / 小屏纵向的 7 节点流程 + 节点详情面板。
+// 管道页(M3):桌面横向 / 小屏纵向的关键节点流程 + 节点详情面板。
 // 状态由后端 observability 计算;视图只展示,不重复推导业务规则。
 // 数据由 AppLayout 统一轮询;视图只消费 pipeline store。
 import { computed, onBeforeUnmount, ref } from 'vue'
@@ -18,12 +18,16 @@ const { pipeline, refreshError } = storeToRefs(store)
 
 // 只存节点 ID:轮询替换 pipeline 数据后,详情面板展示的是当前快照而不是旧对象
 const selectedId = ref<string | null>(null)
+const hiddenPipelineNodeIds = new Set(['erp', 'extract'])
 
 const data = computed(() => (pipeline.value.status === 'success' ? pipeline.value.data : null))
+const visibleNodes = computed(() =>
+  data.value?.nodes.filter((n) => !hiddenPipelineNodeIds.has(n.node)) ?? [],
+)
 const selected = computed(() =>
   selectedId.value === null
     ? null
-    : (data.value?.nodes.find((n) => n.node === selectedId.value) ?? null),
+    : (visibleNodes.value.find((n) => n.node === selectedId.value) ?? null),
 )
 
 function open(node: PipelineNode): void {
@@ -103,13 +107,13 @@ const detailFields = computed(() => {
         <span class="overall__time">截至 {{ formatDateTime(data.generated_at) }}</span>
       </div>
 
-      <!-- 7 节点流程:连接线只表达顺序,不用绿色掩盖 unknown -->
+      <!-- 关键节点流程:连接线只表达顺序,不用绿色掩盖 unknown -->
       <ol
         class="flow"
         data-testid="pipeline-flow"
       >
         <template
-          v-for="(node, i) in data.nodes"
+          v-for="(node, i) in visibleNodes"
           :key="node.node"
         >
           <li class="flow__node-wrap">
@@ -137,7 +141,7 @@ const detailFields = computed(() => {
               </span>
             </button>
             <span
-              v-if="i < data.nodes.length - 1"
+              v-if="i < visibleNodes.length - 1"
               class="flow__connector"
               aria-hidden="true"
             >→</span>

@@ -2969,14 +2969,13 @@ def create_app(landing: str | None = None, templates: str = "templates",
         },
     )
     def data_raw_catalog(request: Request) -> dict:
-        """raw 目录:当前配置允许且确实存在的表(不含 SQLite 内部表)。"""
+        """raw 目录:允许来源下确实存在的表(不含 SQLite 内部表)。"""
         db = store()
         require_raw_browse_auth(db, request, source=None, resource="__catalog__")
-        cfg = state["config"]
         pack = require_pack()
         try:
             items, warnings = br.raw_catalog(
-                db, pack, br.allowed_sources(pack, _known_sources()))
+                db, pack, br.allowed_sources(pack, _allowed_sources()))
         except Exception as e:
             try:
                 db.log_access(
@@ -3009,20 +3008,19 @@ def create_app(landing: str | None = None, templates: str = "templates",
     )
     def data_raw(source: str, table: str, request: Request,
                  offset: int = 0, limit: int = 50, q: str = "") -> dict:
-        """raw 白名单分页浏览(强鉴权 + 访问审计,§4.7)。
+        """raw 分页浏览(强鉴权 + 访问审计,§4.7)。
 
         必须配置控制台 Token 且请求携带有效 Bearer;每次尝试(允许/拒绝)
         都写不泄密访问审计;审计失败则请求失败关闭。
         """
         db = store()
         pack = require_pack()
-        cfg = state["config"]
         require_raw_browse_auth(
             db, request, source=source, resource=table, offset=offset, limit=limit)
         try:
             br.require_source(
-                br.allowed_sources(pack, _known_sources()), db, source)
-            br.require_raw_table(db, source, table, br.allowed_raw_tables(pack, source))
+                br.allowed_sources(pack, _allowed_sources()), db, source)
+            br.require_raw_table(db, source, table)
         except br.BrowseError as e:
             db.log_access(
                 subject="console-admin", resource_type="raw", source=source,

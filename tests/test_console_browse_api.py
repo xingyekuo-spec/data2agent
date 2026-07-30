@@ -64,11 +64,17 @@ def test_raw_catalog(env):
     assert all(not i.table.startswith(("sqlite_", "d2a_")) for i in body.items)
 
 
-def test_raw_catalog_requires_token_and_does_not_expose_orphans(env):
-    LandingStore(env.db_path).con.execute(
-        'CREATE TABLE "raw_orphan__SECRET" ("Id" INTEGER PRIMARY KEY)')
-    LandingStore(env.db_path).con.execute(
-        f'CREATE TABLE "raw_{SOURCE}__SECRET" ("Id" INTEGER PRIMARY KEY)')
+def test_raw_catalog_requires_token_and_includes_allowed_source_tables(env):
+    db = LandingStore(env.db_path)
+    db.con.execute('CREATE TABLE "raw_orphan__SECRET" ("Id" INTEGER PRIMARY KEY)')
+    db.con.execute(
+        f'CREATE TABLE "raw_{SOURCE}__SECRET" ('
+        '"Id" INTEGER PRIMARY KEY, "SECRET_VALUE" TEXT, '
+        '"_d2a_extracted_at" TEXT, "_d2a_deleted_at" TEXT, "_d2a_batch_id" TEXT)')
+    db.con.execute(
+        f'INSERT INTO "raw_{SOURCE}__SECRET" VALUES (?, ?, ?, ?, ?)',
+        (1, "visible", "2026-07-10T00:00:00+08:00", None, "b-secret"))
+    db.con.commit()
     client = _client(env)
     wrong = client.get("/api/data/raw", headers={"Authorization": "Bearer wrong"})
     assert wrong.status_code == 401
@@ -79,8 +85,13 @@ def test_raw_catalog_requires_token_and_does_not_expose_orphans(env):
     assert ok.status_code == 200
     items = {(i["source"], i["table"]) for i in ok.json()["items"]}
     assert ("orphan", "SECRET") not in items
-    assert (SOURCE, "SECRET") not in items
-    assert client.get(f"/api/data/raw/{SOURCE}/SECRET", headers=_auth()).status_code == 404
+    assert (SOURCE, "SECRET") in items
+    assert client.get("/api/data/raw/orphan/SECRET", headers=_auth()).status_code == 404
+    opened = client.get(f"/api/data/raw/{SOURCE}/SECRET", headers=_auth())
+    assert opened.status_code == 200
+    body = opened.json()
+    assert body["total"] == 1
+    assert body["rows"][0]["SECRET_VALUE"] == "visible"
 
 
 def test_raw_catalog_unexpected_failure_is_audited_without_leak(env, monkeypatch):

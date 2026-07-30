@@ -17,11 +17,11 @@ async function mountView(): Promise<ReturnType<typeof mount>> {
 describe('PipelineView(M3)', () => {
   beforeEach(() => setScenario('healthy'))
 
-  it('healthy:overall + 7 节点按固定顺序渲染', async () => {
+  it('healthy:overall + 5 个关键节点按固定顺序渲染', async () => {
     const wrapper = await mountView()
     expect(wrapper.find('[data-testid="pipeline-overall"]').exists()).toBe(true)
     const names = wrapper.findAll('.flow__name').map((n) => n.text())
-    expect(names).toEqual(['erp', 'extract', 'push', 'raw', 'mapping', 'objects', 'mcp'])
+    expect(names).toEqual(['push', 'raw', 'mapping', 'objects', 'mcp'])
     expect(wrapper.findAll('[data-status="healthy"]').length).toBeGreaterThan(0)
   })
 
@@ -32,7 +32,7 @@ describe('PipelineView(M3)', () => {
     await first?.trigger('click')
     const detail = wrapper.find('[data-testid="node-detail"]')
     expect(detail.exists()).toBe(true)
-    expect(detail.text()).toContain('节点 erp')
+    expect(detail.text()).toContain('节点 push')
     expect(detail.text()).toContain('最近成功')
     expect(detail.text()).toContain('运行详情页将在 M4 提供')
 
@@ -80,12 +80,12 @@ describe('PipelineView(M3)', () => {
     const store = usePipelineStore(pinia)
     await store.refresh()
     await flushPromises()
-    expect(wrapper2.findAll('.flow__node')).toHaveLength(7)
+    expect(wrapper2.findAll('.flow__node')).toHaveLength(5)
     setScenario('unknown-error')
     await store.refresh()
     await flushPromises()
     expect(wrapper2.find('[data-testid="refresh-error"]').exists()).toBe(true)
-    expect(wrapper2.findAll('.flow__node')).toHaveLength(7)
+    expect(wrapper2.findAll('.flow__node')).toHaveLength(5)
   })
 
   it('键盘可打开详情(button 原生可聚焦可触发)', async () => {

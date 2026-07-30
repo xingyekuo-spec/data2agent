@@ -194,6 +194,10 @@ def test_extraction_plan_respects_schema():
 def test_map_odbc_error_codes():
     assert map_odbc_error(RuntimeError("Login failed for user")).code == "connection_failed"
     assert map_odbc_error(RuntimeError("HYT00 Timeout expired")).code == "timeout"
+    assert map_odbc_error(RuntimeError(
+        "[Microsoft][ODBC Driver 18 for SQL Server]TCP 提供程序: 等待的操作过时。"
+        " (258); 登录超时已过期",
+    )).code == "timeout"
     assert map_odbc_error(RuntimeError("permission denied on object")).code == "permission_denied"
     err = map_odbc_error(RuntimeError(
         "Driver error: Server=10.0.0.7;Database=ERP;pwd=secret"))

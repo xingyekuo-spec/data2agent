@@ -71,19 +71,24 @@ def test_raw_catalog_honest_counts(env):
     assert customer["classification_warning"] is True
 
 
-def test_raw_catalog_does_not_whitelist_db_orphans(env):
+def test_raw_catalog_includes_existing_tables_for_allowed_source(env):
     landing, pack = env
     landing.con.execute('CREATE TABLE "raw_orphan__SECRET" ("Id" INTEGER PRIMARY KEY)')
-    landing.con.execute(f'CREATE TABLE "raw_{SOURCE}__SECRET" ("Id" INTEGER PRIMARY KEY)')
+    landing.con.execute(
+        f'CREATE TABLE "raw_{SOURCE}__SECRET" ('
+        '"Id" INTEGER PRIMARY KEY, "SECRET_VALUE" TEXT, '
+        '"_d2a_extracted_at" TEXT, "_d2a_deleted_at" TEXT, "_d2a_batch_id" TEXT)')
     landing.con.execute('INSERT INTO "raw_orphan__SECRET" VALUES (1)')
-    landing.con.execute(f'INSERT INTO "raw_{SOURCE}__SECRET" VALUES (1)')
+    landing.con.execute(
+        f'INSERT INTO "raw_{SOURCE}__SECRET" VALUES (?, ?, ?, ?, ?)',
+        (1, "visible", "2026-07-10T00:00:00+08:00", None, "b-secret"))
     landing.con.commit()
     items, _warnings = br.raw_catalog(landing, pack, br.allowed_sources(pack, [SOURCE]))
     assert ("orphan", "SECRET") not in {(i["source"], i["table"]) for i in items}
-    assert (SOURCE, "SECRET") not in {(i["source"], i["table"]) for i in items}
+    assert (SOURCE, "SECRET") in {(i["source"], i["table"]) for i in items}
 
 
-def test_disabled_binding_excluded_from_raw_catalog(env):
+def test_disabled_binding_does_not_hide_existing_raw_table(env):
     landing, pack = env
     for tpl in pack.objects:
         for binding in tpl.bindings:
@@ -91,7 +96,7 @@ def test_disabled_binding_excluded_from_raw_catalog(env):
                 binding.status = "disabled"
     assert "CUSTOMER" not in br.allowed_raw_tables(pack, SOURCE)
     items, _warnings = br.raw_catalog(landing, pack, br.allowed_sources(pack, [SOURCE]))
-    assert (SOURCE, "CUSTOMER") not in {(i["source"], i["table"]) for i in items}
+    assert (SOURCE, "CUSTOMER") in {(i["source"], i["table"]) for i in items}
 
 
 def test_raw_column_meta_roles_and_masking(env):

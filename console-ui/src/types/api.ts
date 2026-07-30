@@ -150,7 +150,7 @@ export interface paths {
         };
         /**
          * Data Raw Catalog
-         * @description raw 目录:当前配置允许且确实存在的表(不含 SQLite 内部表)。
+         * @description raw 目录:允许来源下确实存在的表(不含 SQLite 内部表)。
          */
         get: operations["data_raw_catalog_api_data_raw_get"];
         put?: never;
@@ -170,7 +170,7 @@ export interface paths {
         };
         /**
          * Data Raw
-         * @description raw 白名单分页浏览(强鉴权 + 访问审计,§4.7)。
+         * @description raw 分页浏览(强鉴权 + 访问审计,§4.7)。
          *
          *     必须配置控制台 Token 且请求携带有效 Bearer;每次尝试(允许/拒绝)
          *     都写不泄密访问审计;审计失败则请求失败关闭。
