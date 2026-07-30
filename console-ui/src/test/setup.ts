@@ -22,6 +22,39 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     ResizeObserverStub as unknown as typeof globalThis.ResizeObserver
 }
 
+// Node 22+ 自带实验性 webstorage 全局:未开 --experimental-webstorage 时
+// globalThis.localStorage 为 undefined,且 vitest jsdom 环境不会再用 jsdom
+// 实现补位,导致测试里 localStorage.clear() 抛 TypeError。
+// 测试只需行为等价的 Storage,这里补一个内存实现(sessionStorage 正常,不动)。
+if (typeof localStorage === 'undefined') {
+  class MemoryStorage implements Storage {
+    private data = new Map<string, string>()
+    get length(): number {
+      return this.data.size
+    }
+    clear(): void {
+      this.data.clear()
+    }
+    getItem(key: string): string | null {
+      return this.data.has(key) ? (this.data.get(key) as string) : null
+    }
+    key(index: number): string | null {
+      return [...this.data.keys()][index] ?? null
+    }
+    removeItem(key: string): void {
+      this.data.delete(key)
+    }
+    setItem(key: string, value: string): void {
+      this.data.set(key, String(value))
+    }
+  }
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: new MemoryStorage(),
+    configurable: true,
+    writable: true,
+  })
+}
+
 export { server }
 
 let uninstallFetch: (() => void) | undefined
