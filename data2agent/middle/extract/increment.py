@@ -75,10 +75,12 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                      should_continue: Optional[Callable[[], bool]] = None,
                      sink: Optional[Sink] = None,
                      key_columns: dict[str, list[str]] | None = None,
-                     run_id: int | None = None) -> SyncReport:
+                     run_id: int | None = None,
+                     only_tables: set[str] | None = None) -> SyncReport:
     """sink:raw 落地出口。默认 LocalSink(landing)。
     key_columns:表名 → 配置运行键,覆盖数据库主键。
     无水位的表按 full_refresh 快照协议落地。
+    only_tables:限定只同步这些表(失败表定向重试);None=全部白名单表。
 
     当外部已创建 run(如手动触发已预检窗口/锁/create run 后
     传入 run_id)时,不重复建 run,避免 double-run。
@@ -98,6 +100,8 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
 
         ordinal = 0
         for raw_info in adapter.tables():
+            if only_tables is not None and raw_info.name not in only_tables:
+                continue
             if should_continue and not should_continue():
                 report.paused = True
                 break

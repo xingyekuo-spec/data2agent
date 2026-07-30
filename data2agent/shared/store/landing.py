@@ -793,6 +793,12 @@ class LandingStore:
             # 同步前预估行数(COUNT 查询);NULL=旧运行或未预估,页面退化显示行数
             self.con.execute(
                 "ALTER TABLE d2a_run_step ADD COLUMN expected_rows INTEGER")
+        # 告警静默(错误处理页):alert_key=source|table|category
+        self.con.execute(
+            "CREATE TABLE IF NOT EXISTS d2a_alert_silence ("
+            "alert_key TEXT PRIMARY KEY, "
+            "silenced_until TEXT NOT NULL, "
+            "created_at TEXT NOT NULL)")
         # v0.3:数据集冻结对象清单与模板快照;旧库缺列则补上。
         ds_cols = {r[1] for r in self.con.execute("PRAGMA table_info(d2a_dataset_version)")}
         if "object_manifest" not in ds_cols:
@@ -1684,6 +1690,33 @@ class LandingStore:
         return self.con.execute(
             "SELECT * FROM d2a_run_step WHERE run_id = ? ORDER BY ordinal, id",
             (run_id,)).fetchall()
+
+    # ---- 告警静默(错误处理页)----
+
+    def silence_alert(self, alert_key: str, *, hours: int = 24) -> str:
+        """静默一条告警 hours 小时(重复调用顺延),返回截止时间。"""
+        from datetime import timedelta
+        until = (datetime.now() + timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+        self.con.execute(
+            "INSERT INTO d2a_alert_silence (alert_key, silenced_until, created_at) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(alert_key) DO UPDATE SET silenced_until = excluded.silenced_until",
+            (alert_key, until, _now()))
+        self.con.commit()
+        return until
+
+    def list_alert_silences(self) -> list[dict]:
+        """未过期的静默记录。"""
+        rows = self.con.execute(
+            "SELECT alert_key, silenced_until, created_at FROM d2a_alert_silence "
+            "WHERE silenced_until > ? ORDER BY created_at DESC", (_now(),)).fetchall()
+        return [dict(r) for r in rows]
+
+    def delete_alert_silence(self, alert_key: str) -> bool:
+        cur = self.con.execute(
+            "DELETE FROM d2a_alert_silence WHERE alert_key = ?", (alert_key,))
+        self.con.commit()
+        return cur.rowcount > 0
 
     def record_sync_batch_progress(
         self, *, step_id: int, source: str, table: str,

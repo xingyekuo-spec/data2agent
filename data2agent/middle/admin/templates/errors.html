@@ -31,13 +31,12 @@
   .handled-note{font-size:12px;color:#1e7e34}
   details.handled{margin-top:6px}
   details.handled summary{cursor:pointer;font-size:13px;color:#51606f}
-  .preview-tag{font-size:11px;color:#8a4b00;background:#fff8e6;border-radius:4px;padding:1px 6px}
 </style>
 
 <div class="banner">
-  <b>方案预览</b> — 本页用于验证错误处理机制设计:告警数据来自真实运行/推送记录;
-  错误分类与连续失败轮数为前端实时计算;「静默」暂存于本浏览器;
-  「重试失败的表 / 立即重推」为方案预览(正式后端动作待评估后落地)。
+  <b>错误处理</b> — 告警来自真实运行/推送记录,按表聚合连续失败轮数并分类;
+  「静默」持久化于落地库(所有访问者生效);「重试失败的表 / 立即重推」为真实动作,
+  触发幂等定向同步(水位保证安全),执行后跳转运行详情跟踪进度。
 </div>
 
 <div class="card">
@@ -49,35 +48,19 @@
   </details>
 </div>
 
-<!-- 动作说明弹窗 -->
-<div id="action-overlay" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeAction()">
-  <div class="modal-card" style="max-width:560px">
-    <div class="modal-header">
-      <h2 id="action-title">动作预览</h2>
-      <button class="modal-close" onclick="closeAction()">&times;</button>
-    </div>
-    <div id="action-body"></div>
-  </div>
-</div>
-
 <script>
 var _alerts = [];
 var _catFilter = '';
-var _actions = {};  // alertKey -> {action:'snooze', at:ms}
+var _silences = {};  // alertKey -> silenced_until(服务端持久化)
 
-// ---- 本地动作存储(方案预览:验证静默交互) ----
-function loadActions() {
-  try { _actions = JSON.parse(localStorage.getItem('d2a_error_actions') || '{}'); }
-  catch (e) { _actions = {}; }
-  // 静默 24h 过期
-  var now = Date.now();
-  Object.keys(_actions).forEach(function (k) {
-    var a = _actions[k];
-    if (a.action === 'snooze' && now - a.at > 24 * 3600 * 1000) delete _actions[k];
-  });
-}
-function saveActions() {
-  try { localStorage.setItem('d2a_error_actions', JSON.stringify(_actions)); } catch (e) {}
+function loadSilences() {
+  return fetch('/api/alerts/silences', { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      _silences = {};
+      (data.silences || []).forEach(function (s) { _silences[s.alert_key] = s.silenced_until; });
+    })
+    .catch(function () { _silences = {}; });
 }
 
 // ---- 错误分类(前端启发式,验证分类规则) ----
@@ -129,6 +112,7 @@ function buildAlerts(runsData, failedStepsByRun, pushTables) {
       detail: null, errText: a.error,
       streak: a.runs.length,
       last_at: null,
+      run_id: a.runs[0] || null,  // 最近一次含该表失败的运行(定向重试用)
       actions: ['retry-tables', 'snooze'],
     });
   });
@@ -155,7 +139,7 @@ var CATS = ['全部', '连接失败', '网络超时', '认证权限', '数据异
 function renderChips() {
   var counts = {};
   _alerts.forEach(function (a) {
-    if (_actions[alertKey(a)]) return;
+    if (_silences[alertKey(a)]) return;
     counts[a.category] = (counts[a.category] || 0) + 1;
   });
   var total = Object.values(counts).reduce(function (x, y) { return x + y; }, 0);
@@ -177,11 +161,9 @@ var ACTION_LABELS = {
   'repush': '立即重推',
   'snooze': '静默 24h',
 };
-var PREVIEW_ACTIONS = { 'retry-tables': 1, 'retry-run': 1, 'repush': 1 };
-
 function renderAlert(a, handled) {
   var key = alertKey(a);
-  var act = _actions[key];
+  var until = _silences[key];
   var html = '<div class="alert-card cat-' + a.category + '">';
   html += '<div class="alert-head">';
   html += '<span class="cat-badge cat-' + a.category + '">' + a.category + '</span>';
@@ -193,16 +175,14 @@ function renderAlert(a, handled) {
   if (a.detail) html += '<br>' + esc(a.detail);
   if (a.errText) html += '<br><span class="err-text">' + esc(a.errText) + '</span>';
   html += '</div>';
-  if (handled && act) {
-    html += '<p class="handled-note">' + '🔕 已静默' +
-            ' · ' + fmtTime(new Date(act.at).toISOString()) +
+  if (handled && until) {
+    html += '<p class="handled-note">🔕 已静默至 ' + esc(until) +
             ' · <a href="javascript:void(0)" onclick="undoAction(\'' + key + '\')">撤销</a></p>';
   } else {
     html += '<div class="alert-actions">';
     a.actions.forEach(function (ac) {
-      var preview = PREVIEW_ACTIONS[ac] ? ' <span class="preview-tag">方案预览</span>' : '';
       html += '<button class="btn-ghost" onclick="doAction(\'' + key + '\',\'' + ac + '\')">' +
-              ACTION_LABELS[ac] + preview + '</button>';
+              ACTION_LABELS[ac] + '</button>';
     });
     html += '</div>';
   }
@@ -213,13 +193,13 @@ function renderAlert(a, handled) {
 function renderAll() {
   renderChips();
   var open = _alerts.filter(function (a) {
-    if (_actions[alertKey(a)]) return false;
+    if (_silences[alertKey(a)]) return false;
     return !_catFilter || a.category === _catFilter;
   });
   document.getElementById('alerts-list').innerHTML = open.length
     ? open.map(function (a) { return renderAlert(a, false); }).join('')
     : '<p class="meta">当前无未处理告警 ✅</p>';
-  var handled = _alerts.filter(function (a) { return !!_actions[alertKey(a)]; });
+  var handled = _alerts.filter(function (a) { return !!_silences[alertKey(a)]; });
   document.getElementById('handled-wrap').style.display = handled.length ? '' : 'none';
   document.getElementById('handled-summary').textContent = '已处理(静默)· ' + handled.length;
   document.getElementById('handled-list').innerHTML =
@@ -235,74 +215,63 @@ function findAlert(key) {
 function doAction(key, action) {
   var a = findAlert(key);
   if (action === 'snooze') {
-    _actions[key] = { action: action, at: Date.now() };
-    saveActions();
-    renderAll();
+    fetch('/api/alerts/silences', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ alert_key: key, hours: 24 })
+    })
+      .then(function () { return loadSilences(); })
+      .then(renderAll)
+      .catch(function (e) { alert('静默失败: ' + e.message); });
     return;
   }
-  // 方案预览动作:说明正式行为,并提供当前可用的真实替代
-  var plans = {
-    'retry-tables': {
-      title: '重试失败的表(方案预览)',
-      body: '<p>正式方案:按运行中标记为失败的表<b>定向重抽</b>(其余表不重跑),后端将新增 ' +
-            '<code>POST /api/runs/{id}/retry-failed</code>。</p>' +
-            '<p>当前可用替代:立即触发一次完整同步(幂等,水位保证安全)。</p>',
-      fallback: '立即触发同步',
-    },
-    'retry-run': {
-      title: '重试该运行(方案预览)',
-      body: '<p>正式方案:以相同范围重新执行该运行。</p>' +
-            '<p>当前可用替代:立即触发一次完整同步(幂等)。</p>',
-      fallback: '立即触发同步',
-    },
-    'repush': {
-      title: '立即重推(方案预览)',
-      body: '<p>正式方案:对失败的推送批次立即重推,不等下一轮调度;后端将记录真实 retry_count。</p>' +
-            '<p>当前机制:水位未前进,<b>下一轮同步会自动补推</b>;也可立即触发同步加速。</p>',
-      fallback: '立即触发同步',
-    },
-  };
-  var plan = plans[action];
-  document.getElementById('action-title').textContent = plan.title;
-  document.getElementById('action-body').innerHTML = plan.body +
-    '<div class="alert-actions" style="margin-top:16px">' +
-    '<button onclick="runFallback(\'' + key + '\')">' + plan.fallback + '</button>' +
-    '<button class="btn-ghost" onclick="closeAction()">仅查看,不执行</button></div>';
-  document.getElementById('action-overlay').style.display = 'flex';
-}
-
-function runFallback(key) {
-  var a = findAlert(key);
-  closeAction();
-  fetch('/api/actions/trigger', {
-    method: 'POST', headers: authHeaders(),
-    body: JSON.stringify({ action: 'sync', source: a ? a.source : null })
-  })
-    .then(function (r) { return r.json(); })
+  // 真实动作:定向重试 / 立即重推(均为幂等同步,完成后跳转运行详情)
+  var req;
+  if (action === 'retry-tables' && a && a.run_id) {
+    req = fetch('/api/runs/' + a.run_id + '/retry-failed', {
+      method: 'POST', headers: authHeaders(), body: '{}'
+    });
+  } else if (action === 'retry-run') {
+    req = fetch('/api/actions/trigger', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ action: 'sync', source: a ? a.source : null })
+    });
+  } else if (action === 'repush') {
+    req = fetch('/api/actions/trigger', {
+      method: 'POST', headers: authHeaders(),
+      body: JSON.stringify({ action: 'sync', source: a ? a.source : null,
+                             tables: a && a.table ? [a.table] : null })
+    });
+  } else {
+    return;
+  }
+  req.then(function (r) { return r.json(); })
     .then(function (body) {
-      if (body.status === 'started') {
+      if (body.run_id && (body.status === 'started' || body.executed)) {
+        location.href = '/runs?watch=' + body.run_id;
+      } else if (body.reason === 'already_running' && body.run_id) {
         location.href = '/runs?watch=' + body.run_id;
       } else {
-        alert(formatApiError(body, '触发失败'));
+        alert(formatApiError(body, body.note || '触发失败'));
       }
     })
     .catch(function (e) { alert('请求失败: ' + e.message); });
 }
 
 function undoAction(key) {
-  delete _actions[key];
-  saveActions();
-  renderAll();
-}
-
-function closeAction() {
-  document.getElementById('action-overlay').style.display = 'none';
+  fetch('/api/alerts/silences/' + encodeURIComponent(key), {
+    method: 'DELETE', headers: authHeaders()
+  })
+    .then(function () { return loadSilences(); })
+    .then(renderAll)
+    .catch(function (e) { alert('撤销失败: ' + e.message); });
 }
 
 // ---- 数据加载 ----
 function loadAlerts() {
-  loadActions();
-  fetch('/api/runs?limit=50', { headers: authHeaders() })
+  loadSilences()
+    .then(function () {
+      return fetch('/api/runs?limit=50', { headers: authHeaders() });
+    })
     .then(function (r) { return r.json(); })
     .then(function (runsData) {
       var failedRuns = (runsData.runs || []).filter(function (r) { return r.status === 'failed'; }).slice(0, 10);

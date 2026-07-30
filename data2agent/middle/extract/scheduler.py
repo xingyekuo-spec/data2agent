@@ -92,11 +92,13 @@ def check_sync_preflight(name: str, scfg: SourceConfig) -> SyncCycleResult:
 def run_sync_cycle(name: str, scfg: SourceConfig,
                    landing_path: str, templates: str = "templates",
                    run_id: int | None = None,
-                   acquired_lock=None) -> SyncCycleResult:
+                   acquired_lock=None,
+                   tables: list[str] | None = None) -> SyncCycleResult:
     """一轮 sync(+apply)。返回 SyncCycleResult。
 
     - 自动调度路径(run_id=None):内部创建 run,自行获取锁
     - 手动触发路径(run_id != None):外部已获取锁 + 创建 run,传入复用
+    - tables:限定只同步这些表(失败表定向重试);None=全部
     """
     # 1. 预检
     preflight = check_sync_preflight(name, scfg)
@@ -141,7 +143,8 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
             lookback_days=scfg.lookback_days(), sink=sink,
             key_columns=key_columns,
             should_continue=lambda: in_window(datetime.now().time(), scfg.windows),
-            run_id=run_id)
+            run_id=run_id,
+            only_tables=set(tables) if tables else None)
         log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
                  name, report.run_id, report.total_rows, len(report.tables),
                  report.paused, scfg.sink.type)

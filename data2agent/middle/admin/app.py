@@ -93,6 +93,12 @@ class ConfigPatch(BaseModel):
 class TriggerBody(BaseModel):
     action: str
     source: str | None = None
+    tables: list[str] | None = None  # 限定只同步这些表(失败表定向重试)
+
+
+class SilenceBody(BaseModel):
+    alert_key: str
+    hours: int = 24
 
 
 class TestConnectionBody(BaseModel):
@@ -1086,7 +1092,7 @@ def create_app(
         if body.action == "reconcile":
             raise http_error(
                 400, "中间机管理 v1 不支持 reconcile",
-                "请使用 sync 动作，或在平台侧处理对账流程",
+                "请使用 sync 动作,或在平台侧处理对账流程",
             )
         if body.action != "sync":
             raise http_error(
@@ -1095,6 +1101,48 @@ def create_app(
             )
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
+        tables = _validate_trigger_tables(scfg, body.tables)
+        return _start_sync_run(cfg, name, scfg, tables)
+
+    @api.post("/runs/{run_id}/retry-failed")
+    def retry_failed_tables(run_id: int) -> dict:
+        """定向重试某次运行中失败的表(其余表不重跑)。"""
+        cfg = reload_config()
+        db = LandingStore(cfg.landing)
+        try:
+            run = db.con.execute(
+                "SELECT * FROM d2a_sync_run WHERE id = ?", (run_id,)).fetchone()
+            if run is None:
+                raise http_error(404, f"运行 #{run_id} 不存在", "确认运行 ID")
+            failed = [
+                s["target"] for s in db.steps_for_run(run_id)
+                if s["kind"] == "table" and s["status"] == "failed"
+            ]
+            source = run["source"]
+        finally:
+            db.con.close()
+        if not failed:
+            raise http_error(
+                409, f"运行 #{run_id} 没有失败的表步骤",
+                "仅含失败表的运行可定向重试;否则请整体触发同步",
+            )
+        name, scfg = _resolve_source(cfg, source)
+        return _start_sync_run(cfg, name, scfg, failed)
+
+    def _validate_trigger_tables(scfg, tables: list[str] | None) -> list[str] | None:
+        """校验 tables 在抽取计划内;None/空 = 全部。"""
+        if not tables:
+            return None
+        configured = set(scfg.tables.keys()) if hasattr(scfg, "tables") else set()
+        unknown = [t for t in tables if t not in configured]
+        if unknown:
+            raise http_error(
+                422, f"表不在抽取计划内: {', '.join(unknown)}",
+                "仅可指定 connect.yaml tables 中已配置的表",
+            )
+        return list(dict.fromkeys(tables))
+
+    def _start_sync_run(cfg, name, scfg, tables: list[str] | None) -> dict:
 
         # 1. 预检:窗口外 / tables 为空立即返回,不创建 run
         preflight = check_sync_preflight(name, scfg)
@@ -1138,7 +1186,8 @@ def create_app(
 
         try:
             _TRIGGER_EXECUTOR.submit(
-                _run_sync_worker, run_id, name, scfg, cfg.landing, cfg.templates, lock)
+                _run_sync_worker, run_id, name, scfg, cfg.landing, cfg.templates,
+                lock, tables)
         except Exception as exc:
             # 线程池无法提交：关闭遗留 run 并释放锁，避免永久 blocking
             try:
@@ -1158,6 +1207,39 @@ def create_app(
             "executed": True, "status": "started",
             "note": f"同步已后台启动, 运行 ID #{run_id}",
         }
+
+    # ---- 告警静默 ----
+
+    @api.get("/alerts/silences")
+    def alert_silences() -> dict:
+        cfg = reload_config()
+        db = LandingStore(cfg.landing)
+        try:
+            return {"silences": db.list_alert_silences()}
+        finally:
+            db.con.close()
+
+    @api.post("/alerts/silences")
+    def alert_silence_create(body: SilenceBody) -> dict:
+        if not (1 <= body.hours <= 24 * 30):
+            raise http_error(422, "hours 须为 1..720", "调整静默时长")
+        cfg = reload_config()
+        db = LandingStore(cfg.landing)
+        try:
+            until = db.silence_alert(body.alert_key, hours=body.hours)
+            return {"alert_key": body.alert_key, "silenced_until": until}
+        finally:
+            db.con.close()
+
+    @api.delete("/alerts/silences/{alert_key:path}")
+    def alert_silence_delete(alert_key: str) -> dict:
+        cfg = reload_config()
+        db = LandingStore(cfg.landing)
+        try:
+            deleted = db.delete_alert_silence(alert_key)
+            return {"alert_key": alert_key, "deleted": deleted}
+        finally:
+            db.con.close()
 
     # ---- 运行查询 ----
 
@@ -1310,10 +1392,11 @@ def create_app(
 
     def _run_sync_worker(
         run_id: int, name: str, scfg, landing_path: str, templates: str, lock,
+        tables: list[str] | None = None,
     ) -> None:
         try:
             run_sync_cycle(name, scfg, landing_path, templates,
-                           run_id=run_id, acquired_lock=lock)
+                           run_id=run_id, acquired_lock=lock, tables=tables)
         except Exception as exc:
             failed_store = LandingStore(landing_path)
             try:

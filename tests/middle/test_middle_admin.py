@@ -487,3 +487,103 @@ def test_connection_probe_timeout_does_not_wait_for_worker(monkeypatch):
     elapsed = time.perf_counter() - started
     assert result["error"] == "timeout"
     assert elapsed < 0.12
+
+
+def _wait_run_done(client, run_id, headers, timeout=15.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = client.get(f"/api/runs/{run_id}", headers=headers)
+        assert r.status_code == 200
+        body = r.json()
+        if body["run"]["status"] != "running":
+            return body
+        time.sleep(0.2)
+    raise AssertionError(f"运行 #{run_id} 超时未完成")
+
+
+def test_trigger_with_tables_limits_scope(middle_env):
+    """action=sync 带 tables:仅同步指定表;计划外表 → 422。"""
+    client, _ = middle_env
+    h = {"Authorization": "Bearer secret"}
+    bad = client.post("/api/actions/trigger", headers=h,
+                      json={"action": "sync", "tables": ["NOPE"]})
+    assert bad.status_code == 422
+    ok = client.post("/api/actions/trigger", headers=h,
+                     json={"action": "sync", "tables": ["CUSTOMER"]})
+    assert ok.status_code == 200
+    body = ok.json()
+    assert body["status"] == "started"
+    done = _wait_run_done(client, body["run_id"], h)
+    targets = [s["target"] for s in done["steps"]]
+    assert targets == ["CUSTOMER"], f"定向同步应只含 CUSTOMER,got {targets}"
+
+
+def test_retry_failed_tables_endpoint(middle_env):
+    """POST /runs/{id}/retry-failed:仅重跑失败表;无失败步骤 → 409;不存在 → 404。"""
+    from data2agent.shared.config import load_config
+
+    client, cfg_path = middle_env
+    h = {"Authorization": "Bearer secret"}
+    cfg = load_config(cfg_path)
+    db = LandingStore(cfg.landing)
+    try:
+        run_id = db.start_run(SOURCE, "sync")
+        db.add_step(run_id, 1, "table", "CUSTOMER", status="failed",
+                    error="模拟失败")
+        db.finish_run(run_id, tables=0, rows=0, status="failed", detail="模拟失败")
+        ok_run = db.start_run(SOURCE, "sync")
+        db.add_step(ok_run, 1, "table", "CUSTOMER", status="ok")
+        db.finish_run(ok_run, tables=1, rows=1, status="ok")
+    finally:
+        db.con.close()
+
+    assert client.post("/api/runs/99999/retry-failed", headers=h).status_code == 404
+    assert client.post(f"/api/runs/{ok_run}/retry-failed", headers=h).status_code == 409
+
+    r = client.post(f"/api/runs/{run_id}/retry-failed", headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "started" and body["run_id"] != run_id
+    done = _wait_run_done(client, body["run_id"], h)
+    targets = [s["target"] for s in done["steps"]]
+    assert targets == ["CUSTOMER"]
+    assert done["run"]["status"] == "ok"
+
+
+def test_alert_silences_roundtrip(middle_env):
+    """静默 API:创建 → 列表可见 → 撤销;非法时长 → 422。"""
+    client, _ = middle_env
+    h = {"Authorization": "Bearer secret"}
+    key = "digiwin_e10|CUSTOMER|网络超时"
+    bad = client.post("/api/alerts/silences", headers=h,
+                      json={"alert_key": key, "hours": 0})
+    assert bad.status_code == 422
+    r = client.post("/api/alerts/silences", headers=h,
+                    json={"alert_key": key, "hours": 24})
+    assert r.status_code == 200
+    assert r.json()["silenced_until"]
+    listed = client.get("/api/alerts/silences", headers=h)
+    assert any(s["alert_key"] == key for s in listed.json()["silences"])
+    deleted = client.delete(f"/api/alerts/silences/{key}", headers=h)
+    assert deleted.status_code == 200 and deleted.json()["deleted"] is True
+    listed2 = client.get("/api/alerts/silences", headers=h)
+    assert not any(s["alert_key"] == key for s in listed2.json()["silences"])
+
+
+def test_alert_silences_expired_not_listed(middle_env):
+    """已过期的静默不出现在列表。"""
+    from data2agent.shared.config import load_config
+
+    client, cfg_path = middle_env
+    h = {"Authorization": "Bearer secret"}
+    cfg = load_config(cfg_path)
+    db = LandingStore(cfg.landing)
+    try:
+        db.con.execute(
+            "INSERT INTO d2a_alert_silence (alert_key, silenced_until, created_at) "
+            "VALUES ('k', '2000-01-01 00:00:00', '2000-01-01 00:00:00')")
+        db.con.commit()
+    finally:
+        db.con.close()
+    listed = client.get("/api/alerts/silences", headers=h)
+    assert not any(s["alert_key"] == "k" for s in listed.json()["silences"])

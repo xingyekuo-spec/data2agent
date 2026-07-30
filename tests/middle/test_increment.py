@@ -94,6 +94,16 @@ def test_count_for_sync_increment_filter(pack, source_db):
     assert est == want
 
 
+def test_sync_only_tables_limits_scope(pack, source_db, landing):
+    """only_tables:定向重试只同步指定表,其余表不动。"""
+    report = _sync(source_db, pack, landing,
+                   run_id=landing.start_run(SOURCE, "sync"),
+                   only_tables={"CUSTOMER"})
+    assert [t.table for t in report.tables] == ["CUSTOMER"]
+    steps = landing.steps_for_run(report.run_id)
+    assert [s["target"] for s in steps] == ["CUSTOMER"]
+
+
 def test_subtract_lookback():
     assert subtract_lookback("2026-07-10 08:30:00", 3) == "2026-07-07 08:30:00"
     assert subtract_lookback("2026-07-10", 3) == "2026-07-07"
