@@ -2,18 +2,13 @@
 {% block title %}ERP 元数据 — 中间机管理{% endblock %}
 {% block content %}
 <style>
-  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
-        box-shadow:0 1px 3px rgba(16,34,54,.08)}
   .card h2{font-size:15px;margin:0 0 10px;color:#12314f}
-  .meta{font-size:13px;color:#51606f;line-height:1.55}
   .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
   .row input,.row select{padding:7px 9px;border:1px solid #d0d7de;border-radius:6px;font-size:13px}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #e8edf2;vertical-align:top}
   th{color:#51606f;font-weight:600;background:#f6f8fa}
   th.check,td.check{width:36px;text-align:center;padding-left:6px;padding-right:6px}
-  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
-  .badge-ok{background:#e6f4ea;color:#1e7e34}
   .badge-off{background:#f0f2f4;color:#51606f}
   .badge-chg{background:#fff4e5;color:#8a4b00}
   .drawer{position:fixed;top:0;right:0;width:min(420px,92vw);height:100%;background:#fff;
@@ -127,15 +122,9 @@
 </div>
 
 <script>
-function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function escAttr(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;')
     .replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-function authHeaders(){
-  var h={'Content-Type':'application/json'};
-  var t=sessionStorage.getItem('d2a_token'); if(t) h['Authorization']='Bearer '+t;
-  return h;
 }
 var currentScan=null, selected=null, planSource=null, planRevision=null;
 var visibleRows=[], selectedKeys={};

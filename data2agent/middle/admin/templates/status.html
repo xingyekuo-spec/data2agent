@@ -2,41 +2,9 @@
 {% block title %}状态 — 中间机管理{% endblock %}
 {% block content %}
 <style>
-  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
-        box-shadow:0 1px 3px rgba(16,34,54,.08)}
-  .card h2{font-size:15px;margin:0 0 12px;color:#12314f}
-  .layer{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#6a7682;margin:0 0 6px}
-  .meta{font-size:13px;color:#51606f;line-height:1.6}
   .actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:14px}
-  .warn{font-size:12px;color:#8a4b00;background:#fff8e6;border:1px solid #f0d89a;
-        border-radius:6px;padding:8px 10px;max-width:520px}
-  .oknote{font-size:12px;color:#1e7e34;background:#e6f4ea;border:1px solid #b7dfc3;
-          border-radius:6px;padding:8px 10px;max-width:520px}
-  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
-  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e8edf2}
-  th{color:#51606f;font-weight:600}
-  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
-  .badge-ok{background:#e6f4ea;color:#1e7e34}
-  .badge-off{background:#fdecea;color:#b42318}
-  .badge-warn{background:#fff8e6;color:#8a4b00}
-  .badge-running{background:#e6f0fa;color:#1a56db}
-  .run-row{cursor:pointer}
-  .run-row:hover{background:#f5f7fa}
-  .steps-panel{display:none;margin-top:8px}
-  .steps-panel.open{display:block}
-  .progress-bar{height:4px;background:#e8edf2;border-radius:2px;margin:4px 0;overflow:hidden}
-  .progress-bar-fill{height:100%;background:#1a56db;border-radius:2px;transition:width .3s}
-  .push-rows{font-size:12px;color:#51606f}
-  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9999;display:flex;align-items:center;justify-content:center}
-  .modal-card{background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.18);max-width:720px;width:90vw;max-height:80vh;overflow-y:auto;padding:24px}
-  .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-  .modal-header h2{font-size:16px;margin:0;color:#12314f}
-  .modal-close{background:none;border:none;font-size:22px;cursor:pointer;color:#6a7682;padding:0 4px}
-  .modal-close:hover{color:#12314f}
-  .push-stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:16px}
-  .push-stat{border:1px solid #e8edf2;border-radius:8px;padding:12px}
-  .push-stat dt{font-size:11px;color:#6a7682;letter-spacing:.03em;text-transform:uppercase}
-  .push-stat dd{font-size:20px;font-weight:600;color:#12314f;margin:4px 0 0}
+  .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+  .more-link{font-size:13px;display:inline-block;margin-top:8px}
 </style>
 
 <div id="status-panel"
@@ -52,84 +20,33 @@
   <div class="actions">
     <button type="button" id="btn-trigger">立即触发同步</button>
     <button type="button" id="btn-test">测试 ERP 连接</button>
-    <a href="/metadata">前往元数据</a>
-    <a href="/tables">前往抽取表</a>
   </div>
   <p class="warn" style="margin-top:12px">
-    手动触发已改为后台异步执行，不再阻塞页面；右侧运行面板每 2 秒刷新进度。
+    手动触发为后台异步执行,不阻塞页面;触发后可到 <a href="/runs">运行</a> 页查看逐表进度。
   </p>
   <div id="trigger-result" class="meta" style="margin-top:10px"></div>
   <div id="test-result" class="meta" style="margin-top:10px"></div>
 </div>
 
-<!-- 推送记录面板 -->
-<div class="card" id="push-logs-panel">
-  <p class="layer">推送记录</p>
-  <h2>HTTP 推送日志</h2>
-  <p class="meta" style="margin-bottom:10px">
-    仅当中间机配置了 sink.type=http 推送至平台时才有记录。点击批次展开详情。
-  </p>
-  <div id="push-logs-list"><p class="meta">加载中…</p></div>
-  <!-- 批次详情弹窗 -->
-  <div id="push-detail-overlay" class="modal-overlay" style="display:none" onclick="if(event.target===this)closePushDetail()">
-    <div class="modal-card" id="push-detail-card">
-      <div class="modal-header">
-        <h2 id="push-detail-title">批次详情</h2>
-        <button class="modal-close" onclick="closePushDetail()">&times;</button>
-      </div>
-      <div id="push-detail-body"><p class="meta">加载中…</p></div>
-    </div>
+<div class="summary-grid">
+  <!-- 最近运行摘要:详情在 /runs -->
+  <div class="card">
+    <p class="layer">运行</p>
+    <h2>最近运行</h2>
+    <div id="runs-summary"><p class="meta">加载中…</p></div>
+    <a class="more-link" href="/runs">全部运行记录 →</a>
+  </div>
+
+  <!-- 推送健康摘要:详情在 /push-logs -->
+  <div class="card">
+    <p class="layer">推送</p>
+    <h2>推送健康</h2>
+    <div id="push-summary"><p class="meta">加载中…</p></div>
+    <a class="more-link" href="/push-logs">全部推送记录 →</a>
   </div>
 </div>
 
-<!-- 运行历史面板 -->
-<div class="card" id="runs-panel">
-  <p class="layer">运行历史</p>
-  <h2>最近运行</h2>
-  <p class="meta" style="margin-bottom:10px">点击行展开查看逐表步骤。最近一条在运行中时每 2 秒自动刷新。</p>
-  <div id="runs-list"><p class="meta">加载中…</p></div>
-</div>
-
 <script>
-var _watchTimer = null;
-var _activeRunId = null;
-
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-function authHeaders() {
-  var h = {'Content-Type': 'application/json'};
-  var token = sessionStorage.getItem('d2a_token');
-  if (token) h['Authorization'] = 'Bearer ' + token;
-  return h;
-}
-
-function fmtTime(t) {
-  if (!t) return '—';
-  try { return new Date(t).toLocaleString(); } catch(e) { return t; }
-}
-
-function fmtAge(finished) {
-  if (!finished) return '';
-  try {
-    var ms = Date.now() - new Date(finished).getTime();
-    if (ms < 0) return '';
-    var s = Math.floor(ms / 1000);
-    if (s < 60) return s + 's 前';
-    if (s < 3600) return Math.floor(s / 60) + 'm 前';
-    return Math.floor(s / 3600) + 'h 前';
-  } catch (e) { return ''; }
-}
-
-function badge(status) {
-  var cls = status === 'ok' || status === 'completed' ? 'badge-ok'
-    : status === 'failed' ? 'badge-off'
-    : status === 'running' ? 'badge-running'
-    : status === 'paused' || status === 'started' ? 'badge-warn'
-    : 'badge-off';
-  return '<span class="badge ' + cls + '">' + esc(status) + '</span>';
-}
-
 function renderStatus(data) {
   var html = '';
   (data.sources || []).forEach(function (src) {
@@ -139,14 +56,15 @@ function renderStatus(data) {
     html += '<p class="layer">源 ' + esc(src.source) + '</p>';
 
     html += '<h2>连接</h2>';
-    html += '<p class="meta">DSN 由 secrets / 环境变量提供；本页不显示密码、连接串或 Token。</p>';
+    html += '<p class="meta">DSN 由 secrets / 环境变量提供;本页不显示密码、连接串或 Token。</p>';
     html += '<p class="meta">请用「测试 ERP 连接」确认可达。连接成功但未选表时不是运行失败。</p>';
 
     html += '<h2 style="margin-top:16px">配置</h2>';
     if (configured) {
-      html += '<p class="oknote">已配置抽取表。可在 <a href="/tables">抽取表</a> 查看与调整。</p>';
+      html += '<p class="oknote">已配置抽取表。可在 <a href="/tables">抽取计划</a> 查看与调整。</p>';
     } else {
-      html += '<p class="warn">已连接，尚未配置抽取表。自动和手动同步都会跳过，不会连接 ERP。请到 <a href="/metadata">元数据</a> 选表后在 <a href="/tables">抽取表</a> 保存。</p>';
+      html += '<p class="warn">已连接,尚未配置抽取表。自动和手动同步都会跳过,不会连接 ERP。' +
+              '请到 <a href="/metadata">元数据</a> 选表后在 <a href="/tables">抽取计划</a> 保存。</p>';
     }
 
     html += '<h2 style="margin-top:16px">运行</h2>';
@@ -160,7 +78,8 @@ function renderStatus(data) {
 
     if (src.running_run) {
       var rr = src.running_run;
-      html += '<p class="oknote" style="margin-top:6px">⏳ 同步进行中 — 运行 #' + rr.id +
+      html += '<p class="oknote" style="margin-top:6px">⏳ 同步进行中 — ' +
+              '<a href="/runs?watch=' + rr.id + '">运行 #' + rr.id + '</a>' +
               ' 开始于 ' + esc(rr.started_at) + '</p>';
     }
     if (src.latest_run) {
@@ -174,155 +93,68 @@ function renderStatus(data) {
     }
 
     if (src.watermarks && src.watermarks.length) {
-      html += '<table><thead><tr><th>表</th><th>水位列</th><th>高水位</th><th>上次同步</th></tr></thead><tbody>';
+      html += '<table class="data"><thead><tr><th>表</th><th>水位列</th><th>高水位</th><th>上次同步</th></tr></thead><tbody>';
       src.watermarks.forEach(function (w) {
         html += '<tr><td>' + esc(w.table_name) + '</td><td>' + esc(w.watermark_col) +
                 '</td><td>' + esc(w.high_water) + '</td><td>' + esc(w.last_run_at || '—') + '</td></tr>';
       });
       html += '</tbody></table>';
     } else {
-      html += '<p class="meta">尚无水位记录（全量表或不曾成功增量）。</p>';
+      html += '<p class="meta">尚无水位记录(全量表或不曾成功增量)。</p>';
     }
     html += '</div>';
   });
   return html || '<div class="card"><p class="meta">无源配置</p></div>';
 }
 
-function renderRuns(data) {
+function renderRunsSummary(data) {
   if (!data.runs || !data.runs.length) return '<p class="meta">暂无运行记录</p>';
-  var html = '<table><thead><tr><th>ID</th><th>源</th><th>状态</th><th>开始</th><th>表数</th><th>行数</th><th>耗时</th></tr></thead><tbody>';
-  data.runs.forEach(function(r) {
-    var duration = r.finished_at && r.started_at
-      ? ((new Date(r.finished_at) - new Date(r.started_at)) / 1000).toFixed(0) + 's'
-      : '—';
-    html += '<tr class="run-row" onclick="toggleSteps(' + r.id + ')">';
+  var html = '<table class="data"><thead><tr><th>ID</th><th>源</th><th>状态</th><th>行数</th><th>开始</th></tr></thead><tbody>';
+  data.runs.slice(0, 5).forEach(function (r) {
+    html += '<tr class="run-row" onclick="location.href=\'/runs?watch=' + r.id + '\'">';
     html += '<td>#' + r.id + '</td><td>' + esc(r.source) + '</td><td>' + badge(r.status) + '</td>';
-    html += '<td>' + fmtTime(r.started_at) + '</td><td>' + (r.tables || 0) + '</td>';
-    html += '<td>' + (r.rows || 0) + '</td><td>' + duration + '</td></tr>';
-    html += '<tr class="steps-panel" id="steps-' + r.id + '"><td colspan="7"><p class="meta">加载步骤中…</p></td></tr>';
+    html += '<td>' + (r.rows || 0) + '</td><td>' + fmtTime(r.started_at) + '</td></tr>';
   });
   html += '</tbody></table>';
   return html;
 }
 
-function renderSteps(steps) {
-  if (!steps || !steps.length) return '<p class="meta">无步骤记录</p>';
-  var html = '<table style="margin:0 12px;width:calc(100% - 24px)"><thead><tr>' +
-    '<th>#</th><th>目标</th><th>状态</th><th>行数</th><th>批次</th><th>最后进度</th>' +
-    '</tr></thead><tbody>';
-  steps.forEach(function(s, i) {
-    var hasProgress = s.batches !== null && s.batches !== undefined;
-    var rowsOut = (s.rows_out !== null && s.rows_out !== undefined) ? s.rows_out : (
-      hasProgress ? 0 : '—');
-    var batches = hasProgress ? s.batches : (
-      s.status === 'ok' || s.status === 'paused' || s.status === 'aborted' ? '—' : (
-      s.status === 'running' ? '—' : '—'));
-    var progressTime = s.progressed_at
-      ? fmtTime(s.progressed_at)
-      : (hasProgress ? fmtTime(s.finished_at || s.started_at)
-         : (s.status === 'failed' ? '—' : (
-            s.status === 'running' ? '等待首批完成…' : '历史运行未记录批次进度')));
-    html += '<tr><td>' + (s.ordinal || i + 1) + '</td><td>' + esc(s.target) + '</td>' +
-      '<td>' + badge(s.status) + '</td>' +
-      '<td>' + rowsOut + '</td>' +
-      '<td>' + batches + '</td>' +
-      '<td>' + progressTime + '</td></tr>';
-    if (s.status === 'running' && s.rows_out === null && s.rows_out !== 0) {
-      html += '<tr><td></td><td colspan="5" style="color:#6a7682">⏳ 等待首批完成…</td></tr>';
-    }
-    if (s.status === 'failed' && s.error) {
-      html += '<tr><td></td><td colspan="5" style="color:#b42318;font-size:12px">失败原因: ' + esc(s.error) + '</td></tr>';
-    }
+function renderPushSummary(data) {
+  var list = data.push_logs || [];
+  if (!list.length) return '<p class="meta">暂无推送记录(仅 sink.type=http 时有记录)</p>';
+  var failed = 0;
+  list.forEach(function (p) { if (p.status === 'failed') failed += 1; });
+  var html = '<p class="meta">最近 ' + list.length + ' 条 · ' +
+    (failed ? '<span style="color:#b42318">' + failed + ' 条失败</span>' : '全部成功') + '</p>';
+  html += '<table class="data"><thead><tr><th>表</th><th>步骤</th><th>状态</th><th>时间</th></tr></thead><tbody>';
+  list.slice(0, 5).forEach(function (p) {
+    html += '<tr class="run-row" onclick="location.href=\'/push-logs\'">';
+    html += '<td>' + esc(p.table_name) + '</td><td>' + esc(p.step_kind) + '</td>';
+    html += '<td>' + badge(p.status) + '</td><td>' + fmtTime(p.created_at) + '</td></tr>';
   });
   html += '</tbody></table>';
   return html;
 }
 
-var _stepsCache = {};
-function toggleSteps(runId) {
-  var panel = document.getElementById('steps-' + runId);
-  if (!panel) return;
-  if (panel.classList.contains('open')) {
-    panel.classList.remove('open');
-    return;
-  }
-  panel.classList.add('open');
-  if (_stepsCache[runId]) {
-    panel.innerHTML = '<td colspan="7">' + renderSteps(_stepsCache[runId]) + '</td>';
-  } else {
-    loadSteps(runId);
-  }
-}
-
-function loadSteps(runId) {
-  fetch('/api/runs/' + runId, { headers: authHeaders() })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      _stepsCache[runId] = data.steps || [];
-      var panel = document.getElementById('steps-' + runId);
-      if (panel) panel.innerHTML = '<td colspan="7">' + renderSteps(data.steps || []) + '</td>';
+function loadRunsSummary() {
+  fetch('/api/runs?limit=5', { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      document.getElementById('runs-summary').innerHTML = renderRunsSummary(data);
     })
-    .catch(function() {
-      var panel = document.getElementById('steps-' + runId);
-      if (panel) panel.innerHTML = '<td colspan="7"><p class="meta">步骤加载失败</p></td>';
+    .catch(function () {
+      document.getElementById('runs-summary').innerHTML = '<p class="meta">加载失败</p>';
     });
 }
 
-function watchRun(runId) {
-  _activeRunId = runId;
-  _stepsCache[runId] = null;
-  function poll() {
-    if (_activeRunId !== runId) return;
-    fetch('/api/runs/' + runId, { headers: authHeaders() })
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        if (_activeRunId !== runId) return;
-        _stepsCache[runId] = data.steps || [];
-        var panel = document.getElementById('steps-' + runId);
-        if (panel) {
-          panel.classList.add('open');
-          panel.innerHTML = '<td colspan="7">' + renderSteps(data.steps || []) + '</td>';
-        }
-        var run = data.run;
-        if (run && run.status !== 'running') {
-          stopWatch();
-          htmx.trigger(document.getElementById('status-panel'), 'load');
-          loadRuns();
-        }
-      })
-      .catch(function() { /* 忽略网络错误,下次重试 */ });
-  }
-  poll();
-  if (_watchTimer) clearInterval(_watchTimer);
-  _watchTimer = setInterval(function() {
-    if (_activeRunId !== runId) { stopWatch(); return; }
-    poll();
-  }, 2000);
-}
-
-function stopWatch() {
-  if (_watchTimer) { clearInterval(_watchTimer); _watchTimer = null; }
-  _activeRunId = null;
-}
-
-function loadRuns() {
-  fetch('/api/runs?limit=20', { headers: authHeaders() })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      document.getElementById('runs-list').innerHTML = renderRuns(data);
-      // 如果有 running run，自动开始轮询
-      if (data.runs && data.runs.length) {
-        var running = null;
-        for (var i = 0; i < data.runs.length; i++) {
-          if (data.runs[i].status === 'running') { running = data.runs[i]; break; }
-        }
-        if (running && _activeRunId !== running.id) {
-          watchRun(running.id);
-        }
-      }
+function loadPushSummary() {
+  fetch('/api/push-logs?limit=10', { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      document.getElementById('push-summary').innerHTML = renderPushSummary(data);
     })
-    .catch(function() {
-      document.getElementById('runs-list').innerHTML = '<p class="meta">加载失败</p>';
+    .catch(function () {
+      document.getElementById('push-summary').innerHTML = '<p class="meta">加载失败</p>';
     });
 }
 
@@ -343,24 +175,20 @@ document.getElementById('btn-trigger').onclick = async function () {
   try {
     var r = await fetch('/api/actions/trigger', {
       method: 'POST', headers: authHeaders(),
-      body: JSON.stringify({action: 'sync'})
+      body: JSON.stringify({ action: 'sync' })
     });
     var body = await r.json();
     if (body.status === 'started') {
-      el.textContent = '同步已启动 (运行 #' + body.run_id + ') — 查看下方运行面板';
-      loadRuns();
-      watchRun(body.run_id);
+      el.innerHTML = '同步已启动 — <a href="/runs?watch=' + body.run_id + '">查看运行 #' + body.run_id + ' 进度</a>';
       htmx.trigger(document.getElementById('status-panel'), 'load');
+      loadRunsSummary();
     } else if (body.reason === 'already_running') {
-      el.textContent = body.run_id
-        ? '已有同步正在运行 (运行 #' + body.run_id + ')，正查看进度'
-        : '已有同步正在启动，请稍后刷新状态';
-      if (body.run_id) watchRun(body.run_id);
-      loadRuns();
+      el.innerHTML = body.run_id
+        ? '已有同步正在运行 — <a href="/runs?watch=' + body.run_id + '">查看运行 #' + body.run_id + '</a>'
+        : '已有同步正在启动,请稍后刷新状态';
+      loadRunsSummary();
     } else {
-      el.textContent = typeof formatApiError === 'function'
-        ? formatApiError(body, JSON.stringify(body))
-        : JSON.stringify(body);
+      el.textContent = formatApiError(body, JSON.stringify(body));
     }
   } catch (e) {
     el.textContent = '请求失败: ' + e.message;
@@ -374,106 +202,15 @@ document.getElementById('btn-test').onclick = async function () {
     method: 'POST', headers: authHeaders(), body: '{}'
   });
   var body = await r.json();
-  try { sessionStorage.setItem('d2a_last_connection_test', JSON.stringify({at: Date.now(), body: body})); } catch (e) {}
+  try { sessionStorage.setItem('d2a_last_connection_test', JSON.stringify({ at: Date.now(), body: body })); } catch (e) {}
   if (body.status === 'failed' || body.error) {
-    el.textContent = typeof formatApiError === 'function'
-      ? formatApiError(body, '连接失败')
-      : JSON.stringify(body);
+    el.textContent = formatApiError(body, '连接失败');
   } else {
     el.textContent = JSON.stringify(body);
   }
 };
 
-// ---- 推送记录 ----
-
-function renderPushLogs(data) {
-  if (!data.push_logs || !data.push_logs.length) return '<p class="meta">暂无推送记录（仅在 sink.type=http 时有记录）</p>';
-  var html = '<table><thead><tr><th>ID</th><th>源</th><th>表</th><th>步骤</th><th>批次</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
-  data.push_logs.forEach(function(p) {
-    var duration = p.duration_ms != null ? (p.duration_ms / 1000).toFixed(1) + 's' : '—';
-    html += '<tr class="run-row" onclick="openPushBatch(\'' + esc(p.batch_id || '') + '\')">';
-    html += '<td>#' + p.id + '</td>';
-    html += '<td>' + esc(p.source) + '</td>';
-    html += '<td>' + esc(p.table_name) + '</td>';
-    html += '<td>' + esc(p.step_kind) + '</td>';
-    html += '<td style="font-family:monospace;font-size:11px;max-width:100px;overflow:hidden;text-overflow:ellipsis">' + esc((p.batch_id || '').slice(-16)) + '</td>';
-    html += '<td>' + (p.rows_count != null ? p.rows_count : '—') + '</td>';
-    html += '<td>' + badge(p.status) + '</td>';
-    html += '<td>' + duration + '</td>';
-    html += '<td>' + fmtTime(p.created_at) + '</td></tr>';
-    if (p.status === 'failed' && p.error_detail) {
-      html += '<tr><td></td><td colspan="8" style="color:#b42318;font-size:12px">' + esc(p.error_detail) + '</td></tr>';
-    }
-  });
-  html += '</tbody></table>';
-  return html;
-}
-
-function loadPushLogs() {
-  fetch('/api/push-logs?limit=30', { headers: authHeaders() })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      document.getElementById('push-logs-list').innerHTML = renderPushLogs(data);
-    })
-    .catch(function() {
-      document.getElementById('push-logs-list').innerHTML = '<p class="meta">推送记录加载失败</p>';
-    });
-}
-
-function openPushBatch(batchId) {
-  if (!batchId) return;
-  document.getElementById('push-detail-overlay').style.display = 'flex';
-  document.getElementById('push-detail-title').textContent = '批次 ' + batchId;
-  document.getElementById('push-detail-body').innerHTML = '<p class="meta">加载中…</p>';
-  fetch('/api/push-logs/batch/' + encodeURIComponent(batchId), { headers: authHeaders() })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      var p = data.progress;
-      var pct = p.total > 0 ? Math.round(p.ok / p.total * 100) : 0;
-      var html = '';
-      // 统计卡片
-      html += '<dl class="push-stat-grid">';
-      html += '<div class="push-stat"><dt>模式</dt><dd>' + esc(data.mode) + '</dd></div>';
-      html += '<div class="push-stat"><dt>表</dt><dd>' + esc(data.table_name) + '</dd></div>';
-      html += '<div class="push-stat"><dt>总步骤</dt><dd>' + p.total + '</dd></div>';
-      html += '<div class="push-stat"><dt>成功</dt><dd style="color:#1e7e34">' + p.ok + '</dd></div>';
-      html += '<div class="push-stat"><dt>失败</dt><dd style="color:#b42318">' + p.failed + '</dd></div>';
-      html += '<div class="push-stat"><dt>推送行数</dt><dd>' + (p.rows || 0) + '</dd></div>';
-      html += '<div class="push-stat"><dt>耗时</dt><dd>' + (p.duration_ms / 1000).toFixed(1) + 's</dd></div>';
-      html += '</dl>';
-      // 进度条
-      html += '<div style="margin-bottom:16px">';
-      html += '<span class="push-rows">进度: ' + p.ok + '/' + p.total + ' (' + pct + '%)</span>';
-      html += '<div class="progress-bar"><div class="progress-bar-fill" style="width:' + pct + '%"></div></div>';
-      html += '</div>';
-      // 步骤表
-      html += '<table style="margin-top:8px"><thead><tr><th>步骤</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
-      data.steps.forEach(function(s) {
-        var dur = s.duration_ms != null ? (s.duration_ms / 1000).toFixed(2) + 's' : '—';
-        html += '<tr><td>' + esc(s.step_kind) + '</td>';
-        html += '<td>' + (s.rows_count != null ? s.rows_count : '—') + '</td>';
-        html += '<td>' + badge(s.status) + '</td>';
-        html += '<td>' + dur + '</td>';
-        html += '<td>' + fmtTime(s.created_at) + '</td></tr>';
-        if (s.error_detail) {
-          html += '<tr><td></td><td colspan="4" style="color:#b42318;font-size:12px">' + esc(s.error_detail) + '</td></tr>';
-        }
-      });
-      html += '</tbody></table>';
-      document.getElementById('push-detail-body').innerHTML = html;
-    })
-    .catch(function(err) {
-      document.getElementById('push-detail-body').innerHTML = '<p class="meta">加载失败: ' + err.message + '</p>';
-    });
-}
-
-function closePushDetail() {
-  document.getElementById('push-detail-overlay').style.display = 'none';
-  document.getElementById('push-detail-body').innerHTML = '';
-}
-
-// 页面加载时获取运行历史和推送记录
-loadRuns();
-loadPushLogs();
+loadRunsSummary();
+loadPushSummary();
 </script>
 {% endblock %}

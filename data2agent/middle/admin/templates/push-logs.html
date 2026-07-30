@@ -2,35 +2,11 @@
 {% block title %}推送记录 — 中间机管理{% endblock %}
 {% block content %}
 <style>
-  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
-        box-shadow:0 1px 3px rgba(16,34,54,.08)}
-  .card h2{font-size:15px;margin:0 0 12px;color:#12314f}
-  .meta{font-size:13px;color:#51606f;line-height:1.6}
-  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
-  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e8edf2}
-  th{color:#51606f;font-weight:600}
-  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
-  .badge-ok{background:#e6f4ea;color:#1e7e34}
-  .badge-off{background:#fdecea;color:#b42318}
-  .badge-warn{background:#fff8e6;color:#8a4b00}
-  .badge-running{background:#e6f0fa;color:#1a56db}
-  .run-row{cursor:pointer}
-  .run-row:hover{background:#f5f7fa}
-  .progress-bar{height:4px;background:#e8edf2;border-radius:2px;margin:4px 0;overflow:hidden}
-  .progress-bar-fill{height:100%;background:#1a56db;border-radius:2px;transition:width .3s}
-  .push-rows{font-size:12px;color:#51606f}
-  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9999;display:flex;align-items:center;justify-content:center}
-  .modal-card{background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.18);max-width:720px;width:90vw;max-height:80vh;overflow-y:auto;padding:24px}
-  .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
-  .modal-header h2{font-size:16px;margin:0;color:#12314f}
-  .modal-close{background:none;border:none;font-size:22px;cursor:pointer;color:#6a7682;padding:0 4px}
-  .modal-close:hover{color:#12314f}
   .push-stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:16px}
   .push-stat{border:1px solid #e8edf2;border-radius:8px;padding:12px}
   .push-stat dt{font-size:11px;color:#6a7682;letter-spacing:.03em;text-transform:uppercase}
   .push-stat dd{font-size:20px;font-weight:600;color:#12314f;margin:4px 0 0}
-  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px}
-  .toolbar select{padding:4px 8px;border:1px solid #e8edf2;border-radius:6px;font-size:13px}
+  .push-rows{font-size:12px;color:#51606f}
 </style>
 
 <div class="card">
@@ -68,33 +44,11 @@
 </div>
 
 <script>
-function esc(s) {
-  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-function authHeaders() {
-  var h = {'Content-Type': 'application/json'};
-  var token = sessionStorage.getItem('d2a_token');
-  if (token) h['Authorization'] = 'Bearer ' + token;
-  return h;
-}
-function fmtTime(t) {
-  if (!t) return '—';
-  try { return new Date(t).toLocaleString(); } catch(e) { return t; }
-}
-function badge(status) {
-  var cls = status === 'ok' || status === 'completed' ? 'badge-ok'
-    : status === 'failed' ? 'badge-off'
-    : status === 'running' ? 'badge-running'
-    : status === 'paused' || status === 'started' ? 'badge-warn'
-    : 'badge-off';
-  return '<span class="badge ' + cls + '">' + esc(status) + '</span>';
-}
-
 function renderPushLogs(data) {
   var list = data.push_logs;
   document.getElementById('push-total').textContent = '共 ' + (data.total || 0) + ' 条';
   if (!list || !list.length) return '<p class="meta">暂无推送记录（仅在 sink.type=http 时有记录）</p>';
-  var html = '<table><thead><tr><th>ID</th><th>源</th><th>表</th><th>步骤</th><th>批次</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
+  var html = '<table class="data"><thead><tr><th>ID</th><th>源</th><th>表</th><th>步骤</th><th>批次</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
   list.forEach(function(p) {
     var duration = p.duration_ms != null ? (p.duration_ms / 1000).toFixed(1) + 's' : '—';
     var batchShort = (p.batch_id || '').slice(-20);
@@ -169,7 +123,7 @@ function openPushBatch(batchId) {
       html += '<div class="progress-bar"><div class="progress-bar-fill" style="width:' +
               (completed ? '100' : '0') + '%"></div></div>';
       html += '</div>';
-      html += '<table style="margin-top:8px"><thead><tr><th>步骤</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
+      html += '<table class="data" style="margin-top:8px"><thead><tr><th>步骤</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
       data.steps.forEach(function(s) {
         var dur = s.duration_ms != null ? (s.duration_ms / 1000).toFixed(2) + 's' : '—';
         html += '<tr><td>' + esc(s.step_kind) + '</td>';

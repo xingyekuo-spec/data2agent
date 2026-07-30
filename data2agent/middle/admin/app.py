@@ -438,6 +438,10 @@ def create_app(
     def status_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "status.html", page_ctx(request))
 
+    @app.get("/runs", response_class=HTMLResponse)
+    def runs_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "runs.html", page_ctx(request))
+
     @app.get("/config", response_class=HTMLResponse)
     def config_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "config.html", page_ctx(request))

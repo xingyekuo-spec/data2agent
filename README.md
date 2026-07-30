@@ -16,7 +16,7 @@
 - **制造业本体模板 + 元模型**:业务对象的声明式模板(YAML,首批 5 个 / 规划 18 个),`validate` 一键校验;v0.3 已加入模板/绑定摘要、数据集版本和原子发布;
 - **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:依据必须引用已记录查询 ID 和结果摘要,默认脱敏、口径警示内建;主体/会话/结果摘要级证据已持久化),任何支持 MCP 的 Agent 五分钟接入;HTTP 部署默认强制 Token + 每工具限流 + 查询审计;
 - **运维 / 管理界面**:平台 `console`(`:8849`)已统一为 Vue Console(`/`),覆盖首次配置、配置编辑、日志、日常监控、数据验证、字段血缘、MCP 证据和一键验收;
-  中间机 `middle_admin`(`:8851`)拆为 **配置**（连接与调度）、**元数据**（只读扫描选表）、**抽取表**（确认键/水位并保存）与状态/日志。
+  中间机 `middle_admin`(`:8851`)按任务分组:**运维**(状态总览 / 运行历史 / 推送记录 / 日志)与**配置**三步流程(1 连接 → 2 元数据选表 → 3 抽取计划)。
   新安装默认空 `tables`，未选表不会访问 ERP 业务表。现场推荐[便携包](docs/runbook/portable.md)
   双击 `data2agent.exe`,链路验收见 [push-validation](docs/runbook/push-validation.md);
   管理 API 契约快照见 `console-ui/openapi.json`(用 `python scripts/export_console_openapi.py` 重新生成);

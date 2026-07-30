@@ -1,0 +1,192 @@
+{% extends "layout.html" %}
+{% block title %}运行 — 中间机管理{% endblock %}
+{% block content %}
+<div class="card">
+  <p class="layer">运行历史</p>
+  <h2>同步运行</h2>
+  <p class="hint">点击行展开逐表步骤;存在运行中的运行时,每 2 秒自动刷新进度。</p>
+  <div class="toolbar">
+    <label>源
+      <select id="source-filter" onchange="loadRuns()">
+        <option value="">全部源</option>
+      </select>
+    </label>
+    <label>条数
+      <select id="limit-select" onchange="loadRuns()">
+        <option value="20" selected>20 条</option>
+        <option value="50">50 条</option>
+        <option value="100">100 条</option>
+      </select>
+    </label>
+    <button type="button" onclick="loadRuns()">刷新</button>
+    <span class="meta" id="runs-total" style="margin-left:auto"></span>
+  </div>
+  <div id="runs-list"><p class="meta">加载中…</p></div>
+</div>
+
+<script>
+var _watchTimer = null;
+var _activeRunId = null;
+var _stepsCache = {};
+
+function renderRuns(data) {
+  document.getElementById('runs-total').textContent =
+    data.runs ? '最近 ' + data.runs.length + ' 条' : '';
+  if (!data.runs || !data.runs.length) return '<p class="meta">暂无运行记录</p>';
+  var html = '<table class="data"><thead><tr>' +
+    '<th>ID</th><th>源</th><th>状态</th><th>开始</th><th>表数</th><th>行数</th><th>耗时</th>' +
+    '</tr></thead><tbody>';
+  data.runs.forEach(function (r) {
+    var duration = r.finished_at && r.started_at
+      ? ((new Date(r.finished_at) - new Date(r.started_at)) / 1000).toFixed(0) + 's'
+      : '—';
+    html += '<tr class="run-row" onclick="toggleSteps(' + r.id + ')">';
+    html += '<td>#' + r.id + '</td><td>' + esc(r.source) + '</td><td>' + badge(r.status) + '</td>';
+    html += '<td>' + fmtTime(r.started_at) + '</td><td>' + (r.tables || 0) + '</td>';
+    html += '<td>' + (r.rows || 0) + '</td><td>' + duration + '</td></tr>';
+    html += '<tr class="steps-panel" id="steps-' + r.id + '"><td colspan="7"><p class="meta">加载步骤中…</p></td></tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+function renderSteps(steps) {
+  if (!steps || !steps.length) return '<p class="meta">无步骤记录</p>';
+  var html = '<table class="data" style="margin:0 12px;width:calc(100% - 24px)"><thead><tr>' +
+    '<th>#</th><th>目标</th><th>状态</th><th>行数</th><th>批次</th><th>最后进度</th>' +
+    '</tr></thead><tbody>';
+  steps.forEach(function (s, i) {
+    var hasProgress = s.batches !== null && s.batches !== undefined;
+    var rowsOut = (s.rows_out !== null && s.rows_out !== undefined) ? s.rows_out : (hasProgress ? 0 : '—');
+    var batches = hasProgress ? s.batches : '—';
+    var progressTime = s.progressed_at
+      ? fmtTime(s.progressed_at)
+      : (hasProgress ? fmtTime(s.finished_at || s.started_at)
+         : (s.status === 'failed' ? '—'
+            : (s.status === 'running' ? '等待首批完成…' : '历史运行未记录批次进度')));
+    html += '<tr><td>' + (s.ordinal || i + 1) + '</td><td>' + esc(s.target) + '</td>' +
+      '<td>' + badge(s.status) + '</td>' +
+      '<td>' + rowsOut + '</td>' +
+      '<td>' + batches + '</td>' +
+      '<td>' + progressTime + '</td></tr>';
+    if (s.status === 'running' && s.rows_out === null && s.rows_out !== 0) {
+      html += '<tr><td></td><td colspan="5" style="color:#6a7682">⏳ 等待首批完成…</td></tr>';
+    }
+    if (s.status === 'failed' && s.error) {
+      html += '<tr><td></td><td colspan="5" style="color:#b42318;font-size:12px">失败原因: ' + esc(s.error) + '</td></tr>';
+    }
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+function toggleSteps(runId) {
+  var panel = document.getElementById('steps-' + runId);
+  if (!panel) return;
+  if (panel.classList.contains('open')) {
+    panel.classList.remove('open');
+    return;
+  }
+  panel.classList.add('open');
+  if (_stepsCache[runId]) {
+    panel.innerHTML = '<td colspan="7">' + renderSteps(_stepsCache[runId]) + '</td>';
+  } else {
+    loadSteps(runId);
+  }
+}
+
+function loadSteps(runId) {
+  fetch('/api/runs/' + runId, { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      _stepsCache[runId] = data.steps || [];
+      var panel = document.getElementById('steps-' + runId);
+      if (panel) panel.innerHTML = '<td colspan="7">' + renderSteps(data.steps || []) + '</td>';
+    })
+    .catch(function () {
+      var panel = document.getElementById('steps-' + runId);
+      if (panel) panel.innerHTML = '<td colspan="7"><p class="meta">步骤加载失败</p></td>';
+    });
+}
+
+function watchRun(runId) {
+  _activeRunId = runId;
+  _stepsCache[runId] = null;
+  function poll() {
+    if (_activeRunId !== runId) return;
+    fetch('/api/runs/' + runId, { headers: authHeaders() })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (_activeRunId !== runId) return;
+        _stepsCache[runId] = data.steps || [];
+        var panel = document.getElementById('steps-' + runId);
+        if (panel) {
+          panel.classList.add('open');
+          panel.innerHTML = '<td colspan="7">' + renderSteps(data.steps || []) + '</td>';
+        }
+        var run = data.run;
+        if (run && run.status !== 'running') {
+          stopWatch();
+          loadRuns();
+        }
+      })
+      .catch(function () { /* 忽略网络错误,下次重试 */ });
+  }
+  poll();
+  if (_watchTimer) clearInterval(_watchTimer);
+  _watchTimer = setInterval(function () {
+    if (_activeRunId !== runId) { stopWatch(); return; }
+    poll();
+  }, 2000);
+}
+
+function stopWatch() {
+  if (_watchTimer) { clearInterval(_watchTimer); _watchTimer = null; }
+  _activeRunId = null;
+}
+
+function loadRuns() {
+  var source = document.getElementById('source-filter').value;
+  var limit = document.getElementById('limit-select').value;
+  var url = '/api/runs?limit=' + limit;
+  if (source) url += '&source=' + encodeURIComponent(source);
+  fetch(url, { headers: authHeaders() })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      document.getElementById('runs-list').innerHTML = renderRuns(data);
+      // 源过滤器选项由返回数据累积
+      var sel = document.getElementById('source-filter');
+      var current = sel.value;
+      var sources = {};
+      (data.runs || []).forEach(function (r) { sources[r.source] = true; });
+      sel.innerHTML = '<option value="">全部源</option>';
+      Object.keys(sources).sort().forEach(function (s) {
+        sel.innerHTML += '<option value="' + esc(s) + '"' + (s === current ? ' selected' : '') + '>' + esc(s) + '</option>';
+      });
+      // 有 running 的运行时自动跟踪进度
+      var running = null;
+      (data.runs || []).forEach(function (r) {
+        if (!running && r.status === 'running') running = r;
+      });
+      if (running && _activeRunId !== running.id) watchRun(running.id);
+    })
+    .catch(function () {
+      document.getElementById('runs-list').innerHTML = '<p class="meta">加载失败</p>';
+    });
+}
+
+// 供状态页触发后跳转:?watch=<run_id> 直接展开并跟踪该运行
+(function () {
+  var m = location.search.match(/[?&]watch=(\d+)/);
+  loadRuns();
+  if (m) {
+    var runId = parseInt(m[1], 10);
+    setTimeout(function () {
+      var panel = document.getElementById('steps-' + runId);
+      if (panel) { panel.classList.add('open'); }
+      watchRun(runId);
+    }, 400);
+  }
+})();
+</script>
+{% endblock %}

@@ -98,11 +98,11 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
         _fail("middle: missing token should 401")
     _ok("middle: unauthenticated API → 401")
 
-    for path in ("/status", "/config", "/logs", "/metadata", "/tables"):
+    for path in ("/status", "/runs", "/config", "/logs", "/metadata", "/tables", "/push-logs"):
         r = client.get(path, headers=h)
         if r.status_code != 200:
             _fail(f"middle: GET {path} → {r.status_code}")
-    _ok("middle: HTML pages /status /config /logs /metadata /tables → 200")
+    _ok("middle: HTML pages /status /runs /config /logs /metadata /tables /push-logs → 200")
 
     nav = client.get("/status", headers=h).text
     if 'href="/metadata"' not in nav or 'href="/tables"' not in nav:

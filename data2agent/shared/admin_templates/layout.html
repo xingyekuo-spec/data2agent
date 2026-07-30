@@ -10,10 +10,50 @@
   header{background:#12314f;color:#fff;padding:12px 22px;display:flex;
          justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
   header b{font-size:16px}
-  nav{display:flex;gap:14px;flex-wrap:wrap}
+  nav{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
   nav a{color:#fff;text-decoration:none;font-size:13px;opacity:.9}
   nav a:hover{opacity:1;text-decoration:underline}
+  nav a.active{opacity:1;font-weight:600;border-bottom:2px solid #fff;padding-bottom:2px}
+  nav .nav-group{display:flex;gap:12px;align-items:center}
+  nav .nav-group-label{font-size:11px;letter-spacing:.06em;opacity:.65;margin-right:-6px}
+  nav .nav-divider{width:1px;height:16px;background:rgba(255,255,255,.35)}
   main{padding:16px 22px;max-width:1200px;margin:0 auto}
+  /* ---- 各管理页共享的卡片/徽章/表格/弹窗样式(页面模板不再各自复制) ---- */
+  .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
+        box-shadow:0 1px 3px rgba(16,34,54,.08)}
+  .card h2{font-size:15px;margin:0 0 12px;color:#12314f}
+  .layer{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#6a7682;margin:0 0 6px}
+  .meta{font-size:13px;color:#51606f;line-height:1.6}
+  .hint{font-size:12px;color:#8a97a5;margin:0 0 12px}
+  table.data{width:100%;border-collapse:collapse;font-size:13px;margin-top:10px}
+  table.data th,table.data td{text-align:left;padding:6px 8px;border-bottom:1px solid #e8edf2}
+  table.data th{color:#51606f;font-weight:600}
+  .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px}
+  .badge-ok{background:#e6f4ea;color:#1e7e34}
+  .badge-off{background:#fdecea;color:#b42318}
+  .badge-warn{background:#fff8e6;color:#8a4b00}
+  .badge-running{background:#e6f0fa;color:#1a56db}
+  .warn{font-size:12px;color:#8a4b00;background:#fff8e6;border:1px solid #f0d89a;
+        border-radius:6px;padding:8px 10px;max-width:520px}
+  .oknote{font-size:12px;color:#1e7e34;background:#e6f4ea;border:1px solid #b7dfc3;
+          border-radius:6px;padding:8px 10px;max-width:520px}
+  .run-row{cursor:pointer}
+  .run-row:hover{background:#f5f7fa}
+  .toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
+  .toolbar label{font-size:13px;color:#51606f}
+  .toolbar select,.toolbar input{padding:6px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:13px}
+  .progress-bar{height:4px;background:#e8edf2;border-radius:2px;margin:4px 0;overflow:hidden}
+  .progress-bar-fill{height:100%;background:#1a56db;border-radius:2px;transition:width .3s}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:9999;
+                 display:flex;align-items:center;justify-content:center}
+  .modal-card{background:#fff;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.18);
+              max-width:720px;width:90vw;max-height:80vh;overflow-y:auto;padding:24px}
+  .modal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+  .modal-header h2{font-size:16px;margin:0;color:#12314f}
+  .modal-close{background:none;border:none;font-size:22px;cursor:pointer;color:#6a7682;padding:0 4px}
+  .modal-close:hover{color:#12314f}
+  .steps-panel{display:none}
+  .steps-panel.open{display:table-row}
   .login-panel{background:#fff;border-radius:10px;padding:24px;max-width:420px;margin:40px auto;
                box-shadow:0 1px 3px rgba(16,34,54,.08)}
   .login-panel h2{font-size:15px;margin:0 0 14px;color:#12314f}
@@ -46,33 +86,8 @@
 </div>
 </main>
 <script src="{{ static_url }}/htmx.min.js"></script>
+<script src="{{ static_url }}/admin.js"></script>
 <script>
-/** 把 API 错误体格式化为「详情 — 建议：…」文案。 */
-function formatApiError(body, fallback) {
-  if (!body) return fallback || '请求失败';
-  if (body.errors && body.errors.length) {
-    return body.errors.map(function (e) {
-      var m = (e.field ? e.field + ': ' : '') + (e.message || '');
-      return e.suggestion ? (m + ' — 建议：' + e.suggestion) : m;
-    }).join('\n') || fallback || '请求失败';
-  }
-  var d = body.detail;
-  var detail = null;
-  var suggestion = body.suggestion || body.error_suggestion || null;
-  if (typeof d === 'string') {
-    detail = d;
-  } else if (d && typeof d === 'object') {
-    detail = d.detail || d.message || null;
-    suggestion = suggestion || d.suggestion || null;
-  }
-  if (!detail) {
-    detail = body.message || body.error_detail || body.text || body.error || fallback || '请求失败';
-  }
-  if (!suggestion && body.error) {
-    suggestion = null;
-  }
-  return suggestion ? (detail + ' — 建议：' + suggestion) : detail;
-}
 document.body.addEventListener('htmx:configRequest', function (e) {
   var token = sessionStorage.getItem('d2a_token');
   if (token) {
@@ -98,6 +113,13 @@ document.body.addEventListener('htmx:configRequest', function (e) {
   }
 })();
 {% endif %}
+/* 当前页导航高亮(各页在 nav 链接上标 data-nav)。 */
+(function () {
+  var path = location.pathname;
+  document.querySelectorAll('nav a[data-nav]').forEach(function (a) {
+    if (a.getAttribute('data-nav') === path) a.classList.add('active');
+  });
+})();
 </script>
 </body>
 </html>

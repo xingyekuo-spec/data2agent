@@ -1,10 +1,18 @@
 {% extends "admin/layout.html" %}
 {% block title %}中间机管理{% endblock %}
 {% block nav %}
-<a href="/status">状态</a>
-<a href="/config">配置</a>
-<a href="/metadata">元数据</a>
-<a href="/tables">抽取表</a>
-<a href="/push-logs">推送记录</a>
-<a href="/logs">日志</a>
+<span class="nav-group">
+  <span class="nav-group-label">运维</span>
+  <a href="/status" data-nav="/status">状态</a>
+  <a href="/runs" data-nav="/runs">运行</a>
+  <a href="/push-logs" data-nav="/push-logs">推送记录</a>
+  <a href="/logs" data-nav="/logs">日志</a>
+</span>
+<span class="nav-divider"></span>
+<span class="nav-group">
+  <span class="nav-group-label">配置</span>
+  <a href="/config" data-nav="/config">1 连接</a>
+  <a href="/metadata" data-nav="/metadata">2 选表</a>
+  <a href="/tables" data-nav="/tables">3 抽取计划</a>
+</span>
 {% endblock %}
