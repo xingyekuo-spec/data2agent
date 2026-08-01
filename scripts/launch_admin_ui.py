@@ -468,7 +468,13 @@ def worker_commands(role: str, home: Path, python: Path) -> list[tuple[str, int 
         # apply 是纯落地库操作:不接受 --config,须显式给 --templates(cwd 无 templates)
         ("apply", None, [py, "-m", "data2agent.middle.extract", "apply",
                          "--landing", landing, "--templates", templates,
-                         "--every", "1800"]),
+                         "--every", "30", "--committed-only", "--all-sources"]),
+        ("maintenance", None, [
+            py, "-m", "data2agent.platform.maintenance",
+            "--landing", landing,
+            "--backup-dir", str(home / "data" / "backups"),
+            "--every", "86400",
+        ]),
         ("mcp", 8848, [py, "-m", "data2agent.platform.mcp_server",
                        "--db", landing, "--templates", templates,
                        "--transport", "http", "--host", "0.0.0.0", "--port", "8848"]),
