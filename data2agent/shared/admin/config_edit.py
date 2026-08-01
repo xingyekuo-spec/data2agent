@@ -23,6 +23,7 @@ MIDDLE_EDITABLE = {
     "sources.*.lookback",
     "sources.*.sync_every",
     "sources.*.sync_start_at",
+    "sources.*.start_date",
     "sources.*.sink.url",
 }
 

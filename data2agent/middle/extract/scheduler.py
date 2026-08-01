@@ -16,7 +16,7 @@ from ...shared.config import ConnectConfig, SourceConfig, in_window
 from ...shared.store.dataset_publish import build_dataset
 from .increment import incremental_sync
 from ...shared.store.landing import LandingStore
-from .reconcile import reconcile
+from .reconcile import reconcile, reconcile_remote
 
 log = logging.getLogger("data2agent.connect")
 
@@ -42,7 +42,8 @@ def build_adapter(name: str, scfg: SourceConfig,
     whitelist = scfg.table_whitelist()
     hook = lambda action, sql, rows, ms: landing.log_audit(name, action, sql, rows, ms)  # noqa: E731
     kwargs = dict(batch_size=scfg.rate.batch_size,
-                  rows_per_second=scfg.rate.rows_per_second, audit_hook=hook)
+                  rows_per_second=scfg.rate.rows_per_second, audit_hook=hook,
+                  table_schemas=scfg.table_schemas())
     if scfg.adapter == "sqlite_readonly":
         import os
 
@@ -145,7 +146,8 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
             should_continue=lambda: in_window(datetime.now().time(), scfg.windows),
             run_id=run_id,
             only_tables=set(tables) if tables else None,
-            start_dates=scfg.table_start_dates())
+            start_dates=scfg.table_start_dates(),
+            estimate_rows=scfg.estimate_rows)
         log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
                  name, report.run_id, report.total_rows, len(report.tables),
                  report.paused, scfg.sink.type)
@@ -192,19 +194,74 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig,
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip reconcile source=%s reason=窗口外", name)
         return False
+    from .sync_lock import SourceSyncLock
+
+    lock = SourceSyncLock.try_acquire(landing_path, name)
+    if lock is None:
+        log.info("skip reconcile source=%s reason=sync_or_reconcile_running", name)
+        return False
     landing = LandingStore(landing_path)
-    adapter = build_adapter(name, scfg, landing)
-    report = reconcile(
-        adapter, landing, name, scfg.table_watermarks(), deep=deep,
-        key_columns=scfg.table_key_columns(),
-    )
-    log.info("reconcile source=%s run=%s segments=%s mismatched=%s soft_deleted=%s",
-             name, report.run_id, len(report.segments),
-             len(report.mismatched), report.total_soft_deleted)
-    return True
+    try:
+        adapter = build_adapter(name, scfg, landing)
+        if scfg.sink.type == "http":
+            sink = build_sink(scfg, landing, source=name)
+            report = reconcile_remote(
+                adapter, landing, sink, name, scfg.table_watermarks(),
+                deep=deep, key_columns=scfg.table_key_columns())
+        else:
+            report = reconcile(
+                adapter, landing, name, scfg.table_watermarks(), deep=deep,
+                key_columns=scfg.table_key_columns())
+        log.info(
+            "reconcile source=%s run=%s deep=%s segments=%s "
+            "mismatched=%s soft_deleted=%s",
+            name, report.run_id, deep, len(report.segments),
+            len(report.mismatched), report.total_soft_deleted)
+        return True
+    finally:
+        landing.con.close()
+        lock.release()
 
 
-def serve(cfg: ConnectConfig, once: bool = False) -> None:
+def _reload_source(
+    config_path: str, source: str,
+) -> tuple[ConnectConfig, SourceConfig] | None:
+    from ...shared.config import load_config
+
+    cfg = load_config(config_path)
+    scfg = cfg.sources.get(source)
+    if scfg is None:
+        log.warning(
+            "skip source=%s reason=removed_from_config;重启 connector 以刷新任务清单",
+            source,
+        )
+        return None
+    return cfg, scfg
+
+
+def run_sync_cycle_from_config(config_path: str, source: str) -> SyncCycleResult:
+    """每次触发重新读取配置，使表计划/窗口/凭据引用下一轮生效。"""
+    loaded = _reload_source(config_path, source)
+    if loaded is None:
+        return SyncCycleResult(False, "source_removed")
+    cfg, scfg = loaded
+    return run_sync_cycle(source, scfg, cfg.landing, cfg.templates)
+
+
+def run_reconcile_cycle_from_config(
+    config_path: str, source: str, deep: bool = False,
+) -> bool:
+    loaded = _reload_source(config_path, source)
+    if loaded is None:
+        return False
+    cfg, scfg = loaded
+    return run_reconcile_cycle(source, scfg, cfg.landing, deep=deep)
+
+
+def serve(
+    cfg: ConnectConfig, once: bool = False, *,
+    config_path: str | None = None,
+) -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
@@ -223,16 +280,32 @@ def serve(cfg: ConnectConfig, once: bool = False) -> None:
     scheduler = BlockingScheduler()
     for name, scfg in cfg.sources.items():
         next_run_time = scfg.sync_start_datetime_after(datetime.now())
+        sync_func = run_sync_cycle
+        sync_args = (name, scfg, cfg.landing, cfg.templates)
+        if config_path is not None:
+            sync_func = run_sync_cycle_from_config
+            sync_args = (config_path, name)
         scheduler.add_job(
-            run_sync_cycle, IntervalTrigger(seconds=scfg.sync_every_seconds()),
-            args=(name, scfg, cfg.landing, cfg.templates), id=f"sync:{name}",
+            sync_func, IntervalTrigger(seconds=scfg.sync_every_seconds()),
+            args=sync_args, id=f"sync:{name}",
             max_instances=1, coalesce=True,
             next_run_time=next_run_time)
-        if scfg.reconcile_at:
-            hh, mm = scfg.reconcile_at.split(":")
+        for deep, at in (
+            (False, scfg.reconcile_at),
+            (True, scfg.reconcile_deep_at),
+        ):
+            if not at:
+                continue
+            hh, mm = at.split(":")
+            reconcile_func = run_reconcile_cycle
+            reconcile_args = (name, scfg, cfg.landing, deep)
+            if config_path is not None:
+                reconcile_func = run_reconcile_cycle_from_config
+                reconcile_args = (config_path, name, deep)
             scheduler.add_job(
-                run_reconcile_cycle, CronTrigger(hour=int(hh), minute=int(mm)),
-                args=(name, scfg, cfg.landing), id=f"reconcile:{name}",
+                reconcile_func, CronTrigger(hour=int(hh), minute=int(mm)),
+                args=reconcile_args,
+                id=f"reconcile{'-deep' if deep else ''}:{name}",
                 max_instances=1, coalesce=True)
         log.info(
             "scheduled source=%s sync_every=%s sync_start_at=%s "

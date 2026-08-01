@@ -39,8 +39,9 @@ def main() -> int:
 
     if not Path(args.db).exists():
         ap.error(f"落地库不存在:{args.db}。参考链:python -m tests.fixtures.e10.seed && "
-                 "python -m data2agent.connect sync --config connect.example.yaml && "
-                 "python -m data2agent.connect apply")
+                 "python -m data2agent.middle.extract sync "
+                 "--config connect.example.yaml && "
+                 "python -m data2agent.middle.extract apply")
 
     from .server import create_server
 

@@ -10,11 +10,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
 from .adapters.base import SourceAdapter, TableInfo, resolve_runtime_keys
+from .sink import HttpPushSink
 from ...shared.store.landing import LandingStore, normalize_value
 
 
@@ -60,31 +63,45 @@ def month_segments(min_wm: str, max_wm: str) -> list[tuple[str, str, str]]:
 
 def _repair_segment(adapter: SourceAdapter, landing: LandingStore, source: str,
                     info: TableInfo, wm_col: str, start, end) -> tuple[int, int]:
-    """L2:重抽段 + 完整运行键 diff 软删。返回 (重抽行数, 软删行数)。"""
-    batch_id = uuid.uuid4().hex[:12]
-    pk_cols = list(info.pk)
-    src_keys: set[tuple] = set()
-    rows = 0
-    for batch in adapter.read_segment(info, wm_col, start, end):
-        rows += landing.upsert_rows(source, info, batch, batch_id)
-        src_keys |= {tuple(r[c] for c in pk_cols) for r in batch}
-    gone = landing.active_key_tuples(
-        source, info.name, pk_cols, wm_col, start, end) - src_keys
-    return rows, landing.mark_deleted_keys(source, info.name, pk_cols, gone)
+    """L2:流式重抽段 + staging 键表 SQL diff；内存与段大小无关。"""
+    return _repair_local_stream(
+        adapter, landing, source, info, wm_col, start, end)
 
 
 def _repair_full(adapter: SourceAdapter, landing: LandingStore, source: str,
                  info: TableInfo) -> tuple[int, int]:
-    """无水位表的 L2:全量重抽 + 完整运行键 diff 软删。"""
-    batch_id = uuid.uuid4().hex[:12]
-    pk_cols = list(info.pk)
-    src_keys: set[tuple] = set()
-    rows = 0
-    for batch in adapter.read_increment(info):
-        rows += landing.upsert_rows(source, info, batch, batch_id)
-        src_keys |= {tuple(r[c] for c in pk_cols) for r in batch}
-    gone = landing.active_key_tuples(source, info.name, pk_cols) - src_keys
-    return rows, landing.mark_deleted_keys(source, info.name, pk_cols, gone)
+    """无水位表 L2：全量流式重抽 + staging 键表 SQL diff。"""
+    return _repair_local_stream(adapter, landing, source, info)
+
+
+def _repair_local_stream(
+    adapter: SourceAdapter, landing: LandingStore, source: str,
+    info: TableInfo, wm_col: str | None = None, start=None, end=None,
+) -> tuple[int, int]:
+    repair_id = uuid.uuid4().hex
+    landing.begin_reconcile_repair(
+        source, info, repair_id, wm_col, start, end)
+    rows = batches = 0
+    try:
+        iterator = (
+            adapter.read_segment(info, wm_col, start, end)
+            if wm_col is not None else adapter.read_increment(info))
+        for batch in iterator:
+            batch_id = f"{repair_id}-{batches}"
+            canonical = json.dumps(
+                batch, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"), default=str).encode("utf-8")
+            digest = "sha256:" + hashlib.sha256(canonical).hexdigest()
+            result = landing.write_reconcile_repair_batch(
+                source, info.name, repair_id, batch_id, batch, digest)
+            rows += int(result["ingested"])
+            batches += 1
+        completed = landing.complete_reconcile_repair(
+            source, info.name, repair_id, rows, batches)
+        return rows, int(completed["soft_deleted"])
+    except Exception:
+        landing.abort_reconcile_repair(source, info.name, repair_id)
+        raise
 
 
 def reconcile(adapter: SourceAdapter, landing: LandingStore, source: str,
@@ -190,3 +207,169 @@ def _reconcile_full_table(adapter, landing, source, info: TableInfo,
             soft_deleted=seg.soft_deleted if seg is not None else None,
             error=str(e)[:500])
         raise
+
+
+def _remote_repair(
+    adapter: SourceAdapter, sink: HttpPushSink, source: str, info: TableInfo,
+    wm_col: str | None = None, start=None, end=None,
+) -> tuple[int, int]:
+    """E6b L2：流式推行和当前键全集，平台完成 SQL 反连接软删。"""
+    repair_id = uuid.uuid4().hex
+    sink.begin_reconcile_repair(
+        source, info, repair_id, wm_col, start, end)
+    rows = batches = 0
+    try:
+        iterator = (
+            adapter.read_segment(info, wm_col, start, end)
+            if wm_col is not None
+            else adapter.read_increment(info)
+        )
+        for batch in iterator:
+            rows += sink.write_reconcile_repair(
+                source, info, repair_id, f"{repair_id}-{batches}", batch)
+            batches += 1
+        completed = sink.complete_reconcile_repair(
+            source, info, repair_id, rows, batches)
+        return rows, int(completed.get("soft_deleted", 0))
+    except Exception:
+        try:
+            sink.abort_reconcile_repair(source, info, repair_id)
+        except Exception:
+            pass
+        raise
+
+
+def reconcile_remote(
+    adapter: SourceAdapter, landing: LandingStore, sink: HttpPushSink,
+    source: str, watermarks: dict[str, str] | None = None,
+    deep: bool = False,
+    key_columns: dict[str, list[str]] | None = None,
+) -> ReconcileReport:
+    """E6b：中间机读 ERP，平台算落地统计并执行软删，全程仅出站 HTTP。"""
+    watermarks = watermarks or {}
+    key_columns = key_columns or {}
+    report = ReconcileReport(
+        source=source, run_id=landing.start_run(source, "reconcile"), deep=deep)
+    ordinal = 0
+    generation_id = f"reconcile-{source}-{report.run_id}"
+    generation_open = False
+    repaired_any = False
+    try:
+        sink.ensure_reconcile_protocol()
+        raw_tables = adapter.tables()
+        sink.begin_reconcile_generation(
+            source, generation_id, [table.name for table in raw_tables])
+        generation_open = True
+        for raw_info in raw_tables:
+            info = resolve_runtime_keys(
+                raw_info, key_columns.get(raw_info.name), require_keys=True)
+            adapter.validate_runtime_keys(info)
+            wm_col = watermarks.get(info.name)
+            if wm_col is None:
+                ordinal += 1
+                step_id = landing.add_step(
+                    report.run_id, ordinal, "segment", f"{info.name}:全表")
+                src_count = adapter.table_count(info)
+                dst = sink.reconcile_stats(source, info)
+                dst_count = int(dst["count"])
+                consistent = src_count == dst_count
+                seg = SegmentResult(
+                    info.name, "全表", src_count, dst_count, consistent)
+                report.segments.append(seg)
+                try:
+                    if not consistent or deep:
+                        repaired_any = True
+                        seg.repaired_rows, seg.soft_deleted = _remote_repair(
+                            adapter, sink, source, info)
+                    landing.update_step(
+                        step_id, status="ok", rows_in=src_count,
+                        rows_out=dst_count, repaired=seg.repaired_rows,
+                        soft_deleted=seg.soft_deleted,
+                        error=None if consistent else
+                        f"不一致:源 {src_count} vs 平台 {dst_count}")
+                except Exception as e:
+                    landing.update_step(
+                        step_id, status="failed", rows_in=src_count,
+                        rows_out=dst_count, error=str(e)[:500])
+                    raise
+                continue
+
+            src_bounds = adapter.watermark_bounds(info, wm_col)
+            dst_bounds = sink.reconcile_stats(source, info, wm_col)
+            lows = [
+                str(value) for value in (
+                    normalize_value(src_bounds.get("min")),
+                    normalize_value(dst_bounds.get("min")),
+                ) if value is not None
+            ]
+            if not lows:
+                continue
+            highs = [
+                str(value) for value in (
+                    normalize_value(src_bounds.get("max")),
+                    normalize_value(dst_bounds.get("max")),
+                    landing.get_high_water(source, info.name),
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                ) if value is not None
+            ]
+            for label, start, end in month_segments(min(lows), max(highs)):
+                ordinal += 1
+                step_id = landing.add_step(
+                    report.run_id, ordinal, "segment",
+                    f"{info.name}:{label}")
+                src = adapter.segment_stats(info, wm_col, start, end)
+                dst = sink.reconcile_stats(
+                    source, info, wm_col, start, end)
+                src_max = normalize_value(src["max"])
+                consistent = (
+                    int(src["count"]) == int(dst["count"])
+                    and src_max == dst.get("max")
+                )
+                if int(src["count"]) == 0 and int(dst["count"]) == 0:
+                    landing.update_step(
+                        step_id, status="ok", rows_in=0, rows_out=0)
+                    continue
+                seg = SegmentResult(
+                    info.name, label, int(src["count"]),
+                    int(dst["count"]), consistent)
+                report.segments.append(seg)
+                try:
+                    if not consistent or deep:
+                        repaired_any = True
+                        seg.repaired_rows, seg.soft_deleted = _remote_repair(
+                            adapter, sink, source, info, wm_col, start, end)
+                    landing.update_step(
+                        step_id, status="ok", rows_in=seg.src_count,
+                        rows_out=seg.dst_count, repaired=seg.repaired_rows,
+                        soft_deleted=seg.soft_deleted,
+                        error=None if consistent else
+                        f"不一致:源 {seg.src_count} vs 平台 {seg.dst_count}")
+                except Exception as e:
+                    landing.update_step(
+                        step_id, status="failed", rows_in=seg.src_count,
+                        rows_out=seg.dst_count, error=str(e)[:500])
+                    raise
+        if repaired_any:
+            sink.complete_reconcile_generation(
+                source, generation_id, [table.name for table in raw_tables])
+        else:
+            sink.abort_reconcile_generation(source, generation_id)
+        generation_open = False
+    except Exception as e:
+        if generation_open:
+            try:
+                sink.abort_reconcile_generation(source, generation_id)
+            except Exception:
+                pass
+        landing.finish_run(
+            report.run_id, tables=len({s.table for s in report.segments}),
+            rows=sum(s.repaired_rows for s in report.segments),
+            status="failed", detail=f"remote reconcile failed:{str(e)[:500]}")
+        raise
+    landing.finish_run(
+        report.run_id, tables=len({s.table for s in report.segments}),
+        rows=sum(s.repaired_rows for s in report.segments), status="ok",
+        detail=f"remote reconcile{'-deep' if deep else ''}: "
+        f"{len(report.mismatched)} 段不一致, 软删 "
+        f"{report.total_soft_deleted} 行")
+    return report

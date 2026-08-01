@@ -1,10 +1,11 @@
-"""抽取 CLI:python -m data2agent.connect {sync|reconcile|apply|backfill|serve|status|quarantine}
+"""抽取 CLI:python -m data2agent.middle.extract {sync|reconcile|apply|backfill|reset-cursor|serve|status|quarantine}
 
 sync       --config connect.yaml [--source name];抽取范围/模式来自 tables 配置
 reconcile  --config connect.yaml [--deep] 分段对账 L1;抓物理删除与不动水位的原地改动
 apply      映射应用:raw_* → 数据集候选并默认发布(隔离区 + 熔断);
            --stage-only 只构建候选;--every N 秒常驻循环(拆机部署平台侧)
 backfill   --config connect.yaml --table T --from F --to T(upsert 幂等,不动水位)
+reset-cursor --config connect.yaml --table T --yes 显式清理策略不兼容的单表游标
 serve      --config connect.yaml [--once] 按 connect.yaml 调度常驻(错峰窗口硬约束)
 status     水位 / 最近运行 / 隔离区概览
 quarantine list 查看隔离明细;retry 修复后完整重建数据集并自动发布
@@ -21,7 +22,7 @@ from ...shared.store.dataset_publish import build_dataset
 from .increment import incremental_sync
 from ...shared.store.landing import LandingStore
 from ...shared.store.mapping_apply import DEFAULT_BREAKER_THRESHOLD
-from .reconcile import reconcile
+from .reconcile import reconcile, reconcile_remote
 
 
 def _add_common(sp: argparse.ArgumentParser) -> None:
@@ -43,7 +44,8 @@ def _build(args, ap):
     hook = lambda action, sql, rows, ms: landing.log_audit(args.source, action, sql, rows, ms)  # noqa: E731
     kwargs = dict(batch_size=scfg.rate.batch_size,
                   rows_per_second=scfg.rate.rows_per_second,
-                  audit_hook=hook)
+                  audit_hook=hook,
+                  table_schemas=scfg.table_schemas())
 
     import os as _os
     if scfg.adapter == "sqlite_readonly":
@@ -85,12 +87,27 @@ def main() -> int:
     mp.add_argument("--every", type=float, default=None,
                     help="常驻循环:每隔 N 秒重跑一次(拆机部署平台侧用,"
                          "配合 Windows 服务 / systemd 常驻;不填 = 跑一次退出")
+    mp.add_argument(
+        "--committed-only", action="store_true",
+        help="仅领取完整 ingest generation 后 apply；拆机平台常驻模式必须启用")
+    mp.add_argument(
+        "--all-sources", action="store_true",
+        help="每轮处理落地库中所有待 apply 的 source（平台常驻模式）")
 
     bp = sub.add_parser("backfill", help="指定表的水位区间重抽(不动水位)")
     _add_common(bp)
     bp.add_argument("--table", required=True, help="源表名(须有水位声明)")
     bp.add_argument("--from", dest="wm_from", required=True, help="水位起(含)")
     bp.add_argument("--to", dest="wm_to", required=True, help="水位止(不含)")
+
+    cp = sub.add_parser(
+        "reset-cursor",
+        help="显式清理单表增量游标；下一轮将从配置 start_date 重新同步")
+    _add_common(cp)
+    cp.add_argument("--table", required=True, help="配置中的增量表名")
+    cp.add_argument(
+        "--yes", action="store_true",
+        help="确认清理游标（raw 数据保留，下一轮按配置下界重抽）")
 
     vp = sub.add_parser("serve", help="按 connect.yaml 调度常驻(窗口硬约束)")
     vp.add_argument("--config", default="connect.yaml", help="配置文件路径")
@@ -155,14 +172,16 @@ def main() -> int:
               f"({report.imported}/{report.total} 行,batch {report.batch_id})")
         for row_no, reason in report.skipped:
             print(f"  - 跳过第 {row_no} 行:{reason}")
-        print(f"下一步:python -m data2agent.connect apply --source {args.source}"
+        print(f"下一步:python -m data2agent.middle.extract apply --source {args.source}"
               "(校验 / 隔离 / 熔断在该步生效)")
         return 0
 
     if args.cmd == "serve":
         from ...shared.config import load_config
         from .scheduler import serve
-        serve(load_config(args.config), once=args.once)
+        serve(
+            load_config(args.config), once=args.once,
+            config_path=None if args.once else args.config)
         return 0
 
     if args.cmd == "status":
@@ -175,6 +194,21 @@ def main() -> int:
         return _apply_loop(args)
 
     pack, adapter, landing, watermarks, scfg, cfg = _build(args, ap)
+
+    if args.cmd == "reset-cursor":
+        if args.table not in watermarks:
+            ap.error(
+                f"表 {args.table} 不在配置的增量表中。增量表: {sorted(watermarks)}")
+        if not args.yes:
+            ap.error(
+                "reset-cursor 会让下一轮从配置 start_date（未配置则源头）重抽；"
+                "确认后请加 --yes")
+        removed = landing.reset_sync_cursor(args.source, args.table)
+        state = "已清理" if removed else "原本不存在"
+        print(
+            f"游标{state}:{args.source}.{args.table}；raw 数据未删除，"
+            "下一轮 sync 将从配置下界重新同步")
+        return 0
 
     if args.cmd == "backfill":
         wm_col = watermarks.get(args.table)
@@ -197,10 +231,14 @@ def main() -> int:
         return 0
 
     if args.cmd == "sync":
+        from .scheduler import build_sink
+        sink = build_sink(scfg, landing, source=args.source)
         report = incremental_sync(
             adapter, landing, args.source, watermarks,
             lookback_days=scfg.lookback_days(),
             key_columns=scfg.table_key_columns(),
+            estimate_rows=scfg.estimate_rows,
+            sink=sink,
         )
         print(f"同步完成:run #{report.run_id},{len(report.tables)} 表,"
               f"共 {report.total_rows} 行 → {cfg.landing}")
@@ -209,10 +247,16 @@ def main() -> int:
             print(f"  - {t.table:<16} {t.rows:>6} 行 / {t.batches} 批  [{t.strategy}]{wm}")
         return 0
 
-    report = reconcile(
-        adapter, landing, args.source, watermarks, deep=args.deep,
-        key_columns=scfg.table_key_columns(),
-    )
+    if scfg.sink.type == "http":
+        from .scheduler import build_sink
+        sink = build_sink(scfg, landing, source=args.source)
+        report = reconcile_remote(
+            adapter, landing, sink, args.source, watermarks, deep=args.deep,
+            key_columns=scfg.table_key_columns())
+    else:
+        report = reconcile(
+            adapter, landing, args.source, watermarks, deep=args.deep,
+            key_columns=scfg.table_key_columns())
     mode = "deep" if args.deep else "L1"
     print(f"对账完成({mode}):run #{report.run_id},检查 {len(report.segments)} 段,"
           f"不一致 {len(report.mismatched)} 段,软删 {report.total_soft_deleted} 行")
@@ -224,14 +268,43 @@ def main() -> int:
     return 0
 
 
-def _run_apply_once(args) -> bool:
+def _run_apply_once(args, *, source: str | None = None) -> bool:
     """跑一轮 apply,打印结果。返回是否有对象熔断(供循环模式判断是否继续)。"""
     pack = load_pack(args.templates)
-    result = build_dataset(
-        LandingStore(args.landing), pack, args.source,
-        auto_publish=not getattr(args, "stage_only", False),
-        threshold=args.threshold,
-    )
+    store = LandingStore(args.landing)
+    from ...shared.store.generation_apply import GenerationApplyLease
+
+    active_source = source or args.source
+    generation_id: str | None = None
+    lease: GenerationApplyLease | None = None
+    if getattr(args, "committed_only", False):
+        lease = GenerationApplyLease.claim(store, active_source)
+        if lease is None:
+            print("没有待 apply 的完整 ingest generation，本轮跳过")
+            store.con.close()
+            return False
+        generation_id = lease.generation_id
+    try:
+        result = build_dataset(
+            store, pack, active_source,
+            auto_publish=not getattr(args, "stage_only", False),
+            threshold=args.threshold,
+        )
+        success = (
+            result.outcome == "ok"
+            and (result.published or getattr(args, "stage_only", False))
+            and not any(r.status in ("aborted", "failed") for r in result.results)
+        )
+        if lease is not None:
+            lease.finish(store, success=success)
+    except Exception:
+        if lease is not None:
+            try:
+                lease.finish(store, success=False)
+            except Exception:
+                pass
+        store.con.close()
+        raise
     for r in result.results:
         mark = "⚠ 熔断" if r.status == "aborted" else "ok"
         print(f"  - {r.object:<16} 映射 {r.mapped:>5} 行, 隔离 {r.quarantined} 行  [{mark}]")
@@ -241,18 +314,40 @@ def _run_apply_once(args) -> bool:
               "明细见 d2a_quarantine)")
         if result.dataset_version:
             print(f"  dataset_version={result.dataset_version} published={result.published}")
+        store.con.close()
         return True
     mode = "已发布" if result.published else "仅候选(stage-only)"
     print(f"映射应用完成:{len(result.results)} 个对象 → {args.landing}"
           f" [{mode}] version={result.dataset_version}")
+    store.con.close()
     return False
 
 
 def _apply_loop(args) -> int:
     """拆机部署平台侧:ingest 只收 raw,没有进程会周期性 apply,故 --every 提供常驻循环。
     单次模式(不传 --every)行为与此前一致,退出码沿用熔断即非零的约定。"""
-    if args.every is None:
+    if args.all_sources and not args.committed_only:
+        raise ValueError("--all-sources 必须与 --committed-only 一起使用")
+    if args.every is None and not args.all_sources:
         return 1 if _run_apply_once(args) else 0
+
+    def run_round() -> bool:
+        if not args.all_sources:
+            return _run_apply_once(args)
+        discovery = LandingStore(args.landing)
+        try:
+            sources = discovery.ingest_generation_sources(pending_only=True)
+        finally:
+            discovery.con.close()
+        aborted = False
+        for source in sources:
+            aborted = _run_apply_once(args, source=source) or aborted
+        if not sources:
+            print("没有待 apply 的 source，本轮跳过")
+        return aborted
+
+    if args.every is None:
+        return 1 if run_round() else 0
 
     import time
     from datetime import datetime
@@ -260,7 +355,7 @@ def _apply_loop(args) -> int:
     while True:
         print(f"-- {datetime.now().isoformat(timespec='seconds')} --")
         try:
-            _run_apply_once(args)
+            run_round()
         except Exception as e:  # noqa: BLE001 - 常驻循环:单轮异常不应打断服务,下一轮重试
             print(f"本轮 apply 异常(将于下一轮重试):{e}")
         time.sleep(args.every)

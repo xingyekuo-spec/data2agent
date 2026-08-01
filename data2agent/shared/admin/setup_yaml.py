@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
@@ -36,6 +37,13 @@ def build_middle_connect_yaml(
             "token_env": "D2A_INGEST_TOKEN",
         },
     }
+    parsed = urlparse(platform_url)
+    if parsed.scheme == "http" and parsed.hostname not in (
+        "127.0.0.1", "::1", "localhost",
+    ):
+        # 浏览器表单中明确填写了非本机 HTTP 地址；把安全例外显式落盘，
+        # 后续审核可见，避免隐式放宽全局默认。
+        source["sink"]["allow_insecure_http"] = True
     if sync_start_at:
         source["sync_start_at"] = sync_start_at
     return {
@@ -75,5 +83,5 @@ def build_odbc_dsn(
         server_part = f"{server},{port or 1433}"
     return (
         f"DRIVER={{{driver}}};SERVER={server_part};UID={user};PWD={password};"
-        f"DATABASE={database};TrustServerCertificate=yes"
+        f"DATABASE={database};Encrypt=yes;TrustServerCertificate=no"
     )

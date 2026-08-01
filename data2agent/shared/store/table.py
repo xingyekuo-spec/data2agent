@@ -22,6 +22,7 @@ class TableInfo:
     columns: list[Column]
     pk: list[str]          # 运行键(落地 upsert / 增量 keyset 依据)
     key_source: str = "database_pk"  # database_pk | configured
+    schema: str | None = None
 
 
 def encode_keyset_cursor(watermark, key_values: list | None) -> str:

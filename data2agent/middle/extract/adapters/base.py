@@ -50,13 +50,15 @@ _ALLOWED_PREFIXES = ("SELECT", "PRAGMA TABLE_INFO")  # PRAGMA 仅用于 SQLite �
 
 class SourceAdapter(ABC):
     def __init__(self, whitelist: set[str], *, batch_size: int = 5000,
-                 rows_per_second: int = 0, audit_hook: AuditHook | None = None):
+                 rows_per_second: int = 0, audit_hook: AuditHook | None = None,
+                 table_schemas: dict[str, str] | None = None):
         if not whitelist:
             raise ValueError("白名单为空:适配器拒绝在无白名单下工作")
         self.whitelist = set(whitelist)
         self.batch_size = max(1, int(batch_size))
         self.rows_per_second = max(0, int(rows_per_second))
         self.audit_hook = audit_hook
+        self.table_schemas = dict(table_schemas or {})
         self._last_read_at = 0.0
 
     # ---- 子类钩子 ----
@@ -64,6 +66,17 @@ class SourceAdapter(ABC):
     @abstractmethod
     def _execute(self, sql: str, params: tuple = ()) -> list[dict]:
         """执行(已通过守卫的)SQL,返回 dict 行。"""
+
+    def _stream_execute(
+        self, sql: str, params: tuple = (),
+    ) -> Iterator[list[dict]]:
+        """执行一条 SELECT，并按批返回。
+
+        子类应覆盖为游标 fetchmany；默认实现仅用于保持第三方适配器兼容。
+        """
+        rows = self._execute(sql, params)
+        for start in range(0, len(rows), self.batch_size):
+            yield rows[start:start + self.batch_size]
 
     @abstractmethod
     def table_info(self, name: str) -> TableInfo:
@@ -80,6 +93,10 @@ class SourceAdapter(ABC):
     @abstractmethod
     def _limit_clause(self, limit: int) -> str:
         """返回限制行数的 SQL 片段(含前导空格),如 ' TOP 100' 或 ' LIMIT 100'。"""
+
+    def _table_ref(self, table: TableInfo) -> str:
+        """返回已引用的物理表名；有 schema 时由具体适配器覆盖。"""
+        return self._quote(table.name)
 
     # ---- 安全强制 ----
 
@@ -110,6 +127,25 @@ class SourceAdapter(ABC):
         self._throttle(len(rows))
         return rows
 
+    def _audited_stream(
+        self, sql: str, params: tuple = (), action: str = "read",
+    ) -> Iterator[list[dict]]:
+        """守卫并审计单条流式 SELECT；审计记录整条语句的累计行数。"""
+        self._guard_select(sql)
+        t0 = time.monotonic()
+        total = 0
+        try:
+            for rows in self._stream_execute(sql, params):
+                if not rows:
+                    continue
+                total += len(rows)
+                self._throttle(len(rows))
+                yield rows
+        finally:
+            if self.audit_hook:
+                self.audit_hook(
+                    action, sql, total, (time.monotonic() - t0) * 1000)
+
     # ---- 对外接口 ----
 
     def tables(self) -> list[TableInfo]:
@@ -125,7 +161,7 @@ class SourceAdapter(ABC):
             raise RuntimeKeyError(
                 f"{table.name}: 运行键列不存在: {', '.join(missing)}")
         null_pred = " OR ".join(f"{self._quote(c)} IS NULL" for c in table.pk)
-        sql = (f"SELECT COUNT(*) AS c FROM {self._quote(table.name)} "
+        sql = (f"SELECT COUNT(*) AS c FROM {self._table_ref(table)} "
                f"WHERE {null_pred}")
         (row,) = self._audited_fetch(sql, action="validate_keys")
         if int(row["c"]) > 0:
@@ -136,7 +172,7 @@ class SourceAdapter(ABC):
         # SQL Server 要求派生表必须有别名;SQLite 也接受。
         dup_sql = (
             f"SELECT COUNT(*) AS c FROM ("
-            f"SELECT {key_sql} FROM {self._quote(table.name)} "
+            f"SELECT {key_sql} FROM {self._table_ref(table)} "
             f"GROUP BY {key_sql} HAVING COUNT(*) > 1"
             f") AS d"
         )
@@ -171,14 +207,26 @@ class SourceAdapter(ABC):
         self._check_table(table.name)
         wm = self._quote(watermark_col)
         sql = (f"SELECT COUNT(*) AS c, MAX({wm}) AS m "
-               f"FROM {self._quote(table.name)} WHERE {wm} >= ? AND {wm} < ?")
+               f"FROM {self._table_ref(table)} WHERE {wm} >= ? AND {wm} < ?")
         (row,) = self._audited_fetch(sql, (start, end), action="reconcile")
         return {"count": row["c"], "max": row["m"]}
+
+    def watermark_bounds(
+        self, table: TableInfo, watermark_col: str,
+    ) -> dict:
+        """返回源表水位范围，供跨机 E6b 生成完整分段清单。"""
+        self._check_table(table.name)
+        wm = self._quote(watermark_col)
+        sql = (
+            f"SELECT COUNT(*) AS c, MIN({wm}) AS lo, MAX({wm}) AS hi "
+            f"FROM {self._table_ref(table)}")
+        (row,) = self._audited_fetch(sql, action="reconcile")
+        return {"count": row["c"], "min": row["lo"], "max": row["hi"]}
 
     def table_count(self, table: TableInfo) -> int:
         """整表行数(无水位表的 L1 对账)。"""
         self._check_table(table.name)
-        sql = f"SELECT COUNT(*) AS c FROM {self._quote(table.name)}"
+        sql = f"SELECT COUNT(*) AS c FROM {self._table_ref(table)}"
         (row,) = self._audited_fetch(sql, action="reconcile")
         return row["c"]
 
@@ -195,7 +243,7 @@ class SourceAdapter(ABC):
         if watermark_col is None or since is None:
             return self.table_count(table)
         wm = self._quote(watermark_col)
-        sql = (f"SELECT COUNT(*) AS c FROM {self._quote(table.name)} "
+        sql = (f"SELECT COUNT(*) AS c FROM {self._table_ref(table)} "
                f"WHERE {wm} >= ?")
         (row,) = self._audited_fetch(sql, (since,), action="count_estimate")
         return row["c"]
@@ -227,9 +275,9 @@ class SourceAdapter(ABC):
         # MSSQL: TOP 在 SELECT 后; SQLite: LIMIT 在末尾
         limit = self._limit_clause(self.batch_size)
         if limit.lstrip().upper().startswith("TOP"):
-            return (f"SELECT{limit} {cols} FROM {self._quote(table.name)}"
+            return (f"SELECT{limit} {cols} FROM {self._table_ref(table)}"
                     f"{where} ORDER BY {order}")
-        return (f"SELECT {cols} FROM {self._quote(table.name)}{where} "
+        return (f"SELECT {cols} FROM {self._table_ref(table)}{where} "
                 f"ORDER BY {order}{limit}")
 
     def _keyset_resume_predicate(self, wm_q: str, key_qs: list[str]) -> str:
@@ -287,12 +335,12 @@ class SourceAdapter(ABC):
             cursor = (last[watermark_col], *[last[k] for k in table.pk])
 
     def _read_full(self, table: TableInfo) -> Iterator[list[dict]]:
-        offset = 0
-        while True:
-            rows = self._audited_fetch(self._page_sql(table, self.batch_size, offset))
-            if not rows:
-                return
-            yield rows
-            if len(rows) < self.batch_size:
-                return
-            offset += len(rows)
+        # 全量必须由同一条源库 SELECT/同一游标流式读取。多条 keyset/offset
+        # 语句之间会形成不同快照，源表并发增删时可能产生缺行或混合版本。
+        cols = ", ".join(self._quote(c) for c, _ in table.columns)
+        order = ""
+        if table.pk:
+            order = " ORDER BY " + ", ".join(
+                self._quote(k) for k in table.pk)
+        sql = f"SELECT {cols} FROM {self._table_ref(table)}{order}"
+        yield from self._audited_stream(sql, action="full_refresh")

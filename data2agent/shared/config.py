@@ -65,6 +65,8 @@ class SinkConfig(BaseModel):
     type: Literal["local", "http"] = "local"
     url: str | None = None                # http:平台接收端点(如 https://平台:8850)
     token_env: str | None = None          # http:Token 所在环境变量(凭据不落配置)
+    allow_insecure_http: bool = False      # 仅显式开发/受控内网例外
+    allow_unauthenticated: bool = False    # 仅显式开发例外
 
 
 class TableExtractConfig(BaseModel):
@@ -91,6 +93,10 @@ class TableExtractConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_mode_constraints(self):
+        ident = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+        if self.schema_name is not None and not ident.fullmatch(self.schema_name):
+            raise ValueError(
+                f"非法 schema '{self.schema_name}'(须为 SQL 标识符)")
         if self.mode == "incremental":
             if not self.watermark:
                 raise ValueError("incremental 模式必须配置 watermark")
@@ -102,13 +108,19 @@ class TableExtractConfig(BaseModel):
         if self.start_date is not None:
             if self.mode == "full_refresh":
                 raise ValueError("full_refresh 模式不允许配置 start_date(无水位列可过滤)")
-            if not re.match(r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$",
-                            self.start_date):
+            if not re.match(
+                r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$",
+                self.start_date,
+            ):
                 raise ValueError(
                     f"非法 start_date '{self.start_date}'"
                     f"(格式:YYYY-MM-DD 或 YYYY-MM-DD HH:MM[:SS])")
+            try:
+                datetime.fromisoformat(self.start_date.replace(" ", "T"))
+            except ValueError as e:
+                raise ValueError(
+                    f"非法 start_date '{self.start_date}'") from e
         if self.key_columns is not None:
-            ident = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
             for col in self.key_columns:
                 if not ident.match(col):
                     raise ValueError(f"非法键列名 '{col}'(须为 SQL 标识符)")
@@ -128,8 +140,11 @@ class SourceConfig(BaseModel):
     lookback: str = "3d"
     sync_every: str = "30m"
     sync_start_at: str | None = None       # "HH:MM",首轮自动抽取启动时间;None=服务启动即跑
+    start_date: str | None = None          # 全局抽取起始日期(表级 start_date 未配置时的默认值)
     reconcile_at: str | None = None       # "HH:MM",每日 L1 对账;None 不排
+    reconcile_deep_at: str | None = None  # "HH:MM",每日 L2 修复;建议低频错峰
     apply_after_sync: bool = True         # sink=http 时忽略(映射在平台侧)
+    estimate_rows: bool = False           # COUNT 仅用于进度；生产默认关闭以减轻 ERP
     sink: SinkConfig = SinkConfig()
 
     @field_validator("adapter")
@@ -160,6 +175,39 @@ class SourceConfig(BaseModel):
             dtime.fromisoformat(raw)
         except ValueError as e:
             raise ValueError(f"sync_start_at 格式须为 'HH:MM',got '{v}'") from e
+        return raw
+
+    @field_validator("reconcile_at", "reconcile_deep_at", mode="before")
+    @classmethod
+    def reconcile_time_parse(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        raw = str(v).strip()
+        if not raw:
+            return None
+        try:
+            parsed = dtime.fromisoformat(raw)
+        except ValueError as e:
+            raise ValueError(f"对账时间格式须为 'HH:MM',got '{v}'") from e
+        if len(raw) != 5:
+            raise ValueError(f"对账时间格式须为 'HH:MM',got '{v}'")
+        return parsed.strftime("%H:%M")
+
+    @field_validator("start_date", mode="before")
+    @classmethod
+    def start_date_parse(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        raw = str(v).strip()
+        if not raw:
+            return None
+        if not re.match(r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$", raw):
+            raise ValueError(
+                f"非法 start_date '{v}'(格式:YYYY-MM-DD 或 YYYY-MM-DD HH:MM[:SS])")
+        try:
+            datetime.fromisoformat(raw.replace(" ", "T"))
+        except ValueError as e:
+            raise ValueError(f"非法 start_date '{v}'") from e
         return raw
 
     @field_validator("tables")
@@ -203,15 +251,28 @@ class SourceConfig(BaseModel):
             if spec.key_columns
         }
 
-    def table_start_dates(self) -> dict[str, str]:
-        """各表抽取起始日期(仅 incremental 且配置了 start_date)。"""
+    def table_schemas(self) -> dict[str, str]:
+        """表名 → schema；未显式配置时使用适配器默认值。"""
         if self.tables is None:
             return {}
+        default = "main" if self.adapter == "sqlite_readonly" else "dbo"
         return {
-            table: spec.start_date
+            table: (spec.schema or default)
             for table, spec in self.tables.items()
-            if spec.mode == "incremental" and spec.start_date
         }
+
+    def table_start_dates(self) -> dict[str, str]:
+        """各表抽取起始日期(仅 incremental);表未配置 start_date 时回退到源级全局值。"""
+        if self.tables is None:
+            return {}
+        out: dict[str, str] = {}
+        for table, spec in self.tables.items():
+            if spec.mode != "incremental":
+                continue
+            start = spec.start_date or self.start_date
+            if start:
+                out[table] = start
+        return out
 
     def lookback_days(self) -> float:
         return parse_duration_seconds(self.lookback) / 86400
@@ -244,6 +305,9 @@ def config_revision(path: str | Path) -> str:
 
 
 def load_config(path: str | Path) -> ConnectConfig:
+    import ipaddress
+    from urllib.parse import urlparse
+
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
 
     cfg = ConnectConfig(**data)
@@ -256,11 +320,30 @@ def load_config(path: str | Path) -> ConnectConfig:
             raise ValueError(f"源 {name}: 缺少 tables 配置。")
         if s.sink.type == "http" and not s.sink.url:
             raise ValueError(f"源 {name}: sink.type=http 必须配 sink.url(平台接收端点)")
-        if s.sink.type == "http" and s.reconcile_at is not None:
-            raise ValueError(
-                f"源 {name}: 推送模式(sink.type=http)下不能配 reconcile_at —— "
-                "跨机对账(E6b)尚未实现,中间机的 landing 只有水位、无 raw,"
-                "本地对账会误判整库不一致。请移除 reconcile_at;对账待 E6b 落地后由中间驱动。")
+        if s.sink.type == "http":
+            parsed = urlparse(s.sink.url or "")
+            if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                raise ValueError(f"源 {name}: sink.url 必须是有效 http(s) URL")
+            try:
+                loopback = ipaddress.ip_address(parsed.hostname).is_loopback
+            except ValueError:
+                loopback = parsed.hostname.lower() == "localhost"
+            if (
+                parsed.scheme != "https"
+                and not loopback
+                and not s.sink.allow_insecure_http
+            ):
+                raise ValueError(
+                    f"源 {name}: 非本机 sink.url 必须使用 HTTPS；"
+                    "受控开发环境可显式设 allow_insecure_http: true")
+            if (
+                not s.sink.token_env
+                and not loopback
+                and not s.sink.allow_unauthenticated
+            ):
+                raise ValueError(
+                    f"源 {name}: 非本机 HTTP sink 必须配置 token_env；"
+                    "开发环境可显式设 allow_unauthenticated: true")
     return cfg
 
 

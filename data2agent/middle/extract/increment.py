@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import uuid
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -77,7 +78,8 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                      key_columns: dict[str, list[str]] | None = None,
                      run_id: int | None = None,
                      only_tables: set[str] | None = None,
-                     start_dates: dict[str, str] | None = None) -> SyncReport:
+                     start_dates: dict[str, str] | None = None,
+                     estimate_rows: bool = True) -> SyncReport:
     """sink:raw 落地出口。默认 LocalSink(landing)。
     key_columns:表名 → 配置运行键,覆盖数据库主键。
     无水位的表按 full_refresh 快照协议落地。
@@ -98,14 +100,22 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
         source=source,
         run_id=run_id or landing.start_run(source, "sync"))
     current_step: int | None = None
+    sync_started = False
     try:
         if callable(ensure_proto):
             ensure_proto()
 
+        table_infos = [
+            info for info in adapter.tables()
+            if only_tables is None or info.name in only_tables
+        ]
+        begin_sync = getattr(sink, "begin_sync", None)
+        if callable(begin_sync):
+            sync_started = True
+            begin_sync(source, [info.name for info in table_infos], report.run_id)
+
         ordinal = 0
-        for raw_info in adapter.tables():
-            if only_tables is not None and raw_info.name not in only_tables:
-                continue
+        for raw_info in table_infos:
             if should_continue and not should_continue():
                 report.paused = True
                 break
@@ -117,8 +127,32 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
             info = resolve_runtime_keys(
                 raw_info, key_columns.get(raw_info.name),
                 require_keys=not is_full)
+            if wm_col is not None:
+                column_types = dict(info.columns)
+                if wm_col not in column_types:
+                    raise ValueError(
+                        f"{info.name}: watermark 列 '{wm_col}' 不存在")
+                if column_types[wm_col] != "text":
+                    raise ValueError(
+                        f"{info.name}: watermark '{wm_col}' 当前类型为 "
+                        f"{column_types[wm_col]}；当前增量协议仅支持日期/时间水位")
             if info.pk:
-                adapter.validate_runtime_keys(info)
+                strategy_raw = json.dumps({
+                    "schema": info.schema,
+                    "table": info.name,
+                    "columns": info.columns,
+                    "keys": info.pk,
+                }, sort_keys=True, separators=(",", ":"))
+                strategy_fingerprint = hashlib.sha256(
+                    strategy_raw.encode("utf-8")).hexdigest()
+                if (
+                    info.key_source == "configured"
+                    or not landing.runtime_keys_recently_validated(
+                        source, info.name, strategy_fingerprint)
+                ):
+                    adapter.validate_runtime_keys(info)
+                    landing.record_runtime_key_validation(
+                        source, info.name, strategy_fingerprint)
             landing.log_audit(
                 source, "runtime_keys",
                 f"table={info.name} source={info.key_source} mode={mode} "
@@ -127,7 +161,6 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
 
             snapshot_id = uuid.uuid4().hex[:16] if is_full else None
             table_batch_id = uuid.uuid4().hex[:12]
-            sink.begin_table(source, info, mode=mode, snapshot_id=snapshot_id)
 
             since = None
             resume_after = None
@@ -135,7 +168,9 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
             strategy = "full_refresh"
             if not is_full:
                 start_date = start_dates.get(raw_info.name)
-                cursor = landing.get_sync_cursor(source, info.name)
+                cursor = landing.get_sync_cursor(
+                    source, info.name, watermark_col=wm_col,
+                    key_columns=list(info.pk), schema=info.schema)
                 if cursor is None:
                     # 首轮:配置 start_date 则从其起扫,不抽历史全量
                     strategy, since, high_water = "initial", start_date, None
@@ -152,17 +187,22 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                         if start_date and (since is None or since < start_date):
                             since = start_date
 
+            # 游标策略兼容性检查完成后才在 sink 侧开启表事务，避免配置变更
+            # 被拒绝时留下远端 open snapshot / 虚假 begin 证据。
+            sink.begin_table(source, info, mode=mode, snapshot_id=snapshot_id)
+
             rows = batches = 0
             max_wm = high_water
             interrupted = False
             # 同步前预估行数(进度分母);预估失败不阻断同步,页面退化为仅行数
-            try:
-                expect_since = since if strategy in ("initial", "increment") else (
-                    high_water if strategy == "resume" else None)
-                expected = adapter.count_for_sync(info, wm_col, expect_since)
-                landing.update_step(current_step, expected_rows=expected)
-            except Exception:
-                pass
+            if estimate_rows:
+                try:
+                    expect_since = since if strategy in ("initial", "increment") else (
+                        high_water if strategy == "resume" else None)
+                    expected = adapter.count_for_sync(info, wm_col, expect_since)
+                    landing.update_step(current_step, expected_rows=expected)
+                except Exception:
+                    pass
             try:
                 for batch in adapter.read_increment(
                     info, since=since, watermark_col=wm_col, resume_after=resume_after,
@@ -170,11 +210,11 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     if should_continue and not should_continue():
                         interrupted = True
                         break
-                    batch_id = (f"{table_batch_id}-{batches}" if is_full
-                                else table_batch_id)
+                    batch_id = f"{table_batch_id}-{batches}"
                     rows += sink.write(
                         source, info, batch, batch_id,
-                        mode=mode, snapshot_id=snapshot_id)
+                        mode=mode, snapshot_id=snapshot_id,
+                        table_run_id=table_batch_id)
                     batches += 1
                     if wm_col:
                         last = batch[-1]
@@ -186,7 +226,8 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                             watermark_col=wm_col, watermark=last_wm,
                             key_values=last_cursor_keys,
                             rows_in=rows, rows_out=rows, batches=batches,
-                            batch_id=table_batch_id)
+                            batch_id=table_batch_id,
+                            key_columns=list(info.pk), schema=info.schema)
                         seen = str(last_wm)
                         if max_wm is None or seen > max_wm:
                             max_wm = seen
@@ -221,7 +262,7 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
             if wm_col:
                 landing.set_sync_cursor(
                     source, info.name, wm_col, max_wm, None, table_batch_id,
-                    force=True)
+                    force=True, key_columns=list(info.pk), schema=info.schema)
             landing.update_step(
                 current_step, status="ok", rows_in=rows, rows_out=rows,
                 batch_id=table_batch_id,
@@ -232,7 +273,21 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
             current_step = None
             report.tables.append(TableReport(info.name, rows, batches, table_batch_id,
                                              strategy=strategy, high_water=max_wm))
+        if report.paused:
+            abort_sync = getattr(sink, "abort_sync", None)
+            if sync_started and callable(abort_sync):
+                abort_sync(source)
+        else:
+            complete_sync = getattr(sink, "complete_sync", None)
+            if sync_started and callable(complete_sync):
+                complete_sync(source)
     except Exception as e:
+        abort_sync = getattr(sink, "abort_sync", None)
+        if sync_started and callable(abort_sync):
+            try:
+                abort_sync(source)
+            except Exception:
+                pass
         safe = _safe_error(e)
         if current_step is not None:
             try:

@@ -1,6 +1,6 @@
 """入口:python -m data2agent.platform.ingest [--landing ...] [--host] [--port] [--token]
 
-平台侧常驻,接收中间服务器推来的 raw 批次。内网部署建议配 D2A_INGEST_TOKEN。
+平台侧常驻,接收中间服务器推来的 raw 批次。非本机监听强制 Bearer Token。
 """
 
 from __future__ import annotations
@@ -19,8 +19,19 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8850)
     ap.add_argument("--token", default=None,
                     help="Bearer Token(默认取环境变量 D2A_INGEST_TOKEN;空 = 不认证)")
+    ap.add_argument(
+        "--allow-unauthenticated", action="store_true",
+        help="显式允许非本机监听不鉴权（仅开发环境，生产禁止）")
     args = ap.parse_args()
     token = args.token if args.token is not None else os.environ.get("D2A_INGEST_TOKEN", "")
+    if (
+        args.host not in ("127.0.0.1", "::1", "localhost")
+        and not token
+        and not args.allow_unauthenticated
+    ):
+        ap.error(
+            "非本机监听必须设置 --token/D2A_INGEST_TOKEN；"
+            "仅开发环境可显式使用 --allow-unauthenticated")
 
     import uvicorn
 

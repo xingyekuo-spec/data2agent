@@ -710,6 +710,39 @@ def create_app(landing: str | None = None, templates: str = "templates",
             raise HTTPException(409, "尚未完成首次配置")
         return LandingStore(state["landing"])
 
+    def build_with_generation_gate(
+        db: LandingStore, source: str, *, auto_publish: bool,
+    ):
+        """平台所有手动构建入口统一遵守 ingest generation 屏障。"""
+        from ...shared.store.generation_apply import GenerationApplyLease
+
+        lease = None
+        if db.has_ingest_generations(source):
+            lease = GenerationApplyLease.claim(db, source)
+            if lease is None:
+                raise HTTPException(
+                    409, "没有可 apply 的完整 generation；"
+                    "请等待当前推送完成或现有 apply 结束")
+        try:
+            result = build_dataset(
+                db, require_pack(), source, auto_publish=auto_publish)
+            success = (
+                result.outcome == "ok"
+                and (result.published or not auto_publish)
+                and not any(
+                    r.status in ("aborted", "failed") for r in result.results)
+            )
+            if lease is not None:
+                lease.finish(db, success=success)
+            return result
+        except Exception:
+            if lease is not None:
+                try:
+                    lease.finish(db, success=False)
+                except Exception:
+                    pass
+            raise
+
     def require_config() -> PlatformConfig:
         cfg = state["config"]
         if cfg is None:
@@ -2434,9 +2467,12 @@ def create_app(landing: str | None = None, templates: str = "templates",
         },
     )
     def action_apply(body: ApplyActionBody) -> dict:
-        result = build_dataset(
-            store(), require_pack(), body.source, auto_publish=body.publish,
-        )
+        db = store()
+        try:
+            result = build_with_generation_gate(
+                db, body.source, auto_publish=body.publish)
+        finally:
+            db.con.close()
         if result.outcome == "conflict":
             raise HTTPException(
                 409, result.error or result.reason_code or "数据集构建冲突",
@@ -2519,7 +2555,10 @@ def create_app(landing: str | None = None, templates: str = "templates",
         # ---- 完整数据集重建 + 自动发布(object 仅定位/审计/结果聚焦)----
         db = store()
         try:
-            result = build_dataset(db, pack, body.source, auto_publish=True)
+            result = build_with_generation_gate(
+                db, body.source, auto_publish=True)
+        except HTTPException:
+            raise
         except Exception:
             error_id = str(uuid.uuid4())
             return JSONResponse(
@@ -2532,6 +2571,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
                     status="failed",
                     error_id=error_id,
                 ).model_dump())
+        finally:
+            db.con.close()
 
         focus = next((r for r in result.results if r.object == body.object), None)
         run_id = result.run_id

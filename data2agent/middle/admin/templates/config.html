@@ -308,6 +308,9 @@
           field('抽取启动时间（可空）',
             '自动调度首轮启动时间，格式 <code>HH:MM</code>。例：<code>02:00</code>；留空=服务启动即尝试抽取。',
             '<input type="text" data-key="sync_start_at" value="' + esc(src.sync_start_at || '') + '" placeholder="例如 02:00">') +
+          field('抽取数据开始日期（可空）',
+            '增量表首轮从此日期起抽，不抽更早历史。格式 <code>YYYY-MM-DD</code>。抽取表中单独配置了开始日期的表以表级为准，其余增量表使用此全局日期。',
+            '<input type="text" data-key="start_date" value="' + esc(src.start_date || '') + '" placeholder="例如 2015-01-01">') +
           field('错峰时间窗（可空）',
             '仅在这些时段内允许抽取。格式如 <code>22:00-06:00</code>；多个用英文逗号分隔。留空=全天可抽。',
             '<input type="text" data-key="windows" value="' + esc(w) + '" placeholder="例如 22:00-06:00">') +
@@ -430,8 +433,8 @@
           src.rate[key.slice(5)] = val === '' ? null : Number(val);
         } else if (key === 'sink.url') {
           src.sink.url = val;
-        } else if (key === 'sync_start_at') {
-          src[key] = val === '' ? null : val;
+        } else if (key === 'sync_start_at' || key === 'start_date') {
+          src[key] = val === '' ? null : val.trim();
         } else {
           src[key] = val;
         }

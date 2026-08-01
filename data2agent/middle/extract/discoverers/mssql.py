@@ -380,10 +380,9 @@ class MssqlMetadataDiscoverer:
             return WatermarkCheckResult(False, "watermark_missing", "字段不存在")
         candidate = column in detail.watermark_candidates
         type_l = col.sql_type.lower()
-        allowed = any(h in type_l for h in (
-            "date", "time", "int", "bigint", "smallint", "numeric", "decimal",
-            "float", "real", "rowversion", "timestamp",
-        ))
+        # 当前回看窗口按日历时间运算；数值/rowversion 需要另一套游标策略，
+        # 在协议实现前 fail-closed，避免首轮成功、第二轮无法解析水位。
+        allowed = any(h in type_l for h in ("date", "time"))
         if not allowed:
             return WatermarkCheckResult(
                 False, "watermark_invalid", "字段类型不适合作为水位",

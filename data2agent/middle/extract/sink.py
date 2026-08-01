@@ -19,7 +19,7 @@ from typing import Callable, Literal, Protocol, TYPE_CHECKING
 if TYPE_CHECKING:
     from ...shared.store.landing import LandingStore
 
-from ...protocol.ingest import INGEST_PROTOCOL_VERSION
+from ...protocol.ingest import INGEST_PROTOCOL_VERSION, batch_payload_digest
 from ...shared.store.table import TableInfo
 from ...shared.store.landing import LandingStore, normalize_value
 
@@ -33,12 +33,21 @@ def _brief_error_str() -> str:
 
 
 class Sink(Protocol):
+    def begin_sync(
+        self, source: str, tables: list[str], run_id: int,
+    ) -> None: ...
+
+    def complete_sync(self, source: str) -> None: ...
+
+    def abort_sync(self, source: str) -> None: ...
+
     def begin_table(self, source: str, info: TableInfo, *, mode: SyncMode,
                     snapshot_id: str | None = None) -> None: ...
 
     def write(self, source: str, info: TableInfo, rows: list[dict], batch_id: str, *,
               mode: SyncMode = "incremental",
-              snapshot_id: str | None = None) -> int: ...
+              snapshot_id: str | None = None,
+              table_run_id: str | None = None) -> int: ...
 
     def complete_table(self, source: str, info: TableInfo, completion_id: str,
                        rows: int, batches: int, *, mode: SyncMode = "incremental",
@@ -54,6 +63,15 @@ class LocalSink:
     def __init__(self, landing: LandingStore):
         self.landing = landing
 
+    def begin_sync(self, source: str, tables: list[str], run_id: int) -> None:
+        return None
+
+    def complete_sync(self, source: str) -> None:
+        return None
+
+    def abort_sync(self, source: str) -> None:
+        return None
+
     def begin_table(self, source: str, info: TableInfo, *, mode: SyncMode,
                     snapshot_id: str | None = None) -> None:
         if mode == "full_refresh":
@@ -65,7 +83,8 @@ class LocalSink:
 
     def write(self, source: str, info: TableInfo, rows: list[dict], batch_id: str, *,
               mode: SyncMode = "incremental",
-              snapshot_id: str | None = None) -> int:
+              snapshot_id: str | None = None,
+              table_run_id: str | None = None) -> int:
         if mode == "full_refresh":
             if not snapshot_id:
                 raise ValueError(f"{info.name}: full_refresh 需要 snapshot_id")
@@ -92,14 +111,17 @@ class LocalSink:
             self.landing.abort_snapshot(source, info.name, snapshot_id)
 
 
-def _urllib_post(url: str, payload: dict, token: str | None, timeout: float) -> None:
+def _urllib_post(
+    url: str, payload: dict, token: str | None, timeout: float,
+) -> dict | None:
     data = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     req = urllib.request.Request(
         url, data=data, method="POST", headers={"Content-Type": "application/json"})
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        resp.read()
+        body = resp.read()
+        return json.loads(body.decode("utf-8")) if body else None
 
 
 def _urllib_get_json(url: str, token: str | None, timeout: float) -> dict:
@@ -119,7 +141,7 @@ class HttpPushSink:
 
     def __init__(self, url: str, token: str | None = None, *,
                  timeout: float = 30.0, retries: int = 3,
-                 post: Callable[[str, dict, str | None, float], None] | None = None,
+                 post: Callable[[str, dict, str | None, float], dict | None] | None = None,
                  get_json: Callable[[str, str | None, float], dict] | None = None,
                  landing: "LandingStore | None" = None,
                  source: str = "",
@@ -133,10 +155,12 @@ class HttpPushSink:
         self._post = post or _urllib_post
         self._get_json = get_json or _urllib_get_json
         self._protocol_checked = False
+        self._reconcile_protocol_version: str | None = None
         # push log 写入
         self._landing = landing
         self._source = source
         self._run_id = run_id
+        self._generation_id: str | None = None
 
     def _log_push(self, step_kind: str, table: str, mode: SyncMode,
                   batch_id: str | None = None, rows_count: int | None = None,
@@ -191,15 +215,25 @@ class HttpPushSink:
                     f"平台返回 {remote!r}。"
                     f"建议：升级平台或中间机使协议号一致后再同步"
                 )
+        remote_reconcile = health.get("reconcile_protocol_version")
+        self._reconcile_protocol_version = (
+            str(remote_reconcile) if remote_reconcile is not None else None)
         self._protocol_checked = True
 
-    def _post_with_retry(self, path: str, payload: dict) -> None:
+    def ensure_reconcile_protocol(self) -> None:
+        self.ensure_protocol()
+        if self._reconcile_protocol_version != "1":
+            raise ProtocolVersionError(
+                "平台未声明 E6b reconcile_protocol_version=1；"
+                "请先升级平台 ingest 服务再启用推送模式对账")
+
+    def _post_with_retry(self, path: str, payload: dict) -> dict | None:
         last: Exception | None = None
         t0 = time.time()
         for attempt in range(self.retries):
             try:
-                self._post(f"{self.url}{path}", payload, self.token, self.timeout)
-                return
+                return self._post(
+                    f"{self.url}{path}", payload, self.token, self.timeout)
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last = e
                 time.sleep(min(2 ** attempt, 10))
@@ -215,11 +249,41 @@ class HttpPushSink:
             "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
             "source": source,
             "table": info.name,
+            "schema": info.schema,
             "mode": mode,
             "columns": [[c, t] for c, t in info.columns],
             "pk": list(info.pk),
             "snapshot_id": snapshot_id,
+            "generation_id": self._generation_id,
         }
+
+    def begin_sync(self, source: str, tables: list[str], run_id: int) -> None:
+        self.ensure_protocol()
+        self._generation_id = f"sync-{source}-{run_id}"
+        self._post_with_retry("/ingest/run-begin", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source,
+            "generation_id": self._generation_id,
+            "tables": tables,
+        })
+
+    def complete_sync(self, source: str) -> None:
+        if self._generation_id is None:
+            return
+        self._post_with_retry("/ingest/run-complete", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source,
+            "generation_id": self._generation_id,
+        })
+
+    def abort_sync(self, source: str) -> None:
+        if self._generation_id is None:
+            return
+        self._post_with_retry("/ingest/run-abort", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source,
+            "generation_id": self._generation_id,
+        })
 
     def begin_table(self, source: str, info: TableInfo, *, mode: SyncMode,
                     snapshot_id: str | None = None) -> None:
@@ -238,23 +302,36 @@ class HttpPushSink:
 
     def write(self, source: str, info: TableInfo, rows: list[dict], batch_id: str, *,
               mode: SyncMode = "incremental",
-              snapshot_id: str | None = None) -> int:
+              snapshot_id: str | None = None,
+              table_run_id: str | None = None) -> int:
         self.ensure_protocol()
         t0 = time.time()
+        log_batch_id = table_run_id or batch_id
         try:
             payload = {
                 **self._base_payload(source, info, mode, snapshot_id),
                 "batch_id": batch_id,
+                "table_run_id": table_run_id or batch_id,
                 "rows": [{c: normalize_value(r.get(c)) for c, _ in info.columns} for r in rows],
             }
-            self._post_with_retry("/ingest/batch", payload)
+            expected_digest = batch_payload_digest(payload)
+            receipt = self._post_with_retry("/ingest/batch", payload)
+            if isinstance(receipt, dict):
+                if receipt.get("batch_id") != batch_id:
+                    raise RuntimeError(
+                        f"平台批次回执 ID 不匹配:want={batch_id},"
+                        f"got={receipt.get('batch_id')!r}")
+                remote_digest = receipt.get("payload_sha256")
+                if remote_digest is not None and remote_digest != expected_digest:
+                    raise RuntimeError(
+                        f"平台批次回执摘要不匹配:batch={batch_id}")
         except Exception:
-            self._log_push("write", info.name, mode, batch_id=batch_id,
+            self._log_push("write", info.name, mode, batch_id=log_batch_id,
                            rows_count=len(rows), status="failed",
                            error_detail=_brief_error_str(),
                            duration_ms=(time.time() - t0) * 1000)
             raise
-        self._log_push("write", info.name, mode, batch_id=batch_id,
+        self._log_push("write", info.name, mode, batch_id=log_batch_id,
                        rows_count=len(rows), status="ok",
                        duration_ms=(time.time() - t0) * 1000)
         return len(rows)
@@ -300,3 +377,100 @@ class HttpPushSink:
         self._log_push("abort_table", info.name, mode,
                        batch_id=snapshot_id, status="ok",
                        duration_ms=(time.time() - t0) * 1000)
+
+    # ---- E6b 跨机对账（中间机驱动，平台只接收入站请求）----
+
+    def reconcile_stats(
+        self, source: str, info: TableInfo, watermark_col: str | None = None,
+        start=None, end=None,
+    ) -> dict:
+        self.ensure_reconcile_protocol()
+        result = self._post_with_retry("/ingest/reconcile", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source, "table": info.name,
+            "watermark_col": watermark_col, "start": start, "end": end,
+        })
+        if not isinstance(result, dict) or "count" not in result:
+            raise RuntimeError(f"{info.name}: 平台对账统计响应无效")
+        return result
+
+    def begin_reconcile_generation(
+        self, source: str, generation_id: str, tables: list[str],
+    ) -> None:
+        self.ensure_reconcile_protocol()
+        self._post_with_retry("/ingest/run-begin", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source, "generation_id": generation_id,
+            "tables": tables,
+        })
+
+    def complete_reconcile_generation(
+        self, source: str, generation_id: str, tables: list[str],
+    ) -> None:
+        self._post_with_retry("/ingest/reconcile-run-complete", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source, "generation_id": generation_id,
+            "tables": tables,
+        })
+
+    def abort_reconcile_generation(
+        self, source: str, generation_id: str,
+    ) -> None:
+        self._post_with_retry("/ingest/run-abort", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source, "generation_id": generation_id,
+        })
+
+    def begin_reconcile_repair(
+        self, source: str, info: TableInfo, repair_id: str,
+        watermark_col: str | None = None, start=None, end=None,
+    ) -> None:
+        self.ensure_reconcile_protocol()
+        self._post_with_retry("/ingest/reconcile-repair-begin", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source, "table": info.name, "schema": info.schema,
+            "columns": [[c, t] for c, t in info.columns],
+            "pk": list(info.pk), "repair_id": repair_id,
+            "watermark_col": watermark_col, "start": start, "end": end,
+        })
+
+    def write_reconcile_repair(
+        self, source: str, info: TableInfo, repair_id: str,
+        batch_id: str, rows: list[dict],
+    ) -> int:
+        self.ensure_reconcile_protocol()
+        result = self._post_with_retry("/ingest/reconcile-repair-batch", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source, "table": info.name, "repair_id": repair_id,
+            "batch_id": batch_id,
+            "rows": [
+                {c: normalize_value(row.get(c)) for c, _ in info.columns}
+                for row in rows
+            ],
+        })
+        if not isinstance(result, dict):
+            raise RuntimeError(f"{info.name}: 平台 repair 批次响应无效")
+        return int(result.get("ingested", 0))
+
+    def complete_reconcile_repair(
+        self, source: str, info: TableInfo, repair_id: str,
+        rows: int, batches: int,
+    ) -> dict:
+        self.ensure_reconcile_protocol()
+        result = self._post_with_retry("/ingest/reconcile-repair-complete", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source, "table": info.name, "repair_id": repair_id,
+            "rows": rows, "batches": batches,
+        })
+        if not isinstance(result, dict):
+            raise RuntimeError(f"{info.name}: 平台 repair 完成响应无效")
+        return result
+
+    def abort_reconcile_repair(
+        self, source: str, info: TableInfo, repair_id: str,
+    ) -> None:
+        self._post_with_retry("/ingest/reconcile-repair-abort", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source, "table": info.name, "repair_id": repair_id,
+            "rows": 0, "batches": 0,
+        })

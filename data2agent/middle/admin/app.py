@@ -192,12 +192,14 @@ def _config_subset(cfg: ConnectConfig) -> dict:
             "lookback": scfg.lookback,
             "sync_every": scfg.sync_every,
             "sync_start_at": scfg.sync_start_at,
+            "start_date": scfg.start_date,
             "tables": {
                 tbl: {
                     "mode": spec.mode,
                     "watermark": spec.watermark,
                     "schema": spec.schema or "dbo",
                     "key_columns": spec.key_columns,
+                    "start_date": spec.start_date,
                     "schema_fingerprint": spec.schema_fingerprint,
                     "validated_at": spec.validated_at,
                 }

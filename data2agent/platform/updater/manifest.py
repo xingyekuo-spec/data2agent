@@ -8,7 +8,7 @@
   "package": "d2a-portable-platform-v0.6.0.zip",
   "url": "https://github.com/<org>/<repo>/releases/download/v0.6.0/d2a-portable-platform-v0.6.0.zip",
   "sha256": "...",
-  "supported_ingest_protocol_versions": ["2"],
+  "supported_ingest_protocol_versions": ["2", "3"],
   "notes": "可选,发布说明摘要"
 }
 ```

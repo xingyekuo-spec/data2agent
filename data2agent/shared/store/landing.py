@@ -11,7 +11,7 @@ import hashlib
 import json
 import sqlite3
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS d2a_sync_state (
     source TEXT NOT NULL, table_name TEXT NOT NULL,
     watermark_col TEXT NOT NULL, high_water TEXT,
     last_run_at TEXT, last_batch_id TEXT,
+    key_columns_json TEXT, schema_name TEXT,
     PRIMARY KEY (source, table_name)
 );
 CREATE TABLE IF NOT EXISTS d2a_quarantine (
@@ -494,6 +495,7 @@ CREATE TABLE IF NOT EXISTS d2a_snapshot (
     snapshot_id TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('open', 'published', 'failed')),
     staging_table TEXT NOT NULL,
+    schema_name TEXT,
     expected_rows INTEGER,
     expected_batches INTEGER,
     created_at TEXT NOT NULL,
@@ -506,12 +508,94 @@ CREATE TABLE IF NOT EXISTS d2a_snapshot_batch (
     snapshot_id TEXT NOT NULL,
     batch_id TEXT NOT NULL,
     rows INTEGER NOT NULL,
+    payload_sha256 TEXT,
     status TEXT NOT NULL CHECK (status IN ('ok')),
     created_at TEXT NOT NULL,
     PRIMARY KEY (source, table_name, snapshot_id, batch_id)
 );
 CREATE INDEX IF NOT EXISTS idx_d2a_snapshot_status
     ON d2a_snapshot (source, table_name, status);
+CREATE TABLE IF NOT EXISTS d2a_ingest_batch_receipt (
+    source TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    schema_name TEXT,
+    table_run_id TEXT NOT NULL,
+    batch_id TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    rows INTEGER NOT NULL,
+    committed_at TEXT NOT NULL,
+    PRIMARY KEY (source, table_name, batch_id)
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_ingest_receipt_run
+    ON d2a_ingest_batch_receipt (source, table_name, table_run_id);
+CREATE TABLE IF NOT EXISTS d2a_ingest_generation (
+    source TEXT NOT NULL,
+    generation_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (
+        status IN ('open', 'committed', 'applying', 'applied', 'failed')
+    ),
+    expected_tables_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    committed_at TEXT,
+    applied_at TEXT,
+    apply_owner TEXT,
+    apply_lease_until TEXT,
+    PRIMARY KEY (source, generation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_d2a_ingest_generation_source
+    ON d2a_ingest_generation (source, created_at DESC);
+CREATE TABLE IF NOT EXISTS d2a_ingest_table_commit (
+    source TEXT NOT NULL,
+    generation_id TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    rows INTEGER NOT NULL,
+    batches INTEGER NOT NULL,
+    committed_at TEXT NOT NULL,
+    PRIMARY KEY (source, generation_id, table_name)
+);
+CREATE TABLE IF NOT EXISTS d2a_runtime_key_validation (
+    source TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    strategy_fingerprint TEXT NOT NULL,
+    validated_at TEXT NOT NULL,
+    PRIMARY KEY (source, table_name, strategy_fingerprint)
+);
+CREATE TABLE IF NOT EXISTS d2a_raw_table_identity (
+    source TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    recorded_at TEXT NOT NULL,
+    PRIMARY KEY (source, table_name)
+);
+CREATE TABLE IF NOT EXISTS d2a_reconcile_repair (
+    source TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    repair_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('open', 'completed', 'failed')),
+    staging_table TEXT NOT NULL,
+    schema_name TEXT NOT NULL,
+    columns_json TEXT NOT NULL,
+    pk_json TEXT NOT NULL,
+    watermark_col TEXT,
+    segment_start TEXT,
+    segment_end TEXT,
+    rows INTEGER,
+    batches INTEGER,
+    soft_deleted INTEGER,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    PRIMARY KEY (source, table_name, repair_id)
+);
+CREATE TABLE IF NOT EXISTS d2a_reconcile_repair_batch (
+    source TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    repair_id TEXT NOT NULL,
+    batch_id TEXT NOT NULL,
+    payload_sha256 TEXT NOT NULL,
+    rows INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (source, table_name, repair_id, batch_id)
+);
 CREATE TABLE IF NOT EXISTS d2a_http_push_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source TEXT NOT NULL,
@@ -556,7 +640,7 @@ def normalize_value(v):
     if isinstance(v, (datetime, date)):
         return str(v)
     if isinstance(v, Decimal):
-        return float(v)
+        return format(v, "f")
     return v
 
 
@@ -751,6 +835,86 @@ class LandingStore:
         inst.con.execute("PRAGMA busy_timeout=5000")
         return inst
 
+    @classmethod
+    def open_existing(cls, db_path: str | Path) -> "LandingStore":
+        """打开已初始化落地库的读写连接，不在请求热路径执行 DDL/migrate。"""
+        inst = cls.__new__(cls)
+        inst.db_path = str(db_path)
+        inst.con = sqlite3.connect(inst.db_path)
+        inst.con.row_factory = sqlite3.Row
+        inst.con.execute("PRAGMA foreign_keys=ON")
+        inst.con.execute("PRAGMA busy_timeout=5000")
+        return inst
+
+    def backup_to(self, target: str | Path, *, overwrite: bool = False) -> Path:
+        """使用 SQLite Online Backup API 生成一致备份并执行 integrity_check。"""
+        path = Path(target)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and not overwrite:
+            raise FileExistsError(f"备份已存在:{path}")
+        destination = sqlite3.connect(path)
+        try:
+            self.con.backup(destination)
+            result = destination.execute("PRAGMA integrity_check").fetchone()[0]
+            if result != "ok":
+                raise RuntimeError(f"SQLite 备份完整性检查失败:{result}")
+        finally:
+            destination.close()
+        return path
+
+    def prune_operational_history(
+        self, *, retention_days: int = 90, receipt_days: int = 365,
+    ) -> dict[str, int]:
+        """清理可再生运行历史；发布版本、血缘、隔离和网关证据不在此删除。"""
+        if retention_days < 7 or receipt_days < retention_days:
+            raise ValueError("retention_days 至少 7，receipt_days 不得更短")
+        operational_cutoff = (
+            datetime.now() - timedelta(days=retention_days)).isoformat(
+                timespec="seconds")
+        receipt_cutoff = (
+            datetime.now() - timedelta(days=receipt_days)).isoformat(
+                timespec="seconds")
+        counts: dict[str, int] = {}
+        try:
+            self.con.execute("BEGIN IMMEDIATE")
+            old_runs = [
+                row[0] for row in self.con.execute(
+                    "SELECT id FROM d2a_sync_run "
+                    "WHERE finished_at IS NOT NULL AND finished_at < ?",
+                    (operational_cutoff,))
+            ]
+            if old_runs:
+                marks = ",".join("?" for _ in old_runs)
+                cur = self.con.execute(
+                    f"DELETE FROM d2a_run_step WHERE run_id IN ({marks})",
+                    old_runs)
+                counts["run_steps"] = cur.rowcount
+                cur = self.con.execute(
+                    f"DELETE FROM d2a_sync_run WHERE id IN ({marks})",
+                    old_runs)
+                counts["runs"] = cur.rowcount
+            for table, column, key in (
+                ("d2a_audit_log", "ts", "audit"),
+                ("d2a_http_push_log", "created_at", "push_log"),
+            ):
+                cur = self.con.execute(
+                    f"DELETE FROM {table} WHERE {column} < ?",
+                    (operational_cutoff,))
+                counts[key] = cur.rowcount
+            cur = self.con.execute(
+                "DELETE FROM d2a_ingest_batch_receipt "
+                "WHERE committed_at < ?", (receipt_cutoff,))
+            counts["ingest_receipts"] = cur.rowcount
+            cur = self.con.execute(
+                "DELETE FROM d2a_reconcile_repair_batch "
+                "WHERE created_at < ?", (receipt_cutoff,))
+            counts["reconcile_batches"] = cur.rowcount
+            self.con.commit()
+        except Exception:
+            self.con.rollback()
+            raise
+        return counts
+
     def _migrate(self) -> None:
         """幂等兼容升级:运行元数据与 v0.3 版本列/不变量。
 
@@ -793,6 +957,38 @@ class LandingStore:
             # 同步前预估行数(COUNT 查询);NULL=旧运行或未预估,页面退化显示行数
             self.con.execute(
                 "ALTER TABLE d2a_run_step ADD COLUMN expected_rows INTEGER")
+        state_cols = {
+            r[1] for r in self.con.execute("PRAGMA table_info(d2a_sync_state)")
+        }
+        if "key_columns_json" not in state_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_sync_state ADD COLUMN key_columns_json TEXT")
+        if "schema_name" not in state_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_sync_state ADD COLUMN schema_name TEXT")
+        snapshot_batch_cols = {
+            r[1] for r in self.con.execute("PRAGMA table_info(d2a_snapshot_batch)")
+        }
+        snapshot_cols = {
+            r[1] for r in self.con.execute("PRAGMA table_info(d2a_snapshot)")
+        }
+        if "schema_name" not in snapshot_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_snapshot ADD COLUMN schema_name TEXT")
+        if "payload_sha256" not in snapshot_batch_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_snapshot_batch ADD COLUMN payload_sha256 TEXT")
+        generation_cols = {
+            r[1] for r in self.con.execute(
+                "PRAGMA table_info(d2a_ingest_generation)")
+        }
+        if "apply_owner" not in generation_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_ingest_generation ADD COLUMN apply_owner TEXT")
+        if "apply_lease_until" not in generation_cols:
+            self.con.execute(
+                "ALTER TABLE d2a_ingest_generation "
+                "ADD COLUMN apply_lease_until TEXT")
         # 告警静默(错误处理页):alert_key=source|table|category
         self.con.execute(
             "CREATE TABLE IF NOT EXISTS d2a_alert_silence ("
@@ -905,12 +1101,69 @@ class LandingStore:
         pk = [r[1] for r in sorted(rows, key=lambda x: x[5]) if r[5] > 0]
         return pk or None
 
+    def _assert_raw_schema_compatible(
+        self, source: str, info: TableInfo,
+    ) -> None:
+        """增量 upsert 前拒绝列删除/新增/类型变化，避免旧值静默残留。"""
+        table = raw_table_name(source, info.name)
+        rows = self.con.execute(f'PRAGMA table_info("{table}")').fetchall()
+        meta = {name for name, _ in _META_COLS}
+        actual = {
+            r[1]: str(r[2] or "").upper()
+            for r in rows
+            if r[1] not in meta
+        }
+        expected = {name: _TYPE_SQL[portable].upper() for name, portable in info.columns}
+        if actual == expected:
+            return
+        added = sorted(set(expected) - set(actual))
+        removed = sorted(set(actual) - set(expected))
+        changed = sorted(
+            name for name in set(actual) & set(expected)
+            if actual[name] != expected[name]
+        )
+        raise ValueError(
+            f"{info.name}: 源表结构与既有 raw 不兼容"
+            f"(新增={added}, 删除={removed}, 类型变化={changed})；"
+            "已阻止增量写入以避免旧字段静默残留，请确认结构后执行全量重建/backfill")
+
+    def runtime_keys_recently_validated(
+        self, source: str, table: str, fingerprint: str, *,
+        max_age_hours: float = 24.0,
+    ) -> bool:
+        row = self.con.execute(
+            "SELECT validated_at FROM d2a_runtime_key_validation "
+            "WHERE source = ? AND table_name = ? AND strategy_fingerprint = ?",
+            (source, table, fingerprint),
+        ).fetchone()
+        if row is None:
+            return False
+        try:
+            age = datetime.now() - datetime.fromisoformat(row["validated_at"])
+        except ValueError:
+            return False
+        return age.total_seconds() <= max_age_hours * 3600
+
+    def record_runtime_key_validation(
+        self, source: str, table: str, fingerprint: str,
+    ) -> None:
+        self.con.execute(
+            "INSERT INTO d2a_runtime_key_validation "
+            "(source, table_name, strategy_fingerprint, validated_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(source, table_name, strategy_fingerprint) DO UPDATE SET "
+            "validated_at = excluded.validated_at",
+            (source, table, fingerprint, _now()),
+        )
+        self.con.commit()
+
     def ensure_raw_table(self, source: str, info: TableInfo, *,
                         allow_empty_pk: bool = False) -> None:
         if not info.pk and not allow_empty_pk:
             raise ValueError(
                 f"{info.name}: 源表无主键,无法幂等 upsert;"
                 "请在 binding notes 标注并走全量替换策略(E2)")
+        self._assert_raw_source_identity(source, info)
         existing_pk = self.raw_table_primary_key(source, info.name)
         if existing_pk is None:
             if not self.raw_table_exists(source, info.name):
@@ -921,9 +1174,60 @@ class LandingStore:
                 return
             existing_pk = []
         if existing_pk == list(info.pk):
+            self._assert_raw_schema_compatible(source, info)
             return
         # 运行键变更:受控重建(先校验新键在现有数据上唯一)
         self._rebuild_raw_table_for_pk_change(source, info, existing_pk)
+
+    def _assert_raw_source_identity(
+        self, source: str, info: TableInfo,
+    ) -> None:
+        """增量写入时锁定物理 schema，避免游标重置后混写另一张同名表。"""
+        schema = info.schema or ""
+        identity = self.con.execute(
+            "SELECT schema_name FROM d2a_raw_table_identity "
+            "WHERE source = ? AND table_name = ?",
+            (source, info.name),
+        ).fetchone()
+        if identity is not None:
+            if identity["schema_name"] != schema:
+                raise ValueError(
+                    f"{info.name}: raw 当前绑定 schema="
+                    f"{identity['schema_name'] or '(未声明)'}，本次为 "
+                    f"{schema or '(未声明)'}；已阻止跨物理表增量混写，"
+                    "请确认配置后执行 full_refresh 原子替换")
+            return
+
+        # 兼容升级旧库：优先采用既有同步游标记载的 schema；没有历史证据时
+        # 才以当前已解析的 TableInfo 初始化身份账本。
+        prior = self.con.execute(
+            "SELECT schema_name FROM d2a_sync_state "
+            "WHERE source = ? AND table_name = ?",
+            (source, info.name),
+        ).fetchone()
+        if (
+            prior is not None
+            and prior["schema_name"] is not None
+            and prior["schema_name"] != schema
+        ):
+            raise ValueError(
+                f"{info.name}: 既有同步状态绑定 schema={prior['schema_name']}，"
+                f"本次为 {schema or '(未声明)'}；已阻止跨物理表增量混写")
+        self._record_raw_source_identity(source, info)
+
+    def _record_raw_source_identity(
+        self, source: str, info: TableInfo, *, commit: bool = True,
+    ) -> None:
+        self.con.execute(
+            "INSERT INTO d2a_raw_table_identity "
+            "(source, table_name, schema_name, recorded_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(source, table_name) DO UPDATE SET "
+            "schema_name = excluded.schema_name, "
+            "recorded_at = excluded.recorded_at",
+            (source, info.name, info.schema or "", _now()),
+        )
+        if commit:
+            self.con.commit()
 
     def _create_raw_table(self, source: str, info: TableInfo,
                           table_name: str | None = None) -> None:
@@ -938,6 +1242,8 @@ class LandingStore:
         else:
             ddl = f'CREATE TABLE IF NOT EXISTS "{name}" (\n{cols}\n)'
         self.con.execute(ddl)
+        if table_name is None:
+            self._record_raw_source_identity(source, info, commit=False)
         self.con.commit()
 
     def _rebuild_raw_table_for_pk_change(
@@ -986,17 +1292,21 @@ class LandingStore:
             f"table={info.name} from={','.join(old_pk)} to={','.join(info.pk)}",
             0, 0.0)
 
-    def upsert_rows(self, source: str, info: TableInfo, rows: list[dict], batch_id: str) -> int:
+    def upsert_rows(
+        self, source: str, info: TableInfo, rows: list[dict], batch_id: str, *,
+        commit: bool = True,
+    ) -> int:
         if not rows:
             return 0
         if not info.pk:
             raise ValueError(f"{info.name}: upsert 需要运行键")
         table = raw_table_name(source, info.name)
-        return self._write_rows_into(table, info, rows, batch_id, upsert=True)
+        return self._write_rows_into(
+            table, info, rows, batch_id, upsert=True, commit=commit)
 
     def _write_rows_into(
         self, table: str, info: TableInfo, rows: list[dict], batch_id: str, *,
-        upsert: bool,
+        upsert: bool, commit: bool = True,
     ) -> int:
         if not rows:
             return 0
@@ -1020,8 +1330,332 @@ class LandingStore:
         else:
             sql = f'INSERT INTO "{table}" ({col_sql}) VALUES ({val_sql})'
         self.con.executemany(sql, payload)
-        self.con.commit()
+        if commit:
+            self.con.commit()
         return len(rows)
+
+    def commit_ingest_batch(
+        self, source: str, info: TableInfo, rows: list[dict], batch_id: str,
+        table_run_id: str, payload_sha256: str,
+    ) -> dict:
+        """数据 upsert 与不可变批次回执同事务提交。"""
+        try:
+            self.con.execute("BEGIN IMMEDIATE")
+            # 在写锁内检查，保证并发重试返回原回执，而不是撞唯一键。
+            existing = self.con.execute(
+                "SELECT payload_sha256, rows, committed_at "
+                "FROM d2a_ingest_batch_receipt "
+                "WHERE source = ? AND table_name = ? AND batch_id = ?",
+                (source, info.name, batch_id),
+            ).fetchone()
+            if existing is not None:
+                if existing["payload_sha256"] != payload_sha256:
+                    raise ValueError(
+                        f"{info.name}: batch_id '{batch_id}' 已提交但载荷摘要不同")
+                self.con.commit()
+                return {
+                    "ingested": existing["rows"], "duplicate": True,
+                    "payload_sha256": existing["payload_sha256"],
+                    "committed_at": existing["committed_at"],
+                }
+            n = self.upsert_rows(
+                source, info, rows, batch_id, commit=False)
+            committed_at = _now()
+            self.con.execute(
+                "INSERT INTO d2a_ingest_batch_receipt "
+                "(source, table_name, schema_name, table_run_id, batch_id, "
+                "payload_sha256, rows, committed_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (source, info.name, info.schema, table_run_id, batch_id,
+                 payload_sha256, n, committed_at),
+            )
+            self.con.commit()
+        except Exception:
+            self.con.rollback()
+            raise
+        return {
+            "ingested": n, "duplicate": False,
+            "payload_sha256": payload_sha256, "committed_at": committed_at,
+        }
+
+    def verify_ingest_table_run(
+        self, source: str, table: str, table_run_id: str,
+        expected_rows: int, expected_batches: int,
+    ) -> None:
+        batch_count, row_sum = self.con.execute(
+            "SELECT COUNT(*), COALESCE(SUM(rows), 0) "
+            "FROM d2a_ingest_batch_receipt "
+            "WHERE source = ? AND table_name = ? AND table_run_id = ?",
+            (source, table, table_run_id),
+        ).fetchone()
+        if int(batch_count) != expected_batches or int(row_sum) != expected_rows:
+            raise ValueError(
+                f"{table}: 增量完成核验失败:"
+                f"committed_batches={batch_count}/{expected_batches},"
+                f"committed_rows={row_sum}/{expected_rows}")
+
+    def begin_ingest_generation(
+        self, source: str, generation_id: str, tables: list[str],
+    ) -> dict:
+        expected = sorted(tables)
+        try:
+            self.con.execute("BEGIN IMMEDIATE")
+            self._recover_expired_generation_apply(source, commit=False)
+            pending = self.con.execute(
+                "SELECT generation_id, status FROM d2a_ingest_generation "
+                "WHERE source = ? AND status IN ('committed', 'applying') "
+                "ORDER BY created_at DESC LIMIT 1",
+                (source,),
+            ).fetchone()
+            if pending is not None:
+                raise ValueError(
+                    f"{source}: 数据集 generation {pending['generation_id']} "
+                    f"仍处于 {pending['status']}，请等待 apply 完成后重试同步")
+            existing = self.con.execute(
+                "SELECT status, expected_tables_json FROM d2a_ingest_generation "
+                "WHERE source = ? AND generation_id = ?",
+                (source, generation_id),
+            ).fetchone()
+            if existing is not None:
+                if json.loads(existing["expected_tables_json"]) != expected:
+                    raise ValueError("相同 generation_id 的 tables 清单不一致")
+                self.con.commit()
+                return {
+                    "generation_id": generation_id,
+                    "status": existing["status"], "duplicate": True,
+                }
+            self.con.execute(
+                "UPDATE d2a_ingest_generation SET status = 'failed' "
+                "WHERE source = ? AND status = 'open'",
+                (source,),
+            )
+            self.con.execute(
+                "INSERT INTO d2a_ingest_generation "
+                "(source, generation_id, status, expected_tables_json, created_at) "
+                "VALUES (?, ?, 'open', ?, ?)",
+                (source, generation_id, json.dumps(expected), _now()),
+            )
+            self.con.commit()
+        except Exception:
+            self.con.rollback()
+            raise
+        return {
+            "generation_id": generation_id,
+            "status": "open", "duplicate": False,
+        }
+
+    def record_ingest_table_commit(
+        self, source: str, generation_id: str, table: str,
+        rows: int, batches: int,
+    ) -> None:
+        generation = self.con.execute(
+            "SELECT status, expected_tables_json FROM d2a_ingest_generation "
+            "WHERE source = ? AND generation_id = ?",
+            (source, generation_id),
+        ).fetchone()
+        if generation is None or generation["status"] != "open":
+            raise ValueError(
+                f"{source}: generation '{generation_id}' 未开启或已关闭")
+        expected = json.loads(generation["expected_tables_json"])
+        if table not in expected:
+            raise ValueError(
+                f"{source}: 表 '{table}' 不在 generation 计划内")
+        existing = self.con.execute(
+            "SELECT rows, batches FROM d2a_ingest_table_commit "
+            "WHERE source = ? AND generation_id = ? AND table_name = ?",
+            (source, generation_id, table),
+        ).fetchone()
+        if existing is not None:
+            if (existing["rows"], existing["batches"]) != (rows, batches):
+                raise ValueError(
+                    f"{table}: generation 完成记录与已提交值不一致")
+            return
+        self.con.execute(
+            "INSERT INTO d2a_ingest_table_commit "
+            "(source, generation_id, table_name, rows, batches, committed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (source, generation_id, table, rows, batches, _now()),
+        )
+        self.con.commit()
+
+    def complete_ingest_generation(
+        self, source: str, generation_id: str,
+    ) -> dict:
+        generation = self.con.execute(
+            "SELECT status, expected_tables_json FROM d2a_ingest_generation "
+            "WHERE source = ? AND generation_id = ?",
+            (source, generation_id),
+        ).fetchone()
+        if generation is None:
+            raise ValueError(f"{source}: generation '{generation_id}' 不存在")
+        if generation["status"] in ("committed", "applying", "applied"):
+            return {"committed": True, "duplicate": True}
+        if generation["status"] != "open":
+            raise ValueError(
+                f"{source}: generation '{generation_id}' 状态为 "
+                f"{generation['status']}")
+        expected = set(json.loads(generation["expected_tables_json"]))
+        actual = {
+            r[0] for r in self.con.execute(
+                "SELECT table_name FROM d2a_ingest_table_commit "
+                "WHERE source = ? AND generation_id = ?",
+                (source, generation_id),
+            )
+        }
+        if actual != expected:
+            raise ValueError(
+                f"{source}: generation 表完成集合不一致:"
+                f"missing={sorted(expected - actual)},extra={sorted(actual - expected)}")
+        self.con.execute(
+            "UPDATE d2a_ingest_generation "
+            "SET status = 'committed', committed_at = ? "
+            "WHERE source = ? AND generation_id = ? AND status = 'open'",
+            (_now(), source, generation_id),
+        )
+        self.con.commit()
+        return {"committed": True, "duplicate": False}
+
+    def abort_ingest_generation(self, source: str, generation_id: str) -> None:
+        self.con.execute(
+            "UPDATE d2a_ingest_generation SET status = 'failed' "
+            "WHERE source = ? AND generation_id = ? AND status = 'open'",
+            (source, generation_id),
+        )
+        self.con.commit()
+
+    def _recover_expired_generation_apply(
+        self, source: str, *, commit: bool = True,
+    ) -> list[str]:
+        """回收失去心跳的 applying generation，并关闭遗留 apply run。"""
+        now = _now()
+        expired = [
+            r["generation_id"] for r in self.con.execute(
+                "SELECT generation_id FROM d2a_ingest_generation "
+                "WHERE source = ? AND status = 'applying' "
+                "AND (apply_lease_until IS NULL OR apply_lease_until < ?)",
+                (source, now),
+            )
+        ]
+        if not expired:
+            return []
+        placeholders = ",".join("?" for _ in expired)
+        self.con.execute(
+            "UPDATE d2a_ingest_generation "
+            "SET status = 'committed', apply_owner = NULL, "
+            "apply_lease_until = NULL "
+            f"WHERE source = ? AND generation_id IN ({placeholders}) "
+            "AND status = 'applying'",
+            (source, *expired),
+        )
+        self.con.execute(
+            "UPDATE d2a_sync_run SET status = 'failed', finished_at = ?, "
+            "detail = COALESCE(detail, 'apply lease expired; recovered') "
+            "WHERE source = ? AND run_type = 'apply' AND status = 'running'",
+            (now, source),
+        )
+        if commit:
+            self.con.commit()
+        return expired
+
+    def claim_committed_generation(
+        self, source: str, *, owner_id: str = "legacy",
+        lease_seconds: float = 300.0,
+    ) -> str | None:
+        """原子领取完整 generation，并写入可续租的 apply 所有权。"""
+        try:
+            self.con.execute("BEGIN IMMEDIATE")
+            self._recover_expired_generation_apply(source, commit=False)
+            row = self.con.execute(
+                "SELECT generation_id, status FROM d2a_ingest_generation "
+                "WHERE source = ? AND status = 'committed' "
+                "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (source,),
+            ).fetchone()
+            if row is None:
+                self.con.commit()
+                return None
+            self.con.execute(
+                "UPDATE d2a_ingest_generation SET status = 'applying', "
+                "apply_owner = ?, apply_lease_until = ? "
+                "WHERE source = ? AND generation_id = ? AND status = 'committed'",
+                (
+                    owner_id,
+                    (datetime.now() + timedelta(
+                        seconds=max(30.0, float(lease_seconds))
+                    )).isoformat(timespec="seconds"),
+                    source,
+                    row["generation_id"],
+                ),
+            )
+            self.con.commit()
+            return row["generation_id"]
+        except Exception:
+            self.con.rollback()
+            raise
+
+    def renew_generation_apply_lease(
+        self, source: str, generation_id: str, owner_id: str, *,
+        lease_seconds: float = 300.0,
+    ) -> bool:
+        cur = self.con.execute(
+            "UPDATE d2a_ingest_generation SET apply_lease_until = ? "
+            "WHERE source = ? AND generation_id = ? "
+            "AND status = 'applying' AND apply_owner = ?",
+            (
+                (datetime.now() + timedelta(
+                    seconds=max(30.0, float(lease_seconds))
+                )).isoformat(timespec="seconds"),
+                source, generation_id, owner_id,
+            ),
+        )
+        self.con.commit()
+        return cur.rowcount == 1
+
+    def finish_generation_apply(
+        self, source: str, generation_id: str, *, success: bool,
+        owner_id: str | None = None,
+    ) -> None:
+        owner_pred = " AND apply_owner = ?" if owner_id is not None else ""
+        params: tuple = (
+            "applied" if success else "committed",
+            _now() if success else None,
+            source,
+            generation_id,
+        )
+        if owner_id is not None:
+            params += (owner_id,)
+        cur = self.con.execute(
+            "UPDATE d2a_ingest_generation "
+            "SET status = ?, applied_at = ?, apply_owner = NULL, "
+            "apply_lease_until = NULL "
+            "WHERE source = ? AND generation_id = ? AND status = 'applying'"
+            + owner_pred,
+            params,
+        )
+        self.con.commit()
+        if cur.rowcount != 1:
+            raise ValueError(
+                f"{source}: generation '{generation_id}' apply 租约已丢失")
+
+    def has_ingest_generations(self, source: str) -> bool:
+        row = self.con.execute(
+            "SELECT 1 FROM d2a_ingest_generation WHERE source = ? LIMIT 1",
+            (source,),
+        ).fetchone()
+        return row is not None
+
+    def ingest_generation_sources(
+        self, *, pending_only: bool = False,
+    ) -> list[str]:
+        where = (
+            " WHERE status IN ('committed', 'applying')"
+            if pending_only else ""
+        )
+        return [
+            r["source"] for r in self.con.execute(
+                "SELECT DISTINCT source FROM d2a_ingest_generation"
+                + where + " ORDER BY source")
+        ]
 
     # ---- 全量快照 staging / 原子发布 ----
 
@@ -1030,9 +1664,18 @@ class LandingStore:
         sid = _safe_snapshot_id(snapshot_id)
         staging = staging_raw_table_name(source, info.name, sid)
         row = self.con.execute(
-            "SELECT status, staging_table FROM d2a_snapshot "
+            "SELECT status, staging_table, schema_name FROM d2a_snapshot "
             "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
             (source, info.name, sid)).fetchone()
+        if (
+            row is not None
+            and row["schema_name"] is not None
+            and row["schema_name"] != (info.schema or "")
+        ):
+            raise ValueError(
+                f"{info.name}: snapshot '{sid}' 已绑定 schema="
+                f"{row['schema_name'] or '(未声明)'}，不能以 "
+                f"{info.schema or '(未声明)'} 重放")
         if row is not None and row["status"] == "published":
             return {
                 "snapshot_id": sid, "status": "published",
@@ -1054,13 +1697,15 @@ class LandingStore:
         now = _now()
         self.con.execute(
             "INSERT INTO d2a_snapshot "
-            "(source, table_name, snapshot_id, status, staging_table, created_at) "
-            "VALUES (?, ?, ?, 'open', ?, ?) "
+            "(source, table_name, snapshot_id, status, staging_table, "
+            "schema_name, created_at) "
+            "VALUES (?, ?, ?, 'open', ?, ?, ?) "
             "ON CONFLICT (source, table_name, snapshot_id) DO UPDATE SET "
             "status = 'open', staging_table = excluded.staging_table, "
+            "schema_name = excluded.schema_name, "
             "expected_rows = NULL, expected_batches = NULL, published_at = NULL, "
             "created_at = excluded.created_at",
-            (source, info.name, sid, staging, now))
+            (source, info.name, sid, staging, info.schema or "", now))
         self.con.execute(
             "DELETE FROM d2a_snapshot_batch "
             "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
@@ -1071,7 +1716,7 @@ class LandingStore:
 
     def write_snapshot_batch(
         self, source: str, info: TableInfo, snapshot_id: str,
-        batch_id: str, rows: list[dict],
+        batch_id: str, rows: list[dict], payload_sha256: str | None = None,
     ) -> dict:
         """写入 staging;同一 snapshot_id+batch_id 幂等去重。"""
         sid = _safe_snapshot_id(snapshot_id)
@@ -1088,6 +1733,17 @@ class LandingStore:
             "WHERE source = ? AND table_name = ? AND snapshot_id = ? AND batch_id = ?",
             (source, info.name, sid, batch_id)).fetchone()
         if existing is not None:
+            if payload_sha256 is not None:
+                stored = self.con.execute(
+                    "SELECT payload_sha256 FROM d2a_snapshot_batch "
+                    "WHERE source = ? AND table_name = ? AND snapshot_id = ? "
+                    "AND batch_id = ?",
+                    (source, info.name, sid, batch_id),
+                ).fetchone()["payload_sha256"]
+                if stored is not None and stored != payload_sha256:
+                    raise ValueError(
+                        f"{info.name}: snapshot batch_id '{batch_id}' "
+                        "已提交但载荷摘要不同")
             return {"ingested": existing["rows"], "duplicate": True,
                     "batch_id": batch_id, "snapshot_id": sid}
         staging = snap["staging_table"]
@@ -1095,9 +1751,10 @@ class LandingStore:
             staging, info, rows, batch_id, upsert=bool(info.pk))
         self.con.execute(
             "INSERT INTO d2a_snapshot_batch "
-            "(source, table_name, snapshot_id, batch_id, rows, status, created_at) "
-            "VALUES (?, ?, ?, ?, ?, 'ok', ?)",
-            (source, info.name, sid, batch_id, n, _now()))
+            "(source, table_name, snapshot_id, batch_id, rows, payload_sha256, "
+            "status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'ok', ?)",
+            (source, info.name, sid, batch_id, n, payload_sha256, _now()))
         self.con.commit()
         return {"ingested": n, "duplicate": False,
                 "batch_id": batch_id, "snapshot_id": sid}
@@ -1157,6 +1814,7 @@ class LandingStore:
                 "WHERE source = ? AND table_name = ? AND snapshot_id = ?",
                 (expected_rows, expected_batches, now, live,
                  source, info.name, sid))
+            self._record_raw_source_identity(source, info, commit=False)
             self.con.commit()
         except Exception:
             self.con.rollback()
@@ -1204,6 +1862,260 @@ class LandingStore:
             f'WHERE "{wm_col}" >= ? AND "{wm_col}" < ? AND _d2a_deleted_at IS NULL',
             (start, end)).fetchone()
         return {"count": row["c"], "max": row["m"]}
+
+    def reconcile_stats(
+        self, source: str, table: str, wm_col: str | None = None,
+        start=None, end=None,
+    ) -> dict:
+        """E6b 平台侧统计；无水位时返回全表活跃行数。"""
+        if not self.raw_table_exists(source, table):
+            raise ValueError(f"{table}: 平台 raw 尚不存在，不能对账")
+        if wm_col is None:
+            return {
+                "count": self.count(source, table, active_only=True),
+                "max": None,
+            }
+        if start is None and end is None:
+            row = self.con.execute(
+                f'SELECT COUNT(*) AS c, MIN("{wm_col}") AS lo, '
+                f'MAX("{wm_col}") AS hi '
+                f'FROM "{raw_table_name(source, table)}" '
+                "WHERE _d2a_deleted_at IS NULL",
+            ).fetchone()
+            return {
+                "count": row["c"], "min": row["lo"], "max": row["hi"],
+            }
+        return self.segment_stats(source, table, wm_col, start, end)
+
+    def begin_reconcile_repair(
+        self, source: str, info: TableInfo, repair_id: str,
+        wm_col: str | None = None, start=None, end=None,
+    ) -> dict:
+        """开启 E6b L2，并建立只含运行键的落地侧 staging 表。"""
+        rid = _safe_snapshot_id(repair_id)
+        if not info.pk:
+            raise ValueError(f"{info.name}: 对账修复需要运行键")
+        if wm_col is not None and (
+            start is None or end is None or str(start) >= str(end)
+        ):
+            raise ValueError(f"{info.name}: 对账分段边界无效")
+        self.ensure_raw_table(source, info)
+        columns_json = json.dumps(
+            info.columns, ensure_ascii=False, separators=(",", ":"))
+        pk_json = json.dumps(info.pk, ensure_ascii=False, separators=(",", ":"))
+        existing = self.con.execute(
+            "SELECT * FROM d2a_reconcile_repair "
+            "WHERE source = ? AND table_name = ? AND repair_id = ?",
+            (source, info.name, rid),
+        ).fetchone()
+        manifest = (
+            info.schema or "", columns_json, pk_json, wm_col, start, end)
+        if existing is not None:
+            stored = (
+                existing["schema_name"], existing["columns_json"],
+                existing["pk_json"], existing["watermark_col"],
+                existing["segment_start"], existing["segment_end"])
+            if stored != manifest:
+                raise ValueError(
+                    f"{info.name}: repair_id '{rid}' 的结构或分段边界不一致")
+            if existing["status"] in ("open", "completed"):
+                return {
+                    "repair_id": rid, "status": existing["status"],
+                    "duplicate": True,
+                }
+
+        digest = hashlib.sha256(
+            f"{source}\0{info.name}\0{rid}".encode("utf-8")).hexdigest()[:24]
+        staging = f"d2a_reconcile_keys_{digest}"
+        key_types = dict(info.columns)
+        key_cols = ", ".join(
+            f'"{key}" {_TYPE_SQL[key_types[key]]} NOT NULL'
+            for key in info.pk)
+        pk_sql = ", ".join(f'"{key}"' for key in info.pk)
+        try:
+            self.con.execute("BEGIN IMMEDIATE")
+            self.con.execute(f'DROP TABLE IF EXISTS "{staging}"')
+            self.con.execute(
+                f'CREATE TABLE "{staging}" '
+                f"({key_cols}, PRIMARY KEY ({pk_sql})) WITHOUT ROWID")
+            self.con.execute(
+                "INSERT INTO d2a_reconcile_repair "
+                "(source, table_name, repair_id, status, staging_table, "
+                "schema_name, columns_json, pk_json, watermark_col, "
+                "segment_start, segment_end, created_at) "
+                "VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(source, table_name, repair_id) DO UPDATE SET "
+                "status = 'open', staging_table = excluded.staging_table, "
+                "created_at = excluded.created_at, completed_at = NULL, "
+                "rows = NULL, batches = NULL, soft_deleted = NULL",
+                (source, info.name, rid, staging, info.schema or "",
+                 columns_json, pk_json, wm_col, start, end, _now()),
+            )
+            self.con.execute(
+                "DELETE FROM d2a_reconcile_repair_batch "
+                "WHERE source = ? AND table_name = ? AND repair_id = ?",
+                (source, info.name, rid),
+            )
+            self.con.commit()
+        except Exception:
+            self.con.rollback()
+            raise
+        return {"repair_id": rid, "status": "open", "duplicate": False}
+
+    def write_reconcile_repair_batch(
+        self, source: str, table: str, repair_id: str,
+        batch_id: str, rows: list[dict], payload_sha256: str,
+    ) -> dict:
+        """原始行 upsert、运行键 staging 和批次回执同事务提交。"""
+        rid = _safe_snapshot_id(repair_id)
+        repair = self.con.execute(
+            "SELECT * FROM d2a_reconcile_repair "
+            "WHERE source = ? AND table_name = ? AND repair_id = ?",
+            (source, table, rid),
+        ).fetchone()
+        if repair is None or repair["status"] != "open":
+            raise ValueError(f"{table}: repair '{rid}' 未开启或已关闭")
+        columns = [(str(c), str(t)) for c, t in json.loads(
+            repair["columns_json"])]
+        pk = [str(c) for c in json.loads(repair["pk_json"])]
+        info = TableInfo(
+            name=table, columns=columns, pk=pk,
+            schema=repair["schema_name"] or None)
+        allowed = {c for c, _ in columns}
+        if any(set(row) - allowed for row in rows):
+            raise ValueError(f"{table}: repair rows 含未声明字段")
+        if any(any(row.get(k) is None for k in pk) for row in rows):
+            raise ValueError(f"{table}: repair rows 运行键含 NULL")
+        try:
+            self.con.execute("BEGIN IMMEDIATE")
+            receipt = self.con.execute(
+                "SELECT payload_sha256, rows "
+                "FROM d2a_reconcile_repair_batch "
+                "WHERE source = ? AND table_name = ? AND repair_id = ? "
+                "AND batch_id = ?",
+                (source, table, rid, batch_id),
+            ).fetchone()
+            if receipt is not None:
+                if receipt["payload_sha256"] != payload_sha256:
+                    raise ValueError(
+                        f"{table}: repair batch_id '{batch_id}' 摘要不一致")
+                self.con.commit()
+                return {
+                    "ingested": receipt["rows"], "duplicate": True,
+                    "payload_sha256": receipt["payload_sha256"],
+                }
+            n = self.upsert_rows(
+                source, info, rows, f"reconcile-{rid}", commit=False)
+            staging = repair["staging_table"]
+            key_sql = ", ".join(f'"{k}"' for k in pk)
+            value_sql = ", ".join("?" for _ in pk)
+            self.con.executemany(
+                f'INSERT OR IGNORE INTO "{staging}" ({key_sql}) '
+                f"VALUES ({value_sql})",
+                [tuple(normalize_value(row[k]) for k in pk) for row in rows],
+            )
+            self.con.execute(
+                "INSERT INTO d2a_reconcile_repair_batch "
+                "(source, table_name, repair_id, batch_id, payload_sha256, "
+                "rows, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (source, table, rid, batch_id, payload_sha256, n, _now()),
+            )
+            self.con.commit()
+        except Exception:
+            self.con.rollback()
+            raise
+        return {
+            "ingested": n, "duplicate": False,
+            "payload_sha256": payload_sha256,
+        }
+
+    def complete_reconcile_repair(
+        self, source: str, table: str, repair_id: str,
+        expected_rows: int, expected_batches: int,
+    ) -> dict:
+        """按 staging 运行键做 SQL 反连接并软删，内存占用与表大小无关。"""
+        rid = _safe_snapshot_id(repair_id)
+        repair = self.con.execute(
+            "SELECT * FROM d2a_reconcile_repair "
+            "WHERE source = ? AND table_name = ? AND repair_id = ?",
+            (source, table, rid),
+        ).fetchone()
+        if repair is None:
+            raise ValueError(f"{table}: repair '{rid}' 不存在")
+        if repair["status"] == "completed":
+            return {
+                "completed": True, "duplicate": True,
+                "soft_deleted": repair["soft_deleted"] or 0,
+            }
+        if repair["status"] != "open":
+            raise ValueError(f"{table}: repair '{rid}' 状态为 {repair['status']}")
+        batch_count, row_sum = self.con.execute(
+            "SELECT COUNT(*), COALESCE(SUM(rows), 0) "
+            "FROM d2a_reconcile_repair_batch "
+            "WHERE source = ? AND table_name = ? AND repair_id = ?",
+            (source, table, rid),
+        ).fetchone()
+        if batch_count != expected_batches or row_sum != expected_rows:
+            raise ValueError(
+                f"{table}: repair 完成核验失败: batches={batch_count}/"
+                f"{expected_batches}, rows={row_sum}/{expected_rows}")
+        pk = [str(c) for c in json.loads(repair["pk_json"])]
+        staging = repair["staging_table"]
+        live = raw_table_name(source, table)
+        join = " AND ".join(
+            f'k."{key}" = r."{key}"' for key in pk)
+        segment = ""
+        params: list[object] = [_now()]
+        if repair["watermark_col"] is not None:
+            segment = (
+                f' AND r."{repair["watermark_col"]}" >= ?'
+                f' AND r."{repair["watermark_col"]}" < ?')
+            params.extend([repair["segment_start"], repair["segment_end"]])
+        try:
+            self.con.execute("BEGIN IMMEDIATE")
+            cur = self.con.execute(
+                f'UPDATE "{live}" AS r SET _d2a_deleted_at = ? '
+                "WHERE r._d2a_deleted_at IS NULL"
+                f"{segment} AND NOT EXISTS ("
+                f'SELECT 1 FROM "{staging}" AS k WHERE {join})',
+                tuple(params),
+            )
+            soft_deleted = max(0, cur.rowcount)
+            self.con.execute(f'DROP TABLE "{staging}"')
+            self.con.execute(
+                "UPDATE d2a_reconcile_repair SET status = 'completed', "
+                "rows = ?, batches = ?, soft_deleted = ?, completed_at = ? "
+                "WHERE source = ? AND table_name = ? AND repair_id = ?",
+                (expected_rows, expected_batches, soft_deleted, _now(),
+                 source, table, rid),
+            )
+            self.con.commit()
+        except Exception:
+            self.con.rollback()
+            raise
+        return {
+            "completed": True, "duplicate": False,
+            "soft_deleted": soft_deleted,
+        }
+
+    def abort_reconcile_repair(
+        self, source: str, table: str, repair_id: str,
+    ) -> None:
+        rid = _safe_snapshot_id(repair_id)
+        repair = self.con.execute(
+            "SELECT status, staging_table FROM d2a_reconcile_repair "
+            "WHERE source = ? AND table_name = ? AND repair_id = ?",
+            (source, table, rid),
+        ).fetchone()
+        if repair is None or repair["status"] != "open":
+            return
+        self.con.execute(f'DROP TABLE IF EXISTS "{repair["staging_table"]}"')
+        self.con.execute(
+            "UPDATE d2a_reconcile_repair SET status = 'failed' "
+            "WHERE source = ? AND table_name = ? AND repair_id = ?",
+            (source, table, rid),
+        )
+        self.con.commit()
 
     def active_pks(self, source: str, table: str, pk_col: str,
                    wm_col: str | None = None, start=None, end=None) -> set:
@@ -1296,15 +2208,52 @@ class LandingStore:
             })
         return out
 
-    def get_sync_cursor(self, source: str, table: str) -> tuple[object, list | None] | None:
-        """返回 (watermark, key_values|None)。None 键值表示该水位整表已完成。"""
+    def get_sync_cursor(
+        self,
+        source: str,
+        table: str,
+        *,
+        watermark_col: str | None = None,
+        key_columns: list[str] | None = None,
+        schema: str | None = None,
+    ) -> tuple[object, list | None] | None:
+        """返回游标，并可校验产生该游标的抽取策略仍兼容。"""
         from .table import decode_keyset_cursor
         row = self.con.execute(
-            "SELECT high_water FROM d2a_sync_state WHERE source = ? AND table_name = ?",
+            "SELECT high_water, watermark_col, key_columns_json, schema_name "
+            "FROM d2a_sync_state WHERE source = ? AND table_name = ?",
             (source, table)).fetchone()
         if row is None or row["high_water"] is None:
             return None
+        if watermark_col is not None and row["watermark_col"] != watermark_col:
+            raise ValueError(
+                f"{table}: watermark 已从 '{row['watermark_col']}' 改为 "
+                f"'{watermark_col}'，旧游标不兼容；请先执行显式游标重置/backfill")
+        if key_columns is not None and row["key_columns_json"]:
+            stored_keys = json.loads(row["key_columns_json"])
+            if stored_keys != list(key_columns):
+                raise ValueError(
+                    f"{table}: 运行键已从 {stored_keys} 改为 {list(key_columns)}，"
+                    "旧游标不兼容；请先执行显式游标重置/backfill")
+        if schema is not None and row["schema_name"] is not None:
+            if row["schema_name"] != schema:
+                raise ValueError(
+                    f"{table}: schema 已从 '{row['schema_name']}' 改为 '{schema}'，"
+                    "旧游标不兼容；请先执行显式游标重置/backfill")
         return decode_keyset_cursor(row["high_water"])
+
+    def reset_sync_cursor(self, source: str, table: str) -> bool:
+        """显式删除单表游标，供抽取策略变更后从配置下界重新同步。
+
+        只清理游标状态，不删除 raw 数据；下一轮同步仍通过 upsert/主键迁移
+        保持落地表可用。返回是否实际删除了游标。
+        """
+        cur = self.con.execute(
+            "DELETE FROM d2a_sync_state WHERE source = ? AND table_name = ?",
+            (source, table),
+        )
+        self.con.commit()
+        return cur.rowcount > 0
 
     def set_high_water(self, source: str, table: str, watermark_col: str,
                        high_water: str | None, batch_id: str) -> None:
@@ -1323,6 +2272,8 @@ class LandingStore:
         *,
         force: bool = False,
         commit: bool = True,
+        key_columns: list[str] | None = None,
+        schema: str | None = None,
     ) -> None:
         """原子写入统一游标。默认只前进不后退。
 
@@ -1341,12 +2292,17 @@ class LandingStore:
                 return
         self.con.execute(
             "INSERT INTO d2a_sync_state "
-            "(source, table_name, watermark_col, high_water, last_run_at, last_batch_id) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "(source, table_name, watermark_col, high_water, last_run_at, last_batch_id, "
+            "key_columns_json, schema_name) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (source, table_name) DO UPDATE SET "
             "watermark_col = excluded.watermark_col, high_water = excluded.high_water, "
-            "last_run_at = excluded.last_run_at, last_batch_id = excluded.last_batch_id",
-            (source, table, watermark_col, new_raw, _now(), batch_id))
+            "last_run_at = excluded.last_run_at, last_batch_id = excluded.last_batch_id, "
+            "key_columns_json = COALESCE(excluded.key_columns_json, key_columns_json), "
+            "schema_name = COALESCE(excluded.schema_name, schema_name)",
+            (source, table, watermark_col, new_raw, _now(), batch_id,
+             json.dumps(list(key_columns)) if key_columns is not None else None,
+             schema))
         if commit:
             self.con.commit()
 
@@ -1724,6 +2680,7 @@ class LandingStore:
         key_values: list | None = None, force_cursor: bool = False,
         rows_in: int = 0, rows_out: int = 0, batches: int = 0,
         batch_id: str | None = None, progressed_at: str | None = None,
+        key_columns: list[str] | None = None, schema: str | None = None,
     ) -> None:
         """在同一事务内更新 step 进度与可恢复水位游标,然后提交一次。
 
@@ -1733,7 +2690,8 @@ class LandingStore:
         if watermark_col is not None:
             self.set_sync_cursor(
                 source, table, watermark_col, watermark, key_values,
-                batch_id, force=force_cursor, commit=False)
+                batch_id, force=force_cursor, commit=False,
+                key_columns=key_columns, schema=schema)
         self.con.execute(
             "UPDATE d2a_run_step SET rows_in = ?, rows_out = ?, batches = ?, "
             "progressed_at = ?, batch_id = COALESCE(?, batch_id) "
