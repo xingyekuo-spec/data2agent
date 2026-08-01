@@ -25,18 +25,18 @@ def _iter_prod_py() -> list[Path]:
     return sorted(p for p in PROD.rglob("*.py") if p.is_file())
 
 
-def test_ingest_protocol_version_is_v2():
-    assert INGEST_PROTOCOL_VERSION == "2"
+def test_ingest_protocol_version_is_v3():
+    assert INGEST_PROTOCOL_VERSION == "3"
     from data2agent.protocol.ingest import SUPPORTED_INGEST_PROTOCOL_VERSIONS
 
-    assert SUPPORTED_INGEST_PROTOCOL_VERSIONS == ("2",)
+    assert SUPPORTED_INGEST_PROTOCOL_VERSIONS == ("2", "3")
     sink = (PROD / "middle" / "extract" / "sink.py").read_text(encoding="utf-8")
     ingest_app = (PROD / "platform" / "ingest" / "app.py").read_text(encoding="utf-8")
     assert "ensure_protocol" in sink
     assert "supported_ingest_protocol_versions" in sink
     assert "health_protocol_fields" in ingest_app
     proto = (PROD / "protocol" / "ingest.py").read_text(encoding="utf-8")
-    assert 'INGEST_PROTOCOL_VERSION = "2"' in proto
+    assert 'INGEST_PROTOCOL_VERSION = "3"' in proto
     assert "SUPPORTED_INGEST_PROTOCOL_VERSIONS" in proto
 
 

@@ -143,3 +143,81 @@ def test_no_pk_full_refresh_snapshot(tmp_path: Path):
     incremental_sync(
         SqliteReadOnlyAdapter(str(src), {"LOG"}), landing, SOURCE, watermarks={})
     assert landing.count(SOURCE, "LOG") == 2
+
+
+def test_keyset_full_refresh_does_not_skip_after_low_key_delete(tmp_path: Path):
+    src = _src_currency(
+        tmp_path,
+        [("A", "a"), ("B", "b"), ("C", "c"), ("D", "d")])
+
+    class MutatingAdapter(SqliteReadOnlyAdapter):
+        mutated = False
+
+        def _execute(self, sql, params=()):
+            if " WHERE ((" in sql and not self.mutated:
+                self.mutated = True
+                rw = sqlite3.connect(src)
+                rw.execute("DELETE FROM CURRENCY WHERE CODE = 'A'")
+                rw.commit()
+                rw.close()
+            return super()._execute(sql, params)
+
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    incremental_sync(
+        MutatingAdapter(str(src), {"CURRENCY"}, batch_size=2),
+        landing, SOURCE)
+    raw = raw_table_name(SOURCE, "CURRENCY")
+    codes = [
+        r[0] for r in landing.con.execute(
+            f'SELECT CODE FROM "{raw}" ORDER BY CODE')
+    ]
+    # A 属于首条 SELECT 的语句级快照；关键是后续现存 C 不得被 OFFSET 跳过。
+    assert codes == ["A", "B", "C", "D"]
+
+
+def test_incremental_schema_drop_fails_closed(tmp_path: Path):
+    src = tmp_path / "src.sqlite"
+    con = sqlite3.connect(src)
+    con.execute("CREATE TABLE T (ID INTEGER PRIMARY KEY, V TEXT, W TEXT)")
+    con.execute("INSERT INTO T VALUES (1, 'old', '2026-07-01')")
+    con.commit()
+    con.close()
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    incremental_sync(
+        SqliteReadOnlyAdapter(str(src), {"T"}), landing, SOURCE,
+        watermarks={"T": "W"})
+    con = sqlite3.connect(src)
+    con.execute("ALTER TABLE T DROP COLUMN V")
+    con.execute("UPDATE T SET W = '2026-07-02'")
+    con.commit()
+    con.close()
+    with pytest.raises(ValueError, match="结构与既有 raw 不兼容"):
+        incremental_sync(
+            SqliteReadOnlyAdapter(str(src), {"T"}), landing, SOURCE,
+            watermarks={"T": "W"})
+
+
+def test_raw_physical_schema_identity_requires_full_refresh(tmp_path: Path):
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    dbo = TableInfo(
+        "T", [("ID", "int"), ("V", "text")], ["ID"], schema="dbo")
+    archive = TableInfo(
+        "T", [("ID", "int"), ("V", "text")], ["ID"], schema="archive")
+    landing.ensure_raw_table(SOURCE, dbo)
+    landing.upsert_rows(
+        SOURCE, dbo, [{"ID": 1, "V": "old"}], "b1")
+
+    with pytest.raises(ValueError, match="跨物理表增量混写"):
+        landing.ensure_raw_table(SOURCE, archive)
+
+    landing.begin_snapshot(SOURCE, archive, "schema-switch")
+    landing.write_snapshot_batch(
+        SOURCE, archive, "schema-switch", "b2",
+        [{"ID": 2, "V": "new"}])
+    landing.complete_snapshot(
+        SOURCE, archive, "schema-switch", 1, 1)
+    landing.ensure_raw_table(SOURCE, archive)
+    assert landing.con.execute(
+        "SELECT schema_name FROM d2a_raw_table_identity "
+        "WHERE source = ? AND table_name = 'T'", (SOURCE,)
+    ).fetchone()["schema_name"] == "archive"

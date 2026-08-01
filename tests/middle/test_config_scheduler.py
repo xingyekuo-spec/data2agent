@@ -110,8 +110,8 @@ def test_config_rejects_mssql_without_dsn_env(tmp_path):
         load_config(cfg_file)
 
 
-def test_config_rejects_reconcile_at_in_push_mode(tmp_path):
-    """推送模式(sink=http)下配 reconcile_at 应被拒(E6b 未实现,本地对账会误判)。"""
+def test_config_accepts_reconcile_at_in_push_mode(tmp_path):
+    """E6b 已实现后，推送模式允许安排 L1/deep 跨机对账。"""
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(
         "sources:\n  e10:\n    adapter: mssql_readonly\n    dsn_env: D2A_E10_DSN\n"
@@ -120,10 +120,13 @@ def test_config_rejects_reconcile_at_in_push_mode(tmp_path):
         "        mode: incremental\n"
         "        watermark: UPD\n"
         "    reconcile_at: \"05:30\"\n"
-        "    sink: { type: http, url: \"http://platform:8850\" }\n",
+        "    reconcile_deep_at: \"02:10\"\n"
+        "    sink: { type: http, url: \"http://platform:8850\", "
+        "token_env: D2A_INGEST_TOKEN, allow_insecure_http: true }\n",
         encoding="utf-8")
-    with pytest.raises(ValueError, match="推送模式.*reconcile_at"):
-        load_config(cfg_file)
+    cfg = load_config(cfg_file)
+    assert cfg.sources["e10"].reconcile_at == "05:30"
+    assert cfg.sources["e10"].reconcile_deep_at == "02:10"
 
 
 def test_config_rejects_bad_window(tmp_path):

@@ -201,6 +201,28 @@ def test_successful_live_put_stamps_validated_at(env):
     assert data["sources"][SOURCE]["tables"]["CURRENCY"]["validated_at"]
 
 
+def test_put_persists_start_date(env):
+    """incremental 表的 start_date 必须随保存写入 connect.yaml 并在 GET 中可见。"""
+    client, cfg = env
+    tables = {
+        "CUSTOMER": {
+            "mode": "incremental", "schema": "main",
+            "key_columns": ["Id"], "watermark": "LAST_MODIFIED_DATE",
+            "start_date": "2015-01-01",
+        },
+        "CURRENCY": {"mode": "full_refresh", "schema": "main"},
+    }
+    rev = client.get("/api/extraction-tables", headers=_h()).json()["revision"]
+    r = client.put("/api/extraction-tables", headers=_h(), json={
+        "revision": rev, "tables": tables, "live": True,
+    })
+    assert r.status_code == 200 and r.json()["ok"] is True
+    data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    assert data["sources"][SOURCE]["tables"]["CUSTOMER"]["start_date"] == "2015-01-01"
+    got = client.get("/api/extraction-tables", headers=_h()).json()
+    assert got["tables"]["CUSTOMER"]["start_date"] == "2015-01-01"
+
+
 def test_put_ignores_client_live_false(env, monkeypatch):
     """PUT 不得因客户端 live:false 跳过现场校验而保存。"""
     from data2agent.middle.extract import metadata as md

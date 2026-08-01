@@ -222,3 +222,51 @@ class TestStartDate:
             },
         })
         assert scfg.table_start_dates() == {"A": "2015-01-01"}
+
+
+class TestSourceStartDate:
+    def test_source_accepts_global_start_date(self):
+        scfg = SourceConfig.model_validate({
+            "adapter": "sqlite_readonly", "path": "x.sqlite",
+            "start_date": "2015-01-01",
+        })
+        assert scfg.start_date == "2015-01-01"
+
+    def test_source_rejects_bad_start_date_format(self):
+        with pytest.raises(ValueError, match="非法 start_date"):
+            SourceConfig.model_validate({
+                "adapter": "sqlite_readonly", "path": "x.sqlite",
+                "start_date": "2015/01/01",
+            })
+
+    def test_source_start_date_blank_normalized_to_none(self):
+        scfg = SourceConfig.model_validate({
+            "adapter": "sqlite_readonly", "path": "x.sqlite",
+            "start_date": "",
+        })
+        assert scfg.start_date is None
+
+    def test_table_start_dates_falls_back_to_source_global(self):
+        """表未配置 start_date 的增量表回退到源级全局日期。"""
+        scfg = SourceConfig.model_validate({
+            "adapter": "sqlite_readonly", "path": "x.sqlite",
+            "start_date": "2015-01-01",
+            "tables": {
+                "A": {"mode": "incremental", "watermark": "WM"},
+                "B": {"mode": "full_refresh"},
+            },
+        })
+        assert scfg.table_start_dates() == {"A": "2015-01-01"}
+
+    def test_table_start_date_overrides_source_global(self):
+        """表级 start_date 优先于源级全局日期。"""
+        scfg = SourceConfig.model_validate({
+            "adapter": "sqlite_readonly", "path": "x.sqlite",
+            "start_date": "2015-01-01",
+            "tables": {
+                "A": {"mode": "incremental", "watermark": "WM",
+                      "start_date": "2020-06-01"},
+                "B": {"mode": "incremental", "watermark": "WM"},
+            },
+        })
+        assert scfg.table_start_dates() == {"A": "2020-06-01", "B": "2015-01-01"}

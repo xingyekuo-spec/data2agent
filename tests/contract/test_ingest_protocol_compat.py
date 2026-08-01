@@ -30,9 +30,9 @@ def test_health_declares_active_and_supported_list(tmp_path: Path):
     body = client.get("/ingest/health").json()
     assert body["ok"] is True
     assert body["ingest_protocol_version"] == "2"
-    assert body["active_ingest_protocol_version"] == "2"
-    assert body["supported_ingest_protocol_versions"] == ["2"]
-    assert health_protocol_fields()["supported_ingest_protocol_versions"] == ["2"]
+    assert body["active_ingest_protocol_version"] == "3"
+    assert body["supported_ingest_protocol_versions"] == ["2", "3"]
+    assert health_protocol_fields()["supported_ingest_protocol_versions"] == ["2", "3"]
 
 
 def test_middle_accepts_when_send_protocol_in_supported_list():
@@ -44,7 +44,7 @@ def test_middle_accepts_when_send_protocol_in_supported_list():
             "ok": True,
             "ingest_protocol_version": "9",
             "active_ingest_protocol_version": "9",
-            "supported_ingest_protocol_versions": ["2", "9"],
+            "supported_ingest_protocol_versions": ["2", "3", "9"],
         },
     )
     sink.ensure_protocol()
@@ -57,8 +57,8 @@ def test_middle_rejects_when_send_protocol_not_supported():
         post=lambda *a, **k: None,
         get_json=lambda *a, **k: {
             "ok": True,
-            "active_ingest_protocol_version": "3",
-            "supported_ingest_protocol_versions": ["3"],
+            "active_ingest_protocol_version": "2",
+            "supported_ingest_protocol_versions": ["2"],
         },
     )
     with pytest.raises(ProtocolVersionError, match="不兼容"):
@@ -80,7 +80,7 @@ def test_legacy_middle_equality_against_current_platform_health(tmp_path: Path):
                 f"ingest 协议版本不一致:中间机要求 {mine}, 平台返回 {remote!r}"
             )
 
-    assert INGEST_PROTOCOL_VERSION == "2"
+    assert INGEST_PROTOCOL_VERSION == "3"
     assert "2" in SUPPORTED_INGEST_PROTOCOL_VERSIONS
     legacy_ensure(health, mine="2")
 
@@ -132,9 +132,10 @@ def test_push_contract_current_platform_with_v2_middle(tmp_path: Path):
     assert sink._protocol_checked is True
 
 
-def test_compat_script_ok_for_current_v2():
+def test_compat_script_ok_for_current_v3():
     assert check_constants() == []
     assert is_supported_protocol("2")
+    assert is_supported_protocol("3")
     notes = render_release_notes(release_version="v0.5.1")
     assert "兼容中间机发送协议" in notes
     assert "无需升级" in notes

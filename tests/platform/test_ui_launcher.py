@@ -55,7 +55,8 @@ def test_worker_commands_empty_until_configured(tmp_path):
 
     (tmp_path / "config" / "platform.yaml").write_text("x: 1", encoding="utf-8")
     plat = mod.worker_commands("platform", tmp_path, py)
-    assert {n for n, _, _ in plat} == {"ingest", "apply", "mcp"}
+    assert {n for n, _, _ in plat} == {
+        "ingest", "apply", "maintenance", "mcp"}
     # apply 是纯落地库操作:不能传 --config(子命令不接受),必须显式带 --templates
     apply_cmd = next(cmd for n, _, cmd in plat if n == "apply")
     assert "--config" not in apply_cmd

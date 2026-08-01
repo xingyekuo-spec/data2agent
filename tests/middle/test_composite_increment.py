@@ -202,3 +202,26 @@ def test_resolve_runtime_keys_requires_keys_for_incremental():
     info = TableInfo(name="X", columns=[("A", "text")], pk=[])
     with pytest.raises(RuntimeKeyError):
         resolve_runtime_keys(info, None, require_keys=True)
+
+
+def test_watermark_change_rejects_old_cursor(tmp_path: Path):
+    src = tmp_path / "src.sqlite"
+    con = sqlite3.connect(src)
+    con.execute(
+        "CREATE TABLE T (ID INTEGER PRIMARY KEY, OLD_W TEXT, NEW_W TEXT)")
+    con.execute(
+        "INSERT INTO T VALUES (1, '2099-01-01', '2026-07-01')")
+    con.commit()
+    con.close()
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    landing.set_sync_cursor(
+        SOURCE, "T", "OLD_W", "2099-01-01", None, "old",
+        key_columns=["ID"], schema="main")
+    with pytest.raises(ValueError, match="旧游标不兼容"):
+        incremental_sync(
+            SqliteReadOnlyAdapter(str(src), {"T"}), landing, SOURCE,
+            watermarks={"T": "NEW_W"}, key_columns={"T": ["ID"]})
+    row = landing.con.execute(
+        "SELECT watermark_col FROM d2a_sync_state "
+        "WHERE source = ? AND table_name = ?", (SOURCE, "T")).fetchone()
+    assert row["watermark_col"] == "OLD_W"

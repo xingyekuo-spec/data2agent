@@ -80,6 +80,37 @@ def test_config_post_whitelist_and_validate(middle_env):
     assert "15m" in text and "NOPE" not in text
 
 
+def test_config_post_saves_source_start_date(middle_env):
+    """连接页可保存源级全局抽取开始日期,GET 可见,置空可清除。"""
+    client, cfg = middle_env
+    h = {"Authorization": "Bearer secret"}
+    rev = client.get("/api/config", headers=h).json()["revision"]
+    r = client.post("/api/config", headers=h, json={
+        "sources": {"digiwin_e10": {"start_date": "2015-01-01"}},
+        "revision": rev,
+    })
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert "start_date: '2015-01-01'" in cfg.read_text(encoding="utf-8") or \
+        'start_date: "2015-01-01"' in cfg.read_text(encoding="utf-8") or \
+        "start_date: 2015-01-01" in cfg.read_text(encoding="utf-8")
+    got = client.get("/api/config", headers=h).json()
+    assert got["sources"]["digiwin_e10"]["start_date"] == "2015-01-01"
+    # 置空清除
+    r2 = client.post("/api/config", headers=h, json={
+        "sources": {"digiwin_e10": {"start_date": None}},
+        "revision": got["revision"],
+    })
+    assert r2.status_code == 200 and r2.json()["ok"] is True
+    got2 = client.get("/api/config", headers=h).json()
+    assert got2["sources"]["digiwin_e10"]["start_date"] is None
+    # 非法格式被拒
+    r3 = client.post("/api/config", headers=h, json={
+        "sources": {"digiwin_e10": {"start_date": "2015/01/01"}},
+        "revision": got2["revision"],
+    })
+    assert r3.json()["ok"] is False
+
+
 def test_config_post_requires_current_revision(middle_env):
     client, _ = middle_env
     h = {"Authorization": "Bearer secret"}

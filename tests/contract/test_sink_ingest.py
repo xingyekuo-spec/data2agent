@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from data2agent.middle.extract.adapters.base import TableInfo  # noqa: E402
 from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
 from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
+from data2agent.middle.extract.reconcile import reconcile_remote  # noqa: E402
 from tests.helpers import watermarks_from_pack
 from data2agent.shared.store.landing import LandingStore, raw_table_name  # noqa: E402
 from data2agent.middle.extract.sink import HttpPushSink, LocalSink  # noqa: E402
@@ -54,6 +55,7 @@ def _testclient_post(client: TestClient, token: str | None = None):
         headers = {"Authorization": f"Bearer {tok}"} if tok else {}
         r = client.post(path, json=payload, headers=headers)
         r.raise_for_status()
+        return r.json()
     return post
 
 
@@ -96,8 +98,31 @@ def test_ingest_health_reports_protocol_version(tmp_path):
     assert r.status_code == 200
     body = r.json()
     assert body["ingest_protocol_version"] == "2"
-    assert body["active_ingest_protocol_version"] == "2"
-    assert body["supported_ingest_protocol_versions"] == ["2"]
+    assert body["active_ingest_protocol_version"] == "3"
+    assert body["supported_ingest_protocol_versions"] == ["2", "3"]
+    assert body["reconcile_protocol_version"] == "1"
+
+
+def test_expired_generation_apply_lease_is_recoverable(tmp_path):
+    landing = LandingStore(tmp_path / "platform.sqlite")
+    landing.begin_ingest_generation(SOURCE, "g-expire", [])
+    landing.complete_ingest_generation(SOURCE, "g-expire")
+    assert landing.claim_committed_generation(
+        SOURCE, owner_id="dead-worker") == "g-expire"
+    stale_run = landing.start_run(SOURCE, "apply")
+    landing.con.execute(
+        "UPDATE d2a_ingest_generation SET apply_lease_until = ? "
+        "WHERE source = ? AND generation_id = ?",
+        ("2000-01-01T00:00:00", SOURCE, "g-expire"))
+    landing.con.commit()
+
+    assert landing.claim_committed_generation(
+        SOURCE, owner_id="replacement") == "g-expire"
+    assert landing.con.execute(
+        "SELECT status FROM d2a_sync_run WHERE id = ?", (stale_run,)
+    ).fetchone()["status"] == "failed"
+    landing.finish_generation_apply(
+        SOURCE, "g-expire", success=True, owner_id="replacement")
 
 
 def test_ingest_batch_lands_rows(tmp_path):
@@ -114,6 +139,55 @@ def test_ingest_batch_lands_rows(tmp_path):
     # 重推幂等
     assert client.post("/ingest/batch", json=body).json()["ingested"] == 2
     assert landing.count(SOURCE, "CURRENCY") == 2
+
+
+def test_ingest_rejects_same_batch_id_with_different_payload(tmp_path):
+    landing = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(landing.db_path))
+    base = _v({
+        "source": SOURCE, "table": "T", "mode": "incremental",
+        "columns": [["ID", "int"], ["V", "text"]], "pk": ["ID"],
+        "batch_id": "same-id", "table_run_id": "run-1",
+    })
+    assert client.post(
+        "/ingest/batch", json={**base, "rows": [{"ID": 1, "V": "a"}]}
+    ).status_code == 200
+    conflict = client.post(
+        "/ingest/batch", json={**base, "rows": [{"ID": 2, "V": "b"}]}
+    )
+    assert conflict.status_code == 409
+    assert landing.count(SOURCE, "T") == 1
+
+
+def test_generation_requires_all_tables_and_blocks_apply_overlap(tmp_path):
+    landing = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(landing.db_path))
+    begin = _v({
+        "source": SOURCE, "generation_id": "g1", "tables": ["A", "B"],
+    })
+    assert client.post("/ingest/run-begin", json=begin).status_code == 200
+    incomplete = client.post("/ingest/run-complete", json=_v({
+        "source": SOURCE, "generation_id": "g1",
+    }))
+    assert incomplete.status_code == 409
+    landing.record_ingest_table_commit(SOURCE, "g1", "A", 1, 1)
+    landing.record_ingest_table_commit(SOURCE, "g1", "B", 1, 1)
+    assert client.post("/ingest/run-complete", json=_v({
+        "source": SOURCE, "generation_id": "g1",
+    })).status_code == 200
+    pending = client.post("/ingest/run-begin", json=_v({
+        "source": SOURCE, "generation_id": "g2", "tables": ["A"],
+    }))
+    assert pending.status_code == 409
+    assert landing.claim_committed_generation(SOURCE) == "g1"
+    blocked = client.post("/ingest/run-begin", json=_v({
+        "source": SOURCE, "generation_id": "g2", "tables": ["A"],
+    }))
+    assert blocked.status_code == 409
+    landing.finish_generation_apply(SOURCE, "g1", success=True)
+    assert client.post("/ingest/run-begin", json=_v({
+        "source": SOURCE, "generation_id": "g2", "tables": ["A"],
+    })).status_code == 200
 
 
 def test_ingest_rejects_missing_or_wrong_protocol_version(tmp_path):
@@ -294,6 +368,10 @@ def test_incremental_over_push(source_db, pack, tmp_path):
 
     run()
     total = platform.count(SOURCE, "SALES_ORDER")
+    # 平台必须先消费完整 generation，下一轮才可修改 raw。
+    generation_id = platform.claim_committed_generation(SOURCE)
+    assert generation_id is not None
+    platform.finish_generation_apply(SOURCE, generation_id, success=True)
     r2 = run()
     orders = next(t for t in r2.tables if t.table == "SALES_ORDER")
     assert orders.strategy == "increment"
@@ -357,8 +435,12 @@ def test_http_push_log_counts_write_rows_once_and_records_abort(tmp_path):
     )
     batch_id = "increment-1"
     sink.begin_table(SOURCE, info, mode="incremental")
-    sink.write(SOURCE, info, [{"CODE": "USD", "NAME": "美元"}], batch_id)
-    sink.write(SOURCE, info, [{"CODE": "EUR", "NAME": "欧元"}], batch_id)
+    sink.write(
+        SOURCE, info, [{"CODE": "USD", "NAME": "美元"}],
+        f"{batch_id}-0", table_run_id=batch_id)
+    sink.write(
+        SOURCE, info, [{"CODE": "EUR", "NAME": "欧元"}],
+        f"{batch_id}-1", table_run_id=batch_id)
     sink.complete_table(SOURCE, info, batch_id, rows=2, batches=2)
     progress = middle.push_log_batch_progress(SOURCE, "CURRENCY", batch_id)
     assert progress["rows"] == 2
@@ -447,3 +529,51 @@ def test_http_sync_pause_aborts_remote_snapshot(tmp_path):
         "SELECT name FROM sqlite_master WHERE type='table' AND name GLOB '*__snap_*'"
     ).fetchall()
     assert staging_left == []
+
+
+def test_e6b_remote_reconcile_repairs_edit_and_delete(
+    source_db, pack, tmp_path,
+):
+    """中间只留运行元数据；平台完成跨机重抽与运行键 diff 软删。"""
+    import sqlite3
+
+    platform = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(platform.db_path))
+    middle = LandingStore(tmp_path / "middle.sqlite")
+    sink = _push_sink(client)
+    watermarks = watermarks_from_pack(pack, SOURCE)
+
+    incremental_sync(
+        _adapter(source_db, pack), middle, SOURCE, watermarks, sink=sink)
+    initial_generation = platform.claim_committed_generation(
+        SOURCE, owner_id="test-apply")
+    assert initial_generation is not None
+    platform.finish_generation_apply(
+        SOURCE, initial_generation, success=True, owner_id="test-apply")
+    assert not any(
+        row[0].startswith(f"raw_{SOURCE}__")
+        for row in middle.con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"))
+
+    rw = sqlite3.connect(source_db)
+    rw.execute("DELETE FROM CURRENCY WHERE Id = 2")
+    rw.execute(
+        "UPDATE ITEM SET STANDARD_COST = 123456789.1234 WHERE Id = 1")
+    rw.commit()
+    rw.close()
+
+    report = reconcile_remote(
+        _adapter(source_db, pack), middle, sink, SOURCE,
+        watermarks, deep=True)
+    assert report.total_soft_deleted >= 1
+    deleted = platform.con.execute(
+        f'SELECT _d2a_deleted_at FROM "{raw_table_name(SOURCE, "CURRENCY")}" '
+        "WHERE Id = 2").fetchone()
+    assert deleted["_d2a_deleted_at"] is not None
+    repaired = platform.con.execute(
+        f'SELECT STANDARD_COST FROM "{raw_table_name(SOURCE, "ITEM")}" '
+        "WHERE Id = 1").fetchone()
+    assert repaired["STANDARD_COST"] == "123456789.1234"
+    pending = platform.claim_committed_generation(
+        SOURCE, owner_id="test-reconcile-apply")
+    assert pending is not None and pending.startswith("reconcile-")

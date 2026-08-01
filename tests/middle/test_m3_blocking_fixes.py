@@ -43,7 +43,7 @@ def test_duplicate_configured_key_rejected(tmp_path: Path):
     assert not landing.raw_table_exists(SOURCE, "ITEM")
 
 
-def test_raw_pk_migrates_when_configured_key_changes(tmp_path: Path):
+def test_raw_pk_migrates_after_explicit_cursor_reset(tmp_path: Path):
     src = tmp_path / "src.sqlite"
     con = sqlite3.connect(src)
     con.executescript(
@@ -65,7 +65,15 @@ def test_raw_pk_migrates_when_configured_key_changes(tmp_path: Path):
         watermarks={"ITEM": "UPDATE_TIME"},
     )
     assert landing.raw_table_primary_key(SOURCE, "ITEM") == ["SURROGATE"]
-    # 再切换业务键
+    # 直接切换业务键必须拒绝旧游标，避免跳过同水位下尚未读取的记录。
+    with pytest.raises(ValueError, match="旧游标不兼容"):
+        incremental_sync(
+            SqliteReadOnlyAdapter(str(src), {"ITEM"}), landing, SOURCE,
+            watermarks={"ITEM": "UPDATE_TIME"},
+            key_columns={"ITEM": ["CODE"]},
+        )
+    # 运维显式确认从配置下界重跑后，才允许迁移 raw 主键。
+    assert landing.reset_sync_cursor(SOURCE, "ITEM") is True
     incremental_sync(
         SqliteReadOnlyAdapter(str(src), {"ITEM"}), landing, SOURCE,
         watermarks={"ITEM": "UPDATE_TIME"},

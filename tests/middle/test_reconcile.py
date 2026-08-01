@@ -106,7 +106,8 @@ def test_inplace_edit_needs_deep(env, pack):
     _reconcile(source_db, pack, landing, deep=True)
     fixed = landing.con.execute(
         f'SELECT STANDARD_COST FROM "{raw_table_name(SOURCE, "ITEM")}" WHERE Id = 1').fetchone()
-    assert fixed["STANDARD_COST"] == 999.99
+    # 精确数值在 raw 中以十进制文本保存，避免 money/decimal 经 float 丢精度。
+    assert fixed["STANDARD_COST"] == "999.99"
 
 
 def test_soft_deleted_row_revives(env, pack):
