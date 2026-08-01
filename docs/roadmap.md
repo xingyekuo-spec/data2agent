@@ -21,8 +21,8 @@ data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及�
 仍未宣称:
 
 - 正式生产试点就绪。
-- 跨机器 commit receipt 与 E6b。
-- 生产 HTTPS/mTLS 与凭据轮换。
+- 跨机器 commit receipt、generation 屏障与 E6b 已完成代码实现；尚待现场故障演练。
+- 生产 HTTPS 证书/反代验收、mTLS 与凭据轮换。
 - ERP 写回、审批流、SaaS 多租户或完整 RBAC。
 
 ## 下一版本: v0.4（跨机可靠性）
@@ -30,7 +30,8 @@ data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及�
 > 编号沿用既有“可试点”门槛命名（批次回执 / E6b / TLS / SQLite 基线），与已发布的
 > 产品版本号 `v0.5.1`（ERP 元数据能力）并行；正式试点需同时满足两者。
 
-建议里程碑顺序见实施计划外的跨机可靠性路线(批次 receipt、E6b、传输与凭据、SQLite 试点基线)。
+批次 receipt、generation 屏障、E6b、传输 fail-closed 默认与 SQLite 在线备份基线
+已落地；下一步是现场证书、容量压测、备份恢复和断网重放演练。
 
 ## 工厂试运行建议
 

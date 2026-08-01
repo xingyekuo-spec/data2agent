@@ -54,8 +54,8 @@ Actions 手动运行 release workflow 且不勾选创建 Release。
 ```json
 {
   "ok": true,
-  "active_ingest_protocol_version": "2",
-  "supported_ingest_protocol_versions": ["2"],
+  "active_ingest_protocol_version": "3",
+  "supported_ingest_protocol_versions": ["2", "3"],
   "ingest_protocol_version": "2"
 }
 ```
@@ -72,9 +72,9 @@ Actions 手动运行 release workflow 且不勾选创建 Release。
   "application_version": "0.5.1",
   "release_version": "v0.5.1",
   "role": "platform",
-  "active_ingest_protocol_version": "2",
+  "active_ingest_protocol_version": "3",
   "legacy_health_ingest_protocol_version": "2",
-  "supported_ingest_protocol_versions": ["2"],
+  "supported_ingest_protocol_versions": ["2", "3"],
   "commit": "..."
 }
 
@@ -83,7 +83,7 @@ Actions 手动运行 release workflow 且不勾选创建 Release。
   "application_version": "0.5.1",
   "release_version": "v0.5.1",
   "role": "middle",
-  "send_ingest_protocol_version": "2",
+  "send_ingest_protocol_version": "3",
   "commit": "..."
 }
 ```

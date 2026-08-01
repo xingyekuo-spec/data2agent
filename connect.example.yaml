@@ -26,6 +26,7 @@ sources:
     lookback: 3d                    # 增量回看窗口
     sync_every: 30m                 # 同步节奏(窗口内)
     # sync_start_at: "02:00"         # 可选:自动抽取首轮启动时间;不填=服务启动即跑
+    # start_date: "2015-01-01"      # 可选:全局抽取起始日期;未单独配置 start_date 的增量表用它
     reconcile_at: "05:30"           # 每日 L1 对账;删除本行则不排
     apply_after_sync: true          # 同步后自动物化对象层(sink=http 时忽略)
     # 落地出口:默认 local=写本地库(同机)。
