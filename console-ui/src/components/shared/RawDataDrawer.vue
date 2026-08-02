@@ -8,6 +8,7 @@ import { storeToRefs } from 'pinia'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import { useDataStore } from '@/stores/data'
+import { formatCell } from '@/utils/format'
 
 const props = defineProps<{ visible: boolean }>()
 const emit = defineEmits<{ close: [] }>()
@@ -38,17 +39,6 @@ const successData = computed(() =>
 const totalRows = computed(() => successData.value?.total ?? 0)
 const currentPage = computed(() => rawQuery.offset / rawQuery.limit + 1)
 
-type CellValue = string | number | boolean | null | { __blob__?: boolean; bytes?: number }
-
-function formatCell(value: unknown): string {
-  if (value === null || value === undefined) return '—'
-  if (typeof value === 'object' && value !== null && (value as { __blob__?: boolean }).__blob__) {
-    const blob = value as { bytes?: number }
-    return `[BLOB ${blob.bytes ?? '?'} bytes]`
-  }
-  return String(value as CellValue)
-}
-
 function onPageChange(current: number): void {
   rawQuery.offset = (current - 1) * rawQuery.limit
   void store.browseRaw()
@@ -76,7 +66,10 @@ function onSearch(): void {
     <template #header>
       <div class="drawer-header">
         <span class="drawer-title">Raw 数据浏览</span>
-        <span v-if="successData" class="drawer-source">
+        <span
+          v-if="successData"
+          class="drawer-source"
+        >
           {{ rawSel.source }} / {{ rawSel.table }}
         </span>
       </div>
@@ -94,10 +87,17 @@ function onSearch(): void {
         data-testid="raw-drawer-search"
         @change="rawQuery.q = $event; onSearch()"
       />
-      <el-button size="small" data-testid="raw-drawer-refresh" @click="onRefresh">
+      <el-button
+        size="small"
+        data-testid="raw-drawer-refresh"
+        @click="onRefresh"
+      >
         刷新
       </el-button>
-      <span v-if="successData" class="toolbar-meta">
+      <span
+        v-if="successData"
+        class="toolbar-meta"
+      >
         共 {{ successData.total }} 行 · 排序 {{ successData.sort }}
       </span>
     </div>
@@ -121,7 +121,10 @@ function onSearch(): void {
       </p>
 
       <!-- 折叠警告 -->
-      <div v-if="successData.warnings.length" class="warnings-block">
+      <div
+        v-if="successData.warnings.length"
+        class="warnings-block"
+      >
         <button
           class="warnings-toggle"
           data-testid="raw-drawer-warnings-toggle"
@@ -131,13 +134,26 @@ function onSearch(): void {
           {{ successData.warnings.length }} 条列分类警告
           <span class="toggle-hint">{{ showWarnings ? '收起' : '展开' }}</span>
         </button>
-        <ul v-if="showWarnings" class="warnings-list" data-testid="raw-drawer-warnings">
-          <li v-for="w in successData.warnings" :key="w">{{ w }}</li>
+        <ul
+          v-if="showWarnings"
+          class="warnings-list"
+          data-testid="raw-drawer-warnings"
+        >
+          <li
+            v-for="w in successData.warnings"
+            :key="w"
+          >
+            {{ w }}
+          </li>
         </ul>
       </div>
 
       <!-- 表格 -->
-      <el-table :data="successData.rows" size="small" data-testid="raw-drawer-table">
+      <el-table
+        :data="successData.rows"
+        size="small"
+        data-testid="raw-drawer-table"
+      >
         <el-table-column
           v-for="col in rawCols"
           :key="col.name"
@@ -146,14 +162,26 @@ function onSearch(): void {
         >
           <template #header>
             <span>{{ col.name }}</span>
-            <el-tag v-if="col.classification === 'sensitive'" size="small" type="warning" class="col-flag">
+            <el-tag
+              v-if="col.classification === 'sensitive'"
+              size="small"
+              type="warning"
+              class="col-flag"
+            >
               脱敏
             </el-tag>
-            <el-tag v-else-if="col.classification === 'unknown'" size="small" type="info" class="col-flag">
+            <el-tag
+              v-else-if="col.classification === 'unknown'"
+              size="small"
+              type="info"
+              class="col-flag"
+            >
               未知
             </el-tag>
           </template>
-          <template #default="{ row }">{{ formatCell(row[col.name]) }}</template>
+          <template #default="{ row }">
+            {{ formatCell(row[col.name]) }}
+          </template>
         </el-table-column>
       </el-table>
 
@@ -180,7 +208,10 @@ function onSearch(): void {
       />
     </template>
 
-    <el-empty v-else description="选择一张 raw 表后点击「浏览」查看数据" />
+    <el-empty
+      v-else
+      description="选择一张 raw 表后点击「浏览」查看数据"
+    />
   </el-drawer>
 </template>
 

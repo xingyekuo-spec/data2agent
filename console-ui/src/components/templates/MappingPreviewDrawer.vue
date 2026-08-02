@@ -10,6 +10,7 @@ import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import StatCard from '@/components/dashboard/StatCard.vue'
 import { useMappingPreviewStore } from '@/stores/mappingPreview'
+import { formatJsonValue, formatPercent } from '@/utils/format'
 import type { components } from '@/types/api'
 
 type MappingPreviewIssue = components['schemas']['MappingPreviewIssue']
@@ -89,16 +90,6 @@ const rowViews = computed((): RowView[] => {
 
 const evaluation = computed(() => data.value?.candidate ?? null)
 
-function formatJsonValue(v: unknown): string {
-  if (v === null || v === undefined) return '—'
-  if (typeof v === 'string') return v
-  try {
-    return JSON.stringify(v)
-  } catch {
-    return String(v)
-  }
-}
-
 function formatFields(fields: MappingPreviewDiffField[]): string {
   if (!fields.length) return '—'
   return fields
@@ -109,11 +100,6 @@ function formatFields(fields: MappingPreviewDiffField[]): string {
 function formatIssues(issues: MappingPreviewIssue[]): string {
   if (!issues.length) return '—'
   return issues.map((i) => `${i.reason_code}${i.field ? `(${i.field})` : ''}`).join(', ')
-}
-
-function formatCoverage(rate: number | null | undefined): string {
-  if (rate == null) return '—'
-  return `${(rate * 100).toFixed(1)}%`
 }
 
 function statusLabel(s: string | null): string {
@@ -140,11 +126,17 @@ function onClosed(): void {
     @close="close"
     @closed="onClosed"
   >
-    <p class="readonly-banner" data-testid="preview-readonly-banner">
+    <p
+      class="readonly-banner"
+      data-testid="preview-readonly-banner"
+    >
       只读预览，不会保存/发布
     </p>
 
-    <LoadingState v-if="isLoading && !data" text="正在试算样本…" />
+    <LoadingState
+      v-if="isLoading && !data"
+      text="正在试算样本…"
+    />
 
     <div
       v-else-if="preview.status === 'error' && isUnauthorized"
@@ -152,8 +144,16 @@ function onClosed(): void {
       data-testid="preview-unauthorized"
     >
       <p>需要有效的控制台登录才能执行映射预览。</p>
-      <p class="auth-error__hint">请在管理页完成配置后重试。</p>
-      <el-button size="small" data-testid="preview-retry" @click="emit('retry')">重试</el-button>
+      <p class="auth-error__hint">
+        请在管理页完成配置后重试。
+      </p>
+      <el-button
+        size="small"
+        data-testid="preview-retry"
+        @click="emit('retry')"
+      >
+        重试
+      </el-button>
     </div>
 
     <ErrorState
@@ -182,7 +182,12 @@ function onClosed(): void {
         class="warnings"
         data-testid="preview-warnings"
       >
-        <li v-for="w in data.warnings" :key="w">{{ w }}</li>
+        <li
+          v-for="w in data.warnings"
+          :key="w"
+        >
+          {{ w }}
+        </li>
       </ul>
 
       <EmptyState
@@ -191,7 +196,10 @@ function onClosed(): void {
         hint="本次请求未取到 raw 行;可调整批次/offset/limit 后重试。"
       />
 
-      <div class="summary-grid" data-testid="preview-summary">
+      <div
+        class="summary-grid"
+        data-testid="preview-summary"
+      >
         <StatCard
           label="映射"
           :value="String(evaluation?.summary.mapped ?? 0)"
@@ -201,7 +209,7 @@ function onClosed(): void {
         <StatCard
           label="隔离"
           :value="String(evaluation?.summary.quarantined ?? 0)"
-          :hint="formatCoverage(evaluation?.summary.quarantine_rate)"
+          :hint="formatPercent(evaluation?.summary.quarantine_rate, '—')"
           :tone="(evaluation?.summary.quarantined ?? 0) > 0 ? 'warn' : 'default'"
         />
         <StatCard
@@ -217,7 +225,10 @@ function onClosed(): void {
         />
       </div>
 
-      <div class="meta-row" data-testid="preview-meta">
+      <div
+        class="meta-row"
+        data-testid="preview-meta"
+      >
         <span>模式: {{ data.mode }}</span>
         <span>模板: {{ data.template_version }}</span>
         <span>当前 hash: {{ data.current_binding_hash || '—' }}</span>
@@ -225,65 +236,133 @@ function onClosed(): void {
         <span>采样: {{ data.sample.sampled_rows }} 行</span>
       </div>
 
-      <div class="section-title">行对比</div>
+      <div class="section-title">
+        行对比
+      </div>
       <el-table
         :data="rowViews"
         size="small"
         data-testid="preview-rows-table"
         empty-text="无行数据"
       >
-        <el-table-column prop="sample_row_id" label="样本行" min-width="120" />
-        <el-table-column label="当前状态" width="100">
-          <template #default="{ row }">{{ statusLabel(row.status_current) }}</template>
+        <el-table-column
+          prop="sample_row_id"
+          label="样本行"
+          min-width="120"
+        />
+        <el-table-column
+          label="当前状态"
+          width="100"
+        >
+          <template #default="{ row }">
+            {{ statusLabel(row.status_current) }}
+          </template>
         </el-table-column>
-        <el-table-column label="候选状态" width="100">
-          <template #default="{ row }">{{ statusLabel(row.status_candidate) }}</template>
+        <el-table-column
+          label="候选状态"
+          width="100"
+        >
+          <template #default="{ row }">
+            {{ statusLabel(row.status_candidate) }}
+          </template>
         </el-table-column>
-        <el-table-column label="字段 diff" min-width="200">
+        <el-table-column
+          label="字段 diff"
+          min-width="200"
+        >
           <template #default="{ row }">
             <span class="mono">{{ formatFields(row.fields) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="安全问题" min-width="140">
+        <el-table-column
+          label="安全问题"
+          min-width="140"
+        >
           <template #default="{ row }">
             <span class="mono">{{ formatIssues(row.issues) }}</span>
           </template>
         </el-table-column>
       </el-table>
 
-      <div class="section-title">枚举缺口</div>
+      <div class="section-title">
+        枚举缺口
+      </div>
       <el-table
         :data="evaluation?.enum_gaps ?? []"
         size="small"
         data-testid="preview-enum-gaps"
         empty-text="无枚举缺口"
       >
-        <el-table-column prop="field" label="字段" width="140" />
-        <el-table-column prop="source_value" label="源值" min-width="120" />
-        <el-table-column prop="count" label="次数" width="80" />
+        <el-table-column
+          prop="field"
+          label="字段"
+          width="140"
+        />
+        <el-table-column
+          prop="source_value"
+          label="源值"
+          min-width="120"
+        />
+        <el-table-column
+          prop="count"
+          label="次数"
+          width="80"
+        />
       </el-table>
 
-      <div class="section-title">业务键问题(样本口径)</div>
-      <div class="key-issues" data-testid="preview-key-issues">
+      <div class="section-title">
+        业务键问题(样本口径)
+      </div>
+      <div
+        class="key-issues"
+        data-testid="preview-key-issues"
+      >
         <span>缺失: {{ evaluation?.business_key_issues.missing ?? 0 }}</span>
         <span>重复: {{ evaluation?.business_key_issues.duplicate ?? 0 }}</span>
         <span>范围: {{ evaluation?.business_key_issues.scope ?? 'sample' }}</span>
       </div>
 
-      <div class="section-title">派生覆盖率</div>
+      <div class="section-title">
+        派生覆盖率
+      </div>
       <el-table
         :data="evaluation?.derived_coverage ?? []"
         size="small"
         data-testid="preview-derived-coverage"
         empty-text="无派生字段覆盖数据"
       >
-        <el-table-column prop="field" label="字段" width="140" />
-        <el-table-column prop="matched_rows" label="命中" width="70" />
-        <el-table-column prop="default_hits" label="默认" width="70" />
-        <el-table-column prop="unmatched_rows" label="未匹配" width="80" />
-        <el-table-column prop="eligible_rows" label="可达" width="70" />
-        <el-table-column label="覆盖率" width="90">
-          <template #default="{ row }">{{ formatCoverage(row.row_coverage) }}</template>
+        <el-table-column
+          prop="field"
+          label="字段"
+          width="140"
+        />
+        <el-table-column
+          prop="matched_rows"
+          label="命中"
+          width="70"
+        />
+        <el-table-column
+          prop="default_hits"
+          label="默认"
+          width="70"
+        />
+        <el-table-column
+          prop="unmatched_rows"
+          label="未匹配"
+          width="80"
+        />
+        <el-table-column
+          prop="eligible_rows"
+          label="可达"
+          width="70"
+        />
+        <el-table-column
+          label="覆盖率"
+          width="90"
+        >
+          <template #default="{ row }">
+            {{ formatPercent(row.row_coverage, '—') }}
+          </template>
         </el-table-column>
       </el-table>
     </template>

@@ -9,6 +9,7 @@ import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import { useQuarantineStore } from '@/stores/quarantine'
 import { formatDateTime } from '@/utils/time'
+import { formatDuration, formatJsonPretty, formatPercent } from '@/utils/format'
 
 const store = useQuarantineStore()
 const {
@@ -95,27 +96,6 @@ function formatKeys(keys: Record<string, unknown> | null | undefined): string {
     .join(', ')
 }
 
-function formatAge(seconds: number | null | undefined): string {
-  if (seconds == null) return '-'
-  if (seconds < 60) return `${seconds}s`
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`
-  if (seconds < 86400) return `${(seconds / 3600).toFixed(1)}h`
-  return `${Math.round(seconds / 86400)}d`
-}
-
-function formatRate(rate: number | null | undefined): string {
-  if (rate == null) return '-'
-  return `${(rate * 100).toFixed(1)}%`
-}
-
-function formatJson(obj: unknown): string {
-  try {
-    return JSON.stringify(obj, null, 2)
-  } catch {
-    return String(obj)
-  }
-}
-
 function runLink(runId: number | null | undefined): string {
   if (runId == null) return ''
   return `/runs?run_id=${runId}`
@@ -183,14 +163,24 @@ onMounted(() => {
 <template>
   <section class="quarantine-page">
     <!-- summary bar -->
-    <div v-if="summary" class="d2a-card summary-bar" data-testid="quarantine-summary">
+    <div
+      v-if="summary"
+      class="d2a-card summary-bar"
+      data-testid="quarantine-summary"
+    >
       <div class="summary-item">
         <span class="summary-item__label">未处理隔离</span>
-        <span class="summary-item__value" data-testid="summary-pending">{{ summary.totalPending }}</span>
+        <span
+          class="summary-item__value"
+          data-testid="summary-pending"
+        >{{ summary.totalPending }}</span>
       </div>
       <div class="summary-item">
         <span class="summary-item__label">受影响对象</span>
-        <span class="summary-item__value" data-testid="summary-affected">{{ summary.affectedObjects }}</span>
+        <span
+          class="summary-item__value"
+          data-testid="summary-affected"
+        >{{ summary.affectedObjects }}</span>
       </div>
       <div class="summary-item">
         <span class="summary-item__label">熔断</span>
@@ -202,7 +192,10 @@ onMounted(() => {
       </div>
       <div class="summary-item">
         <span class="summary-item__label">最新隔离</span>
-        <span class="summary-item__value summary-item__value--time" data-testid="summary-latest">
+        <span
+          class="summary-item__value summary-item__value--time"
+          data-testid="summary-latest"
+        >
           {{ summary.latestTime ? formatDateTime(summary.latestTime) : '-' }}
         </span>
       </div>
@@ -211,8 +204,14 @@ onMounted(() => {
     <!-- group table -->
     <div class="d2a-card">
       <div class="toolbar">
-        <h3 class="card-title">对象分组</h3>
-        <el-button size="small" data-testid="quarantine-refresh" @click="store.fetchGroups(); store.fetchRecords()">
+        <h3 class="card-title card-title--flush">
+          对象分组
+        </h3>
+        <el-button
+          size="small"
+          data-testid="quarantine-refresh"
+          @click="store.fetchGroups(); store.fetchRecords()"
+        >
           刷新
         </el-button>
       </div>
@@ -224,9 +223,16 @@ onMounted(() => {
         :error="groups.error"
         @retry="store.fetchGroups()"
       />
-      <EmptyState v-else-if="groups.data.length === 0" title="隔离区为空" />
+      <EmptyState
+        v-else-if="groups.data.length === 0"
+        title="隔离区为空"
+      />
       <template v-else>
-        <p v-if="groupsRefreshError" class="refresh-warning" data-testid="groups-refresh-error">
+        <p
+          v-if="groupsRefreshError"
+          class="refresh-warning"
+          data-testid="groups-refresh-error"
+        >
           刷新失败({{ groupsRefreshError.message }}),展示上一次成功数据
         </p>
         <el-table
@@ -236,24 +242,43 @@ onMounted(() => {
           highlight-current-row
           @row-click="onGroupClick"
         >
-          <el-table-column label="对象" min-width="120">
+          <el-table-column
+            label="对象"
+            min-width="120"
+          >
             <template #default="{ row }">
               {{ row.display_name ?? row.object }}
-              <span v-if="!row.display_name" class="unknown-hint">(未知)</span>
+              <span
+                v-if="!row.display_name"
+                class="unknown-hint"
+              >(未知)</span>
             </template>
           </el-table-column>
-          <el-table-column prop="source" label="来源" width="120" />
-          <el-table-column label="未处理" width="80">
+          <el-table-column
+            prop="source"
+            label="来源"
+            width="120"
+          />
+          <el-table-column
+            label="未处理"
+            width="80"
+          >
             <template #default="{ row }">
               <span :class="{ 'text--danger': row.pending > 0 }">{{ row.pending }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="隔离率 / 阈值" width="130">
+          <el-table-column
+            label="隔离率 / 阈值"
+            width="130"
+          >
             <template #default="{ row }">
-              {{ formatRate(row.quarantine_rate) }} / {{ formatRate(row.breaker_threshold) }}
+              {{ formatPercent(row.quarantine_rate) }} / {{ formatPercent(row.breaker_threshold) }}
             </template>
           </el-table-column>
-          <el-table-column label="隔离率状态" width="110">
+          <el-table-column
+            label="隔离率状态"
+            width="110"
+          >
             <template #default="{ row }">
               <span :data-testid="`rate-state-${row.rate_state}`">
                 <el-tag
@@ -265,7 +290,10 @@ onMounted(() => {
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="数据状态" width="110">
+          <el-table-column
+            label="数据状态"
+            width="110"
+          >
             <template #default="{ row }">
               <span :data-testid="`serving-state-${row.serving_state}`">
                 <el-tag
@@ -277,15 +305,26 @@ onMounted(() => {
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="最近批次" width="150">
-            <template #default="{ row }">{{ row.latest_batch_id ?? '-' }}</template>
+          <el-table-column
+            label="最近批次"
+            width="150"
+          >
+            <template #default="{ row }">
+              {{ row.latest_batch_id ?? '-' }}
+            </template>
           </el-table-column>
-          <el-table-column label="最近原因" min-width="180">
+          <el-table-column
+            label="最近原因"
+            min-width="180"
+          >
             <template #default="{ row }">
               <span class="reason-text">{{ row.latest_reason ?? '-' }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="80">
+          <el-table-column
+            label="操作"
+            width="80"
+          >
             <template #default="{ row }">
               <el-tooltip
                 v-if="!row.retry_allowed"
@@ -321,9 +360,13 @@ onMounted(() => {
     <!-- record table (filtered by selected group) -->
     <div class="d2a-card">
       <div class="toolbar">
-        <h3 class="card-title">
-          <template v-if="selectedGroup">隔离记录:{{ selectedGroupName }}</template>
-          <template v-else>所有隔离记录</template>
+        <h3 class="card-title card-title--flush">
+          <template v-if="selectedGroup">
+            隔离记录:{{ selectedGroupName }}
+          </template>
+          <template v-else>
+            所有隔离记录
+          </template>
         </h3>
         <el-button
           v-if="selectedGroup"
@@ -342,9 +385,16 @@ onMounted(() => {
         :error="records.error"
         @retry="store.fetchRecords()"
       />
-      <EmptyState v-else-if="records.data.length === 0" title="没有符合条件的隔离记录" />
+      <EmptyState
+        v-else-if="records.data.length === 0"
+        title="没有符合条件的隔离记录"
+      />
       <template v-else>
-        <p v-if="recordsRefreshError" class="refresh-warning" data-testid="records-refresh-error">
+        <p
+          v-if="recordsRefreshError"
+          class="refresh-warning"
+          data-testid="records-refresh-error"
+        >
           刷新失败({{ recordsRefreshError.message }}),展示上一次成功数据
         </p>
         <el-table
@@ -353,25 +403,56 @@ onMounted(() => {
           data-testid="quarantine-records-table"
           @row-click="onRecordClick"
         >
-          <el-table-column prop="id" label="ID" width="60" />
-          <el-table-column label="业务键" min-width="180">
-            <template #default="{ row }">{{ formatKeys(row.keys ?? row.keys_json) }}</template>
+          <el-table-column
+            prop="id"
+            label="ID"
+            width="60"
+          />
+          <el-table-column
+            label="业务键"
+            min-width="180"
+          >
+            <template #default="{ row }">
+              {{ formatKeys(row.keys ?? row.keys_json) }}
+            </template>
           </el-table-column>
-          <el-table-column label="原因" min-width="200">
+          <el-table-column
+            label="原因"
+            min-width="200"
+          >
             <template #default="{ row }">
               <span class="reason-text">{{ row.reason }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="批次" width="150">
-            <template #default="{ row }">{{ row.batch_id ?? '-' }}</template>
+          <el-table-column
+            label="批次"
+            width="150"
+          >
+            <template #default="{ row }">
+              {{ row.batch_id ?? '-' }}
+            </template>
           </el-table-column>
-          <el-table-column label="时间" width="150">
-            <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
+          <el-table-column
+            label="时间"
+            width="150"
+          >
+            <template #default="{ row }">
+              {{ formatDateTime(row.created_at) }}
+            </template>
           </el-table-column>
-          <el-table-column label="存活" width="70">
-            <template #default="{ row }">{{ formatAge(row.age_seconds) }}</template>
+          <el-table-column
+            label="存活"
+            width="70"
+          >
+            <template #default="{ row }">
+              {{ formatDuration(row.age_seconds) }}
+            </template>
           </el-table-column>
-          <el-table-column prop="source" label="来源" width="110" />
+          <el-table-column
+            prop="source"
+            label="来源"
+            width="110"
+          />
         </el-table>
         <el-pagination
           class="pager"
@@ -395,7 +476,11 @@ onMounted(() => {
     >
       <LoadingState v-if="detail?.status === 'loading'" />
       <!-- auth error (no token / forbidden): show config guidance, no fallback -->
-      <div v-else-if="isDetailAuthError" class="detail-auth-error" data-testid="detail-auth-error">
+      <div
+        v-else-if="isDetailAuthError"
+        class="detail-auth-error"
+        data-testid="detail-auth-error"
+      >
         <p>需要配置控制台 Token 才能查看隔离详情。</p>
         <p class="detail-auth-error__hint">
           请在管理页完成首次配置,或以 D2A_CONSOLE_TOKEN 启动控制台后重试。
@@ -407,30 +492,54 @@ onMounted(() => {
         @retry="detailId !== null && store.openDetail(detailId)"
       />
       <template v-else-if="detail?.status === 'success'">
-        <p v-if="detailRefreshError" class="refresh-warning" data-testid="detail-refresh-error">
+        <p
+          v-if="detailRefreshError"
+          class="refresh-warning"
+          data-testid="detail-refresh-error"
+        >
           刷新失败({{ detailRefreshError.message }}),展示上一次成功数据
         </p>
 
         <!-- keys -->
-        <section class="detail-section" data-testid="detail-keys">
+        <section
+          class="detail-section"
+          data-testid="detail-keys"
+        >
           <h4>业务键</h4>
-          <dl class="detail-kv" v-if="detail.data.keys">
-            <template v-for="(v, k) in detail.data.keys" :key="k">
+          <dl
+            v-if="detail.data.keys"
+            class="detail-kv"
+          >
+            <template
+              v-for="(v, k) in detail.data.keys"
+              :key="k"
+            >
               <dt>{{ k }}</dt>
               <dd>{{ v }}</dd>
             </template>
           </dl>
-          <p v-else class="detail-none">-</p>
+          <p
+            v-else
+            class="detail-none"
+          >
+            -
+          </p>
         </section>
 
         <!-- reason -->
-        <section class="detail-section" data-testid="detail-reason">
+        <section
+          class="detail-section"
+          data-testid="detail-reason"
+        >
           <h4>原因</h4>
           <p>{{ detail.data.reason }}</p>
         </section>
 
         <!-- meta -->
-        <section class="detail-section" data-testid="detail-meta">
+        <section
+          class="detail-section"
+          data-testid="detail-meta"
+        >
           <h4>基本信息</h4>
           <dl class="detail-kv">
             <dt>来源</dt>
@@ -442,33 +551,54 @@ onMounted(() => {
             <dt>创建时间</dt>
             <dd>{{ formatDateTime(detail.data.created_at) }}</dd>
             <dt>存活</dt>
-            <dd>{{ formatAge(detail.data.age_seconds) }}</dd>
+            <dd>{{ formatDuration(detail.data.age_seconds) }}</dd>
             <dt>请求 ID</dt>
             <dd><code class="request-id">{{ detail.data.request_id }}</code></dd>
           </dl>
         </section>
 
         <!-- raw preview -->
-        <section class="detail-section" data-testid="detail-raw">
+        <section
+          class="detail-section"
+          data-testid="detail-raw"
+        >
           <h4>原始数据(脱敏预览)</h4>
           <pre
             v-if="detail.data.raw"
             class="raw-preview"
             data-testid="detail-raw-content"
-          >{{ formatJson(detail.data.raw) }}</pre>
-          <p v-else class="detail-none">无原始数据</p>
+          >{{ formatJsonPretty(detail.data.raw) }}</pre>
+          <p
+            v-else
+            class="detail-none"
+          >
+            无原始数据
+          </p>
         </section>
 
         <!-- warnings -->
-        <section v-if="detail.data.warnings?.length" class="detail-section" data-testid="detail-warnings">
+        <section
+          v-if="detail.data.warnings?.length"
+          class="detail-section"
+          data-testid="detail-warnings"
+        >
           <h4>警告</h4>
           <ul class="detail-warnings-list">
-            <li v-for="w in detail.data.warnings" :key="w">{{ w }}</li>
+            <li
+              v-for="w in detail.data.warnings"
+              :key="w"
+            >
+              {{ w }}
+            </li>
           </ul>
         </section>
 
         <!-- truncations -->
-        <section v-if="detail.data.truncations?.length" class="detail-section" data-testid="detail-truncations">
+        <section
+          v-if="detail.data.truncations?.length"
+          class="detail-section"
+          data-testid="detail-truncations"
+        >
           <h4>截断标记</h4>
           <p class="detail-trunc-note">
             {{ detail.data.truncations.length }} 行存在截断字段(预览不是完整值):
@@ -486,9 +616,15 @@ onMounted(() => {
       data-testid="retry-result-dialog"
       @closed="store.clearRetry()"
     >
-      <LoadingState v-if="retryResult?.status === 'loading'" text="正在执行重试…" />
+      <LoadingState
+        v-if="retryResult?.status === 'loading'"
+        text="正在执行重试…"
+      />
       <template v-else-if="retryResult?.status === 'success'">
-        <div class="retry-success" data-testid="retry-success">
+        <div
+          class="retry-success"
+          data-testid="retry-success"
+        >
           <p>执行成功:{{ retryResult.data.executed ? '已执行' : '已提交' }}</p>
           <dl class="detail-kv">
             <dt>对象</dt>
@@ -503,16 +639,29 @@ onMounted(() => {
             <dd>{{ retryResult.data.status }}</dd>
           </dl>
           <p class="retry-run-link">
-            <router-link :to="runLink(retryResult.data.run_id)" data-testid="retry-run-link">
+            <router-link
+              :to="runLink(retryResult.data.run_id)"
+              data-testid="retry-run-link"
+            >
               查看运行 #{{ retryResult.data.run_id }}
             </router-link>
           </p>
         </div>
       </template>
       <template v-else-if="retryResult?.status === 'error'">
-        <div class="retry-error" data-testid="retry-error">
-          <p class="retry-error__title">重试失败</p>
-          <p class="retry-error__detail" data-testid="retry-error-detail">{{ retryError?.message ?? '未知错误' }}</p>
+        <div
+          class="retry-error"
+          data-testid="retry-error"
+        >
+          <p class="retry-error__title">
+            重试失败
+          </p>
+          <p
+            class="retry-error__detail"
+            data-testid="retry-error-detail"
+          >
+            {{ retryError?.message ?? '未知错误' }}
+          </p>
           <p
             v-if="retryError?.reason_code"
             class="retry-error__reason"
@@ -520,15 +669,26 @@ onMounted(() => {
           >
             原因码: {{ retryError.reason_code }}
           </p>
-          <p v-if="retryError?.run_id" class="retry-run-link">
-            <router-link :to="runLink(retryError.run_id)" data-testid="retry-error-run-link">
+          <p
+            v-if="retryError?.run_id"
+            class="retry-run-link"
+          >
+            <router-link
+              :to="runLink(retryError.run_id)"
+              data-testid="retry-error-run-link"
+            >
               查看运行 #{{ retryError.run_id }}
             </router-link>
           </p>
         </div>
       </template>
       <template #footer>
-        <el-button data-testid="retry-result-close" @click="store.clearRetry()">关闭</el-button>
+        <el-button
+          data-testid="retry-result-close"
+          @click="store.clearRetry()"
+        >
+          关闭
+        </el-button>
       </template>
     </el-dialog>
   </section>
@@ -579,12 +739,6 @@ onMounted(() => {
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
-}
-
-.card-title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
 }
 
 .toolbar__total {

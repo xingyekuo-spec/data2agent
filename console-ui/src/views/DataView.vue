@@ -21,6 +21,7 @@ import {
   datasetStatusLabel,
 } from '@/utils/datasetStatus'
 import { formatDateTime } from '@/utils/time'
+import { formatCell } from '@/utils/format'
 
 const store = useDataStore()
 const datasetsStore = useDatasetsStore()
@@ -118,19 +119,6 @@ const raw403 = computed(
 const datasetDetailObjects = computed(() =>
   datasetDetail.value?.status === 'success' ? (datasetDetail.value.data.objects ?? []) : [],
 )
-
-type CellValue = string | number | boolean | null | { __blob__?: boolean; bytes?: number }
-
-function formatCell(value: unknown): string {
-  if (value === null || value === undefined) {
-    return '—'
-  }
-  if (typeof value === 'object' && value !== null && (value as { __blob__?: boolean }).__blob__) {
-    const blob = value as { bytes?: number }
-    return `[BLOB ${blob.bytes ?? '?'} bytes]`
-  }
-  return String(value as CellValue)
-}
 
 function onObjPage(current: number): void {
   objQuery.offset = (current - 1) * objQuery.limit
@@ -315,18 +303,30 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
 <template>
   <section class="data-page">
-    <el-tabs v-model="activeTab" data-testid="data-tabs" @tab-change="onTabChange">
+    <el-tabs
+      v-model="activeTab"
+      data-testid="data-tabs"
+      @tab-change="onTabChange"
+    >
       <!-- Raw 浏览 -->
-      <el-tab-pane label="Raw" name="raw">
+      <el-tab-pane
+        label="Raw"
+        name="raw"
+      >
         <div class="d2a-card">
-          <h3 class="card-title">raw 目录</h3>
+          <h3 class="card-title">
+            raw 目录
+          </h3>
           <LoadingState v-if="rawCatalog.status === 'idle' || rawCatalog.status === 'loading'" />
           <ErrorState
             v-else-if="rawCatalog.status === 'error' && rawCatalog.error.status !== 403"
             :error="rawCatalog.error"
             @retry="store.refreshRawCatalog()"
           />
-          <EmptyState v-else-if="rawCatalogData && rawCatalogData.items.length === 0" title="没有可浏览的 raw 表" />
+          <EmptyState
+            v-else-if="rawCatalogData && rawCatalogData.items.length === 0"
+            title="没有可浏览的 raw 表"
+          />
           <template v-else-if="rawCatalogData">
             <p
               v-if="rawCatalogRefreshError"
@@ -335,25 +335,70 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             >
               刷新失败({{ rawCatalogRefreshError.message }}),展示上一次成功数据
             </p>
-            <ul v-if="rawCatalogData.warnings?.length" class="warnings" data-testid="raw-catalog-warnings">
-              <li v-for="w in rawCatalogData.warnings" :key="w">{{ w }}</li>
+            <ul
+              v-if="rawCatalogData.warnings?.length"
+              class="warnings"
+              data-testid="raw-catalog-warnings"
+            >
+              <li
+                v-for="w in rawCatalogData.warnings"
+                :key="w"
+              >
+                {{ w }}
+              </li>
             </ul>
-            <el-table :data="rawCatalogData.items" size="small" data-testid="raw-catalog">
-              <el-table-column prop="source" label="来源" width="130" />
-              <el-table-column prop="table" label="表" min-width="150" />
-              <el-table-column label="行数" width="90">
-                <template #default="{ row }">{{ row.rows ?? '不可检测' }}</template>
-              </el-table-column>
-              <el-table-column label="最近批次" width="150">
-                <template #default="{ row }">{{ row.latest_batch_id ?? '—' }}</template>
-              </el-table-column>
-              <el-table-column label="抽取时间" width="150">
-                <template #default="{ row }">{{ formatDateTime(row.extracted_at) }}</template>
-              </el-table-column>
-              <el-table-column label="分类" width="90">
+            <el-table
+              :data="rawCatalogData.items"
+              size="small"
+              data-testid="raw-catalog"
+            >
+              <el-table-column
+                prop="source"
+                label="来源"
+                width="130"
+              />
+              <el-table-column
+                prop="table"
+                label="表"
+                min-width="150"
+              />
+              <el-table-column
+                label="行数"
+                width="90"
+              >
                 <template #default="{ row }">
-                  <StatusBadge v-if="row.classification_warning" status="warning" />
-                  <StatusBadge v-else status="healthy" />
+                  {{ row.rows ?? '不可检测' }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="最近批次"
+                width="150"
+              >
+                <template #default="{ row }">
+                  {{ row.latest_batch_id ?? '—' }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="抽取时间"
+                width="150"
+              >
+                <template #default="{ row }">
+                  {{ formatDateTime(row.extracted_at) }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="分类"
+                width="90"
+              >
+                <template #default="{ row }">
+                  <StatusBadge
+                    v-if="row.classification_warning"
+                    status="warning"
+                  />
+                  <StatusBadge
+                    v-else
+                    status="healthy"
+                  />
                 </template>
               </el-table-column>
               <el-table-column width="90">
@@ -373,8 +418,14 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
         </div>
 
         <!-- 403:安全配置指引(不降级到对象或 Mock) -->
-        <div v-if="raw403" class="d2a-card security-guide" data-testid="raw-403-guide">
-          <h3 class="card-title">raw 浏览已按安全基线关闭</h3>
+        <div
+          v-if="raw403"
+          class="d2a-card security-guide"
+          data-testid="raw-403-guide"
+        >
+          <h3 class="card-title">
+            raw 浏览已按安全基线关闭
+          </h3>
           <p>
             raw 原始数据只允许授权管理主体访问:当前控制台未配置 Token。
             请在管理页完成首次配置,或以 D2A_CONSOLE_TOKEN 启动控制台后重试。
@@ -383,38 +434,91 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
       </el-tab-pane>
 
       <!-- 对象层浏览 -->
-      <el-tab-pane label="对象层" name="object">
+      <el-tab-pane
+        label="对象层"
+        name="object"
+      >
         <div class="d2a-card">
-          <h3 class="card-title">对象目录</h3>
+          <h3 class="card-title">
+            对象目录
+          </h3>
           <LoadingState v-if="objCatalog.status === 'idle' || objCatalog.status === 'loading'" />
-          <ErrorState v-else-if="objCatalog.status === 'error'" :error="objCatalog.error" @retry="store.refreshRawCatalog()" />
-          <EmptyState v-else-if="objCatalog.data.length === 0" title="没有对象" />
+          <ErrorState
+            v-else-if="objCatalog.status === 'error'"
+            :error="objCatalog.error"
+            @retry="store.refreshRawCatalog()"
+          />
+          <EmptyState
+            v-else-if="objCatalog.data.length === 0"
+            title="没有对象"
+          />
           <template v-else>
-            <p v-if="objCatalogRefreshError" class="refresh-warning" data-testid="obj-catalog-refresh-error">
+            <p
+              v-if="objCatalogRefreshError"
+              class="refresh-warning"
+              data-testid="obj-catalog-refresh-error"
+            >
               刷新失败({{ objCatalogRefreshError.message }}),展示上一次成功数据
             </p>
-            <el-table :data="objCatalog.data" size="small" data-testid="obj-catalog">
-              <el-table-column prop="display_name" label="对象" width="130" />
-              <el-table-column prop="object" label="object" width="150" />
-              <el-table-column label="行数" width="90">
-                <template #default="{ row }">{{ row.rows ?? '不可检测' }}</template>
-              </el-table-column>
-              <el-table-column label="版本" width="160">
+            <el-table
+              :data="objCatalog.data"
+              size="small"
+              data-testid="obj-catalog"
+            >
+              <el-table-column
+                prop="display_name"
+                label="对象"
+                width="130"
+              />
+              <el-table-column
+                prop="object"
+                label="object"
+                width="150"
+              />
+              <el-table-column
+                label="行数"
+                width="90"
+              >
                 <template #default="{ row }">
-                  <span v-if="row.version" data-testid="obj-version">{{ row.version }}</span>
-                  <span v-else class="version-na" data-testid="obj-version-na">尚未发布</span>
+                  {{ row.rows ?? '不可检测' }}
                 </template>
               </el-table-column>
-              <el-table-column label="物化时间" width="150">
-                <template #default="{ row }">{{ formatDateTime(row.mapped_at) }}</template>
+              <el-table-column
+                label="版本"
+                width="160"
+              >
+                <template #default="{ row }">
+                  <span
+                    v-if="row.version"
+                    data-testid="obj-version"
+                  >{{ row.version }}</span>
+                  <span
+                    v-else
+                    class="version-na"
+                    data-testid="obj-version-na"
+                  >尚未发布</span>
+                </template>
               </el-table-column>
-              <el-table-column label="隔离" width="80">
+              <el-table-column
+                label="物化时间"
+                width="150"
+              >
+                <template #default="{ row }">
+                  {{ formatDateTime(row.mapped_at) }}
+                </template>
+              </el-table-column>
+              <el-table-column
+                label="隔离"
+                width="80"
+              >
                 <template #default="{ row }">
                   <StatusBadge :status="row.quarantined > 0 ? 'warning' : 'healthy'" />
                 </template>
               </el-table-column>
               <el-table-column label="状态">
-                <template #default="{ row }">{{ row.warning ?? '' }}</template>
+                <template #default="{ row }">
+                  {{ row.warning ?? '' }}
+                </template>
               </el-table-column>
               <el-table-column width="90">
                 <template #default="{ row }">
@@ -432,7 +536,10 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           </template>
         </div>
 
-        <div v-if="objPage" class="d2a-card">
+        <div
+          v-if="objPage"
+          class="d2a-card"
+        >
           <div class="toolbar">
             <el-input
               v-model="objQuery.q"
@@ -444,7 +551,13 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               data-testid="obj-search"
               @change="searchObject()"
             />
-            <el-button size="small" data-testid="obj-refresh" @click="store.browseObject()">刷新</el-button>
+            <el-button
+              size="small"
+              data-testid="obj-refresh"
+              @click="store.browseObject()"
+            >
+              刷新
+            </el-button>
             <span class="toolbar__meta">
               <template v-if="objPage.status === 'success'">
                 {{ objSel }} · 共 {{ objPage.data.total }} 行 · 排序 {{ objPage.data.sort }}
@@ -452,15 +565,36 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             </span>
           </div>
           <LoadingState v-if="objPage.status === 'loading'" />
-          <ErrorState v-else-if="objPage.status === 'error'" :error="objPage.error" @retry="store.browseObject()" />
+          <ErrorState
+            v-else-if="objPage.status === 'error'"
+            :error="objPage.error"
+            @retry="store.browseObject()"
+          />
           <template v-else-if="objPage.status === 'success'">
-            <p v-if="objPageRefreshError" class="refresh-warning" data-testid="obj-page-refresh-error">
+            <p
+              v-if="objPageRefreshError"
+              class="refresh-warning"
+              data-testid="obj-page-refresh-error"
+            >
               刷新失败({{ objPageRefreshError.message }}),展示上一次成功数据
             </p>
-            <ul v-if="objPage.data.warnings.length" class="warnings" data-testid="obj-warnings">
-              <li v-for="w in objPage.data.warnings" :key="w">{{ w }}</li>
+            <ul
+              v-if="objPage.data.warnings.length"
+              class="warnings"
+              data-testid="obj-warnings"
+            >
+              <li
+                v-for="w in objPage.data.warnings"
+                :key="w"
+              >
+                {{ w }}
+              </li>
             </ul>
-            <el-table :data="objPage.data.rows" size="small" data-testid="obj-table">
+            <el-table
+              :data="objPage.data.rows"
+              size="small"
+              data-testid="obj-table"
+            >
               <el-table-column
                 v-for="col in objCols"
                 :key="col.name"
@@ -469,16 +603,33 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               >
                 <template #header>
                   <span>{{ col.name }}</span>
-                  <el-tag v-if="col.classification === 'sensitive'" size="small" type="warning" class="col-flag">
+                  <el-tag
+                    v-if="col.classification === 'sensitive'"
+                    size="small"
+                    type="warning"
+                    class="col-flag"
+                  >
                     脱敏
                   </el-tag>
-                  <el-tag v-else-if="col.classification === 'unknown'" size="small" type="info" class="col-flag">
+                  <el-tag
+                    v-else-if="col.classification === 'unknown'"
+                    size="small"
+                    type="info"
+                    class="col-flag"
+                  >
                     未知
                   </el-tag>
                 </template>
-                <template #default="{ row }">{{ formatCell(row[col.name]) }}</template>
+                <template #default="{ row }">
+                  {{ formatCell(row[col.name]) }}
+                </template>
               </el-table-column>
-              <el-table-column v-if="hasLineageRefs" label="血缘" width="80" data-testid="obj-lineage-col">
+              <el-table-column
+                v-if="hasLineageRefs"
+                label="血缘"
+                width="80"
+                data-testid="obj-lineage-col"
+              >
                 <template #default="{ $index }">
                   <el-button
                     size="small"
@@ -491,7 +642,11 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                 </template>
               </el-table-column>
             </el-table>
-            <p v-if="objPage.data.truncations.length" class="trunc-note" data-testid="obj-truncations">
+            <p
+              v-if="objPage.data.truncations.length"
+              class="trunc-note"
+              data-testid="obj-truncations"
+            >
               {{ objPage.data.truncations.length }} 行存在截断字段(预览不是完整值):
               {{ objPage.data.truncations.map((t) => `#${t.row_index}(${t.fields.join('/')})`).join(', ') }}
             </p>
@@ -509,10 +664,18 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
       </el-tab-pane>
 
       <!-- 数据集版本 -->
-      <el-tab-pane label="数据集" name="datasets">
+      <el-tab-pane
+        label="数据集"
+        name="datasets"
+      >
         <div class="d2a-card">
-          <h3 class="card-title">构建 / 发布</h3>
-          <div class="toolbar" data-testid="dataset-apply-bar">
+          <h3 class="card-title">
+            构建 / 发布
+          </h3>
+          <div
+            class="toolbar"
+            data-testid="dataset-apply-bar"
+          >
             <el-input
               v-model="applySource"
               size="small"
@@ -520,15 +683,30 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               placeholder="source"
               data-testid="apply-source"
             />
-            <label class="inline" data-testid="stage-only-toggle">
-              <input v-model="stageOnly" type="checkbox" />
+            <label
+              class="inline"
+              data-testid="stage-only-toggle"
+            >
+              <input
+                v-model="stageOnly"
+                type="checkbox"
+              >
               仅构建不发布(stage-only)
             </label>
-            <el-button type="primary" size="small" data-testid="apply-run" @click="onApply">
+            <el-button
+              type="primary"
+              size="small"
+              data-testid="apply-run"
+              @click="onApply"
+            >
               {{ stageOnly ? '构建候选' : '构建并发布' }}
             </el-button>
           </div>
-          <p v-if="applyError" class="refresh-warning" data-testid="apply-error">
+          <p
+            v-if="applyError"
+            class="refresh-warning"
+            data-testid="apply-error"
+          >
             构建失败({{ applyError.message }})
           </p>
           <p
@@ -552,20 +730,44 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               data-testid="dataset-filter-status"
               @change="datasetsStore.refresh()"
             >
-              <el-option label="building" value="building" />
-              <el-option label="published" value="published" />
-              <el-option label="failed" value="failed" />
-              <el-option label="retired" value="retired" />
+              <el-option
+                label="building"
+                value="building"
+              />
+              <el-option
+                label="published"
+                value="published"
+              />
+              <el-option
+                label="failed"
+                value="failed"
+              />
+              <el-option
+                label="retired"
+                value="retired"
+              />
             </el-select>
-            <el-button size="small" data-testid="datasets-refresh" @click="datasetsStore.refresh()">
+            <el-button
+              size="small"
+              data-testid="datasets-refresh"
+              @click="datasetsStore.refresh()"
+            >
               刷新
             </el-button>
             <span class="toolbar__meta">共 {{ datasetTotal }} 个版本</span>
           </div>
-          <p v-if="listRefreshError" class="refresh-warning" data-testid="datasets-refresh-error">
+          <p
+            v-if="listRefreshError"
+            class="refresh-warning"
+            data-testid="datasets-refresh-error"
+          >
             刷新失败({{ listRefreshError.message }}),展示上一次成功数据
           </p>
-          <p v-if="actionError" class="refresh-warning" data-testid="dataset-action-error">
+          <p
+            v-if="actionError"
+            class="refresh-warning"
+            data-testid="dataset-action-error"
+          >
             操作失败({{ actionError.message }})
           </p>
           <p
@@ -587,26 +789,60 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             hint="先执行构建(可选择 stage-only)生成候选"
           />
           <template v-else-if="datasetList.status === 'success'">
-            <el-table :data="datasetList.data" size="small" data-testid="datasets-table">
-              <el-table-column prop="dataset_version" label="版本" min-width="200" />
-              <el-table-column prop="source" label="来源" width="130" />
-              <el-table-column label="状态" width="100">
+            <el-table
+              :data="datasetList.data"
+              size="small"
+              data-testid="datasets-table"
+            >
+              <el-table-column
+                prop="dataset_version"
+                label="版本"
+                min-width="200"
+              />
+              <el-table-column
+                prop="source"
+                label="来源"
+                width="130"
+              />
+              <el-table-column
+                label="状态"
+                width="100"
+              >
                 <template #default="{ row }">
                   <span :data-testid="`dataset-status-${row.dataset_version}`">
                     {{ datasetStatusLabel(row, objectsByVersion[row.dataset_version]) }}
                   </span>
                 </template>
               </el-table-column>
-              <el-table-column label="构建时间" width="150">
-                <template #default="{ row }">{{ formatDateTime(row.built_at) }}</template>
+              <el-table-column
+                label="构建时间"
+                width="150"
+              >
+                <template #default="{ row }">
+                  {{ formatDateTime(row.built_at) }}
+                </template>
               </el-table-column>
-              <el-table-column label="发布时间" width="150">
-                <template #default="{ row }">{{ formatDateTime(row.published_at) || '—' }}</template>
+              <el-table-column
+                label="发布时间"
+                width="150"
+              >
+                <template #default="{ row }">
+                  {{ formatDateTime(row.published_at) || '—' }}
+                </template>
               </el-table-column>
-              <el-table-column label="上一版本" width="160">
-                <template #default="{ row }">{{ row.previous_dataset_version ?? '—' }}</template>
+              <el-table-column
+                label="上一版本"
+                width="160"
+              >
+                <template #default="{ row }">
+                  {{ row.previous_dataset_version ?? '—' }}
+                </template>
               </el-table-column>
-              <el-table-column label="操作" width="220" fixed="right">
+              <el-table-column
+                label="操作"
+                width="220"
+                fixed="right"
+              >
                 <template #default="{ row }">
                   <el-button
                     size="small"
@@ -651,7 +887,11 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           </template>
         </div>
 
-        <div v-if="datasetDetail" class="d2a-card" data-testid="dataset-detail">
+        <div
+          v-if="datasetDetail"
+          class="d2a-card"
+          data-testid="dataset-detail"
+        >
           <LoadingState v-if="datasetDetail.status === 'loading'" />
           <ErrorState
             v-else-if="datasetDetail.status === 'error'"
@@ -659,7 +899,10 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             @retry="datasetsStore.detailVersion && datasetsStore.openDetail(datasetsStore.detailVersion)"
           />
           <template v-else-if="datasetDetail.status === 'success'">
-            <p v-if="detailRefreshError" class="refresh-warning">
+            <p
+              v-if="detailRefreshError"
+              class="refresh-warning"
+            >
               刷新失败({{ detailRefreshError.message }})
             </p>
             <h3 class="card-title">
@@ -671,20 +914,52 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               · previous {{ datasetDetail.data.previous_dataset_version ?? '—' }}
               · error {{ datasetDetail.data.error ?? '—' }}
             </p>
-            <el-table :data="datasetDetailObjects" size="small" data-testid="dataset-objects-table">
-              <el-table-column prop="object" label="对象" width="140" />
-              <el-table-column prop="object_version" label="对象版本" min-width="140" />
-              <el-table-column prop="status" label="状态" width="100" />
-              <el-table-column prop="row_count" label="行数" width="80" />
-              <el-table-column prop="binding_hash" label="binding_hash" min-width="180" />
+            <el-table
+              :data="datasetDetailObjects"
+              size="small"
+              data-testid="dataset-objects-table"
+            >
+              <el-table-column
+                prop="object"
+                label="对象"
+                width="140"
+              />
+              <el-table-column
+                prop="object_version"
+                label="对象版本"
+                min-width="140"
+              />
+              <el-table-column
+                prop="status"
+                label="状态"
+                width="100"
+              />
+              <el-table-column
+                prop="row_count"
+                label="行数"
+                width="80"
+              />
+              <el-table-column
+                prop="binding_hash"
+                label="binding_hash"
+                min-width="180"
+              />
             </el-table>
           </template>
         </div>
       </el-tab-pane>
     </el-tabs>
 
-    <div v-if="currentJson" class="d2a-card">
-      <el-button size="small" text data-testid="json-toggle" @click="showJson = !showJson">
+    <div
+      v-if="currentJson"
+      class="d2a-card"
+    >
+      <el-button
+        size="small"
+        text
+        data-testid="json-toggle"
+        @click="showJson = !showJson"
+      >
         {{ showJson ? '隐藏' : '查看' }}安全 JSON(与表格同源)
       </el-button>
       <pre
@@ -713,12 +988,6 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.card-title {
-  margin: 0 0 10px;
-  font-size: 14px;
-  font-weight: 600;
 }
 
 .toolbar {
