@@ -191,13 +191,21 @@ watch(
 </script>
 
 <template>
-  <div class="preview-panel d2a-card" data-testid="mapping-preview-panel">
+  <div
+    class="preview-panel d2a-card"
+    data-testid="mapping-preview-panel"
+  >
     <div class="toolbar">
-      <h3 class="card-title">映射预览</h3>
+      <h3 class="card-title card-title--flush">
+        映射预览
+      </h3>
       <span class="muted">只读试算,不会保存或发布</span>
     </div>
 
-    <div class="form-grid" data-testid="preview-controls">
+    <div
+      class="form-grid"
+      data-testid="preview-controls"
+    >
       <label>
         数据源
         <select
@@ -205,7 +213,11 @@ watch(
           data-testid="preview-source"
           @change="store.setSource(($event.target as HTMLSelectElement).value)"
         >
-          <option v-if="!sourceOptions.length" value="" disabled>无可用数据源</option>
+          <option
+            v-if="!sourceOptions.length"
+            value=""
+            disabled
+          >无可用数据源</option>
           <option
             v-for="opt in sourceOptions"
             :key="opt.value"
@@ -221,7 +233,7 @@ watch(
           type="text"
           placeholder="留空=不按批次过滤"
           data-testid="preview-batch-id"
-        />
+        >
       </label>
 
       <div class="inline-row">
@@ -234,7 +246,7 @@ watch(
             max="10000"
             data-testid="preview-offset"
             @change="store.setSample({ offset: Number(($event.target as HTMLInputElement).value) || 0 })"
-          />
+          >
         </label>
         <label>
           limit
@@ -245,7 +257,7 @@ watch(
             max="200"
             data-testid="preview-limit"
             @change="store.setSample({ limit: Number(($event.target as HTMLInputElement).value) || 50 })"
-          />
+          >
         </label>
       </div>
 
@@ -254,13 +266,17 @@ watch(
           size="small"
           data-testid="preview-use-draft"
           @click="enableTempDraft"
-        >使用临时草稿</el-button>
+        >
+          使用临时草稿
+        </el-button>
         <el-button
           v-if="useDraft"
           size="small"
           data-testid="preview-use-current"
           @click="useCurrentBinding"
-        >改用当前绑定</el-button>
+        >
+          改用当前绑定
+        </el-button>
       </div>
 
       <template v-if="useDraft">
@@ -277,7 +293,9 @@ watch(
           v-if="localJsonHint || draftParseError"
           class="json-hint"
           data-testid="preview-json-hint"
-        >{{ localJsonHint || draftParseError }}</p>
+        >
+          {{ localJsonHint || draftParseError }}
+        </p>
       </template>
 
       <div class="submit-row">
@@ -287,7 +305,9 @@ watch(
           data-testid="preview-submit"
           :disabled="!canSubmit"
           @click="onSubmit"
-        >预览映射</el-button>
+        >
+          预览映射
+        </el-button>
       </div>
     </div>
 
@@ -308,12 +328,6 @@ watch(
   align-items: baseline;
   gap: 10px;
   margin-bottom: 10px;
-}
-
-.card-title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
 }
 
 .muted {

@@ -26,6 +26,18 @@
   --d2a-env-real: #52c41a;
 
   --d2a-layout-topbar-height: 48px;
+
+  /* 字号阶梯(视图内新建样式优先引用,逐步收敛硬编码 px) */
+  --d2a-font-xs: 11px;
+  --d2a-font-sm: 12px;
+  --d2a-font-md: 13px;
+  --d2a-font-lg: 14px;
+  --d2a-font-title: 17px;
+
+  /* z-index 层级:顶栏 < 抽屉遮罩 < 抽屉 */
+  --d2a-z-topbar: 100;
+  --d2a-z-backdrop: 1000;
+  --d2a-z-drawer: 1001;
 }
 
 html,
@@ -46,4 +58,21 @@ body,
 
 .d2a-card + .d2a-card {
   margin-top: 8px;
+}
+
+/* 卡片标题(原各视图 scoped 重复定义,收敛为全局工具类):
+   默认下间距 10px;--compact 6px(表单页);--flush 0(弹性行内标题) */
+.card-title {
+  margin: 0 0 10px;
+  font-size: var(--d2a-font-lg);
+  font-weight: 600;
+  color: var(--d2a-text-primary);
+}
+
+.card-title--compact {
+  margin-bottom: 6px;
+}
+
+.card-title--flush {
+  margin-bottom: 0;
 }

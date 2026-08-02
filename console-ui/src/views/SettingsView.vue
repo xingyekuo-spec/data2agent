@@ -161,7 +161,7 @@ onUnmounted(stopPolling)
     <div class="d2a-card">
       <div class="settings-head">
         <div>
-          <h3 class="card-title">
+          <h3 class="card-title card-title--compact">
             平台配置
           </h3>
           <p class="card-subtitle">
@@ -252,7 +252,7 @@ onUnmounted(stopPolling)
       class="d2a-card update-card"
       data-testid="update-card"
     >
-      <h3 class="card-title">
+      <h3 class="card-title card-title--compact">
         版本升级
       </h3>
       <p class="card-subtitle">
@@ -359,13 +359,6 @@ onUnmounted(stopPolling)
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-}
-
-.card-title {
-  margin: 0 0 6px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--d2a-text-primary);
 }
 
 .card-subtitle {
