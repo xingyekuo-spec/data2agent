@@ -80,8 +80,11 @@ from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION
 client = TestClient(create_app(${JSON.stringify(landing)}))
 body = {
     # 真实中间机推送会携带协议与写入模式；E2E 必须遵守同一 wire contract。
+    # schema 与 sqlite 适配器一致(main):v0.4 raw 身份账本锁定物理 schema,
+    # 缺省会按「跨物理表增量混写」被拒(409)。
     "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
     "source": ${JSON.stringify(SOURCE)},
+    "schema": "main",
     "table": "CUSTOMER",
     "mode": "incremental",
     "columns": [
