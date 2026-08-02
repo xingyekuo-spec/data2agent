@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createPinia, type Pinia } from 'pinia'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { setScenario } from '@/test/scenario'
 import { useOverviewStore } from '@/stores/overview'
 import { usePipelineStore } from '@/stores/pipeline'
@@ -19,6 +19,10 @@ async function mountDashboard(): Promise<{
   const overview = useOverviewStore(pinia)
   const pipeline = usePipelineStore(pinia)
   await Promise.all([overview.refresh(), pipeline.refresh()])
+  await flushPromises()
+  // TrendChart 为异步组件(echarts 懒加载):首轮渲染才触发 import;
+  // 动态 import 走宏任务,flushPromises 只清微任务,须等待其全部落地
+  await vi.dynamicImportSettled()
   await flushPromises()
   return { wrapper, overview, pipeline }
 }

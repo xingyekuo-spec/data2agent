@@ -2,10 +2,11 @@
 // 仪表盘(M3):摘要卡、状态摘要、抽取趋势、对象分布、最近运行、告警、
 // 版本与治理、数量口径说明。数据来自 overview/pipeline 两个观测 store
 // (统一轮询);视图不直接调 API、不另建 timer。
-import { computed } from 'vue'
+import { computed, defineAsyncComponent } from 'vue'
 import { storeToRefs } from 'pinia'
 import StatCard from '@/components/dashboard/StatCard.vue'
-import TrendChart from '@/components/dashboard/TrendChart.vue'
+// echarts 体积大,异步加载:仅仪表盘可见时才下载图表 chunk
+const TrendChart = defineAsyncComponent(() => import('@/components/dashboard/TrendChart.vue'))
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
@@ -145,7 +146,7 @@ const sortedAlerts = computed(() =>
       <EmptyState
         v-if="ov.needs_setup"
         title="尚未完成首次配置"
-          hint="请打开 /setup 完成首次配置"
+        hint="请打开 /setup 完成首次配置"
       />
       <EmptyState
         v-else-if="ov.sources.length === 0 && ov.objects.length === 0"
@@ -435,13 +436,6 @@ const sortedAlerts = computed(() =>
   background: var(--el-fill-color-light);
   font-size: 12px;
   color: var(--d2a-status-stale);
-}
-
-.card-title {
-  margin: 0 0 10px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--d2a-text-primary);
 }
 
 .status-strip {
