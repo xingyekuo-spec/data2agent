@@ -1,8 +1,9 @@
 <script setup lang="ts">
-// 平台日志页。
-import { onMounted, reactive, ref } from 'vue'
+// 平台日志页。支持手动刷新与自动轮询(复用统一轮询器:防重入/失败退避/隐藏暂停)。
+import { onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import { getLogs } from '@/api/services'
+import { createPoller } from '@/stores/poller'
 import type { ApiError } from '@/api/errors'
 
 const services = [
@@ -21,6 +22,22 @@ const loading = ref(false)
 const text = ref('')
 const ok = ref<boolean | null>(null)
 const error = ref<ApiError | null>(null)
+const autoRefresh = ref(false)
+
+// 自动刷新:与 AppLayout 同一套轮询器语义;组件卸载即停,不留 timer
+const poller = createPoller({
+  intervalMs: 5000,
+  task: () => refresh(),
+  isFailing: () => error.value !== null,
+})
+
+watch(autoRefresh, (enabled) => {
+  if (enabled) {
+    poller.start()
+  } else {
+    poller.stop()
+  }
+})
 
 async function refresh(): Promise<void> {
   loading.value = true
@@ -42,6 +59,7 @@ async function refresh(): Promise<void> {
 onMounted(() => {
   void refresh()
 })
+onUnmounted(() => poller.stop())
 </script>
 
 <template>
@@ -73,19 +91,27 @@ onMounted(() => {
           placeholder="level 过滤,如 ERROR"
           style="width: 200px"
           clearable
+          data-testid="logs-level-input"
           @keyup.enter="refresh"
           @clear="refresh"
         />
         <el-button
           type="primary"
           :loading="loading"
+          data-testid="logs-refresh"
           @click="refresh"
         >
           刷新
         </el-button>
+        <el-checkbox
+          v-model="autoRefresh"
+          label="自动刷新(5s)"
+          data-testid="logs-auto-refresh"
+        />
         <el-tag
           v-if="ok !== null"
           :type="ok ? 'success' : 'warning'"
+          data-testid="logs-status"
         >
           {{ ok ? '已读取' : '日志不可用' }}
         </el-tag>
