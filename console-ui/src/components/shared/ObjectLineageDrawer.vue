@@ -127,13 +127,21 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
     <template #header>
       <div class="drawer-header">
         <span>字段血缘</span>
-        <el-tag v-if="store.stale" size="small" type="warning" data-testid="lineage-stale">
+        <el-tag
+          v-if="store.stale"
+          size="small"
+          type="warning"
+          data-testid="lineage-stale"
+        >
           结果可能过期
         </el-tag>
       </div>
     </template>
 
-    <p class="readonly-note" data-testid="lineage-readonly-note">
+    <p
+      class="readonly-note"
+      data-testid="lineage-readonly-note"
+    >
       只读预览 — 血缘证明系统处理事实，不证明源字典语义
     </p>
 
@@ -152,7 +160,10 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
       >
         <template #description>
           <p>{{ data?.warnings?.[0] ?? '该数据集版本未记录字段血缘' }}</p>
-          <p v-if="data?.dataset_version" class="version-info">
+          <p
+            v-if="data?.dataset_version"
+            class="version-info"
+          >
             数据集版本: {{ data.dataset_version }}
           </p>
         </template>
@@ -161,13 +172,23 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
 
     <template v-else-if="isAvailable && data">
       <!-- 版本身份 -->
-      <div class="lineage-identity" data-testid="lineage-identity">
-        <el-descriptions :column="1" size="small" border>
+      <div
+        class="lineage-identity"
+        data-testid="lineage-identity"
+      >
+        <el-descriptions
+          :column="1"
+          size="small"
+          border
+        >
           <el-descriptions-item label="对象">
             {{ data.display_name }} ({{ data.object }})
           </el-descriptions-item>
           <el-descriptions-item label="业务键">
-            <span v-for="(pair, i) in data.object_key" :key="i">
+            <span
+              v-for="(pair, i) in data.object_key"
+              :key="i"
+            >
               {{ pair[0] }}={{ pair[1] }}<span v-if="Number(i) < data.object_key.length - 1">, </span>
             </span>
           </el-descriptions-item>
@@ -188,7 +209,10 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
       </div>
 
       <!-- 字段列表 -->
-      <div class="lineage-fields" data-testid="lineage-fields">
+      <div
+        class="lineage-fields"
+        data-testid="lineage-fields"
+      >
         <el-collapse accordion>
           <el-collapse-item
             v-for="field in data.fields"
@@ -196,7 +220,10 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
             :name="field.property"
           >
             <template #title>
-              <div class="field-title" :data-testid="`field-${field.property}`">
+              <div
+                class="field-title"
+                :data-testid="`field-${field.property}`"
+              >
                 <span class="field-name">{{ field.display_name }}</span>
                 <code class="field-prop">{{ field.property }}</code>
                 <el-tag
@@ -210,21 +237,37 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
               </div>
             </template>
 
-            <div v-if="field.state === 'unavailable'" class="field-unavailable">
-              <el-tag type="warning" size="small">{{ field.reason_code }}</el-tag>
+            <div
+              v-if="field.state === 'unavailable'"
+              class="field-unavailable"
+            >
+              <el-tag
+                type="warning"
+                size="small"
+              >
+                {{ field.reason_code }}
+              </el-tag>
             </div>
 
             <template v-else>
               <!-- 转换步骤时间线 -->
-              <h4 class="section-title">转换步骤</h4>
-              <el-timeline v-if="(field.steps ?? []).length" class="step-timeline">
+              <h4 class="section-title">
+                转换步骤
+              </h4>
+              <el-timeline
+                v-if="(field.steps ?? []).length"
+                class="step-timeline"
+              >
                 <el-timeline-item
                   v-for="(step, si) in field.steps"
                   :key="si"
                   :type="step.kind === 'read' ? 'primary' : 'success'"
                   size="small"
                 >
-                  <div class="step-item" :data-testid="`step-${field.property}-${si}`">
+                  <div
+                    class="step-item"
+                    :data-testid="`step-${field.property}-${si}`"
+                  >
                     <strong>{{ stepLabel(step.kind) }}</strong>
                     <span v-if="step.map_hit !== null && step.map_hit !== undefined">
                       {{ step.map_hit ? '✓ 命中' : '✗ 未命中' }}
@@ -233,13 +276,24 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
                     <span v-if="step.derived_rule_index !== null && step.derived_rule_index !== undefined">
                       #{{ step.derived_rule_index }}
                     </span>
-                    <div v-if="step.derived_when" class="step-when" :data-testid="`when-${field.property}-${si}`">
+                    <div
+                      v-if="step.derived_when"
+                      class="step-when"
+                      :data-testid="`when-${field.property}-${si}`"
+                    >
                       条件:
-                      <span v-for="(val, col) in step.derived_when" :key="col" class="when-cond">
+                      <span
+                        v-for="(val, col) in step.derived_when"
+                        :key="col"
+                        class="when-cond"
+                      >
                         {{ col }}={{ val }}
                       </span>
                     </div>
-                    <div v-if="step.before" class="step-values">
+                    <div
+                      v-if="step.before"
+                      class="step-values"
+                    >
                       <span class="before">{{ formatEvidence(step.before) }}</span>
                       <span class="arrow"> → </span>
                       <span class="after">{{ formatEvidence(step.after) }}</span>
@@ -247,32 +301,61 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
                   </div>
                 </el-timeline-item>
               </el-timeline>
-              <p v-else class="no-steps">无转换步骤</p>
+              <p
+                v-else
+                class="no-steps"
+              >
+                无转换步骤
+              </p>
 
               <!-- 输入边 -->
-              <h4 v-if="(field.inputs ?? []).length" class="section-title">源数据输入</h4>
+              <h4
+                v-if="(field.inputs ?? []).length"
+                class="section-title"
+              >
+                源数据输入
+              </h4>
               <div
                 v-for="(input, ii) in (field.inputs ?? [])"
                 :key="ii"
                 class="input-card"
                 :data-testid="`input-${field.property}-${ii}`"
               >
-                <el-tag size="small" :type="input.role === 'value' ? '' : input.role === 'join_fk' ? 'warning' : 'info'">
+                <el-tag
+                  size="small"
+                  :type="input.role === 'value' ? '' : input.role === 'join_fk' ? 'warning' : 'info'"
+                >
                   {{ input.role }}
                 </el-tag>
-                <span v-if="input.source_table" class="input-source">
+                <span
+                  v-if="input.source_table"
+                  class="input-source"
+                >
                   {{ input.source_table }}<span v-if="input.source_column">.{{ input.source_column }}</span>
                 </span>
-                <span v-if="input.source_value" class="input-value">
+                <span
+                  v-if="input.source_value"
+                  class="input-value"
+                >
                   = {{ formatEvidence(input.source_value) }}
                 </span>
-                <span v-if="input.source_pk" class="input-pk" :data-testid="`pk-${field.property}-${ii}`">
+                <span
+                  v-if="input.source_pk"
+                  class="input-pk"
+                  :data-testid="`pk-${field.property}-${ii}`"
+                >
                   源记录: {{ formatPk(input.source_pk) }}
                 </span>
-                <span v-if="input.extract_batch_id" class="input-batch">
+                <span
+                  v-if="input.extract_batch_id"
+                  class="input-batch"
+                >
                   批次: {{ input.extract_batch_id }}
                 </span>
-                <span v-if="input.join" class="input-join">
+                <span
+                  v-if="input.join"
+                  class="input-join"
+                >
                   join: {{ input.join.target_table }}.{{ input.join.fk_column }}
                 </span>
               </div>
@@ -282,7 +365,10 @@ function fieldStateTag(state: string): 'success' | 'info' | 'warning' {
       </div>
     </template>
 
-    <el-empty v-else description="选择一行对象数据后点击「血缘」查看" />
+    <el-empty
+      v-else
+      description="选择一行对象数据后点击「血缘」查看"
+    />
   </el-drawer>
 </template>
 
