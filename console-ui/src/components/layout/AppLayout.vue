@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useOverviewStore } from '@/stores/overview'
 import { usePipelineStore } from '@/stores/pipeline'
@@ -13,6 +13,23 @@ const overviewStore = useOverviewStore()
 const pipelineStore = usePipelineStore()
 const session = useSessionStore()
 const route = useRoute()
+
+// 窄屏(≤900px):侧栏改为抽屉,顶栏汉堡按钮开关;路由切换后自动收起
+const menuOpen = ref(false)
+let mql: MediaQueryList | null = null
+
+function onMediaChange(e: MediaQueryListEvent): void {
+  if (!e.matches) {
+    menuOpen.value = false
+  }
+}
+
+watch(
+  () => route.fullPath,
+  () => {
+    menuOpen.value = false
+  },
+)
 
 // 唯一轮询所有者:Dashboard / 管道页 / TopBar 只消费 store,不另建 timer
 const poller = createPoller({
@@ -30,8 +47,15 @@ const poller = createPoller({
     pipelineStore.pipeline.status === 'error',
 })
 
-onMounted(() => poller.start())
-onUnmounted(() => poller.stop())
+onMounted(() => {
+  poller.start()
+  mql = window.matchMedia('(max-width: 900px)')
+  mql.addEventListener('change', onMediaChange)
+})
+onUnmounted(() => {
+  poller.stop()
+  mql?.removeEventListener('change', onMediaChange)
+})
 
 watch(
   () => session.authenticated,
@@ -45,15 +69,24 @@ watch(
 
 <template>
   <el-container class="app-shell">
-    <el-aside class="app-shell__aside">
+    <el-aside
+      class="app-shell__aside"
+      :class="{ 'app-shell__aside--open': menuOpen }"
+    >
       <SideMenu />
     </el-aside>
+    <div
+      v-if="menuOpen"
+      class="app-shell__backdrop"
+      data-testid="menu-backdrop"
+      @click="menuOpen = false"
+    />
     <el-container class="app-shell__body">
       <el-header
         class="app-shell__header"
         height="48px"
       >
-        <TopBar />
+        <TopBar @toggle-menu="menuOpen = !menuOpen" />
       </el-header>
       <el-main class="app-shell__main">
         <router-view />
@@ -86,7 +119,7 @@ watch(
 .app-shell__header {
   position: sticky;
   top: 0;
-  z-index: 100;
+  z-index: var(--d2a-z-topbar);
   padding: 0;
   background: var(--d2a-topbar-bg);
   border-bottom: 1px solid var(--d2a-border);
@@ -96,5 +129,34 @@ watch(
   padding: 8px 12px;
   overflow-y: auto;
   background: var(--d2a-content-bg);
+}
+
+/* 窄屏(≤900px):侧栏脱离文档流变抽屉,遮罩点击关闭 */
+@media (max-width: 900px) {
+  .app-shell__aside {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: var(--d2a-z-drawer);
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 2px 0 8px rgb(0 0 0 / 15%);
+  }
+
+  .app-shell__aside--open {
+    transform: translateX(0);
+  }
+
+  .app-shell__backdrop {
+    position: fixed;
+    z-index: var(--d2a-z-backdrop);
+    background: rgb(0 0 0 / 30%);
+    inset: 0;
+  }
+
+  .app-shell__main {
+    padding: 8px;
+  }
 }
 </style>

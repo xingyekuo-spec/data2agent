@@ -3,13 +3,17 @@
 // 模式标识 / 用户入口。只读两个观测 store,不直接调 API。
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ArrowDown } from '@element-plus/icons-vue'
+import { ArrowDown, Expand } from '@element-plus/icons-vue'
 import EnvironmentBadge from '@/components/shared/EnvironmentBadge.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useOverviewStore } from '@/stores/overview'
 import { usePipelineStore } from '@/stores/pipeline'
 import { useSessionStore } from '@/stores/session'
 import { formatTimeHM } from '@/utils/time'
+
+const emit = defineEmits<{
+  'toggle-menu': []
+}>()
 
 const route = useRoute()
 const session = useSessionStore()
@@ -32,12 +36,23 @@ function onUserCommand(command: string): void {
 
 <template>
   <div class="topbar">
-    <h1
-      class="topbar__title"
-      data-testid="topbar-title"
-    >
-      {{ title }}
-    </h1>
+    <div class="topbar__left">
+      <button
+        type="button"
+        class="topbar__menu-btn"
+        aria-label="打开导航菜单"
+        data-testid="menu-toggle"
+        @click="emit('toggle-menu')"
+      >
+        <el-icon><Expand /></el-icon>
+      </button>
+      <h1
+        class="topbar__title"
+        data-testid="topbar-title"
+      >
+        {{ title }}
+      </h1>
+    </div>
     <div class="topbar__right">
       <StatusBadge
         v-if="overall"
@@ -108,6 +123,43 @@ function onUserCommand(command: string): void {
   margin: 0;
   font-size: 17px;
   font-weight: 600;
+}
+
+.topbar__left {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+/* 汉堡按钮:仅窄屏(≤900px)显示,宽屏隐藏 */
+.topbar__menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--d2a-border);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--d2a-text-primary);
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .topbar__menu-btn {
+    display: inline-flex;
+  }
+
+  /* 窄屏顶栏指标让位于标题:隔离/更新时间收起 */
+  .topbar__metric {
+    display: none;
+  }
+
+  .topbar {
+    padding: 0 10px;
+  }
 }
 
 .topbar__right {

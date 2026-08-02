@@ -7,6 +7,7 @@ import { MODE } from '@/config/mode'
   <span
     class="env-badge env-badge--real"
     title="数据来自真实后端"
+    aria-label="环境模式:REAL,数据来自真实后端"
     data-testid="env-badge"
   >{{ MODE.toUpperCase() }}</span>
 </template>

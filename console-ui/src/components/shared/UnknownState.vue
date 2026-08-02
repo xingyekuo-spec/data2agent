@@ -11,6 +11,7 @@ withDefaults(
 <template>
   <div
     class="state-block state-block--unknown"
+    role="status"
     data-testid="unknown-state"
   >
     <span

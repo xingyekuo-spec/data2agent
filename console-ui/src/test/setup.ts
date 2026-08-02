@@ -22,6 +22,21 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     ResizeObserverStub as unknown as typeof globalThis.ResizeObserver
 }
 
+// jsdom 无 matchMedia(AppLayout 窄屏断点用):补最小 stub,matches 恒 false(宽屏)
+if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
+  window.matchMedia = (query: string): MediaQueryList =>
+    ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }) as MediaQueryList
+}
+
 // Node 22+ 自带实验性 webstorage 全局:未开 --experimental-webstorage 时
 // globalThis.localStorage 为 undefined,且 vitest jsdom 环境不会再用 jsdom
 // 实现补位,导致测试里 localStorage.clear() 抛 TypeError。

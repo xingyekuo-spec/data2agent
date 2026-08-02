@@ -12,6 +12,7 @@ withDefaults(
 <template>
   <div
     class="state-block state-block--empty"
+    role="status"
     data-testid="empty-state"
   >
     <span class="state-block__title">{{ title }}</span>
