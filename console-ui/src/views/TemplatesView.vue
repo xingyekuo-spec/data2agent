@@ -154,14 +154,19 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
       <!-- 左侧:对象列表 -->
       <aside class="templates-list">
         <div class="d2a-card">
-          <h3 class="card-title">模板对象</h3>
+          <h3 class="card-title">
+            模板对象
+          </h3>
           <LoadingState v-if="templates.status === 'idle' || templates.status === 'loading'" />
           <ErrorState
             v-else-if="templates.status === 'error'"
             :error="templates.error"
             @retry="store.fetchTemplates()"
           />
-          <EmptyState v-else-if="objects.length === 0" title="没有模板对象" />
+          <EmptyState
+            v-else-if="objects.length === 0"
+            title="没有模板对象"
+          />
           <template v-else>
             <p
               v-if="templatesRefreshError"
@@ -183,7 +188,10 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                 <span class="tpl-list-item__object">{{ obj.object }}</span>
               </div>
               <div class="tpl-list-item__meta">
-                <span v-if="obj.domain" class="tpl-list-item__domain">{{ obj.domain }}</span>
+                <span
+                  v-if="obj.domain"
+                  class="tpl-list-item__domain"
+                >{{ obj.domain }}</span>
                 <span class="tpl-list-item__bindings">{{ obj.bindings.length }} 个绑定({{ bindingCountLabel(obj) }})</span>
               </div>
               <div class="tpl-list-item__status">
@@ -233,10 +241,19 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
           />
 
           <div class="d2a-card">
-            <el-tabs v-model="activeTab" data-testid="tpl-detail-tabs">
+            <el-tabs
+              v-model="activeTab"
+              data-testid="tpl-detail-tabs"
+            >
               <!-- 概览 tab -->
-              <el-tab-pane label="概览" name="overview">
-                <div class="overview-grid" data-testid="tpl-overview">
+              <el-tab-pane
+                label="概览"
+                name="overview"
+              >
+                <div
+                  class="overview-grid"
+                  data-testid="tpl-overview"
+                >
                   <div class="overview-item">
                     <span class="overview-label">描述</span>
                     <span class="overview-value">{{ selectedObject.description || '—' }}</span>
@@ -265,10 +282,10 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                     <span class="overview-value">
                       <template v-if="selectedObject.knowledge_refs?.length">
                         <span
-                          v-for="ref in selectedObject.knowledge_refs"
-                          :key="ref"
+                          v-for="kref in selectedObject.knowledge_refs"
+                          :key="kref"
                           class="ref-link"
-                        >{{ ref }}</span>
+                        >{{ kref }}</span>
                       </template>
                       <span v-else>—</span>
                     </span>
@@ -276,8 +293,13 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                 </div>
 
                 <!-- 物化信息 -->
-                <div class="section-title">物化信息</div>
-                <div class="overview-grid" data-testid="tpl-materialization">
+                <div class="section-title">
+                  物化信息
+                </div>
+                <div
+                  class="overview-grid"
+                  data-testid="tpl-materialization"
+                >
                   <div class="overview-item">
                     <span class="overview-label">状态</span>
                     <span class="overview-value">
@@ -309,31 +331,71 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
 
                 <!-- 警告 -->
                 <template v-if="selectedObject.warnings?.length">
-                  <div class="section-title">警告</div>
-                  <ul class="warnings" data-testid="tpl-warnings">
-                    <li v-for="w in selectedObject.warnings" :key="w">{{ w }}</li>
+                  <div class="section-title">
+                    警告
+                  </div>
+                  <ul
+                    class="warnings"
+                    data-testid="tpl-warnings"
+                  >
+                    <li
+                      v-for="w in selectedObject.warnings"
+                      :key="w"
+                    >
+                      {{ w }}
+                    </li>
                   </ul>
                 </template>
               </el-tab-pane>
 
               <!-- 属性 tab -->
-              <el-tab-pane label="属性" name="properties">
-                <el-table :data="selectedObject.properties" size="small" data-testid="tpl-properties">
-                  <el-table-column prop="name" label="名称" width="150" />
-                  <el-table-column prop="type" label="类型" width="100" />
-                  <el-table-column prop="desc" label="描述" min-width="150" />
-                  <el-table-column label="敏感" width="80">
+              <el-tab-pane
+                label="属性"
+                name="properties"
+              >
+                <el-table
+                  :data="selectedObject.properties"
+                  size="small"
+                  data-testid="tpl-properties"
+                >
+                  <el-table-column
+                    prop="name"
+                    label="名称"
+                    width="150"
+                  />
+                  <el-table-column
+                    prop="type"
+                    label="类型"
+                    width="100"
+                  />
+                  <el-table-column
+                    prop="desc"
+                    label="描述"
+                    min-width="150"
+                  />
+                  <el-table-column
+                    label="敏感"
+                    width="80"
+                  >
                     <template #default="{ row }">
                       <el-tag
                         v-if="row.sensitive"
                         size="small"
                         type="danger"
                         data-testid="sensitive-tag"
-                      >敏感</el-tag>
-                      <span v-else class="text-muted">—</span>
+                      >
+                        敏感
+                      </el-tag>
+                      <span
+                        v-else
+                        class="text-muted"
+                      >—</span>
                     </template>
                   </el-table-column>
-                  <el-table-column label="枚举值" width="180">
+                  <el-table-column
+                    label="枚举值"
+                    width="180"
+                  >
                     <template #default="{ row }">
                       <template v-if="row.enum_values?.length">
                         <el-tag
@@ -342,22 +404,40 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                           size="small"
                           :type="propertyTagType(row)"
                           class="enum-tag"
-                        >{{ ev }}</el-tag>
+                        >
+                          {{ ev }}
+                        </el-tag>
                       </template>
-                      <span v-else class="text-muted">—</span>
+                      <span
+                        v-else
+                        class="text-muted"
+                      >—</span>
                     </template>
                   </el-table-column>
-                  <el-table-column prop="ref" label="引用" width="120">
+                  <el-table-column
+                    prop="ref"
+                    label="引用"
+                    width="120"
+                  >
                     <template #default="{ row }">
-                      <span v-if="row.ref" class="text-muted">{{ row.ref }}</span>
-                      <span v-else class="text-muted">—</span>
+                      <span
+                        v-if="row.ref"
+                        class="text-muted"
+                      >{{ row.ref }}</span>
+                      <span
+                        v-else
+                        class="text-muted"
+                      >—</span>
                     </template>
                   </el-table-column>
                 </el-table>
               </el-tab-pane>
 
               <!-- 绑定 tab -->
-              <el-tab-pane label="绑定" name="bindings">
+              <el-tab-pane
+                label="绑定"
+                name="bindings"
+              >
                 <template v-if="selectedObject.bindings.length === 0">
                   <EmptyState title="该对象没有绑定" />
                 </template>
@@ -374,12 +454,16 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                       size="small"
                       :type="bindingTag(binding).type"
                       data-testid="binding-status-tag"
-                    >{{ bindingTag(binding).label }}</el-tag>
+                    >
+                      {{ bindingTag(binding).label }}
+                    </el-tag>
                     <el-tag
                       v-if="!binding.enabled"
                       size="small"
                       type="info"
-                    >已停用</el-tag>
+                    >
+                      已停用
+                    </el-tag>
                   </div>
 
                   <!-- 表列表 -->
@@ -391,51 +475,99 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                       size="small"
                       type="info"
                       class="table-tag"
-                    >{{ t }}</el-tag>
+                    >
+                      {{ t }}
+                    </el-tag>
                   </div>
 
                   <!-- 键映射 -->
-                  <details class="binding-details" open>
-                    <summary class="subsection-label">键映射</summary>
+                  <details
+                    class="binding-details"
+                    open
+                  >
+                    <summary class="subsection-label">
+                      键映射
+                    </summary>
                     <el-table
                       :data="keyMapEntries(binding.key_map)"
                       size="small"
                       class="subsection-table"
                     >
-                      <el-table-column prop="objectKey" label="对象键" width="180" />
-                      <el-table-column prop="sourceKey" label="源字段" />
+                      <el-table-column
+                        prop="objectKey"
+                        label="对象键"
+                        width="180"
+                      />
+                      <el-table-column
+                        prop="sourceKey"
+                        label="源字段"
+                      />
                     </el-table>
                   </details>
 
                   <!-- 字段映射 -->
-                  <details class="binding-details" open>
-                    <summary class="subsection-label">字段映射</summary>
+                  <details
+                    class="binding-details"
+                    open
+                  >
+                    <summary class="subsection-label">
+                      字段映射
+                    </summary>
                     <el-table
                       :data="fieldMapEntries(binding.field_map)"
                       size="small"
                       class="subsection-table"
                     >
-                      <el-table-column prop="field" label="对象字段" width="180" />
-                      <el-table-column prop="expression" label="映射表达式" />
+                      <el-table-column
+                        prop="field"
+                        label="对象字段"
+                        width="180"
+                      />
+                      <el-table-column
+                        prop="expression"
+                        label="映射表达式"
+                      />
                     </el-table>
                   </details>
 
                   <!-- 枚举映射 -->
                   <template v-if="enumMapEntries(binding.enum_map).length > 0">
-                    <details class="binding-details" open>
-                      <summary class="subsection-label">枚举映射</summary>
+                    <details
+                      class="binding-details"
+                      open
+                    >
+                      <summary class="subsection-label">
+                        枚举映射
+                      </summary>
                       <el-table
                         :data="enumMapEntries(binding.enum_map)"
                         size="small"
                         class="subsection-table"
                         data-testid="enum-map-table"
                       >
-                        <el-table-column prop="field" label="字段" width="150" />
-                        <el-table-column prop="source" label="源值" width="120" />
-                        <el-table-column label="映射" width="40">
-                          <template>→</template>
+                        <el-table-column
+                          prop="field"
+                          label="字段"
+                          width="150"
+                        />
+                        <el-table-column
+                          prop="source"
+                          label="源值"
+                          width="120"
+                        />
+                        <el-table-column
+                          label="映射"
+                          width="40"
+                        >
+                          <template #default>
+                            →
+                          </template>
                         </el-table-column>
-                        <el-table-column prop="target" label="对象值" width="120" />
+                        <el-table-column
+                          prop="target"
+                          label="对象值"
+                          width="120"
+                        />
                       </el-table>
                     </details>
                   </template>
@@ -446,7 +578,10 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                       v-for="(df, fieldName) in binding.derived"
                       :key="fieldName"
                     >
-                      <details class="binding-details" open>
+                      <details
+                        class="binding-details"
+                        open
+                      >
                         <summary class="subsection-label">
                           派生规则: <code>{{ fieldName }}</code>
                         </summary>
@@ -457,19 +592,28 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                             class="subsection-table"
                             data-testid="derived-rules-table"
                           >
-                            <el-table-column label="条件" min-width="200">
+                            <el-table-column
+                              label="条件"
+                              min-width="200"
+                            >
                               <template #default="{ row }">
                                 <code>{{ row.condition }}</code>
                               </template>
                             </el-table-column>
-                            <el-table-column label="取值" width="160">
+                            <el-table-column
+                              label="取值"
+                              width="160"
+                            >
                               <template #default="{ row }">
                                 <code>{{ row.value }}</code>
                               </template>
                             </el-table-column>
                           </el-table>
                         </template>
-                        <div v-if="df.default != null" class="derived-default">
+                        <div
+                          v-if="df.default != null"
+                          class="derived-default"
+                        >
                           默认值: <code>{{ df.default }}</code>
                         </div>
                       </details>
@@ -478,11 +622,17 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
 
                   <!-- Watermark / Notes -->
                   <div class="binding-meta">
-                    <div v-if="binding.watermark" class="binding-meta-item">
+                    <div
+                      v-if="binding.watermark"
+                      class="binding-meta-item"
+                    >
                       <span class="subsection-label">水位线：</span>
                       <code>{{ binding.watermark }}</code>
                     </div>
-                    <div v-if="binding.notes" class="binding-meta-item">
+                    <div
+                      v-if="binding.notes"
+                      class="binding-meta-item"
+                    >
                       <span class="subsection-label">备注：</span>
                       <span class="text-muted">{{ binding.notes }}</span>
                     </div>
@@ -491,7 +641,10 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
               </el-tab-pane>
 
               <!-- 指标 tab -->
-              <el-tab-pane label="指标" name="metrics">
+              <el-tab-pane
+                label="指标"
+                name="metrics"
+              >
                 <template v-if="metrics.status === 'idle' || metrics.status === 'loading'">
                   <LoadingState />
                 </template>
@@ -512,32 +665,61 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                   >
                     刷新失败({{ metricsRefreshError.message }}),展示上一次成功数据
                   </p>
-                  <el-table :data="metrics.data" size="small" data-testid="tpl-metrics">
-                    <el-table-column prop="metric" label="指标名" width="160" />
-                    <el-table-column prop="display_name" label="显示名" width="140" />
-                    <el-table-column label="状态" width="90">
+                  <el-table
+                    :data="metrics.data"
+                    size="small"
+                    data-testid="tpl-metrics"
+                  >
+                    <el-table-column
+                      prop="metric"
+                      label="指标名"
+                      width="160"
+                    />
+                    <el-table-column
+                      prop="display_name"
+                      label="显示名"
+                      width="140"
+                    />
+                    <el-table-column
+                      label="状态"
+                      width="90"
+                    >
                       <template #default="{ row }">
                         <el-tag
                           size="small"
                           :type="metricStatusTag(row.status).type"
-                        >{{ metricStatusTag(row.status).label }}</el-tag>
+                        >
+                          {{ metricStatusTag(row.status).label }}
+                        </el-tag>
                       </template>
                     </el-table-column>
-                    <el-table-column label="校准" width="90">
+                    <el-table-column
+                      label="校准"
+                      width="90"
+                    >
                       <template #default="{ row }">
                         <el-tag
                           size="small"
                           :type="calibrationTag(row.calibration_state).type"
                           data-testid="calibration-tag"
-                        >{{ calibrationTag(row.calibration_state).label }}</el-tag>
+                        >
+                          {{ calibrationTag(row.calibration_state).label }}
+                        </el-tag>
                       </template>
                     </el-table-column>
-                    <el-table-column prop="formula" label="公式" min-width="200">
+                    <el-table-column
+                      prop="formula"
+                      label="公式"
+                      min-width="200"
+                    >
                       <template #default="{ row }">
                         <code>{{ row.formula }}</code>
                       </template>
                     </el-table-column>
-                    <el-table-column label="粒度" width="140">
+                    <el-table-column
+                      label="粒度"
+                      width="140"
+                    >
                       <template #default="{ row }">
                         <template v-if="row.grain?.length">
                           <el-tag
@@ -546,12 +728,20 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                             size="small"
                             type="info"
                             class="grain-tag"
-                          >{{ g }}</el-tag>
+                          >
+                            {{ g }}
+                          </el-tag>
                         </template>
-                        <span v-else class="text-muted">—</span>
+                        <span
+                          v-else
+                          class="text-muted"
+                        >—</span>
                       </template>
                     </el-table-column>
-                    <el-table-column label="维度" width="140">
+                    <el-table-column
+                      label="维度"
+                      width="140"
+                    >
                       <template #default="{ row }">
                         <template v-if="row.dimensions?.length">
                           <el-tag
@@ -560,16 +750,35 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
                             size="small"
                             type="info"
                             class="dim-tag"
-                          >{{ d }}</el-tag>
+                          >
+                            {{ d }}
+                          </el-tag>
                         </template>
-                        <span v-else class="text-muted">—</span>
+                        <span
+                          v-else
+                          class="text-muted"
+                        >—</span>
                       </template>
                     </el-table-column>
-                    <el-table-column prop="freshness_sla" label="时效" width="100" />
-                    <el-table-column prop="caveats" label="注意事项" min-width="160">
+                    <el-table-column
+                      prop="freshness_sla"
+                      label="时效"
+                      width="100"
+                    />
+                    <el-table-column
+                      prop="caveats"
+                      label="注意事项"
+                      min-width="160"
+                    >
                       <template #default="{ row }">
-                        <span v-if="row.caveats" class="text-muted">{{ row.caveats }}</span>
-                        <span v-else class="text-muted">—</span>
+                        <span
+                          v-if="row.caveats"
+                          class="text-muted"
+                        >{{ row.caveats }}</span>
+                        <span
+                          v-else
+                          class="text-muted"
+                        >—</span>
                       </template>
                     </el-table-column>
                   </el-table>
@@ -580,7 +789,10 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
         </template>
 
         <!-- 未选择对象时的空状态 -->
-        <div v-else class="d2a-card">
+        <div
+          v-else
+          class="d2a-card"
+        >
           <EmptyState title="请从左侧选择一个模板对象以查看详情" />
         </div>
       </main>
@@ -592,7 +804,9 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
         size="small"
         data-testid="tpl-refresh"
         @click="store.fetchTemplates()"
-      >刷新模板</el-button>
+      >
+        刷新模板
+      </el-button>
     </div>
   </section>
 </template>
@@ -624,12 +838,6 @@ function propertyTagType(p: { sensitive: boolean }): TagType {
 .templates-actions {
   display: flex;
   gap: 8px;
-}
-
-.card-title {
-  margin: 0 0 10px;
-  font-size: 14px;
-  font-weight: 600;
 }
 
 .card-subtitle {

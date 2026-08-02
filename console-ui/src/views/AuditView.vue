@@ -165,9 +165,16 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
 <template>
   <section class="audit-page">
-    <el-tabs v-model="activeTab" data-testid="audit-tabs" @tab-change="syncRouteQuery">
+    <el-tabs
+      v-model="activeTab"
+      data-testid="audit-tabs"
+      @tab-change="syncRouteQuery"
+    >
       <!-- SQL 操作审计 -->
-      <el-tab-pane label="SQL 操作" name="sql">
+      <el-tab-pane
+        label="SQL 操作"
+        name="sql"
+      >
         <div class="d2a-card toolbar">
           <el-input
             v-model="sqlFilters.source"
@@ -203,38 +210,83 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             class="toolbar__input toolbar__input--wide"
             @change="filterSql()"
           />
-          <el-button size="small" data-testid="sql-refresh" @click="store.refreshSql()">刷新</el-button>
+          <el-button
+            size="small"
+            data-testid="sql-refresh"
+            @click="store.refreshSql()"
+          >
+            刷新
+          </el-button>
           <span class="toolbar__total">共 {{ sqlTotal }} 条</span>
         </div>
 
         <div class="d2a-card">
           <LoadingState v-if="sql.status === 'idle' || sql.status === 'loading'" />
-          <ErrorState v-else-if="sql.status === 'error'" :error="sql.error" @retry="store.refreshSql()" />
-          <EmptyState v-else-if="sql.data.length === 0" title="没有符合条件的审计记录" />
+          <ErrorState
+            v-else-if="sql.status === 'error'"
+            :error="sql.error"
+            @retry="store.refreshSql()"
+          />
+          <EmptyState
+            v-else-if="sql.data.length === 0"
+            title="没有符合条件的审计记录"
+          />
           <template v-else>
-            <p v-if="sqlRefreshError" class="refresh-warning" data-testid="sql-refresh-error">
+            <p
+              v-if="sqlRefreshError"
+              class="refresh-warning"
+              data-testid="sql-refresh-error"
+            >
               刷新失败({{ sqlRefreshError.message }}),展示上一次成功数据
             </p>
-            <el-table :data="sql.data" size="small" data-testid="sql-table">
+            <el-table
+              :data="sql.data"
+              size="small"
+              data-testid="sql-table"
+            >
               <el-table-column type="expand">
                 <template #default="{ row }">
-                  <pre class="sql-full" data-testid="sql-full">{{ row.sql }}</pre>
+                  <pre
+                    class="sql-full"
+                    data-testid="sql-full"
+                  >{{ row.sql }}</pre>
                 </template>
               </el-table-column>
-              <el-table-column label="时间" width="150">
-                <template #default="{ row }">{{ formatDateTime(row.ts) }}</template>
+              <el-table-column
+                label="时间"
+                width="150"
+              >
+                <template #default="{ row }">
+                  {{ formatDateTime(row.ts) }}
+                </template>
               </el-table-column>
-              <el-table-column prop="source" label="来源" width="130" />
-              <el-table-column prop="action" label="动作" width="90" />
+              <el-table-column
+                prop="source"
+                label="来源"
+                width="130"
+              />
+              <el-table-column
+                prop="action"
+                label="动作"
+                width="90"
+              />
               <el-table-column label="SQL(默认折叠)">
                 <template #default="{ row }">
                   <span class="sql-preview">{{ truncate(row.sql) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="行数" width="80">
-                <template #default="{ row }">{{ row.rows ?? '—' }}</template>
+              <el-table-column
+                label="行数"
+                width="80"
+              >
+                <template #default="{ row }">
+                  {{ row.rows ?? '—' }}
+                </template>
               </el-table-column>
-              <el-table-column label="耗时" width="90">
+              <el-table-column
+                label="耗时"
+                width="90"
+              >
                 <template #default="{ row }">
                   {{ row.duration_ms == null ? '—' : `${row.duration_ms}ms` }}
                 </template>
@@ -254,7 +306,10 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
       </el-tab-pane>
 
       <!-- 控制台数据访问审计 -->
-      <el-tab-pane label="数据访问" name="access">
+      <el-tab-pane
+        label="数据访问"
+        name="access"
+      >
         <div class="d2a-card toolbar">
           <el-input
             v-model="accessFilters.subject"
@@ -274,9 +329,18 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             data-testid="filter-resource-type"
             @change="filterAccess()"
           >
-            <el-option label="raw" value="raw" />
-            <el-option label="object" value="object" />
-            <el-option label="quarantine_raw" value="quarantine_raw" />
+            <el-option
+              label="raw"
+              value="raw"
+            />
+            <el-option
+              label="object"
+              value="object"
+            />
+            <el-option
+              label="quarantine_raw"
+              value="quarantine_raw"
+            />
           </el-select>
           <el-select
             v-model="accessFilters.allowed"
@@ -287,8 +351,14 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             data-testid="filter-allowed"
             @change="filterAccess()"
           >
-            <el-option label="允许" value="true" />
-            <el-option label="拒绝" value="false" />
+            <el-option
+              label="允许"
+              value="true"
+            />
+            <el-option
+              label="拒绝"
+              value="false"
+            />
           </el-select>
           <el-input
             v-model="accessFilters.from"
@@ -308,44 +378,94 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             data-testid="filter-access-to"
             @change="filterAccess()"
           />
-          <el-button size="small" data-testid="access-refresh" @click="store.refreshAccess()">
+          <el-button
+            size="small"
+            data-testid="access-refresh"
+            @click="store.refreshAccess()"
+          >
             刷新
           </el-button>
           <span class="toolbar__total">
             <template v-if="access.status === 'success'">共 {{ access.data.total }} 条</template>
           </span>
         </div>
-        <p class="scope-note" data-testid="access-scope-note">
+        <p
+          class="scope-note"
+          data-testid="access-scope-note"
+        >
           访问审计当前覆盖 raw 数据浏览与 quarantine_raw 隔离详情查看(允许与拒绝)。
         </p>
 
         <div class="d2a-card">
           <LoadingState v-if="access.status === 'idle' || access.status === 'loading'" />
-          <ErrorState v-else-if="access.status === 'error'" :error="access.error" @retry="store.refreshAccess()" />
-          <EmptyState v-else-if="access.data.items.length === 0" title="没有符合条件的访问记录" />
+          <ErrorState
+            v-else-if="access.status === 'error'"
+            :error="access.error"
+            @retry="store.refreshAccess()"
+          />
+          <EmptyState
+            v-else-if="access.data.items.length === 0"
+            title="没有符合条件的访问记录"
+          />
           <template v-else>
-            <p v-if="accessRefreshError" class="refresh-warning" data-testid="access-refresh-error">
+            <p
+              v-if="accessRefreshError"
+              class="refresh-warning"
+              data-testid="access-refresh-error"
+            >
               刷新失败({{ accessRefreshError.message }}),展示上一次成功数据
             </p>
-            <el-table :data="access.data.items" size="small" data-testid="access-table">
-              <el-table-column label="时间" width="150">
-                <template #default="{ row }">{{ formatDateTime(row.ts) }}</template>
+            <el-table
+              :data="access.data.items"
+              size="small"
+              data-testid="access-table"
+            >
+              <el-table-column
+                label="时间"
+                width="150"
+              >
+                <template #default="{ row }">
+                  {{ formatDateTime(row.ts) }}
+                </template>
               </el-table-column>
-              <el-table-column prop="subject" label="主体" width="130" />
-              <el-table-column prop="resource_type" label="类型" width="70" />
-              <el-table-column label="资源" min-width="140">
+              <el-table-column
+                prop="subject"
+                label="主体"
+                width="130"
+              />
+              <el-table-column
+                prop="resource_type"
+                label="类型"
+                width="70"
+              />
+              <el-table-column
+                label="资源"
+                min-width="140"
+              >
                 <template #default="{ row }">
                   {{ row.source ? `${row.source}/` : '' }}{{ row.resource }}
                 </template>
               </el-table-column>
-              <el-table-column label="结果" width="80">
+              <el-table-column
+                label="结果"
+                width="80"
+              >
                 <template #default="{ row }">
                   <StatusBadge :status="row.allowed ? 'healthy' : 'failed'" />
                 </template>
               </el-table-column>
-              <el-table-column prop="reason_code" label="原因码" width="150" />
-              <el-table-column label="行数" width="70">
-                <template #default="{ row }">{{ row.returned_rows ?? '—' }}</template>
+              <el-table-column
+                prop="reason_code"
+                label="原因码"
+                width="150"
+              />
+              <el-table-column
+                label="行数"
+                width="70"
+              >
+                <template #default="{ row }">
+                  {{ row.returned_rows ?? '—' }}
+                </template>
               </el-table-column>
             </el-table>
             <el-pagination

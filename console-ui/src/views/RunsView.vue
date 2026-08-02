@@ -128,7 +128,12 @@ watch(
         data-testid="filter-type"
         @change="onFilterChange"
       >
-        <el-option v-for="t in TYPE_OPTIONS" :key="t" :label="t" :value="t" />
+        <el-option
+          v-for="t in TYPE_OPTIONS"
+          :key="t"
+          :label="t"
+          :value="t"
+        />
       </el-select>
       <el-select
         v-model="filters.status"
@@ -138,50 +143,118 @@ watch(
         data-testid="filter-status"
         @change="onFilterChange"
       >
-        <el-option v-for="s in STATUS_OPTIONS" :key="s" :label="s" :value="s" />
+        <el-option
+          v-for="s in STATUS_OPTIONS"
+          :key="s"
+          :label="s"
+          :value="s"
+        />
       </el-select>
-      <el-button size="small" data-testid="refresh-button" @click="store.refresh()">刷新</el-button>
+      <el-button
+        size="small"
+        data-testid="refresh-button"
+        @click="store.refresh()"
+      >
+        刷新
+      </el-button>
       <span class="toolbar__total">共 {{ total }} 条</span>
     </div>
 
     <div class="d2a-card">
       <LoadingState v-if="list.status === 'idle' || list.status === 'loading'" />
-      <ErrorState v-else-if="list.status === 'error'" :error="list.error" @retry="store.refresh()" />
-      <EmptyState v-else-if="list.data.length === 0" title="没有符合条件的运行" />
+      <ErrorState
+        v-else-if="list.status === 'error'"
+        :error="list.error"
+        @retry="store.refresh()"
+      />
+      <EmptyState
+        v-else-if="list.data.length === 0"
+        title="没有符合条件的运行"
+      />
       <template v-else>
-        <p v-if="refreshError" class="refresh-warning" data-testid="runs-refresh-error">
+        <p
+          v-if="refreshError"
+          class="refresh-warning"
+          data-testid="runs-refresh-error"
+        >
           刷新失败({{ refreshError.message }}),展示上一次成功数据
         </p>
-        <el-table :data="list.data" size="small" data-testid="runs-table" @row-click="openRow">
-          <el-table-column label="ID" width="70" prop="id" />
-          <el-table-column label="类型" width="100">
-            <template #default="{ row }">{{ runTypeLabel(row.type) }}</template>
+        <el-table
+          :data="list.data"
+          size="small"
+          data-testid="runs-table"
+          @row-click="openRow"
+        >
+          <el-table-column
+            label="ID"
+            width="70"
+            prop="id"
+          />
+          <el-table-column
+            label="类型"
+            width="100"
+          >
+            <template #default="{ row }">
+              {{ runTypeLabel(row.type) }}
+            </template>
           </el-table-column>
-          <el-table-column prop="source" label="来源" width="130" />
-          <el-table-column label="状态" width="90">
+          <el-table-column
+            prop="source"
+            label="来源"
+            width="130"
+          />
+          <el-table-column
+            label="状态"
+            width="90"
+          >
             <template #default="{ row }">
               <StatusBadge :status="runStatusMap[row.status ?? ''] ?? 'unknown'" />
             </template>
           </el-table-column>
-          <el-table-column label="开始" width="140">
-            <template #default="{ row }">{{ formatDateTime(row.started_at) }}</template>
+          <el-table-column
+            label="开始"
+            width="140"
+          >
+            <template #default="{ row }">
+              {{ formatDateTime(row.started_at) }}
+            </template>
           </el-table-column>
-          <el-table-column label="结束" width="140">
-            <template #default="{ row }">{{ formatDateTime(row.finished_at) }}</template>
+          <el-table-column
+            label="结束"
+            width="140"
+          >
+            <template #default="{ row }">
+              {{ formatDateTime(row.finished_at) }}
+            </template>
           </el-table-column>
-          <el-table-column label="耗时" width="90">
+          <el-table-column
+            label="耗时"
+            width="90"
+          >
             <template #default="{ row }">
               {{ row.duration_ms == null ? '—' : `${Math.round(row.duration_ms)}ms` }}
             </template>
           </el-table-column>
-          <el-table-column label="表/对象" width="80">
-            <template #default="{ row }">{{ row.tables ?? '—' }}</template>
+          <el-table-column
+            label="表/对象"
+            width="80"
+          >
+            <template #default="{ row }">
+              {{ row.tables ?? '—' }}
+            </template>
           </el-table-column>
-          <el-table-column label="行数" width="90">
-            <template #default="{ row }">{{ row.rows ?? '—' }}</template>
+          <el-table-column
+            label="行数"
+            width="90"
+          >
+            <template #default="{ row }">
+              {{ row.rows ?? '—' }}
+            </template>
           </el-table-column>
           <el-table-column label="隔离">
-            <template #default="{ row }">{{ row.quarantined ?? '—' }}</template>
+            <template #default="{ row }">
+              {{ row.quarantined ?? '—' }}
+            </template>
           </el-table-column>
         </el-table>
         <el-pagination
@@ -204,9 +277,17 @@ watch(
       @close="closeDrawer"
     >
       <LoadingState v-if="detail?.status === 'loading'" />
-      <ErrorState v-else-if="detail?.status === 'error'" :error="detail.error" @retry="store.detailId !== null && store.openDetail(store.detailId)" />
+      <ErrorState
+        v-else-if="detail?.status === 'error'"
+        :error="detail.error"
+        @retry="store.detailId !== null && store.openDetail(store.detailId)"
+      />
       <template v-else-if="detail?.status === 'success'">
-        <p v-if="detailRefreshError" class="refresh-warning" data-testid="run-detail-refresh-error">
+        <p
+          v-if="detailRefreshError"
+          class="refresh-warning"
+          data-testid="run-detail-refresh-error"
+        >
           刷新失败({{ detailRefreshError.message }}),展示上一次成功数据
         </p>
         <dl class="summary">
@@ -225,39 +306,94 @@ watch(
         </dl>
 
         <h4>步骤</h4>
-        <p v-if="detail.data.steps_state === 'legacy_unavailable'" class="legacy-note" data-testid="legacy-note">
+        <p
+          v-if="detail.data.steps_state === 'legacy_unavailable'"
+          class="legacy-note"
+          data-testid="legacy-note"
+        >
           历史记录没有逐步证据(该运行产生于 step 记录引入之前)。
         </p>
-        <EmptyState v-else-if="detail.data.steps.length === 0" title="该运行没有工作单元" />
-        <el-table v-else :data="detail.data.steps" size="small" data-testid="steps-table">
-          <el-table-column prop="ordinal" label="#" width="40" />
-          <el-table-column prop="kind" label="kind" width="70" />
-          <el-table-column prop="name" label="目标" min-width="130" />
-          <el-table-column label="状态" width="80">
+        <EmptyState
+          v-else-if="detail.data.steps.length === 0"
+          title="该运行没有工作单元"
+        />
+        <el-table
+          v-else
+          :data="detail.data.steps"
+          size="small"
+          data-testid="steps-table"
+        >
+          <el-table-column
+            prop="ordinal"
+            label="#"
+            width="40"
+          />
+          <el-table-column
+            prop="kind"
+            label="kind"
+            width="70"
+          />
+          <el-table-column
+            prop="name"
+            label="目标"
+            min-width="130"
+          />
+          <el-table-column
+            label="状态"
+            width="80"
+          >
             <template #default="{ row }">
               <StatusBadge :status="runStatusMap[row.status] ?? 'unknown'" />
             </template>
           </el-table-column>
-          <el-table-column label="in/out" width="90">
-            <template #default="{ row }">{{ row.rows_in ?? '—' }}/{{ row.rows_out ?? '—' }}</template>
+          <el-table-column
+            label="in/out"
+            width="90"
+          >
+            <template #default="{ row }">
+              {{ row.rows_in ?? '—' }}/{{ row.rows_out ?? '—' }}
+            </template>
           </el-table-column>
-          <el-table-column label="隔离" width="60">
-            <template #default="{ row }">{{ row.quarantined ?? '—' }}</template>
+          <el-table-column
+            label="隔离"
+            width="60"
+          >
+            <template #default="{ row }">
+              {{ row.quarantined ?? '—' }}
+            </template>
           </el-table-column>
-          <el-table-column label="水位 before → after" min-width="160">
+          <el-table-column
+            label="水位 before → after"
+            min-width="160"
+          >
             <template #default="{ row }">
               {{ row.watermark_before ?? '—' }} → {{ row.watermark_after ?? '—' }}
             </template>
           </el-table-column>
-          <el-table-column label="错误" min-width="120">
-            <template #default="{ row }">{{ row.error ?? '—' }}</template>
+          <el-table-column
+            label="错误"
+            min-width="120"
+          >
+            <template #default="{ row }">
+              {{ row.error ?? '—' }}
+            </template>
           </el-table-column>
         </el-table>
 
-        <el-button class="json-toggle" size="small" text data-testid="json-toggle" @click="showJson = !showJson">
+        <el-button
+          class="json-toggle"
+          size="small"
+          text
+          data-testid="json-toggle"
+          @click="showJson = !showJson"
+        >
           {{ showJson ? '隐藏' : '查看' }}安全 JSON
         </el-button>
-        <pre v-if="showJson" class="json-view" data-testid="json-view">{{ JSON.stringify(detail.data, null, 2) }}</pre>
+        <pre
+          v-if="showJson"
+          class="json-view"
+          data-testid="json-view"
+        >{{ JSON.stringify(detail.data, null, 2) }}</pre>
       </template>
     </el-drawer>
   </section>

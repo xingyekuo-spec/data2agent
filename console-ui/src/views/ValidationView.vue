@@ -47,8 +47,18 @@ function checkHealth(status: Report['checks'][number]['status']): 'healthy' | 'w
 <template>
   <section class="validation-page">
     <div class="d2a-card toolbar">
-      <el-checkbox v-model="includeMcpProbe" :disabled="loading">检查 MCP evidence</el-checkbox>
-      <el-button type="primary" :loading="loading" data-testid="validation-run" @click="run">
+      <el-checkbox
+        v-model="includeMcpProbe"
+        :disabled="loading"
+      >
+        检查 MCP evidence
+      </el-checkbox>
+      <el-button
+        type="primary"
+        :loading="loading"
+        data-testid="validation-run"
+        @click="run"
+      >
         开始只读验收
       </el-button>
       <a
@@ -59,8 +69,16 @@ function checkHealth(status: Report['checks'][number]['status']): 'healthy' | 'w
     </div>
 
     <LoadingState v-if="loading" />
-    <ErrorState v-else-if="error" :error="error" @retry="run" />
-    <div v-else-if="report" class="d2a-card report" data-testid="validation-report">
+    <ErrorState
+      v-else-if="error"
+      :error="error"
+      @retry="run"
+    />
+    <div
+      v-else-if="report"
+      class="d2a-card report"
+      data-testid="validation-report"
+    >
       <div class="report__headline">
         <div>
           <h2>验收运行 #{{ report.run_id }}</h2>
@@ -73,14 +91,47 @@ function checkHealth(status: Report['checks'][number]['status']): 'healthy' | 'w
         <dt>模板</dt><dd>{{ report.template_version ?? '—' }}</dd>
         <dt>检查</dt><dd>{{ report.summary?.pass_count ?? 0 }} 通过 / {{ report.summary?.warning_count ?? 0 }} 警告 / {{ report.summary?.fail_count ?? 0 }} 失败</dd>
       </dl>
-      <el-table :data="report.checks" size="small">
-        <el-table-column prop="title" label="检查" min-width="160" />
-        <el-table-column label="结果" width="100"><template #default="{ row }"><StatusBadge :status="checkHealth(row.status)" /></template></el-table-column>
-        <el-table-column prop="summary" label="摘要" min-width="260" />
-        <el-table-column label="证据" width="110"><template #default="{ row }"><a v-if="row.evidence[0]" :href="row.evidence[0].href">查看</a><span v-else>—</span></template></el-table-column>
+      <el-table
+        :data="report.checks"
+        size="small"
+      >
+        <el-table-column
+          prop="title"
+          label="检查"
+          min-width="160"
+        />
+        <el-table-column
+          label="结果"
+          width="100"
+        >
+          <template #default="{ row }">
+            <StatusBadge :status="checkHealth(row.status)" />
+          </template>
+        </el-table-column>
+        <el-table-column
+          prop="summary"
+          label="摘要"
+          min-width="260"
+        />
+        <el-table-column
+          label="证据"
+          width="110"
+        >
+          <template #default="{ row }">
+            <a
+              v-if="row.evidence[0]"
+              :href="row.evidence[0].href"
+            >查看</a><span v-else>—</span>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
-    <div v-else class="d2a-card empty">尚未运行验收。验收只读取既有事实，不执行同步、发布或写回。</div>
+    <div
+      v-else
+      class="d2a-card empty"
+    >
+      尚未运行验收。验收只读取既有事实，不执行同步、发布或写回。
+    </div>
   </section>
 </template>
 

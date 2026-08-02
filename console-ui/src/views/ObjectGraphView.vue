@@ -185,7 +185,10 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
           placeholder="搜索对象、显示名或领域"
           data-testid="object-graph-search"
         />
-        <div class="stats" data-testid="object-graph-stats">
+        <div
+          class="stats"
+          data-testid="object-graph-stats"
+        >
           <span>{{ graphNodes.length }} 对象</span>
           <span>{{ graphEdges.length }} 关系</span>
           <span>{{ domains.length }} 领域</span>
@@ -295,7 +298,9 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
               <dd>{{ selectedNode.incoming }}/{{ selectedNode.outgoing }}</dd>
             </dl>
 
-            <div class="section-title">关联关系</div>
+            <div class="section-title">
+              关联关系
+            </div>
             <EmptyState
               v-if="selectedEdges.length === 0"
               title="该对象暂无关系"
@@ -323,20 +328,37 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
                 </button>
               </div>
               <div class="relation-card__meta">
-                <el-tag size="small" type="info">{{ edge.relation }}</el-tag>
-                <el-tag size="small">{{ edge.cardinality }}</el-tag>
+                <el-tag
+                  size="small"
+                  type="info"
+                >
+                  {{ edge.relation }}
+                </el-tag>
+                <el-tag size="small">
+                  {{ edge.cardinality }}
+                </el-tag>
                 <span>{{ edge.desc || '—' }}</span>
               </div>
             </div>
 
-            <div class="section-title">出边定义</div>
+            <div class="section-title">
+              出边定义
+            </div>
             <el-table
               :data="selectedOutgoingRelations"
               size="small"
               data-testid="object-graph-outgoing"
             >
-              <el-table-column prop="name" label="关系名" min-width="150" />
-              <el-table-column prop="target" label="目标对象" min-width="150">
+              <el-table-column
+                prop="name"
+                label="关系名"
+                min-width="150"
+              />
+              <el-table-column
+                prop="target"
+                label="目标对象"
+                min-width="150"
+              >
                 <template #default="{ row }">
                   <el-button
                     link
@@ -347,7 +369,11 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
                   </el-button>
                 </template>
               </el-table-column>
-              <el-table-column prop="cardinality" label="基数" width="90" />
+              <el-table-column
+                prop="cardinality"
+                label="基数"
+                width="90"
+              />
             </el-table>
           </template>
         </aside>

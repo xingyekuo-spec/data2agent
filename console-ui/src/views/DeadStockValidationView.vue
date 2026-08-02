@@ -199,9 +199,18 @@ function itemRowClass({ row }: { row: Record<string, unknown> }) {
           clearable
           data-testid="dead-stock-filter-confidence"
         >
-          <el-option label="HIGH" value="HIGH" />
-          <el-option label="MEDIUM" value="MEDIUM" />
-          <el-option label="LOW" value="LOW" />
+          <el-option
+            label="HIGH"
+            value="HIGH"
+          />
+          <el-option
+            label="MEDIUM"
+            value="MEDIUM"
+          />
+          <el-option
+            label="LOW"
+            value="LOW"
+          />
         </el-select>
         <el-button
           type="primary"
@@ -284,16 +293,44 @@ function itemRowClass({ row }: { row: Record<string, unknown> }) {
             data-testid="dead-stock-items"
             @row-click="(row: Record<string, unknown>) => store.selectItem(String(row.item_code ?? ''))"
           >
-            <el-table-column prop="item_code" label="品号" min-width="120" />
-            <el-table-column prop="plant_id" label="工厂" width="90" />
-            <el-table-column prop="warehouse_code" label="仓库" width="90" />
-            <el-table-column prop="inventory_qty" label="库存" width="110">
-              <template #default="{ row }">{{ numeric(row.inventory_qty) }}</template>
+            <el-table-column
+              prop="item_code"
+              label="品号"
+              min-width="120"
+            />
+            <el-table-column
+              prop="plant_id"
+              label="工厂"
+              width="90"
+            />
+            <el-table-column
+              prop="warehouse_code"
+              label="仓库"
+              width="90"
+            />
+            <el-table-column
+              prop="inventory_qty"
+              label="库存"
+              width="110"
+            >
+              <template #default="{ row }">
+                {{ numeric(row.inventory_qty) }}
+              </template>
             </el-table-column>
-            <el-table-column prop="dead_stock_amount" label="金额" width="120">
-              <template #default="{ row }">{{ numeric(row.dead_stock_amount) }}</template>
+            <el-table-column
+              prop="dead_stock_amount"
+              label="金额"
+              width="120"
+            >
+              <template #default="{ row }">
+                {{ numeric(row.dead_stock_amount) }}
+              </template>
             </el-table-column>
-            <el-table-column prop="dead_stock_days" label="天数" width="90" />
+            <el-table-column
+              prop="dead_stock_days"
+              label="天数"
+              width="90"
+            />
           </el-table>
           <EmptyState
             v-else

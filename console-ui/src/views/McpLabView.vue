@@ -264,15 +264,28 @@ async function onLoadProposalDetail(): Promise<void> {
 </script>
 
 <template>
-  <section class="mcp-lab" data-testid="mcp-lab-page">
-    <div class="d2a-card scope-banner" data-testid="mcp-scope-banner">
+  <section
+    class="mcp-lab"
+    data-testid="mcp-lab-page"
+  >
+    <div
+      class="d2a-card scope-banner"
+      data-testid="mcp-scope-banner"
+    >
       <p>
         query evidence 以当前标签页 session 隔离；建议卡为「说」档结构化输出，不会执行 ERP 写回或其他「做」档动作。
       </p>
-      <p class="scope-banner__hint" data-testid="evidence-session-id">
+      <p
+        class="scope-banner__hint"
+        data-testid="evidence-session-id"
+      >
         session={{ evidenceSessionId ?? '尚未生成' }}
       </p>
-      <p v-if="historyClearedHint" class="scope-banner__hint" data-testid="history-cleared-hint">
+      <p
+        v-if="historyClearedHint"
+        class="scope-banner__hint"
+        data-testid="history-cleared-hint"
+      >
         {{ historyClearedHint }}
       </p>
     </div>
@@ -291,19 +304,49 @@ async function onLoadProposalDetail(): Promise<void> {
         size="small"
         data-testid="mcp-interface-table"
       >
-        <el-table-column prop="tool" label="接口" min-width="150" />
-        <el-table-column prop="tier" label="档位" width="72">
+        <el-table-column
+          prop="tool"
+          label="接口"
+          min-width="150"
+        />
+        <el-table-column
+          prop="tier"
+          label="档位"
+          width="72"
+        >
           <template #default="{ row }">
-            <el-tag size="small" :type="row.tier === '说' ? 'warning' : 'success'">
+            <el-tag
+              size="small"
+              :type="row.tier === '说' ? 'warning' : 'success'"
+            >
               {{ row.tier }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="mode" label="能力" min-width="100" />
-        <el-table-column prop="target" label="目标" min-width="150" />
-        <el-table-column prop="params" label="参数" min-width="260" />
-        <el-table-column prop="evidence" label="证据" min-width="190" />
-        <el-table-column label="操作" width="110">
+        <el-table-column
+          prop="mode"
+          label="能力"
+          min-width="100"
+        />
+        <el-table-column
+          prop="target"
+          label="目标"
+          min-width="150"
+        />
+        <el-table-column
+          prop="params"
+          label="参数"
+          min-width="260"
+        />
+        <el-table-column
+          prop="evidence"
+          label="证据"
+          min-width="190"
+        />
+        <el-table-column
+          label="操作"
+          width="110"
+        >
           <template #default="{ row }">
             <el-button
               size="small"
@@ -323,7 +366,13 @@ async function onLoadProposalDetail(): Promise<void> {
       data-testid="mcp-interface-detail"
     >
       <div class="interface-detail__head">
-        <el-button size="small" data-testid="back-to-interface-list" @click="backToList">返回列表</el-button>
+        <el-button
+          size="small"
+          data-testid="back-to-interface-list"
+          @click="backToList"
+        >
+          返回列表
+        </el-button>
         <div>
           <h3>{{ selectedInterface?.tool }}</h3>
           <p>{{ selectedInterface?.mode }} · {{ selectedInterface?.target }}</p>
@@ -354,21 +403,54 @@ async function onLoadProposalDetail(): Promise<void> {
         <h3>query_objects</h3>
         <p>对象查询 · 不带 object 返回对象目录</p>
       </div>
-      <div class="form-grid" data-testid="object-query-form">
-        <label>对象 <input v-model="objectForm.object" data-testid="object-name" /></label>
+      <div
+        class="form-grid"
+        data-testid="object-query-form"
+      >
+        <label>对象 <input
+          v-model="objectForm.object"
+          data-testid="object-name"
+        ></label>
         <label>filters(JSON)
-          <textarea v-model="objectForm.filtersJson" rows="3" data-testid="object-filters" />
+          <textarea
+            v-model="objectForm.filtersJson"
+            rows="3"
+            data-testid="object-filters"
+          />
         </label>
-        <label>order_by <input v-model="objectForm.order_by" data-testid="object-order-by" /></label>
+        <label>order_by <input
+          v-model="objectForm.order_by"
+          data-testid="object-order-by"
+        ></label>
         <label class="inline">
-          <input v-model="objectForm.desc" type="checkbox" data-testid="object-desc" /> desc
+          <input
+            v-model="objectForm.desc"
+            type="checkbox"
+            data-testid="object-desc"
+          > desc
         </label>
         <label>limit
-          <input v-model.number="objectForm.limit" type="number" min="1" max="200" data-testid="object-limit" />
+          <input
+            v-model.number="objectForm.limit"
+            type="number"
+            min="1"
+            max="200"
+            data-testid="object-limit"
+          >
         </label>
-        <el-button type="primary" data-testid="object-run" @click="onRunObjects">执行查询</el-button>
+        <el-button
+          type="primary"
+          data-testid="object-run"
+          @click="onRunObjects"
+        >
+          执行查询
+        </el-button>
       </div>
-      <p v-if="objectRefreshError" class="refresh-warning" data-testid="object-refresh-error">
+      <p
+        v-if="objectRefreshError"
+        class="refresh-warning"
+        data-testid="object-refresh-error"
+      >
         刷新失败({{ reasonLabel(objectRefreshError as McpLabApiError) || objectRefreshError.message }})，保留上次成功结果
       </p>
       <LoadingState v-if="objectQuery.status === 'loading'" />
@@ -385,8 +467,14 @@ async function onLoadProposalDetail(): Promise<void> {
           @retry="onRunObjects"
         />
       </template>
-      <div v-else-if="objectQuery.status === 'success'" data-testid="object-result">
-        <div class="result-meta" data-testid="object-result-meta">
+      <div
+        v-else-if="objectQuery.status === 'success'"
+        data-testid="object-result"
+      >
+        <div
+          class="result-meta"
+          data-testid="object-result-meta"
+        >
           <span>query_id={{ metaOf(objectQuery.data)?.query_id ?? 'null' }}</span>
           <span>scope={{ metaOf(objectQuery.data)?.evidence_scope ?? '—' }}</span>
           <span>session={{ shortValue(metaOf(objectQuery.data)?.session_id) }}</span>
@@ -400,11 +488,22 @@ async function onLoadProposalDetail(): Promise<void> {
             template={{ metaOf(objectQuery.data)?.template_version ?? '—' }}
           </span>
         </div>
-        <p v-if="metaOf(objectQuery.data)?.masked_fields?.length" data-testid="object-masked">
+        <p
+          v-if="metaOf(objectQuery.data)?.masked_fields?.length"
+          data-testid="object-masked"
+        >
           已脱敏: {{ metaOf(objectQuery.data)?.masked_fields?.join(', ') }}
         </p>
-        <ul v-if="metaOf(objectQuery.data)?.warnings?.length" data-testid="object-warnings">
-          <li v-for="w in metaOf(objectQuery.data)?.warnings" :key="w">{{ w }}</li>
+        <ul
+          v-if="metaOf(objectQuery.data)?.warnings?.length"
+          data-testid="object-warnings"
+        >
+          <li
+            v-for="w in metaOf(objectQuery.data)?.warnings"
+            :key="w"
+          >
+            {{ w }}
+          </li>
         </ul>
         <EmptyState
           v-if="rowsOf(objectQuery.data).length === 0"
@@ -424,10 +523,17 @@ async function onLoadProposalDetail(): Promise<void> {
             min-width="120"
           />
         </el-table>
-        <el-button size="small" data-testid="toggle-object-json" @click="showObjectRawJson = !showObjectRawJson">
+        <el-button
+          size="small"
+          data-testid="toggle-object-json"
+          @click="showObjectRawJson = !showObjectRawJson"
+        >
           {{ showObjectRawJson ? '隐藏' : '显示' }}原始 JSON
         </el-button>
-        <pre v-if="showObjectRawJson" data-testid="object-raw-json">{{ JSON.stringify(objectQuery.data, null, 2) }}</pre>
+        <pre
+          v-if="showObjectRawJson"
+          data-testid="object-raw-json"
+        >{{ JSON.stringify(objectQuery.data, null, 2) }}</pre>
       </div>
     </section>
 
@@ -440,15 +546,40 @@ async function onLoadProposalDetail(): Promise<void> {
         <h3>query_metrics</h3>
         <p>指标查询 · 不带 metric 返回指标目录</p>
       </div>
-      <div class="form-grid" data-testid="metrics-query-form">
-        <label>指标 <input v-model="metricsForm.metric" data-testid="metric-name" /></label>
-        <label>group_by <input v-model="metricsForm.group_by" data-testid="metric-group-by" /></label>
+      <div
+        class="form-grid"
+        data-testid="metrics-query-form"
+      >
+        <label>指标 <input
+          v-model="metricsForm.metric"
+          data-testid="metric-name"
+        ></label>
+        <label>group_by <input
+          v-model="metricsForm.group_by"
+          data-testid="metric-group-by"
+        ></label>
         <label>limit
-          <input v-model.number="metricsForm.limit" type="number" min="1" max="200" data-testid="metric-limit" />
+          <input
+            v-model.number="metricsForm.limit"
+            type="number"
+            min="1"
+            max="200"
+            data-testid="metric-limit"
+          >
         </label>
-        <el-button type="primary" data-testid="metrics-run" @click="onRunMetrics">执行查询</el-button>
+        <el-button
+          type="primary"
+          data-testid="metrics-run"
+          @click="onRunMetrics"
+        >
+          执行查询
+        </el-button>
       </div>
-      <p v-if="metricsRefreshError" class="refresh-warning" data-testid="metrics-refresh-error">
+      <p
+        v-if="metricsRefreshError"
+        class="refresh-warning"
+        data-testid="metrics-refresh-error"
+      >
         刷新失败({{ reasonLabel(metricsRefreshError as McpLabApiError) || metricsRefreshError.message }})，保留上次成功结果
       </p>
       <LoadingState v-if="metricsQuery.status === 'loading'" />
@@ -457,8 +588,14 @@ async function onLoadProposalDetail(): Promise<void> {
         :error="metricsQuery.error"
         @retry="onRunMetrics"
       />
-      <div v-else-if="metricsQuery.status === 'success'" data-testid="metrics-result">
-        <div class="result-meta" data-testid="metrics-result-meta">
+      <div
+        v-else-if="metricsQuery.status === 'success'"
+        data-testid="metrics-result"
+      >
+        <div
+          class="result-meta"
+          data-testid="metrics-result-meta"
+        >
           <span>query_id={{ metaOf(metricsQuery.data)?.query_id ?? 'null' }}</span>
           <span>scope={{ metaOf(metricsQuery.data)?.evidence_scope ?? '—' }}</span>
           <span>session={{ shortValue(metaOf(metricsQuery.data)?.session_id) }}</span>
@@ -469,8 +606,16 @@ async function onLoadProposalDetail(): Promise<void> {
             dataset={{ metaOf(metricsQuery.data)?.dataset_version ?? '尚未发布' }}
           </span>
         </div>
-        <ul v-if="metaOf(metricsQuery.data)?.warnings?.length" data-testid="metrics-warnings">
-          <li v-for="w in metaOf(metricsQuery.data)?.warnings" :key="w">{{ w }}</li>
+        <ul
+          v-if="metaOf(metricsQuery.data)?.warnings?.length"
+          data-testid="metrics-warnings"
+        >
+          <li
+            v-for="w in metaOf(metricsQuery.data)?.warnings"
+            :key="w"
+          >
+            {{ w }}
+          </li>
         </ul>
         <EmptyState
           v-if="rowsOf(metricsQuery.data).length === 0"
@@ -490,10 +635,17 @@ async function onLoadProposalDetail(): Promise<void> {
             min-width="120"
           />
         </el-table>
-        <el-button size="small" data-testid="toggle-metrics-json" @click="showMetricsRawJson = !showMetricsRawJson">
+        <el-button
+          size="small"
+          data-testid="toggle-metrics-json"
+          @click="showMetricsRawJson = !showMetricsRawJson"
+        >
           {{ showMetricsRawJson ? '隐藏' : '显示' }}原始 JSON
         </el-button>
-        <pre v-if="showMetricsRawJson" data-testid="metrics-raw-json">{{ JSON.stringify(metricsQuery.data, null, 2) }}</pre>
+        <pre
+          v-if="showMetricsRawJson"
+          data-testid="metrics-raw-json"
+        >{{ JSON.stringify(metricsQuery.data, null, 2) }}</pre>
       </div>
     </section>
 
@@ -506,11 +658,24 @@ async function onLoadProposalDetail(): Promise<void> {
         <h3>propose_action</h3>
         <p>说档建议卡 · 引用同一 session 的 query evidence</p>
       </div>
-      <div class="form-grid" data-testid="proposal-form">
-        <label>对象 <input v-model="proposalForm.object" data-testid="proposal-object" /></label>
-        <label>动作 <input v-model="proposalForm.action" data-testid="proposal-action" /></label>
+      <div
+        class="form-grid"
+        data-testid="proposal-form"
+      >
+        <label>对象 <input
+          v-model="proposalForm.object"
+          data-testid="proposal-object"
+        ></label>
+        <label>动作 <input
+          v-model="proposalForm.action"
+          data-testid="proposal-action"
+        ></label>
         <label>结论
-          <textarea v-model="proposalForm.conclusion" rows="2" data-testid="proposal-conclusion" />
+          <textarea
+            v-model="proposalForm.conclusion"
+            rows="2"
+            data-testid="proposal-conclusion"
+          />
         </label>
         <div
           v-for="(row, idx) in proposalForm.evidence"
@@ -518,25 +683,64 @@ async function onLoadProposalDetail(): Promise<void> {
           class="evidence-row"
           data-testid="evidence-row"
         >
-          <label>claim <input v-model="row.claim" :data-testid="`evidence-claim-${idx}`" /></label>
+          <label>claim <input
+            v-model="row.claim"
+            :data-testid="`evidence-claim-${idx}`"
+          ></label>
           <label>query_id
-            <select v-model="row.query_id" :data-testid="`evidence-query-${idx}`">
+            <select
+              v-model="row.query_id"
+              :data-testid="`evidence-query-${idx}`"
+            >
               <option value="">选择当前会话中的持久 query evidence</option>
-              <option v-for="h in citableHistory" :key="h.query_id" :value="h.query_id">
+              <option
+                v-for="h in citableHistory"
+                :key="h.query_id"
+                :value="h.query_id"
+              >
                 {{ h.query_id }} · {{ h.tool }} · {{ h.target }} · {{ shortValue(h.result_digest, 6) }}
               </option>
             </select>
           </label>
-          <p v-if="historyFor(row.query_id)?.result_digest" class="muted">
+          <p
+            v-if="historyFor(row.query_id)?.result_digest"
+            class="muted"
+          >
             digest={{ shortValue(historyFor(row.query_id)?.result_digest, 10) }}
           </p>
-          <el-button size="small" @click="removeEvidenceRow(idx)">删除</el-button>
+          <el-button
+            size="small"
+            @click="removeEvidenceRow(idx)"
+          >
+            删除
+          </el-button>
         </div>
-        <el-button size="small" data-testid="evidence-add" @click="addEvidenceRow">添加 evidence</el-button>
-        <el-button type="primary" data-testid="proposal-run" @click="onRunProposal">生成建议卡</el-button>
-        <p class="muted" data-testid="no-execute-hint">本页不提供执行建议或写回控件。</p>
+        <el-button
+          size="small"
+          data-testid="evidence-add"
+          @click="addEvidenceRow"
+        >
+          添加 evidence
+        </el-button>
+        <el-button
+          type="primary"
+          data-testid="proposal-run"
+          @click="onRunProposal"
+        >
+          生成建议卡
+        </el-button>
+        <p
+          class="muted"
+          data-testid="no-execute-hint"
+        >
+          本页不提供执行建议或写回控件。
+        </p>
       </div>
-      <p v-if="proposalRefreshError" class="refresh-warning" data-testid="proposal-refresh-error">
+      <p
+        v-if="proposalRefreshError"
+        class="refresh-warning"
+        data-testid="proposal-refresh-error"
+      >
         {{ reasonLabel(proposalRefreshError as McpLabApiError) || proposalRefreshError.message }}
       </p>
       <LoadingState v-if="proposal.status === 'loading'" />
@@ -545,16 +749,30 @@ async function onLoadProposalDetail(): Promise<void> {
         :error="proposal.error"
         @retry="onRunProposal"
       />
-      <div v-else-if="proposal.status === 'success'" class="proposal-card" data-testid="proposal-result">
+      <div
+        v-else-if="proposal.status === 'success'"
+        class="proposal-card"
+        data-testid="proposal-result"
+      >
         <h3>{{ proposal.data.conclusion }}</h3>
         <p>档位: {{ proposal.data.tier }} · {{ proposal.data.action_desc }}</p>
         <p data-testid="proposal-summary-meta">
           proposal_id={{ proposal.data.proposal_id }} · session={{ shortValue(proposal.data.session_id) }} ·
           dataset={{ proposal.data.dataset_version ?? '—' }}
         </p>
-        <p data-testid="proposal-governance">{{ proposal.data.governance }}</p>
-        <ul v-if="proposal.data.caveats?.length" data-testid="proposal-caveats">
-          <li v-for="c in proposal.data.caveats" :key="c">{{ c }}</li>
+        <p data-testid="proposal-governance">
+          {{ proposal.data.governance }}
+        </p>
+        <ul
+          v-if="proposal.data.caveats?.length"
+          data-testid="proposal-caveats"
+        >
+          <li
+            v-for="c in proposal.data.caveats"
+            :key="c"
+          >
+            {{ c }}
+          </li>
         </ul>
         <div
           v-for="ev in proposal.data.evidence"
@@ -562,45 +780,79 @@ async function onLoadProposalDetail(): Promise<void> {
           class="evidence-item"
           data-testid="proposal-evidence-item"
         >
-          <button type="button" @click="toggleEvidence(ev.query.query_id)">
+          <button
+            type="button"
+            @click="toggleEvidence(ev.query.query_id)"
+          >
             {{ ev.claim }} ({{ ev.query.query_id }}) · {{ shortValue(ev.query.result_digest, 8) }}
           </button>
-          <div v-if="expandedEvidence === ev.query.query_id" data-testid="evidence-expand">
+          <div
+            v-if="expandedEvidence === ev.query.query_id"
+            data-testid="evidence-expand"
+          >
             <pre>{{ prettyJson(evidenceSnapshot(ev)) }}</pre>
           </div>
         </div>
       </div>
     </section>
 
-    <div v-if="selectedTool !== null" class="d2a-card" data-testid="evidence-detail-panel">
+    <div
+      v-if="selectedTool !== null"
+      class="d2a-card"
+      data-testid="evidence-detail-panel"
+    >
       <h3>持久 Evidence 详情</h3>
       <div class="form-grid">
         <label>query_id
-          <input v-model="detailForm.query_id" data-testid="detail-query-id" />
+          <input
+            v-model="detailForm.query_id"
+            data-testid="detail-query-id"
+          >
         </label>
-        <el-button size="small" data-testid="detail-query-load" @click="onLoadQueryDetail">读取 Query 详情</el-button>
+        <el-button
+          size="small"
+          data-testid="detail-query-load"
+          @click="onLoadQueryDetail"
+        >
+          读取 Query 详情
+        </el-button>
         <LoadingState v-if="queryDetail.status === 'loading'" />
         <ErrorState
           v-else-if="queryDetail.status === 'error'"
           :error="queryDetail.error"
           @retry="onLoadQueryDetail"
         />
-        <pre v-else-if="queryDetail.status === 'success'" data-testid="detail-query-result">
-{{ prettyJson(queryDetail.data) }}</pre>
+        <pre
+          v-else-if="queryDetail.status === 'success'"
+          data-testid="detail-query-result"
+        >
+        {{ prettyJson(queryDetail.data) }}</pre>
       </div>
       <div class="form-grid detail-panel">
         <label>proposal_id
-          <input v-model="detailForm.proposal_id" data-testid="detail-proposal-id" />
+          <input
+            v-model="detailForm.proposal_id"
+            data-testid="detail-proposal-id"
+          >
         </label>
-        <el-button size="small" data-testid="detail-proposal-load" @click="onLoadProposalDetail">读取 Proposal 详情</el-button>
+        <el-button
+          size="small"
+          data-testid="detail-proposal-load"
+          @click="onLoadProposalDetail"
+        >
+          读取 Proposal 详情
+        </el-button>
         <LoadingState v-if="proposalDetail.status === 'loading'" />
         <ErrorState
           v-else-if="proposalDetail.status === 'error'"
           :error="proposalDetail.error"
           @retry="onLoadProposalDetail"
         />
-        <pre v-else-if="proposalDetail.status === 'success'" data-testid="detail-proposal-result">
-{{ prettyJson(proposalDetail.data) }}</pre>
+        <pre
+          v-else-if="proposalDetail.status === 'success'"
+          data-testid="detail-proposal-result"
+        >
+        {{ prettyJson(proposalDetail.data) }}</pre>
       </div>
     </div>
   </section>
