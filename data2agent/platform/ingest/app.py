@@ -47,12 +47,57 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     initialized = LandingStore(landing_path)
     initialized.con.close()
 
-    def auth(request: Request) -> None:
-        if not token:
+    def _registry_for(source: str | None) -> tuple[dict | None, bool]:
+        """(登记记录, 登记簿是否非空);库不可读时按空登记簿处理(引导期)。"""
+        try:
+            db = LandingStore.open_existing(landing_path)
+        except Exception:
+            return None, False
+        try:
+            reg = db.get_source_registration(source) if source else None
+            return reg, db.registry_has_any()
+        finally:
+            db.con.close()
+
+    async def auth(request: Request) -> None:
+        """签发制授权(2026-08):
+
+        - 登记源:Bearer 须为该源签发的 Token(库中只存哈希);已停用源 403;
+        - 未登记源:仅全局管理员 Token(D2A_INGEST_TOKEN,迁移期兼容)可推;
+        - 空登记簿 + 无全局 Token = 开发引导期,开放;
+          首个源登记后未登记推送一律 403(先登记才接收)。
+        """
+        bearer = (
+            request.headers.get("authorization", "").removeprefix("Bearer ").strip())
+        # 管理员 Token 最高优先:可推任何源(含未登记),供迁移期与运维逃生
+        if token and bearer == token:
             return
-        supplied = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
-        if supplied != token:
+        source: str | None = None
+        if (
+            request.method == "POST"
+            and request.headers.get("content-type", "").startswith("application/json")
+        ):
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = None
+            if isinstance(payload, dict) and isinstance(payload.get("source"), str):
+                source = payload["source"]
+        reg, has_any = _registry_for(source)
+        if reg is not None:
+            if reg["status"] != "active":
+                raise HTTPException(
+                    403, f"数据源 {source} 已停用,请在平台数据源管理中启用")
+            digest = hashlib.sha256(bearer.encode()).hexdigest() if bearer else ""
+            if bearer and digest == reg["token_sha256"]:
+                return
+            raise HTTPException(401, f"数据源 {source} 的推送 Token 无效")
+        if token:
             raise HTTPException(401, "需要有效 Token(Authorization: Bearer <token>)")
+        if has_any:
+            raise HTTPException(
+                403, f"数据源 {source} 未在平台登记;签发制下请先在数据源管理中登记")
+        # 引导期:空登记簿且无全局 Token,保持内网开放
 
     app = FastAPI(title="data2agent ingest")
 

@@ -622,6 +622,10 @@ class SourceCard(BaseModel):
     quarantined: int = Field(description="未处理隔离条数")
     last_run_at: datetime | None = Field(default=None, description=TZ_TIME_DESC)
     last_run_status: str | None = None
+    registered: bool = Field(
+        default=False, description="是否已在平台登记簿登记(签发制)")
+    registry_status: Literal["active", "disabled"] | None = Field(
+        default=None, description="登记状态;未登记为 null")
 
 
 class SourceTableState(BaseModel):
@@ -656,6 +660,42 @@ class IngestTokenReveal(BaseModel):
     """明文 Token 响应(仅 reveal 接口;每次调用写访问审计)。"""
 
     token: str
+
+
+# ---- 数据源登记(平台签发制)----
+
+SOURCE_IDENT_PATTERN = r"^[a-z][a-z0-9_]{2,31}$"
+
+
+class SourceRegisterBody(BaseModel):
+    """登记数据源:平台生成专属推送 Token(明文仅响应这一次)。"""
+
+    model_config = {"extra": "forbid"}
+    source: str = Field(
+        pattern=SOURCE_IDENT_PATTERN,
+        description="源标识(小写字母/数字/下划线,建议 <厂区>_<系统>,如 kunshan_e10)")
+    display_name: str | None = Field(default=None, max_length=64)
+    source_type: SourceType = "unknown"
+    note: str | None = Field(default=None, max_length=200)
+
+
+class SourceRegistered(BaseModel):
+    source: str
+    display_name: str | None
+    source_type: SourceType
+    status: Literal["active", "disabled"]
+    token: str = Field(description="专属推送 Token 明文,仅此一次;平台只存哈希,丢失须重置")
+    endpoint: str
+
+
+class SourceTokenResetResult(BaseModel):
+    source: str
+    token: str = Field(description="新 Token 明文,仅此一次")
+
+
+class SourceStatusChangeResult(BaseModel):
+    source: str
+    status: Literal["active", "disabled"]
 
 
 class RunStep(BaseModel):

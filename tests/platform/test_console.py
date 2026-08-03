@@ -167,6 +167,58 @@ def test_ingest_connection_info_and_reveal(env, monkeypatch):
     assert audit is not None and audit[0] == "ingest_token_reveal" and audit[1] == 1
 
 
+def test_source_register_lifecycle(env):
+    """签发制:登记 → 列表可见(未推送也在) → 停用/启用 → 重置 Token;全程审计。"""
+    landing, platform_yaml, tmp_path = env
+    platform_cfg = PlatformConfig(
+        templates=str(ROOT / "templates"), landing=landing.db_path)
+    client = TestClient(create_app(
+        landing.db_path, str(ROOT / "templates"),
+        platform_cfg, config_path=platform_yaml, home=tmp_path))
+
+    # 登记:明文仅此一次,库中只存哈希
+    r = client.post("/api/sources/register", json={
+        "source": "kunshan_e10", "display_name": "昆山厂 E10", "source_type": "erp"})
+    assert r.status_code == 201, r.text
+    created = r.json()
+    assert created["status"] == "active" and created["token"]
+    assert created["endpoint"].endswith(":8850")
+    reg = landing.get_source_registration("kunshan_e10")
+    assert reg is not None and reg["token_sha256"] != created["token"]
+
+    # 重名 409;非法标识 422
+    assert client.post("/api/sources/register", json={
+        "source": "kunshan_e10"}).status_code == 409
+    assert client.post("/api/sources/register", json={
+        "source": "Bad Name"}).status_code == 422
+
+    # 未推送也出现在清单(registered=True),既有观测源 registered=False
+    cards = client.get("/api/sources").json()
+    by_source = {c["source"]: c for c in cards}
+    assert by_source["kunshan_e10"]["registered"] is True
+    assert by_source["kunshan_e10"]["display_name"] == "昆山厂 E10"
+    assert by_source[SOURCE]["registered"] is False
+
+    # 停用 / 启用
+    assert client.post("/api/sources/kunshan_e10/disable").json()["status"] == "disabled"
+    assert client.post("/api/sources/kunshan_e10/enable").json()["status"] == "active"
+    assert client.post("/api/sources/ghost/disable").status_code == 404
+
+    # 重置 Token:哈希更新,新明文仅此一次
+    r2 = client.post("/api/sources/kunshan_e10/token/reset")
+    assert r2.status_code == 200, r2.text
+    new_token = r2.json()["token"]
+    assert new_token and new_token != created["token"]
+    assert landing.get_source_registration("kunshan_e10")["token_sha256"] != reg["token_sha256"]
+
+    # 审计:register / disable / enable / reset 各一条
+    rows = landing.con.execute(
+        "SELECT resource FROM d2a_console_access_audit "
+        "WHERE resource_type = 'config' AND source = 'kunshan_e10' ORDER BY id").fetchall()
+    assert [r[0] for r in rows] == [
+        "source_register", "source_disable", "source_enable", "source_token_reset"]
+
+
 def test_ingest_token_reveal_without_token_409(env, monkeypatch):
     """未配 Token:reveal 返回 409,不返回空串冒充。"""
     landing, platform_yaml, tmp_path = env

@@ -14,6 +14,7 @@ import importlib.metadata
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
 import sqlite3
@@ -127,6 +128,10 @@ from .contracts import (
     SetupSuccessResponse,
     SourceCard,
     SourceDetail,
+    SourceRegisterBody,
+    SourceRegistered,
+    SourceStatusChangeResult,
+    SourceTokenResetResult,
     IngestConnectionInfo,
     IngestTokenReveal,
     TemplateMetric,
@@ -1670,7 +1675,13 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     def _source_card(db: LandingStore, source: str) -> dict:
         """单源卡片聚合;任何子查询失败按字段降级,不让整卡 500。"""
-        stype, dname = _SOURCE_REGISTRY.get(source, ("unknown", source))
+        reg = db.get_source_registration(source)
+        if reg is not None:
+            stype = reg["source_type"] or "unknown"
+            dname = reg["display_name"] or _SOURCE_REGISTRY.get(
+                source, ("unknown", source))[1]
+        else:
+            stype, dname = _SOURCE_REGISTRY.get(source, ("unknown", source))
         status, reason = "unknown", ""
         pack = state["pack"]
         if pack is not None:
@@ -1702,6 +1713,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
             "quarantined": quarantined,
             "last_run_at": obs.aware(last["started_at"]) if last else None,
             "last_run_status": last["status"] if last else None,
+            "registered": reg is not None,
+            "registry_status": reg["status"] if reg else None,
             "_watermarks": watermarks,
         }
 
@@ -1711,10 +1724,12 @@ def create_app(landing: str | None = None, templates: str = "templates",
         responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
     )
     def sources() -> list[dict]:
-        """数据源清单:平台观测到的全部接入源(卡片聚合)。"""
+        """数据源清单:观测到的源与已登记源的并集(登记但未推送的源也列出)。"""
         db = store()
+        names = set(_observed_sources())
+        names.update(r["source"] for r in db.list_source_registrations())
         out = []
-        for s in _observed_sources():
+        for s in sorted(names):
             card = _source_card(db, s)
             card.pop("_watermarks", None)
             out.append(card)
@@ -1729,7 +1744,9 @@ def create_app(landing: str | None = None, templates: str = "templates",
     def source_detail(source: str) -> dict:
         """数据源详情:表级水位与 raw 行数 + 最近 5 次运行。"""
         if source not in _observed_sources():
-            raise HTTPException(404, f"数据源 {source} 不存在")
+            reg = store().get_source_registration(source)
+            if reg is None:
+                raise HTTPException(404, f"数据源 {source} 不存在")
         db = store()
         card = _source_card(db, source)
         watermarks = card.pop("_watermarks")
@@ -1759,6 +1776,98 @@ def create_app(landing: str | None = None, templates: str = "templates",
             "table_states": table_states,
             "recent_runs": [_map_run(r) for r in runs],
         }
+
+    # ---- 数据源登记(平台签发制)----
+    # 平台登记分配 source + 按源签发 Token(只存哈希,明文仅此一次);
+    # 中间机照抄配置即可推送。全局 D2A_INGEST_TOKEN 为迁移期管理员 Token。
+
+    def _iso_now() -> str:
+        return datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def _ingest_endpoint(request: Request) -> str:
+        cfg = state["config"]
+        return (cfg.ingest_url if cfg and cfg.ingest_url else None) or (
+            f"http://{request.url.hostname or '127.0.0.1'}:8850"
+        )
+
+    def _audit_config(source: str | None, resource: str) -> None:
+        db = store()
+        db.log_access(
+            subject="console-admin", resource_type="config", source=source,
+            resource=resource, allowed=True, reason_code="ok")
+
+    @api.post(
+        "/sources/register",
+        response_model=SourceRegistered,
+        status_code=201,
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409],
+                   422: _RESP_HTTP_ERROR[422]},
+    )
+    def source_register(body: SourceRegisterBody, request: Request) -> dict:
+        """登记数据源并签发专属 Token;重名 409。明文仅此一次。"""
+        db = store()
+        token = secrets.token_urlsafe(24)
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        try:
+            db.create_source_registration(
+                source=body.source, token_sha256=digest,
+                display_name=body.display_name, source_type=body.source_type,
+                note=body.note, created_at=_iso_now())
+        except sqlite3.IntegrityError as e:
+            raise HTTPException(409, f"数据源 {body.source} 已登记") from e
+        _audit_config(body.source, "source_register")
+        return {
+            "source": body.source,
+            "display_name": body.display_name,
+            "source_type": body.source_type,
+            "status": "active",
+            "token": token,
+            "endpoint": _ingest_endpoint(request),
+        }
+
+    @api.post(
+        "/sources/{source}/disable",
+        response_model=SourceStatusChangeResult,
+        responses={401: _RESP_HTTP_ERROR[401], 404: {"model": HttpError},
+                   409: _RESP_HTTP_ERROR[409]},
+    )
+    def source_disable(source: str) -> dict:
+        """停用数据源:ingest 立即拒绝其推送;历史数据与审计保留。"""
+        db = store()
+        if not db.set_source_registration_status(
+                source, "disabled", disabled_at=_iso_now()):
+            raise HTTPException(404, f"数据源 {source} 未登记")
+        _audit_config(source, "source_disable")
+        return {"source": source, "status": "disabled"}
+
+    @api.post(
+        "/sources/{source}/enable",
+        response_model=SourceStatusChangeResult,
+        responses={401: _RESP_HTTP_ERROR[401], 404: {"model": HttpError},
+                   409: _RESP_HTTP_ERROR[409]},
+    )
+    def source_enable(source: str) -> dict:
+        db = store()
+        if not db.set_source_registration_status(source, "active", disabled_at=None):
+            raise HTTPException(404, f"数据源 {source} 未登记")
+        _audit_config(source, "source_enable")
+        return {"source": source, "status": "active"}
+
+    @api.post(
+        "/sources/{source}/token/reset",
+        response_model=SourceTokenResetResult,
+        responses={401: _RESP_HTTP_ERROR[401], 404: {"model": HttpError},
+                   409: _RESP_HTTP_ERROR[409]},
+    )
+    def source_token_reset(source: str) -> dict:
+        """重置专属 Token(旧 Token 立即失效);明文仅此一次。"""
+        db = store()
+        token = secrets.token_urlsafe(24)
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        if not db.reset_source_token(source, digest):
+            raise HTTPException(404, f"数据源 {source} 未登记")
+        _audit_config(source, "source_token_reset")
+        return {"source": source, "token": token}
 
     # ---- 中间机接入信息(展示用)----
     # 运维在中间机配 sink 时需要:平台端点 + Token + 协议版本。

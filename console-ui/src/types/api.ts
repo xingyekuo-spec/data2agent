@@ -710,11 +710,31 @@ export interface paths {
         };
         /**
          * Sources
-         * @description 数据源清单:平台观测到的全部接入源(卡片聚合)。
+         * @description 数据源清单:观测到的源与已登记源的并集(登记但未推送的源也列出)。
          */
         get: operations["sources_api_sources_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Source Register
+         * @description 登记数据源并签发专属 Token;重名 409。明文仅此一次。
+         */
+        post: operations["source_register_api_sources_register_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -735,6 +755,63 @@ export interface paths {
         get: operations["source_detail_api_sources__source__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/{source}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Source Disable
+         * @description 停用数据源:ingest 立即拒绝其推送;历史数据与审计保留。
+         */
+        post: operations["source_disable_api_sources__source__disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/{source}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Source Enable */
+        post: operations["source_enable_api_sources__source__enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/{source}/token/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Source Token Reset
+         * @description 重置专属 Token(旧 Token 立即失效);明文仅此一次。
+         */
+        post: operations["source_token_reset_api_sources__source__token_reset_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3194,6 +3271,17 @@ export interface components {
              * @description 未处理隔离条数
              */
             quarantined: number;
+            /**
+             * Registered
+             * @description 是否已在平台登记簿登记(签发制)
+             * @default false
+             */
+            registered: boolean;
+            /**
+             * Registry Status
+             * @description 登记状态;未登记为 null
+             */
+            registry_status?: ("active" | "disabled") | null;
             /** Source */
             source: string;
             /**
@@ -3249,6 +3337,17 @@ export interface components {
              * @description 该源最近运行(最多 5 条)
              */
             recent_runs: components["schemas"]["RunSummary"][];
+            /**
+             * Registered
+             * @description 是否已在平台登记簿登记(签发制)
+             * @default false
+             */
+            registered: boolean;
+            /**
+             * Registry Status
+             * @description 登记状态;未登记为 null
+             */
+            registry_status?: ("active" | "disabled") | null;
             /** Source */
             source: string;
             /**
@@ -3276,6 +3375,61 @@ export interface components {
              */
             tables: number;
         };
+        /**
+         * SourceRegisterBody
+         * @description 登记数据源:平台生成专属推送 Token(明文仅响应这一次)。
+         */
+        SourceRegisterBody: {
+            /** Display Name */
+            display_name?: string | null;
+            /** Note */
+            note?: string | null;
+            /**
+             * Source
+             * @description 源标识(小写字母/数字/下划线,建议 <厂区>_<系统>,如 kunshan_e10)
+             */
+            source: string;
+            /**
+             * Source Type
+             * @default unknown
+             * @enum {string}
+             */
+            source_type: "erp" | "unknown";
+        };
+        /** SourceRegistered */
+        SourceRegistered: {
+            /** Display Name */
+            display_name: string | null;
+            /** Endpoint */
+            endpoint: string;
+            /** Source */
+            source: string;
+            /**
+             * Source Type
+             * @enum {string}
+             */
+            source_type: "erp" | "unknown";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "disabled";
+            /**
+             * Token
+             * @description 专属推送 Token 明文,仅此一次;平台只存哈希,丢失须重置
+             */
+            token: string;
+        };
+        /** SourceStatusChangeResult */
+        SourceStatusChangeResult: {
+            /** Source */
+            source: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "active" | "disabled";
+        };
         /** SourceTableState */
         SourceTableState: {
             /** High Water */
@@ -3294,6 +3448,16 @@ export interface components {
             table_name: string;
             /** Watermark Col */
             watermark_col: string | null;
+        };
+        /** SourceTokenResetResult */
+        SourceTokenResetResult: {
+            /** Source */
+            source: string;
+            /**
+             * Token
+             * @description 新 Token 明文,仅此一次
+             */
+            token: string;
         };
         /** SyncStateRow */
         SyncStateRow: {
@@ -5852,6 +6016,57 @@ export interface operations {
             };
         };
     };
+    source_register_api_sources_register_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SourceRegisterBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceRegistered"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestError"];
+                };
+            };
+        };
+    };
     source_detail_api_sources__source__get: {
         parameters: {
             query?: never;
@@ -5870,6 +6085,180 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SourceDetail"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    source_disable_api_sources__source__disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceStatusChangeResult"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    source_enable_api_sources__source__enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceStatusChangeResult"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    source_token_reset_api_sources__source__token_reset_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceTokenResetResult"];
                 };
             };
             /** @description 缺少或无效的 Bearer Token */

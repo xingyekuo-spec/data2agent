@@ -5868,6 +5868,28 @@
             "title": "Quarantined",
             "type": "integer"
           },
+          "registered": {
+            "default": false,
+            "description": "是否已在平台登记簿登记(签发制)",
+            "title": "Registered",
+            "type": "boolean"
+          },
+          "registry_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "disabled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "登记状态;未登记为 null",
+            "title": "Registry Status"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -5972,6 +5994,28 @@
             "title": "Recent Runs",
             "type": "array"
           },
+          "registered": {
+            "default": false,
+            "description": "是否已在平台登记簿登记(签发制)",
+            "title": "Registered",
+            "type": "boolean"
+          },
+          "registry_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "active",
+                  "disabled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "登记状态;未登记为 null",
+            "title": "Registry Status"
+          },
           "source": {
             "title": "Source",
             "type": "string"
@@ -6029,6 +6073,132 @@
           "recent_runs"
         ],
         "title": "SourceDetail",
+        "type": "object"
+      },
+      "SourceRegisterBody": {
+        "additionalProperties": false,
+        "description": "登记数据源:平台生成专属推送 Token(明文仅响应这一次)。",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "source": {
+            "description": "源标识(小写字母/数字/下划线,建议 <厂区>_<系统>,如 kunshan_e10)",
+            "pattern": "^[a-z][a-z0-9_]{2,31}$",
+            "title": "Source",
+            "type": "string"
+          },
+          "source_type": {
+            "default": "unknown",
+            "enum": [
+              "erp",
+              "unknown"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source"
+        ],
+        "title": "SourceRegisterBody",
+        "type": "object"
+      },
+      "SourceRegistered": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "endpoint": {
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_type": {
+            "enum": [
+              "erp",
+              "unknown"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "token": {
+            "description": "专属推送 Token 明文,仅此一次;平台只存哈希,丢失须重置",
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "display_name",
+          "source_type",
+          "status",
+          "token",
+          "endpoint"
+        ],
+        "title": "SourceRegistered",
+        "type": "object"
+      },
+      "SourceStatusChangeResult": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "status"
+        ],
+        "title": "SourceStatusChangeResult",
         "type": "object"
       },
       "SourceTableState": {
@@ -6091,6 +6261,25 @@
           "high_water"
         ],
         "title": "SourceTableState",
+        "type": "object"
+      },
+      "SourceTokenResetResult": {
+        "properties": {
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "token": {
+            "description": "新 Token 明文,仅此一次",
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "token"
+        ],
+        "title": "SourceTokenResetResult",
         "type": "object"
       },
       "SyncStateRow": {
@@ -10425,7 +10614,7 @@
     },
     "/api/sources": {
       "get": {
-        "description": "数据源清单:平台观测到的全部接入源(卡片聚合)。",
+        "description": "数据源清单:观测到的源与已登记源的并集(登记但未推送的源也列出)。",
         "operationId": "sources_api_sources_get",
         "responses": {
           "200": {
@@ -10470,6 +10659,71 @@
           {}
         ],
         "summary": "Sources"
+      }
+    },
+    "/api/sources/register": {
+      "post": {
+        "description": "登记数据源并签发专属 Token;重名 409。明文仅此一次。",
+        "operationId": "source_register_api_sources_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceRegisterBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceRegistered"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestError"
+                }
+              }
+            },
+            "description": "请求参数错误(HTTPException 字符串 detail 或 FastAPI 校验列表)"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Source Register"
       }
     },
     "/api/sources/{source}": {
@@ -10546,6 +10800,233 @@
           {}
         ],
         "summary": "Source Detail"
+      }
+    },
+    "/api/sources/{source}/disable": {
+      "post": {
+        "description": "停用数据源:ingest 立即拒绝其推送;历史数据与审计保留。",
+        "operationId": "source_disable_api_sources__source__disable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceStatusChangeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Source Disable"
+      }
+    },
+    "/api/sources/{source}/enable": {
+      "post": {
+        "operationId": "source_enable_api_sources__source__enable_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceStatusChangeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Source Enable"
+      }
+    },
+    "/api/sources/{source}/token/reset": {
+      "post": {
+        "description": "重置专属 Token(旧 Token 立即失效);明文仅此一次。",
+        "operationId": "source_token_reset_api_sources__source__token_reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceTokenResetResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Source Token Reset"
       }
     },
     "/api/templates": {

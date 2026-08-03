@@ -1167,6 +1167,8 @@ export const baseFixture: ScenarioFixture = {
       quarantined: 0,
       last_run_at: T,
       last_run_status: 'ok',
+      registered: false,
+      registry_status: null,
     },
   ],
   sourceDetails: {
@@ -1181,6 +1183,8 @@ export const baseFixture: ScenarioFixture = {
       quarantined: 0,
       last_run_at: T,
       last_run_status: 'ok',
+      registered: false,
+      registry_status: null,
       table_states: [
         {
           table_name: 'CUSTOMER',

@@ -2,8 +2,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import { createPinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
+import { server } from '@/test/fetch-stub'
+import { http } from '@/test/http'
+import { baseFixture } from '@/test/fixtures/base'
 import { setScenario } from '@/test/scenario'
 import SourcesView from './SourcesView.vue'
+
+const healthyCard = baseFixture.sources[0]!
+const healthyDetail = baseFixture.sourceDetails['digiwin_e10']!
 
 function mountSources() {
   return mount(SourcesView, {
@@ -47,20 +53,55 @@ describe('SourcesView(数据源管理)', () => {
     wrapper.unmount()
   })
 
-  it('添加数据源:ERP 已支持,其余类型规划中', async () => {
+  it('添加数据源:登记表单 → 签发成功展示一次性 Token 与配置片段', async () => {
     const wrapper = mountSources()
     await flushPromises()
 
     await wrapper.find('[data-testid="source-add"]').trigger('click')
     await flushPromises()
+    expect(wrapper.find('[data-testid="register-submit"]').attributes('disabled')).toBeDefined()
 
-    const erp = document.body.querySelector('[data-testid="source-type-erp"]')
-    expect(erp?.textContent).toContain('已支持')
-    expect(erp?.textContent).toContain('中间机')
-    for (const t of ['mes', 'srm', 'excel', 'api']) {
-      const item = document.body.querySelector(`[data-testid="source-type-${t}"]`)
-      expect(item?.textContent).toContain('规划中')
-    }
+    await wrapper.find('[data-testid="register-source"]').setValue('kunshan_e10')
+    await wrapper.find('[data-testid="register-display-name"]').setValue('昆山厂 E10')
+    await wrapper.find('[data-testid="register-submit"]').trigger('click')
+    await flushPromises()
+
+    // 成功页:仅此一次的明文 + 专属配置片段(source/端点/Token 已填好)
+    const snippet = document.body.querySelector('[data-testid="register-snippet"]')
+    expect(snippet?.textContent).toContain('kunshan_e10:')
+    expect(snippet?.textContent).toContain('http://192.168.1.10:8850')
+    expect(snippet?.textContent).toContain('D2A_INGEST_TOKEN=issued-token-xyz')
+    wrapper.unmount()
+  })
+
+  it('登记源详情:展示登记管理动作(停用/重置 Token)', async () => {
+    // 让清单中的 digiwin_e10 为已登记状态
+    server.use(
+      http.get('*/api/sources', () =>
+        new Response(JSON.stringify([{
+          ...healthyCard, registered: true, registry_status: 'active',
+        }]), { headers: { 'Content-Type': 'application/json' } })),
+      http.get('*/api/sources/:source', () =>
+        new Response(JSON.stringify({
+          ...healthyDetail, registered: true, registry_status: 'active',
+        }), { headers: { 'Content-Type': 'application/json' } })),
+    )
+    const wrapper = mountSources()
+    await flushPromises()
+
+    await wrapper.find('[data-testid="source-card-digiwin_e10"]').trigger('click')
+    await flushPromises()
+
+    expect(document.body.querySelector('[data-testid="source-toggle-status"]')).not.toBeNull()
+    expect(document.body.querySelector('[data-testid="source-token-reset"]')).not.toBeNull()
+    wrapper.unmount()
+  })
+
+  it('卡片徽标:已签发/未登记状态可见', async () => {
+    const wrapper = mountSources()
+    await flushPromises()
+    const card = wrapper.find('[data-testid="source-card-digiwin_e10"]')
+    expect(card.text()).toContain('未登记')
     wrapper.unmount()
   })
 

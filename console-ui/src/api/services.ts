@@ -258,6 +258,24 @@ export function postIngestTokenReveal() {
   return call(client.POST('/api/ingest/connection-info/reveal'))
 }
 
+// ---- 数据源登记(平台签发制) ----
+
+export function postSourceRegister(body: components['schemas']['SourceRegisterBody']) {
+  return call(client.POST('/api/sources/register', { body }))
+}
+
+export function postSourceDisable(source: string) {
+  return call(client.POST('/api/sources/{source}/disable', { params: { path: { source } } }))
+}
+
+export function postSourceEnable(source: string) {
+  return call(client.POST('/api/sources/{source}/enable', { params: { path: { source } } }))
+}
+
+export function postSourceTokenReset(source: string) {
+  return call(client.POST('/api/sources/{source}/token/reset', { params: { path: { source } } }))
+}
+
 export function getTemplateMetrics() {
   return call(client.GET('/api/templates/metrics'))
 }

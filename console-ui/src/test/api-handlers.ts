@@ -225,6 +225,28 @@ export function buildHandlers(): StubHandler[] {
       if (fail) return fail
       return json({ token: 'tok-abcdef-123456' })
     }),
+    http.post('*/api/sources/register', async ({ request }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      const body = (await request.json()) as Record<string, unknown>
+      if (!body.source || !String(body.source).match(/^[a-z][a-z0-9_]{2,31}$/)) {
+        return json({ detail: '源标识非法' }, 422)
+      }
+      return json({
+        source: body.source,
+        display_name: body.display_name ?? null,
+        source_type: body.source_type ?? 'unknown',
+        status: 'active',
+        token: 'issued-token-xyz',
+        endpoint: 'http://192.168.1.10:8850',
+      }, 201)
+    }),
+    http.post('*/api/sources/:source/disable', ({ params }) =>
+      json({ source: params.source, status: 'disabled' })),
+    http.post('*/api/sources/:source/enable', ({ params }) =>
+      json({ source: params.source, status: 'active' })),
+    http.post('*/api/sources/:source/token/reset', ({ params }) =>
+      json({ source: params.source, token: 'reset-token-new' })),
     http.get('*/api/sources/:source', ({ params }) => {
       const fail = transportFailure()
       if (fail) return fail

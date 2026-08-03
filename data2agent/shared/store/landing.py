@@ -544,6 +544,18 @@ CREATE TABLE IF NOT EXISTS d2a_ingest_generation (
 );
 CREATE INDEX IF NOT EXISTS idx_d2a_ingest_generation_source
     ON d2a_ingest_generation (source, created_at DESC);
+-- 数据源登记簿(平台签发制):source 唯一登记 + 按源 Token(仅存哈希)。
+-- 空表 = 开发引导期(开放);首个源登记后 ingest 进入签发制校验。
+CREATE TABLE IF NOT EXISTS d2a_source_registry (
+    source TEXT PRIMARY KEY,
+    display_name TEXT,
+    source_type TEXT NOT NULL DEFAULT 'unknown',
+    token_sha256 TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    note TEXT,
+    created_at TEXT NOT NULL,
+    disabled_at TEXT
+);
 CREATE TABLE IF NOT EXISTS d2a_ingest_table_commit (
     source TEXT NOT NULL,
     generation_id TEXT NOT NULL,
@@ -1656,6 +1668,57 @@ class LandingStore:
                 "SELECT DISTINCT source FROM d2a_ingest_generation"
                 + where + " ORDER BY source")
         ]
+
+    # ---- 数据源登记簿(平台签发制)----
+
+    def create_source_registration(
+        self, *, source: str, token_sha256: str,
+        display_name: str | None = None, source_type: str = "unknown",
+        note: str | None = None, created_at: str,
+    ) -> None:
+        """登记数据源(重名报错,由调用方转为 409)。Token 只存哈希。"""
+        try:
+            self.con.execute(
+                "INSERT INTO d2a_source_registry "
+                "(source, display_name, source_type, token_sha256, status, note, created_at) "
+                "VALUES (?, ?, ?, ?, 'active', ?, ?)",
+                (source, display_name, source_type, token_sha256, note, created_at))
+            self.con.commit()
+        except sqlite3.IntegrityError:
+            # 回滚残留的隐式事务:共享连接场景下不回滚会持锁阻塞后续写
+            self.con.rollback()
+            raise
+
+    def get_source_registration(self, source: str) -> dict | None:
+        row = self.con.execute(
+            "SELECT * FROM d2a_source_registry WHERE source = ?", (source,)).fetchone()
+        return dict(row) if row else None
+
+    def list_source_registrations(self) -> list[dict]:
+        return [
+            dict(r) for r in self.con.execute(
+                "SELECT * FROM d2a_source_registry ORDER BY source").fetchall()
+        ]
+
+    def registry_has_any(self) -> bool:
+        (n,) = self.con.execute("SELECT COUNT(*) FROM d2a_source_registry").fetchone()
+        return n > 0
+
+    def set_source_registration_status(
+        self, source: str, status: str, *, disabled_at: str | None,
+    ) -> bool:
+        cur = self.con.execute(
+            "UPDATE d2a_source_registry SET status = ?, disabled_at = ? WHERE source = ?",
+            (status, disabled_at, source))
+        self.con.commit()
+        return cur.rowcount > 0
+
+    def reset_source_token(self, source: str, token_sha256: str) -> bool:
+        cur = self.con.execute(
+            "UPDATE d2a_source_registry SET token_sha256 = ? WHERE source = ?",
+            (token_sha256, source))
+        self.con.commit()
+        return cur.rowcount > 0
 
     # ---- 全量快照 staging / 原子发布 ----
 
