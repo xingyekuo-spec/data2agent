@@ -5,6 +5,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Coin,
+  Connection,
   Document,
   Files,
   MagicStick,
@@ -26,6 +27,7 @@ const openeds = NAV_GROUPS.map((g) => g.title)
 
 const icons: Record<ViewName, typeof Odometer> = {
   dashboard: Odometer,
+  sources: Connection,
   pipeline: Share,
   runs: Document,
   validation: CircleCheck,

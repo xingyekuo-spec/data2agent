@@ -125,6 +125,8 @@ from .contracts import (
     SetupResponse,
     SetupStatusResponse,
     SetupSuccessResponse,
+    SourceCard,
+    SourceDetail,
     TemplateMetric,
     TemplateObject,
     UpdateActionResponse,
@@ -1634,6 +1636,126 @@ def create_app(landing: str | None = None, templates: str = "templates",
             **_map_run(r),
             "steps_state": steps_state,
             "steps": [_map_step(s) for s in steps],
+        }
+
+    # ---- 数据源管理(只读聚合)----
+    # 边界:连接配置与 ERP 凭据在中间机(安全拓扑),平台不持有也不修改;
+    # 这里只做「接入了哪些源、什么状态」的登记式观测,供数据源管理页展示。
+
+    # 已登记的源类型:source 名 → (类型, 展示名)。新类型(金蝶/用友/MES…)
+    # 接入时在此登记;未登记源显示为 unknown + 原名,不伪造类型。
+    _SOURCE_REGISTRY: dict[str, tuple[str, str]] = {
+        "digiwin_e10": ("erp", "鼎捷 E10"),
+        "digiwin_ef": ("erp", "鼎捷易飞"),
+    }
+
+    def _source_access_mode(db: LandingStore, source: str) -> str:
+        """push=有 ingest 回执(中间机推送);local=有 raw 表无回执;否则 unknown。"""
+        try:
+            (n,) = db.con.execute(
+                "SELECT COUNT(*) FROM d2a_ingest_batch_receipt WHERE source = ?",
+                (source,)).fetchone()
+            if n:
+                return "push"
+        except sqlite3.Error:
+            pass
+        try:
+            if obs.raw_table_names(db, source):
+                return "local"
+        except Exception:
+            pass
+        return "unknown"
+
+    def _source_card(db: LandingStore, source: str) -> dict:
+        """单源卡片聚合;任何子查询失败按字段降级,不让整卡 500。"""
+        stype, dname = _SOURCE_REGISTRY.get(source, ("unknown", source))
+        status, reason = "unknown", ""
+        pack = state["pack"]
+        if pack is not None:
+            try:
+                nodes = obs.compute_nodes(db, pack, state["config"], source)
+                ingest_nodes = [n for n in nodes if n["node"] in ("erp", "extract", "push")]
+                status = obs.fold_status([n["status"] for n in ingest_nodes])
+                reason = next(
+                    (n["status_reason"] for n in ingest_nodes if n.get("status_reason")),
+                    "",
+                )
+            except Exception:
+                status, reason = "unknown", "状态计算失败"
+        watermarks = db.list_sync_watermarks(source)
+        (quarantined,) = db.con.execute(
+            "SELECT COUNT(*) FROM d2a_quarantine WHERE source = ? AND resolved_at IS NULL",
+            (source,)).fetchone()
+        last = db.con.execute(
+            "SELECT status, started_at FROM d2a_sync_run WHERE source = ? "
+            "ORDER BY id DESC LIMIT 1", (source,)).fetchone()
+        return {
+            "source": source,
+            "display_name": dname,
+            "source_type": stype,
+            "access_mode": _source_access_mode(db, source),
+            "status": status,
+            "status_reason": reason,
+            "tables": len(watermarks),
+            "quarantined": quarantined,
+            "last_run_at": obs.aware(last["started_at"]) if last else None,
+            "last_run_status": last["status"] if last else None,
+            "_watermarks": watermarks,
+        }
+
+    @api.get(
+        "/sources",
+        response_model=list[SourceCard],
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
+    def sources() -> list[dict]:
+        """数据源清单:平台观测到的全部接入源(卡片聚合)。"""
+        db = store()
+        out = []
+        for s in _observed_sources():
+            card = _source_card(db, s)
+            card.pop("_watermarks", None)
+            out.append(card)
+        return out
+
+    @api.get(
+        "/sources/{source}",
+        response_model=SourceDetail,
+        responses={401: _RESP_HTTP_ERROR[401], 404: {"model": HttpError},
+                   409: _RESP_HTTP_ERROR[409]},
+    )
+    def source_detail(source: str) -> dict:
+        """数据源详情:表级水位与 raw 行数 + 最近 5 次运行。"""
+        if source not in _observed_sources():
+            raise HTTPException(404, f"数据源 {source} 不存在")
+        db = store()
+        card = _source_card(db, source)
+        watermarks = card.pop("_watermarks")
+        raw_tables = set(obs.raw_table_names(db, source))
+        table_states = []
+        for w in watermarks:
+            rows: int | None = None
+            if w["table_name"] in raw_tables:
+                try:
+                    (rows,) = db.con.execute(
+                        f'SELECT COUNT(*) FROM "raw_{source}__{w["table_name"]}"'
+                        " WHERE _d2a_deleted_at IS NULL").fetchone()
+                except sqlite3.Error:
+                    rows = None
+            table_states.append({
+                "table_name": w["table_name"],
+                "watermark_col": w["watermark_col"],
+                "high_water": w["high_water"],
+                "last_run_at": obs.aware(w["last_run_at"]),
+                "rows": rows,
+            })
+        runs = db.con.execute(
+            "SELECT * FROM d2a_sync_run WHERE source = ? "
+            "ORDER BY started_at DESC, id DESC LIMIT 5", (source,)).fetchall()
+        return {
+            **card,
+            "table_states": table_states,
+            "recent_runs": [_map_run(r) for r in runs],
         }
 
     def _validation_error(status: int, detail: str, reason_code: str) -> JSONResponse:

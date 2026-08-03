@@ -218,6 +218,16 @@ export function buildHandlers(): StubHandler[] {
   return [
     http.get('*/api/setup/status', () => respond((f) => f.setupStatus)),
     http.get('*/api/overview', () => respond((f) => f.overview)),
+    http.get('*/api/sources', () => respond((f) => f.sources)),
+    http.get('*/api/sources/:source', ({ params }) => {
+      const fail = transportFailure()
+      if (fail) return fail
+      const detail = scenarioFixtures[getScenario()].sourceDetails[params.source ?? '']
+      if (!detail) {
+        return json({ detail: `数据源 ${params.source} 不存在` }, 404)
+      }
+      return json(detail)
+    }),
     http.post('*/api/validation/run', () => {
       const fail = transportFailure()
       if (fail) return fail

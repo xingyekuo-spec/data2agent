@@ -91,6 +91,54 @@ def test_explicit_home_ignores_process_home_for_vue_dist(env, monkeypatch):
     assert client.get("/", follow_redirects=False).status_code == 200
 
 
+def test_sources_api_lists_observed_sources(env):
+    """数据源清单:登记式聚合(类型/接入方式/状态/表数/隔离数)。"""
+    landing, platform_yaml, tmp_path = env
+    platform_cfg = PlatformConfig(
+        templates=str(ROOT / "templates"), landing=landing.db_path)
+    client = TestClient(create_app(
+        landing.db_path, str(ROOT / "templates"),
+        platform_cfg, config_path=platform_yaml, home=tmp_path))
+
+    r = client.get("/api/sources")
+    assert r.status_code == 200, r.text
+    cards = r.json()
+    assert len(cards) == 1
+    card = cards[0]
+    assert card["source"] == SOURCE
+    assert card["display_name"] == "鼎捷 E10"
+    assert card["source_type"] == "erp"
+    assert card["access_mode"] == "local"  # 本地直连落地,无 ingest 回执
+    assert card["status"] in (
+        "healthy", "warning", "stale", "failed", "unknown", "idle", "running")
+    assert card["tables"] > 0
+    assert card["quarantined"] == 0
+    assert card["last_run_at"] is not None
+
+
+def test_source_detail_tables_and_recent_runs(env):
+    """数据源详情:表级水位 + raw 活跃行数 + 最近运行。"""
+    landing, platform_yaml, tmp_path = env
+    platform_cfg = PlatformConfig(
+        templates=str(ROOT / "templates"), landing=landing.db_path)
+    client = TestClient(create_app(
+        landing.db_path, str(ROOT / "templates"),
+        platform_cfg, config_path=platform_yaml, home=tmp_path))
+
+    r = client.get(f"/api/sources/{SOURCE}")
+    assert r.status_code == 200, r.text
+    detail = r.json()
+    assert detail["source"] == SOURCE
+    assert detail["table_states"], "应有表级状态"
+    customer = next(t for t in detail["table_states"] if t["table_name"] == "CUSTOMER")
+    assert customer["watermark_col"] == "LAST_MODIFIED_DATE"
+    assert customer["rows"] == 24
+    assert detail["recent_runs"], "应有最近运行"
+    assert all(run["source"] == SOURCE for run in detail["recent_runs"])
+
+    assert client.get("/api/sources/no_such_source").status_code == 404
+
+
 def test_repo_root_points_at_repository_root():
     """_REPO_ROOT 必须指向仓库根(含 pyproject.toml),而非包目录。
 

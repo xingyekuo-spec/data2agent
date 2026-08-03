@@ -5760,6 +5760,277 @@
         "title": "SetupSuccessResponse",
         "type": "object"
       },
+      "SourceCard": {
+        "properties": {
+          "access_mode": {
+            "description": "接入方式:push=中间机推送(有 ingest 回执);local=本地落地(有 raw 表无回执);unknown=均无法检测",
+            "enum": [
+              "push",
+              "local",
+              "unknown"
+            ],
+            "title": "Access Mode",
+            "type": "string"
+          },
+          "display_name": {
+            "description": "展示名(如 鼎捷 E10);未知源回退为 source 原名",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Last Run At"
+          },
+          "last_run_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Status"
+          },
+          "quarantined": {
+            "description": "未处理隔离条数",
+            "title": "Quarantined",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_type": {
+            "description": "源类型:erp=已支持的 ERP 接入;unknown=未登记类型",
+            "enum": [
+              "erp",
+              "unknown"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          },
+          "status": {
+            "description": "按接入链(erp/extract/push)节点折叠;unknown 不得显示为正常",
+            "enum": [
+              "unknown",
+              "idle",
+              "running",
+              "healthy",
+              "warning",
+              "failed",
+              "stale"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_reason": {
+            "default": "",
+            "title": "Status Reason",
+            "type": "string"
+          },
+          "tables": {
+            "description": "已接入表数(d2a_sync_state 水位表数)",
+            "title": "Tables",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "display_name",
+          "source_type",
+          "access_mode",
+          "status",
+          "tables",
+          "quarantined"
+        ],
+        "title": "SourceCard",
+        "type": "object"
+      },
+      "SourceDetail": {
+        "properties": {
+          "access_mode": {
+            "description": "接入方式:push=中间机推送(有 ingest 回执);local=本地落地(有 raw 表无回执);unknown=均无法检测",
+            "enum": [
+              "push",
+              "local",
+              "unknown"
+            ],
+            "title": "Access Mode",
+            "type": "string"
+          },
+          "display_name": {
+            "description": "展示名(如 鼎捷 E10);未知源回退为 source 原名",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Last Run At"
+          },
+          "last_run_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run Status"
+          },
+          "quarantined": {
+            "description": "未处理隔离条数",
+            "title": "Quarantined",
+            "type": "integer"
+          },
+          "recent_runs": {
+            "description": "该源最近运行(最多 5 条)",
+            "items": {
+              "$ref": "#/components/schemas/RunSummary"
+            },
+            "title": "Recent Runs",
+            "type": "array"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "source_type": {
+            "description": "源类型:erp=已支持的 ERP 接入;unknown=未登记类型",
+            "enum": [
+              "erp",
+              "unknown"
+            ],
+            "title": "Source Type",
+            "type": "string"
+          },
+          "status": {
+            "description": "按接入链(erp/extract/push)节点折叠;unknown 不得显示为正常",
+            "enum": [
+              "unknown",
+              "idle",
+              "running",
+              "healthy",
+              "warning",
+              "failed",
+              "stale"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_reason": {
+            "default": "",
+            "title": "Status Reason",
+            "type": "string"
+          },
+          "table_states": {
+            "items": {
+              "$ref": "#/components/schemas/SourceTableState"
+            },
+            "title": "Table States",
+            "type": "array"
+          },
+          "tables": {
+            "description": "已接入表数(d2a_sync_state 水位表数)",
+            "title": "Tables",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "source",
+          "display_name",
+          "source_type",
+          "access_mode",
+          "status",
+          "tables",
+          "quarantined",
+          "table_states",
+          "recent_runs"
+        ],
+        "title": "SourceDetail",
+        "type": "object"
+      },
+      "SourceTableState": {
+        "properties": {
+          "high_water": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High Water"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value",
+            "title": "Last Run At"
+          },
+          "rows": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "raw 活跃(未软删)行数;查询失败为 null(不可检测)",
+            "title": "Rows"
+          },
+          "table_name": {
+            "title": "Table Name",
+            "type": "string"
+          },
+          "watermark_col": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Watermark Col"
+          }
+        },
+        "required": [
+          "table_name",
+          "watermark_col",
+          "high_water"
+        ],
+        "title": "SourceTableState",
+        "type": "object"
+      },
       "SyncStateRow": {
         "properties": {
           "high_water": {
@@ -9999,6 +10270,131 @@
           {}
         ],
         "summary": "Setup Status"
+      }
+    },
+    "/api/sources": {
+      "get": {
+        "description": "数据源清单:平台观测到的全部接入源(卡片聚合)。",
+        "operationId": "sources_api_sources_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SourceCard"
+                  },
+                  "title": "Response Sources Api Sources Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Sources"
+      }
+    },
+    "/api/sources/{source}": {
+      "get": {
+        "description": "数据源详情:表级水位与 raw 行数 + 最近 5 次运行。",
+        "operationId": "source_detail_api_sources__source__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "source",
+            "required": true,
+            "schema": {
+              "title": "Source",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SourceDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Source Detail"
       }
     },
     "/api/templates": {

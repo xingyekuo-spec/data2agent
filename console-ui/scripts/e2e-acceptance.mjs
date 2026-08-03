@@ -894,9 +894,10 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
     expect((await page.locator('[data-testid="mcp-scope-banner"]').count()) === 1,
       'M5:Real MCP Lab 页可访问')
 
-    // 八页面冒烟
+    // 九页面冒烟(2026-08 起含数据源管理)
     for (const [path, testid] of [
       ['/', 'stat-grid'],
+      ['/sources', 'source-grid'],
       ['/pipeline', 'pipeline-flow'],
       ['/runs', 'runs-table'],
       ['/audit', 'sql-table'],
@@ -908,7 +909,7 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
       await page.goto(`http://localhost:${REAL_UI_PORT}${path}`, { waitUntil: 'networkidle' })
       await page.waitForTimeout(800)
       const n = await page.locator(`[data-testid="${testid}"]`).count()
-      expect(n > 0, `M6:八页面 ${path} 可见 ${testid}`)
+      expect(n > 0, `M6:九页面 ${path} 可见 ${testid}`)
     }
 
     // Settings 平台专用配置页(不计入八主页面):只暴露非敏感平台路径。

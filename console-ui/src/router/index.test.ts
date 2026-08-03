@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { NAV_GROUPS, NAV_ITEMS, createAppRouter, routes } from './index'
 
 describe('router', () => {
-  it('11 个主页面 + 配置/日志 + 首次配置隐藏路由', () => {
-    expect(NAV_ITEMS).toHaveLength(13)
-    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(13)
-    expect(routes.filter((r) => r.name)).toHaveLength(14)
+  it('14 个主页面 + 首次配置隐藏路由', () => {
+    expect(NAV_ITEMS).toHaveLength(14)
+    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(14)
+    expect(routes.filter((r) => r.name)).toHaveLength(15)
   })
 
   it('菜单分组遵循数据生命周期:总览/数据源/数据管理/本体库/MCP 服务/平台管理', () => {
@@ -18,7 +18,7 @@ describe('router', () => {
       'MCP 服务',
       '平台管理',
     ])
-    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([1, 3, 1, 2, 2, 4])
+    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([1, 4, 1, 2, 2, 4])
   })
 
   it('路径与规格一致:MCP Lab 固定 /mcp', () => {
@@ -26,6 +26,7 @@ describe('router', () => {
     expect(mcp?.path).toBe('/mcp')
     expect(NAV_ITEMS.map((i) => i.path)).toEqual([
       '/',
+      '/sources',
       '/pipeline',
       '/runs',
       '/quarantine',

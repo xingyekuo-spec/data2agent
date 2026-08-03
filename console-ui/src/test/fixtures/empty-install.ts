@@ -4,6 +4,8 @@ import { baseFixture, pipelineNode, type ScenarioFixture } from './base'
 export const emptyInstallFixture = {
   ...baseFixture,
   setupStatus: { needs_setup: true, config_path: null, home: '/home/d2a' },
+  sources: [],
+  sourceDetails: {},
   overview: {
     landing: '',
     readonly: true,

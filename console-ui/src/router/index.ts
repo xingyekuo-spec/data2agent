@@ -9,6 +9,7 @@ import {
 /** 静态声明,保证 Vite 可按需分包且路径可分析 */
 const viewComponents = {
   dashboard: () => import('@/views/DashboardView.vue'),
+  sources: () => import('@/views/SourcesView.vue'),
   pipeline: () => import('@/views/PipelineView.vue'),
   runs: () => import('@/views/RunsView.vue'),
   validation: () => import('@/views/ValidationView.vue'),
@@ -55,6 +56,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     title: '数据源',
     items: [
+      { name: 'sources', path: '/sources', title: '数据源管理' },
       { name: 'pipeline', path: '/pipeline', title: '接入状态' },
       { name: 'runs', path: '/runs', title: '接入记录' },
       { name: 'quarantine', path: '/quarantine', title: '待确认数据' },

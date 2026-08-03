@@ -238,6 +238,18 @@ export function getTemplates() {
   return call(client.GET('/api/templates'))
 }
 
+// ---- 数据源管理 ----
+
+export function getSources() {
+  return call(client.GET('/api/sources'))
+}
+
+export function getSourceDetail(source: string) {
+  return call(
+    client.GET('/api/sources/{source}', { params: { path: { source } } }),
+  )
+}
+
 export function getTemplateMetrics() {
   return call(client.GET('/api/templates/metrics'))
 }

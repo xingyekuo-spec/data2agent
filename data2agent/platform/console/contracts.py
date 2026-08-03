@@ -598,6 +598,46 @@ class PipelineResponse(BaseModel):
     nodes: list[PipelineNode]
 
 
+# ---- 数据源管理:平台侧数据源清单与详情(只读聚合)----
+#
+# 边界:连接配置与 ERP 凭据在中间机(安全拓扑),平台只做"接入了哪些源、
+# 状态如何"的登记与观测;新增/修改数据源不经过本 API。
+
+SourceType = Literal["erp", "unknown"]
+SourceAccessMode = Literal["push", "local", "unknown"]
+
+
+class SourceCard(BaseModel):
+    source: str
+    display_name: str = Field(description="展示名(如 鼎捷 E10);未知源回退为 source 原名")
+    source_type: SourceType = Field(
+        description="源类型:erp=已支持的 ERP 接入;unknown=未登记类型")
+    access_mode: SourceAccessMode = Field(
+        description="接入方式:push=中间机推送(有 ingest 回执);"
+        "local=本地落地(有 raw 表无回执);unknown=均无法检测")
+    status: PipelineNodeStatus = Field(
+        description="按接入链(erp/extract/push)节点折叠;unknown 不得显示为正常")
+    status_reason: str = ""
+    tables: int = Field(description="已接入表数(d2a_sync_state 水位表数)")
+    quarantined: int = Field(description="未处理隔离条数")
+    last_run_at: datetime | None = Field(default=None, description=TZ_TIME_DESC)
+    last_run_status: str | None = None
+
+
+class SourceTableState(BaseModel):
+    table_name: str
+    watermark_col: str | None
+    high_water: str | None
+    last_run_at: datetime | None = Field(default=None, description=TZ_TIME_DESC)
+    rows: int | None = Field(
+        default=None, description="raw 活跃(未软删)行数;查询失败为 null(不可检测)")
+
+
+class SourceDetail(SourceCard):
+    table_states: list[SourceTableState]
+    recent_runs: list[RunSummary] = Field(description="该源最近运行(最多 5 条)")
+
+
 class RunStep(BaseModel):
     id: int
     ordinal: int

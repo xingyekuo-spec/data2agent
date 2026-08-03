@@ -664,6 +664,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sources
+         * @description 数据源清单:平台观测到的全部接入源(卡片聚合)。
+         */
+        get: operations["sources_api_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sources/{source}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Source Detail
+         * @description 数据源详情:表级水位与 raw 行数 + 最近 5 次运行。
+         */
+        get: operations["source_detail_api_sources__source__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/templates": {
         parameters: {
             query?: never;
@@ -3052,6 +3092,132 @@ export interface components {
              * @default true
              */
             restart_required: boolean;
+        };
+        /** SourceCard */
+        SourceCard: {
+            /**
+             * Access Mode
+             * @description 接入方式:push=中间机推送(有 ingest 回执);local=本地落地(有 raw 表无回执);unknown=均无法检测
+             * @enum {string}
+             */
+            access_mode: "push" | "local" | "unknown";
+            /**
+             * Display Name
+             * @description 展示名(如 鼎捷 E10);未知源回退为 source 原名
+             */
+            display_name: string;
+            /**
+             * Last Run At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            last_run_at?: string | null;
+            /** Last Run Status */
+            last_run_status?: string | null;
+            /**
+             * Quarantined
+             * @description 未处理隔离条数
+             */
+            quarantined: number;
+            /** Source */
+            source: string;
+            /**
+             * Source Type
+             * @description 源类型:erp=已支持的 ERP 接入;unknown=未登记类型
+             * @enum {string}
+             */
+            source_type: "erp" | "unknown";
+            /**
+             * Status
+             * @description 按接入链(erp/extract/push)节点折叠;unknown 不得显示为正常
+             * @enum {string}
+             */
+            status: "unknown" | "idle" | "running" | "healthy" | "warning" | "failed" | "stale";
+            /**
+             * Status Reason
+             * @default
+             */
+            status_reason: string;
+            /**
+             * Tables
+             * @description 已接入表数(d2a_sync_state 水位表数)
+             */
+            tables: number;
+        };
+        /** SourceDetail */
+        SourceDetail: {
+            /**
+             * Access Mode
+             * @description 接入方式:push=中间机推送(有 ingest 回执);local=本地落地(有 raw 表无回执);unknown=均无法检测
+             * @enum {string}
+             */
+            access_mode: "push" | "local" | "unknown";
+            /**
+             * Display Name
+             * @description 展示名(如 鼎捷 E10);未知源回退为 source 原名
+             */
+            display_name: string;
+            /**
+             * Last Run At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            last_run_at?: string | null;
+            /** Last Run Status */
+            last_run_status?: string | null;
+            /**
+             * Quarantined
+             * @description 未处理隔离条数
+             */
+            quarantined: number;
+            /**
+             * Recent Runs
+             * @description 该源最近运行(最多 5 条)
+             */
+            recent_runs: components["schemas"]["RunSummary"][];
+            /** Source */
+            source: string;
+            /**
+             * Source Type
+             * @description 源类型:erp=已支持的 ERP 接入;unknown=未登记类型
+             * @enum {string}
+             */
+            source_type: "erp" | "unknown";
+            /**
+             * Status
+             * @description 按接入链(erp/extract/push)节点折叠;unknown 不得显示为正常
+             * @enum {string}
+             */
+            status: "unknown" | "idle" | "running" | "healthy" | "warning" | "failed" | "stale";
+            /**
+             * Status Reason
+             * @default
+             */
+            status_reason: string;
+            /** Table States */
+            table_states: components["schemas"]["SourceTableState"][];
+            /**
+             * Tables
+             * @description 已接入表数(d2a_sync_state 水位表数)
+             */
+            tables: number;
+        };
+        /** SourceTableState */
+        SourceTableState: {
+            /** High Water */
+            high_water: string | null;
+            /**
+             * Last Run At
+             * @description timezone-aware ISO 8601 (v0.2 convention); implementing milestone must convert legacy local text to an offset-bearing value
+             */
+            last_run_at?: string | null;
+            /**
+             * Rows
+             * @description raw 活跃(未软删)行数;查询失败为 null(不可检测)
+             */
+            rows?: number | null;
+            /** Table Name */
+            table_name: string;
+            /** Watermark Col */
+            watermark_col: string | null;
         };
         /** SyncStateRow */
         SyncStateRow: {
@@ -5492,6 +5658,102 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    sources_api_sources_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceCard"][];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    source_detail_api_sources__source__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceDetail"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

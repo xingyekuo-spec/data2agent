@@ -15,6 +15,8 @@ export type HttpError = components['schemas']['HttpError']
 export type SetupStatusResponse = components['schemas']['SetupStatusResponse']
 export type OverviewResponse = components['schemas']['OverviewResponse']
 export type RunSummary = components['schemas']['RunSummary']
+export type SourceCard = components['schemas']['SourceCard']
+export type SourceDetail = components['schemas']['SourceDetail']
 export type QuarantineRecord = components['schemas']['QuarantineRecord']
 export type AuditRecord = components['schemas']['AuditRecord']
 export type AccessAuditPage = components['schemas']['AccessAuditPage']
@@ -86,6 +88,9 @@ export interface ScenarioFixture {
   mappingPreviewEmpty: MappingPreviewResponse
   mappingPreviewStatus: number
   mappingPreviewError: MappingPreviewError | null
+  /** 数据源管理:清单卡片与详情(按源名索引) */
+  sources: SourceCard[]
+  sourceDetails: Record<string, SourceDetail>
 }
 
 const T = '2026-07-18T09:12:00+08:00'
@@ -1145,4 +1150,68 @@ export const baseFixture: ScenarioFixture = {
   mappingPreviewEmpty,
   mappingPreviewStatus: 200,
   mappingPreviewError: null,
+
+  // ---- 数据源管理 ----
+  sources: [
+    {
+      source: 'digiwin_e10',
+      display_name: '鼎捷 E10',
+      source_type: 'erp',
+      access_mode: 'local',
+      status: 'healthy',
+      status_reason: '',
+      tables: 2,
+      quarantined: 0,
+      last_run_at: T,
+      last_run_status: 'ok',
+    },
+  ],
+  sourceDetails: {
+    digiwin_e10: {
+      source: 'digiwin_e10',
+      display_name: '鼎捷 E10',
+      source_type: 'erp',
+      access_mode: 'local',
+      status: 'healthy',
+      status_reason: '',
+      tables: 2,
+      quarantined: 0,
+      last_run_at: T,
+      last_run_status: 'ok',
+      table_states: [
+        {
+          table_name: 'CUSTOMER',
+          watermark_col: 'LAST_MODIFIED_DATE',
+          high_water: '2026-07-18 08:30:00',
+          last_run_at: T,
+          rows: 24,
+        },
+        {
+          table_name: 'SALES_ORDER',
+          watermark_col: 'LAST_MODIFIED_DATE',
+          high_water: '2026-07-18 08:30:00',
+          last_run_at: T,
+          rows: 52,
+        },
+      ],
+      recent_runs: [
+        {
+          id: 42,
+          type: 'sync',
+          status: 'ok',
+          source: 'digiwin_e10',
+          started_at: T,
+          finished_at: T,
+          duration_ms: 1800,
+          tables: 2,
+          rows: 76,
+          quarantined: 0,
+          dataset_version: null,
+          detail: null,
+          error: null,
+          error_id: null,
+        },
+      ],
+    },
+  },
 }
