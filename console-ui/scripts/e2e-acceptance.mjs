@@ -250,7 +250,7 @@ landing: ${landing}
     const cards = await page.locator('[data-testid="stat-value"]').allTextContents()
     expect(cards[1] === '15/15', `真实覆盖率 15/15(实际 ${cards[1]})`)
 
-    await page.locator('.el-menu-item', { hasText: '接入状态' }).click()
+    await page.locator('.el-menu-item', { hasText: '管道状态' }).click()
     await page.locator('[data-testid="pipeline-flow"]').waitFor({ state: 'visible' })
     const statusOf = async (name) =>
       page.locator('.flow__node', { hasText: name }).first().getAttribute('data-status')
@@ -262,7 +262,7 @@ landing: ${landing}
     expect((await statusOf('mcp')) === 'failed', 'Real:mcp failed(未启动)')
 
     // M4 Real:运行详情含真实结构化 step;legacy 显示无证据
-    await page.locator('.el-menu-item', { hasText: '接入记录' }).click()
+    await page.locator('.el-menu-item', { hasText: '运行记录' }).click()
     await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
     const rows = page.locator('[data-testid="runs-table"] tbody tr')
     expect((await rows.count()) >= 5, 'Real:运行列表含 sync/apply/reconcile/ingest/legacy')

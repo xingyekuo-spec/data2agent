@@ -44,7 +44,7 @@ export interface NavGroup {
 /**
  * 菜单结构(2026-08 按数据生命周期模块化重构,两级:分组标题 + 页面项)。
  * 分组沿数据流向:总览 → 数据源 → 数据管理 → 本体库 → MCP 服务 → 平台管理,
- * 与后端模块边界一一对应;页面标题用业务语言(接入/待确认),不用技术黑话。
+ * 与后端模块边界一一对应;页面标题保留专业术语(水位/隔离区等口径统一)。
  */
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
@@ -57,9 +57,9 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     title: '数据源',
     items: [
       { name: 'sources', path: '/sources', title: '数据源管理' },
-      { name: 'pipeline', path: '/pipeline', title: '接入状态' },
-      { name: 'runs', path: '/runs', title: '接入记录' },
-      { name: 'quarantine', path: '/quarantine', title: '待确认数据' },
+      { name: 'pipeline', path: '/pipeline', title: '管道状态' },
+      { name: 'runs', path: '/runs', title: '运行记录' },
+      { name: 'quarantine', path: '/quarantine', title: '隔离区' },
     ],
   },
   {
@@ -71,7 +71,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     title: '本体库',
     items: [
-      { name: 'templates', path: '/templates', title: '对象模板' },
+      { name: 'templates', path: '/templates', title: '模板' },
       { name: 'object-graph', path: '/object-graph', title: '对象关系' },
     ],
   },
@@ -87,8 +87,8 @@ export const NAV_GROUPS: readonly NavGroup[] = [
     items: [
       { name: 'settings', path: '/settings', title: '配置' },
       { name: 'logs', path: '/logs', title: '日志' },
-      { name: 'audit', path: '/audit', title: '操作审计' },
-      { name: 'validation', path: '/validation', title: '一键验收' },
+      { name: 'audit', path: '/audit', title: '审计日志' },
+      { name: 'validation', path: '/validation', title: '验收报告' },
     ],
   },
 ]
