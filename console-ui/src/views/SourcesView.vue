@@ -126,11 +126,21 @@ function openAddDialog(): void {
   addDialogVisible.value = true
 }
 
+const SOURCE_IDENT = /^[a-z][a-z0-9_]{2,31}$/
+
 async function submitRegister(): Promise<void> {
+  const src = registerForm.source.trim()
+  // 前端预检:不合规直接给人话提示,不让用户吃到原始 422
+  if (!SOURCE_IDENT.test(src)) {
+    registerError.value =
+      `「${src}」不是合法的源标识:须以小写字母开头,只用小写字母/数字/下划线,`
+      + '3~32 位(如 kunshan_e10);不支持中文、大写、空格和横线'
+    return
+  }
   registering.value = true
   registerError.value = null
   const result = await postSourceRegister({
-    source: registerForm.source.trim(),
+    source: src,
     display_name: registerForm.display_name.trim() || null,
     source_type: registerForm.source_type,
     note: registerForm.note.trim() || null,
@@ -587,7 +597,7 @@ onMounted(() => {
               placeholder="如 kunshan_e10(厂区_系统)"
               data-testid="register-source"
             />
-            <span class="form-hint">小写字母/数字/下划线,3~32 位;登记后不可改</span>
+            <span class="form-hint">小写字母开头,只用小写字母/数字/下划线,3~32 位;不支持中文/大写/横线。登记后不可改</span>
           </el-form-item>
           <el-form-item label="展示名">
             <el-input

@@ -74,6 +74,24 @@ describe('SourcesView(数据源管理)', () => {
     wrapper.unmount()
   })
 
+  it('登记表单:非法标识前端预检,不发请求、给人话提示', async () => {
+    const wrapper = mountSources()
+    await flushPromises()
+    await wrapper.find('[data-testid="source-add"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-testid="register-source"]').setValue('昆山e10')
+    await wrapper.find('[data-testid="register-submit"]').trigger('click')
+    await flushPromises()
+
+    const err = document.body.querySelector('[data-testid="register-error"]')
+    expect(err?.textContent).toContain('不是合法的源标识')
+    expect(err?.textContent).toContain('不支持中文')
+    // 未进入成功页
+    expect(document.body.querySelector('[data-testid="register-snippet"]')).toBeNull()
+    wrapper.unmount()
+  })
+
   it('登记源详情:展示登记管理动作(停用/重置 Token)', async () => {
     // 让清单中的 digiwin_e10 为已登记状态
     server.use(
