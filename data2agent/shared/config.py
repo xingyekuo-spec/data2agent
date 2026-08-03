@@ -59,7 +59,8 @@ class RateConfig(BaseModel):
 
 
 class SinkConfig(BaseModel):
-    """raw 落地出口(§12.3):local=写本地库(同机);http=推给平台(Pattern A 中间服务器)。"""
+    """raw 落地出口(§12.3):local=写本地库(仅限内部开发/参考链/测试,非交付形态);
+    http=推给平台(生产中间机唯一允许的形态)。"""
 
     model_config = {"extra": "forbid"}
     type: Literal["local", "http"] = "local"

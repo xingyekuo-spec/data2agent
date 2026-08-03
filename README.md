@@ -49,6 +49,8 @@ data2agent/
 ## 开发者本地快速开始
 
 完整源码开发运行步骤见 [docs/runbook/source-dev.md](docs/runbook/source-dev.md)。
+本地 `sink: local` 落地仅为开发/参考链路径;生产部署只有跨机推送一种形态
+(见[现场部署](#现场部署))。
 
 ```bash
 pip install -e ".[dev,mcp,console,ingest,connect,middle_admin,excel]"

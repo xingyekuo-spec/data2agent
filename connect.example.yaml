@@ -29,6 +29,6 @@ sources:
     # start_date: "2015-01-01"      # 可选:全局抽取起始日期;未单独配置 start_date 的增量表用它
     reconcile_at: "05:30"           # 每日 L1 对账;删除本行则不排
     apply_after_sync: true          # 同步后自动物化对象层(sink=http 时忽略)
-    # 落地出口:默认 local=写本地库(同机)。
-    # Pattern A 中间服务器改为推给平台:
+    # 落地出口:默认 local=写本地库 —— 仅限内部开发/参考链/测试,非交付形态;
+    # 生产部署中间机必须推给平台(HttpPushSink),不允许在生产 ERP 机器上本地落地:
     # sink: { type: http, url: "https://平台域名", token_env: D2A_INGEST_TOKEN }

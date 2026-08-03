@@ -58,7 +58,11 @@ class Sink(Protocol):
 
 
 class LocalSink:
-    """写本地落地库(与 HTTP 推送同一生命周期语义)。"""
+    """写本地落地库(与 HTTP 推送同一生命周期语义)。
+
+    定位:内部开发/参考链/测试基座,非交付形态;同时是 E6a「推送落地
+    与直连逐行一致」的对照实现。生产部署的中间机必须使用 HttpPushSink。
+    """
 
     def __init__(self, landing: LandingStore):
         self.landing = landing

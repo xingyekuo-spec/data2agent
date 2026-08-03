@@ -292,9 +292,11 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
 其余抽取、映射与隔离逻辑继续复用。
 
 **E6a · 推送 sink(✅ 已实现,仅表示传输与幂等落地可运行)**
-- 落地出口抽象为 Sink(`connect/sink.py`):`LocalSink`(写本地库,同机/开发默认)、
-  `HttpPushSink`(POST 给平台;中间服务器用,stdlib urllib 零额外依赖、值推送前归一化、
-  失败指数退避重试);`incremental_sync` 默认 `LocalSink(landing)`,行为向后兼容;
+- 落地出口抽象为 Sink(`connect/sink.py`):`LocalSink`(写本地库 —— 仅限内部开发/
+  参考链/测试,非交付形态;同时是本节「推送与直连逐行一致」验证的对照实现)、
+  `HttpPushSink`(POST 给平台;生产中间机唯一允许的形态,stdlib urllib 零额外依赖、
+  值推送前归一化、失败指数退避重试);`incremental_sync` 默认 `LocalSink(landing)`,
+  行为向后兼容;
 - 平台接收端 `data2agent.platform.ingest`(FastAPI):`POST /ingest/batch` 只负责幂等落地;
   中间机在一张表的全部批次成功后再 `POST /ingest/table-complete`。完成事件包含表结构、
   行数与批次数，零行表也必须发送，平台据此创建空 Raw 表并保存表级新鲜度证据;
