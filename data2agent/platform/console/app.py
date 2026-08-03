@@ -191,7 +191,10 @@ _SETUP_API_PATHS = frozenset({"/api/setup", "/api/setup/status"})
 _AUDIT_SQL_BUDGET = 4096
 
 _PKG = Path(__file__).resolve().parent
-_REPO_ROOT = _PKG.parent.parent
+# 仓库根:data2agent/platform/console → 上三级。
+# (分层重构把 app.py 从 data2agent/console 移入 platform/ 深了一级,
+#  少退一级会让源码运行的 console 找不到 console-ui/dist)
+_REPO_ROOT = _PKG.parent.parent.parent
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
 _VUE_MODULE_MEDIA_TYPES = {
     ".js": "text/javascript; charset=utf-8",

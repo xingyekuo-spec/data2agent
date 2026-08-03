@@ -91,6 +91,32 @@ def test_explicit_home_ignores_process_home_for_vue_dist(env, monkeypatch):
     assert client.get("/", follow_redirects=False).status_code == 200
 
 
+def test_repo_root_points_at_repository_root():
+    """_REPO_ROOT 必须指向仓库根(含 pyproject.toml),而非包目录。
+
+    回归:分层重构(fab4e34d)把 app.py 从 data2agent/console 移入
+    platform/ 深了一级,_REPO_ROOT 少退一层,源码运行的 console
+    找不到 console-ui/dist,首页回退「未构建」提示页。
+    """
+    from data2agent.platform.console import app as console_app
+
+    assert (console_app._REPO_ROOT / "pyproject.toml").is_file()
+
+
+def test_resolve_vue_dist_finds_repo_tree_dist(tmp_path, monkeypatch):
+    """无 home / 无环境变量时,须命中仓库内 console-ui/dist 候选。"""
+    from data2agent.platform.console import app as console_app
+
+    dist = tmp_path / "console-ui" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(console_app, "_REPO_ROOT", tmp_path)
+    monkeypatch.delenv("D2A_VUE_DIST", raising=False)
+    monkeypatch.delenv("D2A_HOME", raising=False)
+
+    assert console_app.resolve_vue_dist() == dist.resolve()
+
+
 def test_full_mode_apply(env):
     landing, platform_yaml, tmp_path = env
     platform_cfg = PlatformConfig(
