@@ -235,6 +235,21 @@ def test_ingest_token_reveal_without_token_409(env, monkeypatch):
     assert client.post("/api/ingest/connection-info/reveal").status_code == 409
 
 
+def test_pipeline_source_param(env):
+    """管道多源:指定已知源 200;未知源 404;缺省保持 default_source 兼容。"""
+    landing, platform_yaml, tmp_path = env
+    platform_cfg = PlatformConfig(
+        templates=str(ROOT / "templates"), landing=landing.db_path)
+    client = TestClient(create_app(
+        landing.db_path, str(ROOT / "templates"),
+        platform_cfg, config_path=platform_yaml, home=tmp_path))
+
+    assert client.get("/api/pipeline").status_code == 200
+    r = client.get(f"/api/pipeline?source={SOURCE}")
+    assert r.status_code == 200, r.text
+    assert client.get("/api/pipeline?source=ghost_source").status_code == 404
+
+
 def test_repo_root_points_at_repository_root():
     """_REPO_ROOT 必须指向仓库根(含 pyproject.toml),而非包目录。
 

@@ -92,8 +92,12 @@ export function postUpdateDownload() {
 }
 
 /** 契约桩:后端实现前真实调用返回 501,页面据此显示「尚未接入」 */
-export function getPipeline() {
-  return call(client.GET('/api/pipeline'))
+export function getPipeline(source?: string) {
+  return call(
+    client.GET('/api/pipeline', {
+      params: source ? { query: { source } } : undefined,
+    }),
+  )
 }
 
 // ---- M4:运行 / 审计 / 数据浏览 ----

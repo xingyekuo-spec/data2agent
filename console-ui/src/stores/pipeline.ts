@@ -17,11 +17,24 @@ export const usePipelineStore = defineStore('pipeline', () => {
   const services = ref<RequestState<ServicesStatusResponse>>({ status: 'idle' })
   const lastSuccessAt = ref<Date | null>(null)
   const refreshError = ref<ApiError | null>(null)
+  /** 多源场景:当前查看的数据源;null = 后端 default_source(兼容)
+   *  AppLayout 统一轮询也走此源——切换后下一轮自动跟随。 */
+  const currentSource = ref<string | null>(null)
   let inFlight = false
 
   const data = computed(() =>
     pipeline.value.status === 'success' ? pipeline.value.data : null,
   )
+
+  function setSource(source: string | null): void {
+    if (currentSource.value === source) {
+      return
+    }
+    currentSource.value = source
+    // 切源即废弃当前快照,避免展示上一源的数据冒充
+    pipeline.value = { status: 'idle' }
+    refreshError.value = null
+  }
 
   async function refresh(): Promise<void> {
     if (inFlight) {
@@ -34,7 +47,10 @@ export const usePipelineStore = defineStore('pipeline', () => {
       services.value = { status: 'loading' }
     }
     try {
-      const [pl, sv] = await Promise.all([getPipeline(), getServices()])
+      const [pl, sv] = await Promise.all([
+        getPipeline(currentSource.value ?? undefined),
+        getServices(),
+      ])
       let ok = true
       if (pl.ok) {
         pipeline.value = { status: 'success', data: pl.data }
@@ -65,5 +81,14 @@ export const usePipelineStore = defineStore('pipeline', () => {
     }
   }
 
-  return { pipeline, services, data, lastSuccessAt, refreshError, refresh }
+  return {
+    pipeline,
+    services,
+    data,
+    lastSuccessAt,
+    refreshError,
+    currentSource,
+    setSource,
+    refresh,
+  }
 })

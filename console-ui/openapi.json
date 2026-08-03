@@ -9905,8 +9905,26 @@
     },
     "/api/pipeline": {
       "get": {
-        "description": "真实管道状态:固定 7 节点 + 折叠总体状态(观测口径见 observability)。\n\n服务探测与数据健康分开:MCP/ingest 进程健康不覆盖数据 stale。",
+        "description": "真实管道状态:固定 7 节点 + 折叠总体状态(观测口径见 observability)。\n\n服务探测与数据健康分开:MCP/ingest 进程健康不覆盖数据 stale。\nsource:指定数据源(多中间机场景);缺省为 default_source(兼容旧调用)。",
         "operationId": "pipeline_api_pipeline_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -9937,6 +9955,16 @@
               }
             },
             "description": "冲突/未配置/只读/熔断"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [

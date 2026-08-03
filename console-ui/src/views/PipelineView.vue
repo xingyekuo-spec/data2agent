@@ -1,33 +1,89 @@
 <script setup lang="ts">
-// 管道页(M3):桌面横向 / 小屏纵向的关键节点流程 + 节点详情面板。
+// 管道页:数据源(中间机) → 推送 → 落地 → 映射 → 对象层 → MCP 网关 流程。
+// 多源:顶部源切换器(多中间机场景,数据源管理同源清单);
+// erp/extract 折叠为「数据源(中间机)」起始节点(状态取两者折叠,详情跳 /sources)。
 // 状态由后端 observability 计算;视图只展示,不重复推导业务规则。
-// 数据由 AppLayout 统一轮询;视图只消费 pipeline store。
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { usePipelineStore } from '@/stores/pipeline'
+import { useSourcesStore } from '@/stores/sources'
 import type { components } from '@/types/api'
-import { formatDateTime } from '@/utils/time'
+import { formatDateTime, formatTimeHM } from '@/utils/time'
 
 type PipelineNode = components['schemas']['PipelineNode']
 
 const store = usePipelineStore()
-const { pipeline, refreshError } = storeToRefs(store)
+const { pipeline, refreshError, currentSource } = storeToRefs(store)
+const sourcesStore = useSourcesStore()
+const { cards: sourceCards } = storeToRefs(sourcesStore)
+
+/** 节点中文标签(node ID 仍是契约字段,仅展示层翻译) */
+const NODE_LABELS: Record<string, string> = {
+  datasource: '数据源(中间机)',
+  erp: 'ERP',
+  extract: '抽取',
+  push: '推送',
+  raw: '落地',
+  mapping: '映射',
+  objects: '对象层',
+  mcp: 'MCP 网关',
+}
+
+function labelOf(nodeId: string): string {
+  return NODE_LABELS[nodeId] ?? nodeId
+}
 
 // 只存节点 ID:轮询替换 pipeline 数据后,详情面板展示的是当前快照而不是旧对象
 const selectedId = ref<string | null>(null)
-const hiddenPipelineNodeIds = new Set(['erp', 'extract'])
-
 const data = computed(() => (pipeline.value.status === 'success' ? pipeline.value.data : null))
-const visibleNodes = computed(() =>
-  data.value?.nodes.filter((n) => !hiddenPipelineNodeIds.has(n.node)) ?? [],
-)
+
+/** 折叠优先级与后端 fold_status 一致 */
+const FOLD_ORDER = ['failed', 'stale', 'warning', 'running', 'unknown', 'idle', 'healthy']
+function foldStatus(statuses: string[]): string {
+  for (const s of FOLD_ORDER) {
+    if (statuses.includes(s)) return s
+  }
+  return 'unknown'
+}
+
+/** 流程节点:erp/extract 折叠为一个「数据源(中间机)」起始节点 */
+const flowNodes = computed<PipelineNode[]>(() => {
+  const nodes = data.value?.nodes ?? []
+  const srcNodes = nodes.filter((n) => n.node === 'erp' || n.node === 'extract')
+  const rest = nodes.filter((n) => n.node !== 'erp' && n.node !== 'extract')
+  if (srcNodes.length === 0) {
+    return rest
+  }
+  const successTimes = srcNodes
+    .map((n) => n.last_success_at)
+    .filter((t): t is string => t !== null)
+    .sort()
+  const synthesized: PipelineNode = {
+    node: 'datasource',
+    status: foldStatus(srcNodes.map((n) => n.status)) as PipelineNode['status'],
+    status_reason: srcNodes.find((n) => n.status_reason)?.status_reason ?? '',
+    observed_at: srcNodes.find((n) => n.observed_at)?.observed_at ?? null,
+    last_success_at: successTimes.length ? successTimes[successTimes.length - 1]! : null,
+    last_failure_at: srcNodes.find((n) => n.last_failure_at)?.last_failure_at ?? null,
+    rows_in: null,
+    rows_out: srcNodes.find((n) => n.rows_out !== null)?.rows_out ?? null,
+    duration_ms: null,
+    error: srcNodes.find((n) => n.error)?.error ?? null,
+    version: null,
+    run_id: srcNodes.find((n) => n.run_id)?.run_id ?? null,
+    source: srcNodes[0]?.source ?? null,
+    detail_path: '/sources',
+  }
+  return [synthesized, ...rest]
+})
+
 const selected = computed(() =>
   selectedId.value === null
     ? null
-    : (visibleNodes.value.find((n) => n.node === selectedId.value) ?? null),
+    : (flowNodes.value.find((n) => n.node === selectedId.value) ?? null),
 )
 
 function open(node: PipelineNode): void {
@@ -58,6 +114,22 @@ function metricOf(node: PipelineNode): string {
   }
   return ''
 }
+
+function lastSuccessOf(node: PipelineNode): string {
+  return node.last_success_at ? `上次成功 ${formatTimeHM(node.last_success_at)}` : ''
+}
+
+function onSourceChange(value: string): void {
+  close()
+  store.setSource(value || null)
+  void store.refresh()
+}
+
+onMounted(() => {
+  if (sourceCards.value.status === 'idle') {
+    void sourcesStore.refresh()
+  }
+})
 
 const detailFields = computed(() => {
   const n = selected.value
@@ -104,6 +176,24 @@ const detailFields = computed(() => {
           :status="data.overall_status"
           data-testid="pipeline-overall"
         />
+        <el-select
+          :model-value="currentSource ?? ''"
+          class="overall__source"
+          size="small"
+          data-testid="pipeline-source"
+          @change="onSourceChange"
+        >
+          <el-option
+            label="默认数据源"
+            value=""
+          />
+          <el-option
+            v-for="s in sourceCards.status === 'success' ? sourceCards.data : []"
+            :key="s.source"
+            :label="s.display_name"
+            :value="s.source"
+          />
+        </el-select>
         <span class="overall__time">截至 {{ formatDateTime(data.generated_at) }}</span>
       </div>
 
@@ -113,7 +203,7 @@ const detailFields = computed(() => {
         data-testid="pipeline-flow"
       >
         <template
-          v-for="(node, i) in visibleNodes"
+          v-for="(node, i) in flowNodes"
           :key="node.node"
         >
           <li class="flow__node-wrap">
@@ -123,15 +213,19 @@ const detailFields = computed(() => {
               :class="`flow__node--${node.status}`"
               :data-status="node.status"
               :aria-pressed="selected?.node === node.node"
-              :aria-label="`节点 ${node.node} 状态 ${node.status},点击查看详情`"
+              :aria-label="`节点 ${labelOf(node.node)} 状态 ${node.status},点击查看详情`"
               @click="open(node)"
             >
-              <span class="flow__name">{{ node.node }}</span>
+              <span class="flow__name">{{ labelOf(node.node) }}</span>
               <StatusBadge :status="node.status" />
               <span
                 v-if="metricOf(node)"
                 class="flow__metric"
               >{{ metricOf(node) }}</span>
+              <span
+                v-if="lastSuccessOf(node)"
+                class="flow__last-success"
+              >{{ lastSuccessOf(node) }}</span>
               <span
                 v-if="node.status_reason"
                 class="flow__reason"
@@ -141,7 +235,7 @@ const detailFields = computed(() => {
               </span>
             </button>
             <span
-              v-if="i < visibleNodes.length - 1"
+              v-if="i < flowNodes.length - 1"
               class="flow__connector"
               aria-hidden="true"
             >→</span>
@@ -158,7 +252,7 @@ const detailFields = computed(() => {
         :aria-label="`节点 ${selected.node} 详情`"
       >
         <div class="detail__head">
-          <h3>节点 {{ selected.node }}</h3>
+          <h3>{{ labelOf(selected.node) }}</h3>
           <StatusBadge :status="selected.status" />
           <button
             type="button"
@@ -184,7 +278,7 @@ const detailFields = computed(() => {
               查看详情 →
             </router-link>
           </template>
-          <span v-else>运行详情页将在 M4 提供</span>
+          <span v-else>暂无更多详情</span>
         </p>
       </div>
     </template>
@@ -216,6 +310,11 @@ const detailFields = computed(() => {
 .overall__label {
   font-size: 13px;
   font-weight: 600;
+}
+
+.overall__source {
+  width: 160px;
+  margin-left: 12px;
 }
 
 .overall__time {
@@ -294,6 +393,11 @@ const detailFields = computed(() => {
 
 .flow__metric {
   font-size: 12px;
+  color: var(--d2a-text-secondary);
+}
+
+.flow__last-success {
+  font-size: var(--d2a-font-xs);
   color: var(--d2a-text-secondary);
 }
 

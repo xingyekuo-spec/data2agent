@@ -2961,10 +2961,11 @@ def create_app(landing: str | None = None, templates: str = "templates",
         response_model=PipelineResponse,
         responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
     )
-    def pipeline() -> dict:
+    def pipeline(source: str | None = None) -> dict:
         """真实管道状态:固定 7 节点 + 折叠总体状态(观测口径见 observability)。
 
         服务探测与数据健康分开:MCP/ingest 进程健康不覆盖数据 stale。
+        source:指定数据源(多中间机场景);缺省为 default_source(兼容旧调用)。
         """
         db = store()
         cfg = state["config"]
@@ -2976,7 +2977,14 @@ def create_app(landing: str | None = None, templates: str = "templates",
             component_version = importlib.metadata.version("data2agent")
         except importlib.metadata.PackageNotFoundError:
             component_version = None
-        return obs.build_pipeline(db, require_pack(), cfg, default_source(),
+        chosen = default_source()
+        if source is not None:
+            known = set(_known_sources())
+            known.update(r["source"] for r in db.list_source_registrations())
+            if source not in known:
+                raise HTTPException(404, f"数据源 {source} 不存在")
+            chosen = source
+        return obs.build_pipeline(db, require_pack(), cfg, chosen,
                                   probes=probes, component_version=component_version)
 
     # ---- v0.3 datasets(M1 只读;M2-T06 publish/rollback 原子引擎)----

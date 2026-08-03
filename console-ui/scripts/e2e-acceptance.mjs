@@ -254,12 +254,13 @@ landing: ${landing}
     await page.locator('[data-testid="pipeline-flow"]').waitFor({ state: 'visible' })
     const statusOf = async (name) =>
       page.locator('.flow__node', { hasText: name }).first().getAttribute('data-status')
-    // erp / extract 节点已在当前版本隐藏(见 PipelineView hiddenPipelineNodeIds)
-    expect((await page.locator('.flow__node', { hasText: 'erp' }).count()) === 0, 'Real:erp 节点已隐藏')
-    expect((await page.locator('.flow__node', { hasText: 'extract' }).count()) === 0, 'Real:extract 节点已隐藏')
-    expect((await statusOf('push')) === 'failed', 'Real:push 接收端未启动 failed')
-    expect((await statusOf('mapping')) === 'warning', 'Real:mapping warning(全部 draft)')
-    expect((await statusOf('mcp')) === 'failed', 'Real:mcp failed(未启动)')
+    // erp / extract 折叠为「数据源(中间机)」起始节点(2026-08 起)
+    expect((await page.locator('.flow__node', { hasText: 'erp' }).count()) === 0, 'Real:erp 节点不单独展示')
+    expect((await page.locator('.flow__node', { hasText: 'extract' }).count()) === 0, 'Real:extract 节点不单独展示')
+    expect((await page.locator('.flow__node', { hasText: '数据源(中间机)' }).count()) === 1, 'Real:数据源合成节点存在')
+    expect((await statusOf('推送')) === 'failed', 'Real:push 接收端未启动 failed')
+    expect((await statusOf('映射')) === 'warning', 'Real:mapping warning(全部 draft)')
+    expect((await statusOf('MCP 网关')) === 'failed', 'Real:mcp failed(未启动)')
 
     // M4 Real:运行详情含真实结构化 step;legacy 显示无证据
     await page.locator('.el-menu-item', { hasText: '运行记录' }).click()

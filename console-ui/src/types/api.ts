@@ -521,6 +521,7 @@ export interface paths {
          * @description 真实管道状态:固定 7 节点 + 折叠总体状态(观测口径见 observability)。
          *
          *     服务探测与数据健康分开:MCP/ingest 进程健康不覆盖数据 stale。
+         *     source:指定数据源(多中间机场景);缺省为 default_source(兼容旧调用)。
          */
         get: operations["pipeline_api_pipeline_get"];
         put?: never;
@@ -5541,7 +5542,9 @@ export interface operations {
     };
     pipeline_api_pipeline_get: {
         parameters: {
-            query?: never;
+            query?: {
+                source?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -5573,6 +5576,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
