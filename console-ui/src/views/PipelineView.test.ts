@@ -29,6 +29,11 @@ describe('PipelineView(M3)', () => {
     const names = wrapper.findAll('.flow__name').map((n) => n.text())
     expect(names).toEqual(['数据源(中间机)', '推送', '落地', '映射', '对象层', 'MCP 网关'])
     expect(wrapper.findAll('[data-status="healthy"]').length).toBeGreaterThan(0)
+
+    // P2:连接线流量标签(下游节点行数 + 时间)+ 页头刷新指示
+    const labels = wrapper.findAll('[data-testid="connector-label"]').map((n) => n.text())
+    expect(labels).toContain('1284 行 · 09:12')
+    expect(wrapper.find('[data-testid="pipeline-poll-at"]').text()).toContain('刷新于')
   })
 
   it('点击节点打开详情;再点/ESC 关闭;无 detail_path 不死链', async () => {

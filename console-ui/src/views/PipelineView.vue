@@ -17,7 +17,7 @@ import { formatDateTime, formatTimeHM } from '@/utils/time'
 type PipelineNode = components['schemas']['PipelineNode']
 
 const store = usePipelineStore()
-const { pipeline, refreshError, currentSource } = storeToRefs(store)
+const { pipeline, refreshError, currentSource, lastSuccessAt } = storeToRefs(store)
 const sourcesStore = useSourcesStore()
 const { cards: sourceCards } = storeToRefs(sourcesStore)
 
@@ -118,6 +118,21 @@ function metricOf(node: PipelineNode): string {
 
 function lastSuccessOf(node: PipelineNode): string {
   return node.last_success_at ? `上次成功 ${formatTimeHM(node.last_success_at)}` : ''
+}
+
+/** 连接线流量标签:取下游节点的最近输入(行数 + 时间),让「流」可见 */
+function connectorLabel(nextNode: PipelineNode | undefined): string {
+  if (!nextNode) {
+    return ''
+  }
+  const parts: string[] = []
+  if (nextNode.rows_in !== null) {
+    parts.push(`${nextNode.rows_in} 行`)
+  }
+  if (nextNode.last_success_at) {
+    parts.push(formatTimeHM(nextNode.last_success_at))
+  }
+  return parts.join(' · ')
 }
 
 function onSourceChange(value: string): void {
@@ -241,6 +256,13 @@ const detailFields = computed(() => {
           />
         </el-select>
         <span class="overall__time">截至 {{ formatDateTime(data.generated_at) }}</span>
+        <span
+          v-if="lastSuccessAt"
+          class="overall__poll"
+          data-testid="pipeline-poll-at"
+        >
+          · 刷新于 {{ formatTimeHM(lastSuccessAt.toISOString()) }}
+        </span>
       </div>
 
       <!-- 关键节点流程:连接线只表达顺序,不用绿色掩盖 unknown -->
@@ -284,7 +306,14 @@ const detailFields = computed(() => {
               v-if="i < flowNodes.length - 1"
               class="flow__connector"
               aria-hidden="true"
-            >→</span>
+            >
+              <span class="flow__connector-arrow">→</span>
+              <span
+                v-if="connectorLabel(flowNodes[i + 1])"
+                class="flow__connector-label"
+                data-testid="connector-label"
+              >{{ connectorLabel(flowNodes[i + 1]) }}</span>
+            </span>
           </li>
         </template>
       </ol>
@@ -397,7 +426,20 @@ const detailFields = computed(() => {
 }
 
 .flow__connector {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
   color: var(--d2a-text-secondary);
+  line-height: 1.2;
+}
+
+.flow__connector-label {
+  max-width: 90px;
+  overflow: hidden;
+  font-size: var(--d2a-font-xs);
+  color: var(--d2a-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .flow__node {
