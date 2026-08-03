@@ -177,7 +177,7 @@ onMounted(() => {
           />
           <el-table-column
             prop="watermark_col"
-            label="更新到哪儿了"
+            label="水位"
             min-width="150"
           >
             <template #default="{ row }">
