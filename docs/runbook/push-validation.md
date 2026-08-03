@@ -13,7 +13,7 @@ ERP → 中间服务器 → 数据平台
 | 1 | 数据平台已拿到拟安装的 `d2a-portable-platform-<版本>.zip` |
 | 2 | 中间服务器已有可用的 `d2a-portable-middle-<版本>.zip`（可与平台应用版本不同） |
 | 3 | 平台 `supported_ingest_protocol_versions` 覆盖中间机发送协议（见 Release 兼容性说明；通常 v2 中间机可对接新平台） |
-| 4 | 两台机器约定同一 ingest Token |
+| 4 | 已确定数据源标识（建议 `<厂区>_<系统>`，如 `kunshan_e10`;多中间机时必须全局唯一） |
 | 5 | 中间服务器已安装 ODBC Driver 18 for SQL Server |
 | 6 | 中间服务器可以访问 ERP SQL Server |
 | 7 | 中间服务器可以访问数据平台 ingest 端口,默认 `8850` |
@@ -27,16 +27,24 @@ ERP → 中间服务器 → 数据平台
 1. 解压 `d2a-portable-platform-<版本>.zip`。
 2. 双击 `data2agent.exe`。
 3. 浏览器打开 `/setup`。
-4. 填写 ingest Token、管理 Token、MCP Token。
+4. 填写 ingest Token（**管理员 Token**,迁移期/逃生用）、管理 Token、MCP Token。
 5. 保存配置。
 6. 确认托盘「运行状态」正常。
+7. 打开控制台「数据源管理 → 添加数据源」:填写源标识（如 `kunshan_e10`）登记，
+   **平台签发该源专属推送 Token（明文仅此一次）**,复制生成的中间机配置片段。
+
+> **签发制说明(2026-08 起)**:数据源须在平台登记后才可推送；ingest 按
+> 「source + 专属 Token」校验,停用/重置在数据源管理页操作。兼容规则:
+> 空登记簿 + 无管理员 Token 为开发引导期(开放);管理员 Token 可推任何源
+> (迁移期),现场全部切换为专属 Token 后可从 secrets.env 移除以严格化。
 
 ### 2.2 中间服务器
 
 1. 安装 ODBC Driver 18 for SQL Server。
 2. 解压 `d2a-portable-middle-<版本>.zip`。
 3. 双击 `data2agent.exe`。
-4. 浏览器打开 `/config`，填写平台 URL、ERP 连接与 Token，保存。
+4. 浏览器打开 `/config`，将平台签发的配置片段(source 标识 / 平台 URL /
+   专属 Token)与 ERP 连接填入，保存。
 5. 「测试数据库连接」通过后，打开 `/metadata` 刷新扫描，选表加入计划。
 6. 在 `/tables` 确认模式 / 业务键 / 水位，校验并保存抽取计划。
 7. 重启抽取进程。
