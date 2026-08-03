@@ -127,6 +127,8 @@ from .contracts import (
     SetupSuccessResponse,
     SourceCard,
     SourceDetail,
+    IngestConnectionInfo,
+    IngestTokenReveal,
     TemplateMetric,
     TemplateObject,
     UpdateActionResponse,
@@ -1757,6 +1759,54 @@ def create_app(landing: str | None = None, templates: str = "templates",
             "table_states": table_states,
             "recent_runs": [_map_run(r) for r in runs],
         }
+
+    # ---- 中间机接入信息(展示用)----
+    # 运维在中间机配 sink 时需要:平台端点 + Token + 协议版本。
+    # 明文 Token 只经 reveal 接口发放,每次写访问审计(可追谁看过)。
+
+    @api.get(
+        "/ingest/connection-info",
+        response_model=IngestConnectionInfo,
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
+    def ingest_connection_info(request: Request) -> dict:
+        from ...protocol.ingest import (
+            INGEST_PROTOCOL_VERSION,
+            SUPPORTED_INGEST_PROTOCOL_VERSIONS,
+        )
+        token = os.environ.get("D2A_INGEST_TOKEN", "")
+        cfg = state["config"]
+        endpoint = (cfg.ingest_url if cfg and cfg.ingest_url else None) or (
+            f"http://{request.url.hostname or '127.0.0.1'}:8850"
+        )
+        masked = None
+        if token:
+            masked = f"{token[:4]}…{token[-2:]}" if len(token) > 6 else "…"
+        return {
+            "endpoint": endpoint,
+            "token_configured": bool(token),
+            "token_masked": masked,
+            "active_protocol_version": INGEST_PROTOCOL_VERSION,
+            "supported_protocol_versions": list(SUPPORTED_INGEST_PROTOCOL_VERSIONS),
+        }
+
+    @api.post(
+        "/ingest/connection-info/reveal",
+        response_model=IngestTokenReveal,
+        responses={401: _RESP_HTTP_ERROR[401], 409: _RESP_HTTP_ERROR[409]},
+    )
+    def ingest_token_reveal() -> dict:
+        """出示明文 ingest Token;每次调用写访问审计(严禁记录 Token 本体)。"""
+        token = os.environ.get("D2A_INGEST_TOKEN", "")
+        if not token:
+            raise HTTPException(
+                409, "平台未配置 D2A_INGEST_TOKEN(见平台 config/secrets.env)")
+        db = store()
+        db.log_access(
+            subject="console-admin", resource_type="config", source=None,
+            resource="ingest_token_reveal", allowed=True,
+            reason_code="reveal_requested")
+        return {"token": token}
 
     def _validation_error(status: int, detail: str, reason_code: str) -> JSONResponse:
         return JSONResponse(

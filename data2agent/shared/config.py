@@ -354,6 +354,8 @@ class PlatformConfig(BaseModel):
     model_config = {"extra": "forbid"}
     templates: str = "templates"
     landing: str = "landing/factory.sqlite"
+    # 可选:对外告知中间机的 ingest 端点(反代域名);缺省按访问主机推导
+    ingest_url: str | None = None
 
 
 def load_platform_config(path: str | Path) -> PlatformConfig:

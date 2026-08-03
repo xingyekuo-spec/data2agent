@@ -3,21 +3,84 @@
 // 边界:连接配置与凭据在中间机(安全拓扑),本页只读观测,不提供编辑。
 import { onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
-import { Refresh, Plus } from '@element-plus/icons-vue'
+import { Refresh, Plus, Key } from '@element-plus/icons-vue'
 import { ref } from 'vue'
+import { ElMessage } from 'element-plus'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
+import { getIngestConnectionInfo, postIngestTokenReveal } from '@/api/services'
 import { useSourcesStore, type SourceCard } from '@/stores/sources'
 import { formatDateTime } from '@/utils/time'
 import { formatDuration } from '@/utils/format'
+import type { components } from '@/types/api'
 import type { HealthStatus } from '@/types/state'
+
+type IngestConnectionInfo = components['schemas']['IngestConnectionInfo']
 
 const store = useSourcesStore()
 const { cards, detail, detailSource } = storeToRefs(store)
 
 const addDialogVisible = ref(false)
+
+// ---- 中间机接入信息(供中间机 sink 配置填写)----
+const connDialogVisible = ref(false)
+const connInfo = ref<IngestConnectionInfo | null>(null)
+const connLoading = ref(false)
+const revealedToken = ref<string | null>(null)
+const revealLoading = ref(false)
+
+async function openConnectionInfo(): Promise<void> {
+  connDialogVisible.value = true
+  revealedToken.value = null
+  if (connInfo.value) return
+  connLoading.value = true
+  const result = await getIngestConnectionInfo()
+  connLoading.value = false
+  if (!result.ok) {
+    ElMessage.error(`接入信息加载失败:${result.error.message}`)
+    return
+  }
+  connInfo.value = result.data
+}
+
+async function revealToken(): Promise<void> {
+  revealLoading.value = true
+  const result = await postIngestTokenReveal()
+  revealLoading.value = false
+  if (!result.ok) {
+    ElMessage.error(result.error.message)
+    return
+  }
+  revealedToken.value = result.data.token
+}
+
+async function copyText(text: string, label: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(`${label}已复制`)
+  } catch {
+    ElMessage.warning('复制失败,请手动选择复制')
+  }
+}
+
+function sinkSnippet(): string {
+  if (!connInfo.value) return ''
+  const tokenLine = revealedToken.value
+    ? `D2A_INGEST_TOKEN=${revealedToken.value}`
+    : 'D2A_INGEST_TOKEN=<点「显示明文」填入>'
+  return [
+    '# 中间机 connect.yaml(数据源 sink 段):',
+    'sink:',
+    '  type: http',
+    `  url: "${connInfo.value.endpoint}"`,
+    '  token_env: D2A_INGEST_TOKEN',
+    '',
+    '# 中间机 config/secrets.env:',
+    tokenLine,
+  ].join('\n')
+}
 
 /** 已支持/规划中的数据源类型(添加引导用;只有 ERP 可点) */
 const sourceTypes = [
@@ -68,6 +131,13 @@ onMounted(() => {
           </p>
         </div>
         <div class="page-actions">
+          <el-button
+            :icon="Key"
+            data-testid="connection-info"
+            @click="openConnectionInfo"
+          >
+            接入信息
+          </el-button>
           <el-button
             :icon="Plus"
             data-testid="source-add"
@@ -254,6 +324,75 @@ onMounted(() => {
       </template>
     </el-drawer>
 
+    <!-- 中间机接入信息:端点 / Token / 协议版本,供中间机 sink 配置 -->
+    <el-dialog
+      v-model="connDialogVisible"
+      title="中间机接入信息"
+      width="560px"
+      data-testid="connection-info-dialog"
+    >
+      <LoadingState v-if="connLoading" />
+      <template v-else-if="connInfo">
+        <el-descriptions
+          :column="1"
+          border
+          size="small"
+          data-testid="connection-info-table"
+        >
+          <el-descriptions-item label="接收端点">
+            <code>{{ connInfo.endpoint }}</code>
+            <el-button
+              link
+              type="primary"
+              @click="copyText(connInfo!.endpoint, '端点')"
+            >
+              复制
+            </el-button>
+          </el-descriptions-item>
+          <el-descriptions-item label="推送 Token">
+            <template v-if="connInfo.token_configured">
+              <code>{{ revealedToken ?? connInfo.token_masked }}</code>
+              <el-button
+                v-if="!revealedToken"
+                link
+                type="primary"
+                :loading="revealLoading"
+                data-testid="token-reveal"
+                @click="revealToken"
+              >
+                显示明文
+              </el-button>
+              <el-button
+                v-else
+                link
+                type="primary"
+                @click="copyText(revealedToken, 'Token')"
+              >
+                复制
+              </el-button>
+            </template>
+            <span v-else>未配置(平台 config/secrets.env 设 D2A_INGEST_TOKEN)</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="协议版本">
+            首选 {{ connInfo.active_protocol_version }},接受
+            {{ connInfo.supported_protocol_versions.join(' / ') }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <h4 class="drawer-section-title">
+          中间机配置片段
+        </h4>
+        <pre
+          class="conn-snippet"
+          data-testid="connection-snippet"
+        >{{ sinkSnippet() }}</pre>
+        <p class="page-desc">
+          将以上片段填入中间机 connect.yaml 与 config/secrets.env;
+          出示明文会记入平台访问审计。
+        </p>
+      </template>
+    </el-dialog>
+
     <!-- 添加数据源引导 -->
     <el-dialog
       v-model="addDialogVisible"
@@ -375,6 +514,19 @@ onMounted(() => {
 
 .drawer-section-title + .el-table {
   margin-bottom: 20px;
+}
+
+.conn-snippet {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--d2a-border);
+  border-radius: 6px;
+  background: #0d1117;
+  color: #c9d1d9;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .type-list {

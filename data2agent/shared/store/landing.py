@@ -2711,7 +2711,7 @@ class LandingStore:
 
         只记主体/目标/结果/查询形状/行数;严禁 Token、q 原文、返回值、traceback。
         """
-        if resource_type not in ("raw", "object", "quarantine_raw"):
+        if resource_type not in ("raw", "object", "quarantine_raw", "config"):
             raise ValueError(f"非法 resource_type '{resource_type}'")
         cur = self.con.execute(
             "INSERT INTO d2a_console_access_audit (ts, subject, resource_type, source,"

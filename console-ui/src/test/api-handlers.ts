@@ -219,6 +219,12 @@ export function buildHandlers(): StubHandler[] {
     http.get('*/api/setup/status', () => respond((f) => f.setupStatus)),
     http.get('*/api/overview', () => respond((f) => f.overview)),
     http.get('*/api/sources', () => respond((f) => f.sources)),
+    http.get('*/api/ingest/connection-info', () => respond((f) => f.ingestConnectionInfo)),
+    http.post('*/api/ingest/connection-info/reveal', () => {
+      const fail = transportFailure()
+      if (fail) return fail
+      return json({ token: 'tok-abcdef-123456' })
+    }),
     http.get('*/api/sources/:source', ({ params }) => {
       const fail = transportFailure()
       if (fail) return fail

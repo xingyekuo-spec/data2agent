@@ -250,6 +250,14 @@ export function getSourceDetail(source: string) {
   )
 }
 
+export function getIngestConnectionInfo() {
+  return call(client.GET('/api/ingest/connection-info'))
+}
+
+export function postIngestTokenReveal() {
+  return call(client.POST('/api/ingest/connection-info/reveal'))
+}
+
 export function getTemplateMetrics() {
   return call(client.GET('/api/templates/metrics'))
 }

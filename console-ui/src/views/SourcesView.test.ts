@@ -84,4 +84,30 @@ describe('SourcesView(数据源管理)', () => {
     expect(wrapper.find('[data-testid="source-grid"]').exists()).toBe(false)
     wrapper.unmount()
   })
+
+  it('接入信息:端点/协议/脱敏 Token,点显示明文出全文', async () => {
+    const wrapper = mountSources()
+    await flushPromises()
+
+    await wrapper.find('[data-testid="connection-info"]').trigger('click')
+    await flushPromises()
+
+    const table = document.body.querySelector('[data-testid="connection-info-table"]')
+    expect(table?.textContent).toContain('http://192.168.1.10:8850')
+    expect(table?.textContent).toContain('tok-…56')
+    expect(table?.textContent).toContain('2 / 3')
+
+    // 配置片段默认不含明文
+    const snippet = document.body.querySelector('[data-testid="connection-snippet"]')
+    expect(snippet?.textContent).toContain('sink:')
+    expect(snippet?.textContent).not.toContain('tok-abcdef-123456')
+
+    // 显示明文后片段含 Token
+    const revealBtn = document.body.querySelector('[data-testid="token-reveal"]') as HTMLElement
+    revealBtn.click()
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="connection-snippet"]')?.textContent)
+      .toContain('D2A_INGEST_TOKEN=tok-abcdef-123456')
+    wrapper.unmount()
+  })
 })

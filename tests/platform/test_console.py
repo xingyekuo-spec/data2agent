@@ -139,6 +139,50 @@ def test_source_detail_tables_and_recent_runs(env):
     assert client.get("/api/sources/no_such_source").status_code == 404
 
 
+def test_ingest_connection_info_and_reveal(env, monkeypatch):
+    """接入信息:端点/协议/脱敏 Token;reveal 出示明文并写访问审计。"""
+    landing, platform_yaml, tmp_path = env
+    monkeypatch.setenv("D2A_INGEST_TOKEN", "tok-abcdef-123456")
+    platform_cfg = PlatformConfig(
+        templates=str(ROOT / "templates"), landing=landing.db_path)
+    client = TestClient(create_app(
+        landing.db_path, str(ROOT / "templates"),
+        platform_cfg, config_path=platform_yaml, home=tmp_path))
+
+    r = client.get("/api/ingest/connection-info")
+    assert r.status_code == 200, r.text
+    info = r.json()
+    assert info["token_configured"] is True
+    assert info["token_masked"] == "tok-…56"
+    assert "…" in info["token_masked"] and "abcdef" not in info["token_masked"]
+    assert info["supported_protocol_versions"]
+    assert info["endpoint"].endswith(":8850")
+
+    r2 = client.post("/api/ingest/connection-info/reveal")
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["token"] == "tok-abcdef-123456"
+    audit = landing.con.execute(
+        "SELECT resource, allowed FROM d2a_console_access_audit "
+        "WHERE resource_type = 'config' ORDER BY id DESC LIMIT 1").fetchone()
+    assert audit is not None and audit[0] == "ingest_token_reveal" and audit[1] == 1
+
+
+def test_ingest_token_reveal_without_token_409(env, monkeypatch):
+    """未配 Token:reveal 返回 409,不返回空串冒充。"""
+    landing, platform_yaml, tmp_path = env
+    monkeypatch.delenv("D2A_INGEST_TOKEN", raising=False)
+    platform_cfg = PlatformConfig(
+        templates=str(ROOT / "templates"), landing=landing.db_path)
+    client = TestClient(create_app(
+        landing.db_path, str(ROOT / "templates"),
+        platform_cfg, config_path=platform_yaml, home=tmp_path))
+
+    info = client.get("/api/ingest/connection-info").json()
+    assert info["token_configured"] is False
+    assert info["token_masked"] is None
+    assert client.post("/api/ingest/connection-info/reveal").status_code == 409
+
+
 def test_repo_root_points_at_repository_root():
     """_REPO_ROOT 必须指向仓库根(含 pyproject.toml),而非包目录。
 

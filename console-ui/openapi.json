@@ -868,6 +868,68 @@
         "title": "HttpError",
         "type": "object"
       },
+      "IngestConnectionInfo": {
+        "description": "中间机接入信息(展示用):中间机配 sink 时需要的三要素。",
+        "properties": {
+          "active_protocol_version": {
+            "description": "平台首选协议号",
+            "title": "Active Protocol Version",
+            "type": "string"
+          },
+          "endpoint": {
+            "description": "平台 ingest 接收端点;platform.yaml 未配 ingest_url 时按访问主机推导",
+            "title": "Endpoint",
+            "type": "string"
+          },
+          "supported_protocol_versions": {
+            "description": "平台当前接受的协议号列表;中间机发送协议须落在其中",
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Protocol Versions",
+            "type": "array"
+          },
+          "token_configured": {
+            "description": "平台是否已配 D2A_INGEST_TOKEN;未配置时中间机只能匿名推送(不推荐)",
+            "title": "Token Configured",
+            "type": "boolean"
+          },
+          "token_masked": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "脱敏 Token(前 4 … 后 2);未配置为 null",
+            "title": "Token Masked"
+          }
+        },
+        "required": [
+          "endpoint",
+          "token_configured",
+          "active_protocol_version",
+          "supported_protocol_versions"
+        ],
+        "title": "IngestConnectionInfo",
+        "type": "object"
+      },
+      "IngestTokenReveal": {
+        "description": "明文 Token 响应(仅 reveal 接口;每次调用写访问审计)。",
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "IngestTokenReveal",
+        "type": "object"
+      },
       "JsonValue": {
         "anyOf": [
           {
@@ -9022,6 +9084,95 @@
         "tags": [
           "v0.3"
         ]
+      }
+    },
+    "/api/ingest/connection-info": {
+      "get": {
+        "operationId": "ingest_connection_info_api_ingest_connection_info_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestConnectionInfo"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Ingest Connection Info"
+      }
+    },
+    "/api/ingest/connection-info/reveal": {
+      "post": {
+        "description": "出示明文 ingest Token;每次调用写访问审计(严禁记录 Token 本体)。",
+        "operationId": "ingest_token_reveal_api_ingest_connection_info_reveal_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestTokenReveal"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "缺少或无效的 Bearer Token"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HttpError"
+                }
+              }
+            },
+            "description": "冲突/未配置/只读/熔断"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "summary": "Ingest Token Reveal"
       }
     },
     "/api/logs": {

@@ -638,6 +638,26 @@ class SourceDetail(SourceCard):
     recent_runs: list[RunSummary] = Field(description="该源最近运行(最多 5 条)")
 
 
+class IngestConnectionInfo(BaseModel):
+    """中间机接入信息(展示用):中间机配 sink 时需要的三要素。"""
+
+    endpoint: str = Field(
+        description="平台 ingest 接收端点;platform.yaml 未配 ingest_url 时按访问主机推导")
+    token_configured: bool = Field(
+        description="平台是否已配 D2A_INGEST_TOKEN;未配置时中间机只能匿名推送(不推荐)")
+    token_masked: str | None = Field(
+        default=None, description="脱敏 Token(前 4 … 后 2);未配置为 null")
+    active_protocol_version: str = Field(description="平台首选协议号")
+    supported_protocol_versions: list[str] = Field(
+        description="平台当前接受的协议号列表;中间机发送协议须落在其中")
+
+
+class IngestTokenReveal(BaseModel):
+    """明文 Token 响应(仅 reveal 接口;每次调用写访问审计)。"""
+
+    token: str
+
+
 class RunStep(BaseModel):
     id: int
     ordinal: int

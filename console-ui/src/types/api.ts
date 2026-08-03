@@ -352,6 +352,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ingest/connection-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ingest Connection Info */
+        get: operations["ingest_connection_info_api_ingest_connection_info_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ingest/connection-info/reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest Token Reveal
+         * @description 出示明文 ingest Token;每次调用写访问审计(严禁记录 Token 本体)。
+         */
+        post: operations["ingest_token_reveal_api_ingest_connection_info_reveal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/logs": {
         parameters: {
             query?: never;
@@ -1232,6 +1269,45 @@ export interface components {
         HttpError: {
             /** Detail */
             detail: string;
+        };
+        /**
+         * IngestConnectionInfo
+         * @description 中间机接入信息(展示用):中间机配 sink 时需要的三要素。
+         */
+        IngestConnectionInfo: {
+            /**
+             * Active Protocol Version
+             * @description 平台首选协议号
+             */
+            active_protocol_version: string;
+            /**
+             * Endpoint
+             * @description 平台 ingest 接收端点;platform.yaml 未配 ingest_url 时按访问主机推导
+             */
+            endpoint: string;
+            /**
+             * Supported Protocol Versions
+             * @description 平台当前接受的协议号列表;中间机发送协议须落在其中
+             */
+            supported_protocol_versions: string[];
+            /**
+             * Token Configured
+             * @description 平台是否已配 D2A_INGEST_TOKEN;未配置时中间机只能匿名推送(不推荐)
+             */
+            token_configured: boolean;
+            /**
+             * Token Masked
+             * @description 脱敏 Token(前 4 … 后 2);未配置为 null
+             */
+            token_masked?: string | null;
+        };
+        /**
+         * IngestTokenReveal
+         * @description 明文 Token 响应(仅 reveal 接口;每次调用写访问审计)。
+         */
+        IngestTokenReveal: {
+            /** Token */
+            token: string;
         };
         /**
          * JsonValue
@@ -4870,6 +4946,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["McpLabError"];
+                };
+            };
+        };
+    };
+    ingest_connection_info_api_ingest_connection_info_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestConnectionInfo"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+        };
+    };
+    ingest_token_reveal_api_ingest_connection_info_reveal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IngestTokenReveal"];
+                };
+            };
+            /** @description 缺少或无效的 Bearer Token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
+                };
+            };
+            /** @description 冲突/未配置/只读/熔断 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpError"];
                 };
             };
         };

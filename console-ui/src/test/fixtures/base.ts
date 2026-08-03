@@ -17,6 +17,7 @@ export type OverviewResponse = components['schemas']['OverviewResponse']
 export type RunSummary = components['schemas']['RunSummary']
 export type SourceCard = components['schemas']['SourceCard']
 export type SourceDetail = components['schemas']['SourceDetail']
+export type IngestConnectionInfo = components['schemas']['IngestConnectionInfo']
 export type QuarantineRecord = components['schemas']['QuarantineRecord']
 export type AuditRecord = components['schemas']['AuditRecord']
 export type AccessAuditPage = components['schemas']['AccessAuditPage']
@@ -91,6 +92,8 @@ export interface ScenarioFixture {
   /** 数据源管理:清单卡片与详情(按源名索引) */
   sources: SourceCard[]
   sourceDetails: Record<string, SourceDetail>
+  /** 中间机接入信息 */
+  ingestConnectionInfo: IngestConnectionInfo
 }
 
 const T = '2026-07-18T09:12:00+08:00'
@@ -1213,5 +1216,14 @@ export const baseFixture: ScenarioFixture = {
         },
       ],
     },
+  },
+
+  // ---- 中间机接入信息 ----
+  ingestConnectionInfo: {
+    endpoint: 'http://192.168.1.10:8850',
+    token_configured: true,
+    token_masked: 'tok-…56',
+    active_protocol_version: '3',
+    supported_protocol_versions: ['2', '3'],
   },
 }
