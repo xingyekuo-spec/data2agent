@@ -1,6 +1,7 @@
 # data2agent 路线图
 
-> 状态: **`v0.5.1`** — ERP 元数据 M0–M7 已完成（产品包无 showroom，Console 仅真实 API）;更新于 2026-07-24。
+> 状态: **`v0.5.1`** — ERP 元数据 M0–M7 已完成（产品包无 showroom，Console 仅真实 API）;
+> v0.4 跨机可靠性随首个工厂生产试点通过现场验证;更新于 2026-08-03。
 
 data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及中间机元数据发现与抽取表管理
 （见 [ERP 元数据实施计划](superpowers/plans/2026-07-23-erp-metadata-extraction-management.md)，已收尾）。
@@ -18,10 +19,13 @@ data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及�
 
 进行中：无。
 
+已完成（补充）:
+
+- **正式生产试点**:首个工厂试点已完成验证(跨机 receipt / generation 屏障 /
+  E6b 与 SQLite 备份基线随试点通过现场演练)。
+
 仍未宣称:
 
-- 正式生产试点就绪。
-- 跨机器 commit receipt、generation 屏障与 E6b 已完成代码实现；尚待现场故障演练。
 - 生产 HTTPS 证书/反代验收、mTLS 与凭据轮换。
 - ERP 写回、审批流、SaaS 多租户或完整 RBAC。
 
@@ -31,7 +35,8 @@ data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及�
 > 产品版本号 `v0.5.1`（ERP 元数据能力）并行；正式试点需同时满足两者。
 
 批次 receipt、generation 屏障、E6b、传输 fail-closed 默认与 SQLite 在线备份基线
-已落地；下一步是现场证书、容量压测、备份恢复和断网重放演练。
+已落地，并随首个工厂生产试点通过现场演练；下一步是生产 HTTPS 证书/反代与
+凭据轮换等传输层加固验收。
 
 ## 工厂试运行建议
 
