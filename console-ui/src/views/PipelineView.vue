@@ -9,6 +9,7 @@ import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { usePipelineStore } from '@/stores/pipeline'
+import { useOverviewStore } from '@/stores/overview'
 import { useSourcesStore } from '@/stores/sources'
 import type { components } from '@/types/api'
 import { formatDateTime, formatTimeHM } from '@/utils/time'
@@ -129,6 +130,51 @@ onMounted(() => {
   if (sourceCards.value.status === 'idle') {
     void sourcesStore.refresh()
   }
+})
+
+const overviewStore = useOverviewStore()
+
+/** 节点详情行动链接:按节点类型与状态给出下一步(只读面板 → 可行动) */
+interface NodeAction {
+  label: string
+  to: string
+}
+
+const detailActions = computed<NodeAction[]>(() => {
+  const n = selected.value
+  if (!n) {
+    return []
+  }
+  const actions: NodeAction[] = []
+  const bad = n.status === 'failed' || n.status === 'stale'
+  if (n.node === 'datasource') {
+    actions.push({ label: '查看数据源', to: '/sources' })
+  }
+  if (n.node === 'push' && bad) {
+    actions.push({ label: '检查数据源接入', to: '/sources' })
+  }
+  if (n.node === 'mapping' && (bad || n.status === 'warning')) {
+    actions.push({ label: '去校准映射', to: '/templates' })
+  }
+  const quarantinePending = overviewStore.data?.summary.quarantine_pending ?? 0
+  if ((n.node === 'mapping' || n.node === 'objects') && quarantinePending > 0) {
+    actions.push({ label: `处理待确认数据(${quarantinePending})`, to: '/quarantine' })
+  }
+  if (n.node === 'mcp' && bad) {
+    actions.push({ label: '打开 MCP Lab 验证', to: '/mcp' })
+  }
+  if (n.run_id) {
+    actions.push({ label: '查看运行详情', to: `/runs?run_id=${n.run_id}` })
+  }
+  // detail_path(后端给出)优先且不重复
+  const seen = new Set(n.detail_path ? [n.detail_path] : [])
+  return actions.filter((a) => {
+    if (seen.has(a.to)) {
+      return false
+    }
+    seen.add(a.to)
+    return true
+  })
 })
 
 const detailFields = computed(() => {
@@ -278,7 +324,18 @@ const detailFields = computed(() => {
               查看详情 →
             </router-link>
           </template>
-          <span v-else>暂无更多详情</span>
+          <template v-if="detailActions.length">
+            <router-link
+              v-for="action in detailActions"
+              :key="action.to"
+              class="detail__action"
+              :data-testid="`node-action-${action.to.replace(/\W+/g, '-')}`"
+              :to="action.to"
+            >
+              {{ action.label }} →
+            </router-link>
+          </template>
+          <span v-if="!selected.detail_path && detailActions.length === 0">暂无更多详情</span>
         </p>
       </div>
     </template>
@@ -447,6 +504,10 @@ const detailFields = computed(() => {
   margin: 0;
   font-size: 13px;
   word-break: break-all;
+}
+
+.detail__action {
+  margin-right: 14px;
 }
 
 .detail__path {

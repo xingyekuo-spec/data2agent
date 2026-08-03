@@ -6,6 +6,7 @@ import { server } from '@/test/fetch-stub'
 import { http } from '@/test/http'
 import { baseFixture } from '@/test/fixtures/base'
 import { setScenario } from '@/test/scenario'
+import { useOverviewStore } from '@/stores/overview'
 import { usePipelineStore } from '@/stores/pipeline'
 import PipelineView from './PipelineView.vue'
 
@@ -125,6 +126,38 @@ describe('PipelineView(M3)', () => {
     expect(detail.exists()).toBe(true)
     expect(detail.text()).toContain('failed')
     expect(detail.text()).toContain('ingest 接收端不可达')
+  })
+
+  it('节点详情按状态给行动链接(诊断 → 下一步)', async () => {
+    // mapping failed(熔断)→ 去校准映射
+    setScenario('apply-circuit-broken')
+    const wrapper = await mountView()
+    const mapping = wrapper.findAll('.flow__node').find((n) => n.text().includes('映射'))
+    await mapping?.trigger('click')
+    const detail = wrapper.find('[data-testid="node-detail"]')
+    expect(detail.text()).toContain('去校准映射')
+    expect(detail.find('[data-testid="node-action--templates"]').exists()).toBe(true)
+    wrapper.unmount()
+
+    // quarantine-pending:对象层节点给「处理待确认数据」
+    setScenario('quarantine-pending')
+    const pinia2: Pinia = createPinia()
+    const wrapper2 = mount(PipelineView, { global: { plugins: [pinia2, ElementPlus] } })
+    await usePipelineStore(pinia2).refresh()
+    await useOverviewStore(pinia2).refresh()
+    await flushPromises()
+    const objects = wrapper2.findAll('.flow__node').find((n) => n.text().includes('对象层'))
+    await objects?.trigger('click')
+    expect(wrapper2.find('[data-testid="node-detail"]').text()).toContain('处理待确认数据(4)')
+
+    // 数据源合成节点 → detail_path 即 /sources(行动去重,单链接)
+    const datasource = wrapper2.findAll('.flow__node')[0]
+    await datasource?.trigger('click')
+    const detail3 = wrapper2.find('[data-testid="node-detail"]')
+    expect(detail3.text()).toContain('查看详情')
+    const links = detail3.findAll('router-link')
+    expect(links.filter((l) => l.attributes('to') === '/sources')).toHaveLength(1)
+    wrapper2.unmount()
   })
 
   it('多源:切换数据源带 source 参数重查,快照作废不冒充', async () => {
