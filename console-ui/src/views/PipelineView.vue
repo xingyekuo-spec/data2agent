@@ -135,9 +135,12 @@ function connectorLabel(nextNode: PipelineNode | undefined): string {
   return parts.join(' · ')
 }
 
+/** el-select 把空串视为空值(显示占位符),默认源改用哨兵值 */
+const DEFAULT_SOURCE_VALUE = '__default__'
+
 function onSourceChange(value: string): void {
   close()
-  store.setSource(value || null)
+  store.setSource(value === DEFAULT_SOURCE_VALUE ? null : value)
   void store.refresh()
 }
 
@@ -238,7 +241,7 @@ const detailFields = computed(() => {
           data-testid="pipeline-overall"
         />
         <el-select
-          :model-value="currentSource ?? ''"
+          :model-value="currentSource ?? DEFAULT_SOURCE_VALUE"
           class="overall__source"
           size="small"
           data-testid="pipeline-source"
@@ -246,7 +249,7 @@ const detailFields = computed(() => {
         >
           <el-option
             label="默认数据源"
-            value=""
+            :value="DEFAULT_SOURCE_VALUE"
           />
           <el-option
             v-for="s in sourceCards.status === 'success' ? sourceCards.data : []"
@@ -287,11 +290,9 @@ const detailFields = computed(() => {
               <span class="flow__name">{{ labelOf(node.node) }}</span>
               <StatusBadge :status="node.status" />
               <span
-                v-if="metricOf(node)"
                 class="flow__metric"
               >{{ metricOf(node) }}</span>
               <span
-                v-if="lastSuccessOf(node)"
                 class="flow__last-success"
               >{{ lastSuccessOf(node) }}</span>
               <span
@@ -408,46 +409,53 @@ const detailFields = computed(() => {
   color: var(--d2a-text-secondary);
 }
 
-/* 桌面横向流程 */
+/* 桌面横向流程:节点等宽等高、不折行(溢出横向滚动),视觉链条不断 */
 .flow {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  flex-wrap: nowrap;
+  gap: 0;
   align-items: stretch;
-  padding: 0;
+  padding: 2px;
   margin: 0;
+  overflow-x: auto;
   list-style: none;
 }
 
 .flow__node-wrap {
   display: flex;
-  gap: 4px;
-  align-items: center;
+  flex: 1 1 0;
+  min-width: 150px;
+  align-items: stretch;
 }
 
 .flow__connector {
   display: inline-flex;
+  flex: 0 0 64px;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   color: var(--d2a-text-secondary);
   line-height: 1.2;
 }
 
 .flow__connector-label {
-  max-width: 90px;
+  max-width: 62px;
+  margin-top: 2px;
   overflow: hidden;
   font-size: var(--d2a-font-xs);
   color: var(--d2a-text-secondary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-align: center;
+  line-height: 1.3;
+  white-space: normal;
 }
 
 .flow__node {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
   gap: 6px;
   align-items: flex-start;
-  min-width: 128px;
+  min-width: 0;
   padding: 10px 12px;
   background: #fff;
   border: 1px solid var(--d2a-border);
@@ -487,21 +495,28 @@ const detailFields = computed(() => {
 }
 
 .flow__name {
+  max-width: 100%;
+  overflow: hidden;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .flow__metric {
+  min-height: 1.2em;
   font-size: 12px;
   color: var(--d2a-text-secondary);
 }
 
 .flow__last-success {
+  min-height: 1.2em;
   font-size: var(--d2a-font-xs);
   color: var(--d2a-text-secondary);
 }
 
 .flow__reason {
   display: -webkit-box;
+  min-height: 2.4em; /* 统一占位:无原因节点与两行原因节点同高 */
   overflow: hidden;
   font-size: 11px;
   color: var(--d2a-text-secondary);
@@ -562,15 +577,21 @@ const detailFields = computed(() => {
 @media (width <= 900px) {
   .flow {
     flex-direction: column;
+    overflow-x: visible;
   }
 
   .flow__node-wrap {
     flex-direction: column;
     align-items: stretch;
+    min-width: 0;
   }
 
   .flow__connector {
+    flex: 0 0 auto;
     align-self: center;
+  }
+
+  .flow__connector-arrow {
     transform: rotate(90deg);
   }
 }
