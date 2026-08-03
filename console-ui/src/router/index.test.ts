@@ -9,14 +9,16 @@ describe('router', () => {
     expect(routes.filter((r) => r.name)).toHaveLength(14)
   })
 
-  it('菜单分组遵循规格:运维监控 / 数据管理 / Agent / 系统', () => {
+  it('菜单分组遵循数据生命周期:总览/数据源/数据管理/本体库/MCP 服务/平台管理', () => {
     expect(NAV_GROUPS.map((g) => g.title)).toEqual([
-      '运维监控',
+      '总览',
+      '数据源',
       '数据管理',
-      'Agent',
-      '系统',
+      '本体库',
+      'MCP 服务',
+      '平台管理',
     ])
-    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([5, 4, 2, 2])
+    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([1, 3, 1, 2, 2, 4])
   })
 
   it('路径与规格一致:MCP Lab 固定 /mcp', () => {
@@ -26,16 +28,16 @@ describe('router', () => {
       '/',
       '/pipeline',
       '/runs',
-      '/validation',
-      '/audit',
-      '/data',
       '/quarantine',
-      '/object-graph',
+      '/data',
       '/templates',
+      '/object-graph',
       '/dead-stock',
       '/mcp',
       '/settings',
       '/logs',
+      '/audit',
+      '/validation',
     ])
   })
 

@@ -41,40 +41,52 @@ export interface NavGroup {
 }
 
 /**
- * 菜单结构(设计规格 §3.3,两级:分组标题 + 页面项)。
+ * 菜单结构(2026-08 按数据生命周期模块化重构,两级:分组标题 + 页面项)。
+ * 分组沿数据流向:总览 → 数据源 → 数据管理 → 本体库 → MCP 服务 → 平台管理,
+ * 与后端模块边界一一对应;页面标题用业务语言(接入/待确认),不用技术黑话。
  */
 export const NAV_GROUPS: readonly NavGroup[] = [
   {
-    title: '运维监控',
+    title: '总览',
     items: [
       { name: 'dashboard', path: '/', title: '仪表盘' },
-      { name: 'pipeline', path: '/pipeline', title: '管道状态' },
-      { name: 'runs', path: '/runs', title: '运行记录' },
-      { name: 'validation', path: '/validation', title: '验收报告' },
-      { name: 'audit', path: '/audit', title: '审计日志' },
+    ],
+  },
+  {
+    title: '数据源',
+    items: [
+      { name: 'pipeline', path: '/pipeline', title: '接入状态' },
+      { name: 'runs', path: '/runs', title: '接入记录' },
+      { name: 'quarantine', path: '/quarantine', title: '待确认数据' },
     ],
   },
   {
     title: '数据管理',
     items: [
       { name: 'data', path: '/data', title: '数据浏览' },
-      { name: 'quarantine', path: '/quarantine', title: '隔离区' },
-      { name: 'object-graph', path: '/object-graph', title: '对象关系' },
-      { name: 'templates', path: '/templates', title: '模板' },
     ],
   },
   {
-    title: 'Agent',
+    title: '本体库',
+    items: [
+      { name: 'templates', path: '/templates', title: '对象模板' },
+      { name: 'object-graph', path: '/object-graph', title: '对象关系' },
+    ],
+  },
+  {
+    title: 'MCP 服务',
     items: [
       { name: 'dead-stock-validation', path: '/dead-stock', title: '呆滞验证' },
       { name: 'mcp-lab', path: '/mcp', title: 'MCP Lab' },
     ],
   },
   {
-    title: '系统',
+    title: '平台管理',
     items: [
       { name: 'settings', path: '/settings', title: '配置' },
       { name: 'logs', path: '/logs', title: '日志' },
+      { name: 'audit', path: '/audit', title: '操作审计' },
+      { name: 'validation', path: '/validation', title: '一键验收' },
     ],
   },
 ]
