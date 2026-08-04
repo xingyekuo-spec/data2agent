@@ -139,33 +139,33 @@ body,
 }
 
 .d2a-page-flush > .el-tabs .el-tabs__content {
-  padding: 0 12px;
+  padding: 0;
 }
 
 /* 页签带正下方的工具栏:与页签带连成同一白色通栏(无间隙、同宽);
    仅当工具栏是页签面板首个元素时(如审计页);面板中部工具栏保持卡片 */
 .d2a-page-flush > .el-tabs .el-tab-pane > .d2a-card.d2a-toolbar:first-child {
   padding: 8px 12px;
-  margin: 0 -12px 8px;
+  margin: 0;
   background: #fff;
   border: none;
   border-radius: 0;
   box-shadow: 0 1px 0 var(--d2a-border);
 }
 
-@media (max-width: 900px) {
-  .d2a-page-flush > .el-tabs .el-tabs__header {
-    padding: 0 8px;
-  }
+/* 页签页内容卡片:与页签带同宽(通栏),去圆角/侧边线,仅留底部分隔;
+   页面整体为「通栏带 + 通栏卡片」的连续白条结构 */
+.d2a-page-flush > .el-tabs .el-tab-pane > .d2a-card {
+  margin-top: 8px;
+  margin-right: 0;
+  margin-left: 0;
+  border-right: none;
+  border-left: none;
+  border-radius: 0;
+}
 
-  .d2a-page-flush > .el-tabs .el-tabs__content {
-    padding: 0 8px;
-  }
-
-  .d2a-page-flush > .el-tabs .el-tab-pane > .d2a-card.d2a-toolbar:first-child {
-    padding: 8px;
-    margin: 0 -8px 8px;
-  }
+.d2a-page-flush > .el-tabs .el-tab-pane > .d2a-card.d2a-toolbar:first-child {
+  margin-top: 0;
 }
 
 /* 工具栏筛选控件固定宽度(EP 新版 select 默认 100% 宽,须约束) */
