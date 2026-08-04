@@ -76,3 +76,34 @@ body,
 .card-title--flush {
   margin-bottom: 0;
 }
+
+/* A 类列表页工具栏(页面结构规范 §二.2):左筛选、右主操作;
+   不再是独立卡片,直接位于内容区第一行 */
+.d2a-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.d2a-toolbar__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+
+/* 工具栏筛选控件固定宽度(EP 新版 select 默认 100% 宽,须约束) */
+.d2a-toolbar .el-select {
+  width: 140px;
+}
+
+.d2a-toolbar .el-input {
+  width: 220px;
+}
+
+.d2a-toolbar .el-select,
+.d2a-toolbar .el-input {
+  flex: 0 0 auto;
+}

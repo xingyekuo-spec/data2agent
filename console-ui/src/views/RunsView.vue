@@ -7,6 +7,7 @@ import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
+import Pager from '@/components/shared/Pager.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useRunsStore } from '@/stores/runs'
 import type { HealthStatus } from '@/types/state'
@@ -89,8 +90,8 @@ function onFilterChange(): void {
   syncQuery()
 }
 
-function onPageChange(current: number): void {
-  store.setPage((current - 1) * page.limit, page.limit)
+function onPagerChange(offset: number, limit: number): void {
+  store.setPage(offset, limit)
   syncQuery()
 }
 
@@ -119,7 +120,8 @@ watch(
 
 <template>
   <section class="runs-page">
-    <div class="d2a-card toolbar">
+    <!-- 规范工具栏(A 类):左筛选、右操作;不再独立成卡 -->
+    <div class="d2a-toolbar">
       <el-select
         v-model="filters.type"
         placeholder="类型"
@@ -150,14 +152,15 @@ watch(
           :value="s"
         />
       </el-select>
-      <el-button
-        size="small"
-        data-testid="refresh-button"
-        @click="store.refresh()"
-      >
-        刷新
-      </el-button>
-      <span class="toolbar__total">共 {{ total }} 条</span>
+      <div class="d2a-toolbar__actions">
+        <el-button
+          size="small"
+          data-testid="refresh-button"
+          @click="store.refresh()"
+        >
+          刷新
+        </el-button>
+      </div>
     </div>
 
     <div class="d2a-card">
@@ -257,14 +260,12 @@ watch(
             </template>
           </el-table-column>
         </el-table>
-        <el-pagination
-          class="pager"
-          layout="prev, pager, next"
+        <Pager
           :total="total"
-          :page-size="page.limit"
-          :current-page="page.offset / page.limit + 1"
+          :limit="page.limit"
+          :offset="page.offset"
           data-testid="runs-pager"
-          @current-change="onPageChange"
+          @change="onPagerChange"
         />
       </template>
     </div>
@@ -422,11 +423,6 @@ watch(
   margin: 0 0 8px;
   font-size: 12px;
   color: var(--d2a-status-stale);
-}
-
-.pager {
-  margin-top: 10px;
-  justify-content: flex-end;
 }
 
 .summary {

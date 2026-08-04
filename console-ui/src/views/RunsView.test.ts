@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { HttpResponse, http } from '@/test/http'
 import { createPinia, type Pinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
@@ -18,7 +19,10 @@ async function mountView(query: Record<string, string> = {}): Promise<{
   const router = createAppRouter(createMemoryHistory())
   await router.push({ path: '/runs', query })
   await router.isReady()
-  const wrapper = mount(RunsView, { global: { plugins: [pinia, ElementPlus, router] } })
+  const wrapper = mount(RunsView, {
+    // 与生产一致的中文 locale(App.vue 经 el-config-provider;测试直挂插件选项)
+    global: { plugins: [pinia, [ElementPlus, { locale: zhCn }], router] },
+  })
   await flushPromises()
   return { wrapper, router }
 }
