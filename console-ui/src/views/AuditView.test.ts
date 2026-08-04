@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { HttpResponse, http } from '@/test/http'
 import { createPinia, type Pinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
@@ -14,7 +15,7 @@ async function mountView(): Promise<ReturnType<typeof mount>> {
   const router = createAppRouter(createMemoryHistory())
   await router.push('/audit')
   await router.isReady()
-  const wrapper = mount(AuditView, { global: { plugins: [pinia, ElementPlus, router] } })
+  const wrapper = mount(AuditView, { global: { plugins: [pinia, [ElementPlus, { locale: zhCn }], router] } })
   await flushPromises()
   return wrapper
 }
@@ -24,7 +25,7 @@ async function mountViewWithQuery(query: Record<string, string>): Promise<Return
   const router = createAppRouter(createMemoryHistory())
   await router.push({ path: '/audit', query })
   await router.isReady()
-  const wrapper = mount(AuditView, { global: { plugins: [pinia, ElementPlus, router] } })
+  const wrapper = mount(AuditView, { global: { plugins: [pinia, [ElementPlus, { locale: zhCn }], router] } })
   await flushPromises()
   return wrapper
 }

@@ -7,6 +7,7 @@ import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
+import Pager from '@/components/shared/Pager.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useAuditStore } from '@/stores/audit'
 import { formatDateTime } from '@/utils/time'
@@ -29,14 +30,16 @@ function truncate(text: string, max = 80): string {
   return text.length > max ? `${text.slice(0, max)}…` : text
 }
 
-function onSqlPage(current: number): void {
-  sqlPage.offset = (current - 1) * sqlPage.limit
+function onSqlPage(offset: number, limit: number): void {
+  sqlPage.offset = offset
+  sqlPage.limit = limit
   void store.refreshSql()
   syncRouteQuery()
 }
 
-function onAccessPage(current: number): void {
-  accessPage.offset = (current - 1) * accessPage.limit
+function onAccessPage(offset: number, limit: number): void {
+  accessPage.offset = offset
+  accessPage.limit = limit
   void store.refreshAccess()
   syncRouteQuery()
 }
@@ -164,7 +167,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 </script>
 
 <template>
-  <section class="audit-page">
+  <section class="audit-page d2a-page-flush">
     <el-tabs
       v-model="activeTab"
       data-testid="audit-tabs"
@@ -175,7 +178,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
         label="SQL 操作"
         name="sql"
       >
-        <div class="d2a-card toolbar">
+        <div class="d2a-card d2a-toolbar">
           <el-input
             v-model="sqlFilters.source"
             placeholder="来源(source)"
@@ -210,14 +213,15 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             class="toolbar__input toolbar__input--wide"
             @change="filterSql()"
           />
-          <el-button
-            size="small"
-            data-testid="sql-refresh"
-            @click="store.refreshSql()"
-          >
-            刷新
-          </el-button>
-          <span class="toolbar__total">共 {{ sqlTotal }} 条</span>
+          <div class="d2a-toolbar__actions">
+            <el-button
+              size="small"
+              data-testid="sql-refresh"
+              @click="store.refreshSql()"
+            >
+              刷新
+            </el-button>
+          </div>
         </div>
 
         <div class="d2a-card">
@@ -292,14 +296,12 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                 </template>
               </el-table-column>
             </el-table>
-            <el-pagination
-              class="pager"
-              layout="prev, pager, next"
+            <Pager
               :total="sqlTotal"
-              :page-size="sqlPage.limit"
-              :current-page="sqlPage.offset / sqlPage.limit + 1"
+              :limit="sqlPage.limit"
+              :offset="sqlPage.offset"
               data-testid="sql-pager"
-              @current-change="onSqlPage"
+              @change="onSqlPage"
             />
           </template>
         </div>
@@ -310,7 +312,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
         label="数据访问"
         name="access"
       >
-        <div class="d2a-card toolbar">
+        <div class="d2a-card d2a-toolbar">
           <el-input
             v-model="accessFilters.subject"
             placeholder="主体(subject)"
@@ -378,16 +380,15 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             data-testid="filter-access-to"
             @change="filterAccess()"
           />
-          <el-button
-            size="small"
-            data-testid="access-refresh"
-            @click="store.refreshAccess()"
-          >
-            刷新
-          </el-button>
-          <span class="toolbar__total">
-            <template v-if="access.status === 'success'">共 {{ access.data.total }} 条</template>
-          </span>
+          <div class="d2a-toolbar__actions">
+            <el-button
+              size="small"
+              data-testid="access-refresh"
+              @click="store.refreshAccess()"
+            >
+              刷新
+            </el-button>
+          </div>
         </div>
         <p
           class="scope-note"
@@ -468,14 +469,12 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                 </template>
               </el-table-column>
             </el-table>
-            <el-pagination
-              class="pager"
-              layout="prev, pager, next"
+            <Pager
               :total="access.status === 'success' ? access.data.total : 0"
-              :page-size="accessPage.limit"
-              :current-page="accessPage.offset / accessPage.limit + 1"
+              :limit="accessPage.limit"
+              :offset="accessPage.offset"
               data-testid="access-pager"
-              @current-change="onAccessPage"
+              @change="onAccessPage"
             />
           </template>
         </div>
@@ -489,27 +488,6 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.toolbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.toolbar__input {
-  width: 150px;
-}
-
-.toolbar__input--wide {
-  width: 220px;
-}
-
-.toolbar__total {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--d2a-text-secondary);
 }
 
 .scope-note {
@@ -539,10 +517,5 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
   border-radius: 6px;
   white-space: pre-wrap;
   word-break: break-all;
-}
-
-.pager {
-  margin-top: 10px;
-  justify-content: flex-end;
 }
 </style>
