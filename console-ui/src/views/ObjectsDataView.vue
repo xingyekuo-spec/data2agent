@@ -130,6 +130,13 @@ function searchObject(): void {
   syncRouteQuery()
 }
 
+function onRefresh(): void {
+  void store.refreshRawCatalog()
+  if (objSel.value) {
+    void store.browseObject()
+  }
+}
+
 onMounted(() => {
   applyRouteQuery(route.query, true)
   void store.refreshRawCatalog()
@@ -140,6 +147,39 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
 <template>
   <section class="data-page d2a-page-flush">
+    <!-- 通栏工具栏(A 类规范):对象搜索;未选对象时禁用并引导 -->
+    <div class="d2a-card d2a-toolbar">
+      <el-input
+        v-model="objQuery.q"
+        :placeholder="objSel ? (objSearchable ? '按业务键搜索' : '该资源没有可搜索业务键') : '先在下方目录选择对象'"
+        size="small"
+        clearable
+        :disabled="!objSel || !objSearchable"
+        data-testid="obj-search"
+        @change="searchObject()"
+      />
+      <span
+        v-if="objPage?.status === 'success'"
+        class="toolbar-hint"
+      >
+        {{ objSel }} · 排序 {{ objPage.data.sort }}
+      </span>
+      <span
+        v-else
+        class="toolbar-hint"
+        data-testid="obj-toolbar-hint"
+      >{{ objSel || '未选择对象' }}</span>
+      <div class="d2a-toolbar__actions">
+        <el-button
+          size="small"
+          data-testid="obj-refresh"
+          @click="onRefresh"
+        >
+          刷新
+        </el-button>
+      </div>
+    </div>
+
     <div class="d2a-card">
       <h3 class="card-title">
         对象目录
@@ -238,35 +278,6 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
       </template>
     </div>
 
-    <div
-      v-if="objPage"
-      class="d2a-card d2a-toolbar"
-    >
-      <el-input
-        v-model="objQuery.q"
-        :placeholder="objPage.status === 'success' && objPage.data.searchable ? '按业务键搜索' : '该资源没有可搜索业务键'"
-        size="small"
-        clearable
-        :disabled="!objSearchable"
-        data-testid="obj-search"
-        @change="searchObject()"
-      />
-      <span
-        v-if="objPage.status === 'success'"
-        class="toolbar-hint"
-      >
-        {{ objSel }} · 排序 {{ objPage.data.sort }}
-      </span>
-      <div class="d2a-toolbar__actions">
-        <el-button
-          size="small"
-          data-testid="obj-refresh"
-          @click="store.browseObject()"
-        >
-          刷新
-        </el-button>
-      </div>
-    </div>
     <div
       v-if="objPage"
       class="d2a-card"

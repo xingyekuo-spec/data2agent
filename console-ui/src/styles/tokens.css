@@ -100,7 +100,9 @@ body,
   margin: -8px -12px 0;
 }
 
-.d2a-page-flush > .d2a-toolbar {
+/* A 类列表页通栏工具栏:仅页面首位工具栏通栏贴顶栏;
+   面板中部的工具栏保持内缩卡片,不得通栏 */
+.d2a-page-flush > .d2a-toolbar:first-child {
   border-top: none;
   border-right: none;
   border-left: none;

@@ -108,6 +108,20 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
 <template>
   <section class="data-page d2a-page-flush">
+    <!-- 通栏工具栏(A 类规范):左提示右操作 -->
+    <div class="d2a-card d2a-toolbar">
+      <span class="toolbar-hint">raw 原始数据目录(点「浏览」查看表数据)</span>
+      <div class="d2a-toolbar__actions">
+        <el-button
+          size="small"
+          data-testid="raw-refresh"
+          @click="store.refreshRawCatalog()"
+        >
+          刷新
+        </el-button>
+      </div>
+    </div>
+
     <div class="d2a-card">
       <h3 class="card-title">
         raw 目录

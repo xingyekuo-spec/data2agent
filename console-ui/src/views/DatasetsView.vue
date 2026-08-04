@@ -129,6 +129,43 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
 <template>
   <section class="data-page d2a-page-flush">
+    <div class="d2a-card d2a-toolbar">
+      <el-select
+        v-model="datasetFilters.status"
+        placeholder="状态"
+        clearable
+        size="small"
+        data-testid="dataset-filter-status"
+        @change="datasetsStore.refresh()"
+      >
+        <el-option
+          label="building"
+          value="building"
+        />
+        <el-option
+          label="published"
+          value="published"
+        />
+        <el-option
+          label="failed"
+          value="failed"
+        />
+        <el-option
+          label="retired"
+          value="retired"
+        />
+      </el-select>
+      <div class="d2a-toolbar__actions">
+        <el-button
+          size="small"
+          data-testid="datasets-refresh"
+          @click="datasetsStore.refresh()"
+        >
+          刷新
+        </el-button>
+      </div>
+    </div>
+
     <div class="d2a-card">
       <h3 class="card-title">
         构建 / 发布
@@ -179,43 +216,6 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
         · published={{ applyResult.data.published ?? false }}
         · previous={{ applyResult.data.previous_dataset_version ?? '—' }}
       </p>
-    </div>
-
-    <div class="d2a-card d2a-toolbar">
-      <el-select
-        v-model="datasetFilters.status"
-        placeholder="状态"
-        clearable
-        size="small"
-        data-testid="dataset-filter-status"
-        @change="datasetsStore.refresh()"
-      >
-        <el-option
-          label="building"
-          value="building"
-        />
-        <el-option
-          label="published"
-          value="published"
-        />
-        <el-option
-          label="failed"
-          value="failed"
-        />
-        <el-option
-          label="retired"
-          value="retired"
-        />
-      </el-select>
-      <div class="d2a-toolbar__actions">
-        <el-button
-          size="small"
-          data-testid="datasets-refresh"
-          @click="datasetsStore.refresh()"
-        >
-          刷新
-        </el-button>
-      </div>
     </div>
 
     <div class="d2a-card">
