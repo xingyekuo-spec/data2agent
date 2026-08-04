@@ -121,7 +121,9 @@ describe('PipelineView(M3)', () => {
     // healthy 下打开推送详情
     const push = wrapper.findAll('.flow__node').find((n) => n.text().includes('推送'))
     await push?.trigger('click')
-    expect(wrapper.find('[data-testid="node-detail"]').text()).toContain('healthy')
+    expect(
+      wrapper.find('[data-testid="node-detail"] [data-status="healthy"]').exists(),
+    ).toBe(true)
 
     // 轮询刷新到 ingest-failed:详情必须同步为 failed,无需关闭重开
     setScenario('ingest-failed')
@@ -129,7 +131,7 @@ describe('PipelineView(M3)', () => {
     await flushPromises()
     const detail = wrapper.find('[data-testid="node-detail"]')
     expect(detail.exists()).toBe(true)
-    expect(detail.text()).toContain('failed')
+    expect(detail.find('[data-status="failed"]').exists()).toBe(true)
     expect(detail.text()).toContain('ingest 接收端不可达')
   })
 

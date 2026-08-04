@@ -195,21 +195,44 @@ const detailActions = computed<NodeAction[]>(() => {
   })
 })
 
-const detailFields = computed(() => {
+/** 详情字段拆分:核心直出;技术字段折叠(默认收起,排障才看) */
+const ISO_IN_TEXT = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?(\+\d{2}:\d{2}|Z)?/g
+
+/** 原因文本里的原始 ISO 时间戳替换为本地格式化时间(与下方字段同风格) */
+function humanizeReason(reason: string): string {
+  return reason.replace(ISO_IN_TEXT, (m) => formatDateTime(m) || m)
+}
+
+const detailCore = computed(() => {
+  const n = selected.value
+  if (!n) {
+    return []
+  }
+  const fields: { label: string; value: string }[] = [
+    { label: '状态原因', value: humanizeReason(n.status_reason) || '—' },
+    { label: '最近成功', value: formatDateTime(n.last_success_at) || '—' },
+  ]
+  if (n.last_failure_at) {
+    fields.push({ label: '最近失败', value: formatDateTime(n.last_failure_at) })
+  }
+  if (n.error) {
+    fields.push({ label: '上次失败原因', value: n.error })
+  }
+  if (n.rows_out !== null) {
+    fields.push({ label: '本次输出', value: `${n.rows_out} 行` })
+  }
+  return fields
+})
+
+const detailAdvanced = computed(() => {
   const n = selected.value
   if (!n) {
     return []
   }
   return [
-    { label: '状态', value: n.status },
-    { label: '原因', value: n.status_reason || '—' },
     { label: '观测时间', value: formatDateTime(n.observed_at) || '—' },
-    { label: '最近成功', value: formatDateTime(n.last_success_at) || '—' },
-    { label: '最近失败', value: formatDateTime(n.last_failure_at) || '—' },
     { label: '本次输入', value: n.rows_in === null ? '—' : `${n.rows_in} 行` },
-    { label: '本次输出', value: n.rows_out === null ? '—' : `${n.rows_out} 行` },
     { label: '耗时', value: n.duration_ms === null ? '—' : `${Math.round(n.duration_ms)} ms` },
-    { label: '错误', value: n.error ?? '—' },
     { label: '版本', value: n.version ?? '尚未发布' },
     { label: '运行 ID', value: n.run_id ?? '—' },
     { label: '来源', value: n.source ?? '—' },
@@ -300,7 +323,7 @@ const detailFields = computed(() => {
                 class="flow__reason"
                 :title="node.status_reason"
               >
-                {{ node.status_reason }}
+                {{ humanizeReason(node.status_reason) }}
               </span>
             </button>
             <span
@@ -341,13 +364,25 @@ const detailFields = computed(() => {
         </div>
         <dl class="detail__grid">
           <template
-            v-for="f in detailFields"
+            v-for="f in detailCore"
             :key="f.label"
           >
             <dt>{{ f.label }}</dt>
             <dd>{{ f.value }}</dd>
           </template>
         </dl>
+        <details class="detail__more">
+          <summary>技术细节</summary>
+          <dl class="detail__grid">
+            <template
+              v-for="f in detailAdvanced"
+              :key="f.label"
+            >
+              <dt>{{ f.label }}</dt>
+              <dd>{{ f.value }}</dd>
+            </template>
+          </dl>
+        </details>
         <p class="detail__path">
           <template v-if="selected.detail_path">
             <router-link :to="selected.detail_path">
@@ -561,6 +596,21 @@ const detailFields = computed(() => {
   margin: 0;
   font-size: 13px;
   word-break: break-all;
+}
+
+.detail__more {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--d2a-text-secondary);
+}
+
+.detail__more summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.detail__more .detail__grid {
+  margin-top: 8px;
 }
 
 .detail__action {
