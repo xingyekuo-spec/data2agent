@@ -7,6 +7,7 @@ import { ElMessageBox } from 'element-plus'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
+import Pager from '@/components/shared/Pager.vue'
 import { useQuarantineStore } from '@/stores/quarantine'
 import { formatDateTime } from '@/utils/time'
 import { formatDuration, formatJsonPretty, formatPercent } from '@/utils/format'
@@ -117,8 +118,8 @@ function onRecordClick(row: { id: number }): void {
   void store.openDetail(row.id)
 }
 
-function onPageChange(current: number): void {
-  store.setPage((current - 1) * page.limit, page.limit)
+function onPagerChange(offset: number, limit: number): void {
+  store.setPage(offset, limit)
 }
 
 // ---- detail drawer ----
@@ -161,7 +162,33 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="quarantine-page">
+  <section class="quarantine-page d2a-page-flush">
+    <!-- 通栏工具栏(A 类规范):左侧当前筛选,右侧主操作 -->
+    <div class="d2a-card d2a-toolbar">
+      <el-tag
+        v-if="selectedGroup"
+        closable
+        type="warning"
+        data-testid="clear-group-filter"
+        @close="onClearGroup"
+      >
+        筛选:{{ selectedGroupName }}
+      </el-tag>
+      <span
+        v-else
+        class="toolbar-hint"
+      >全部隔离记录</span>
+      <div class="d2a-toolbar__actions">
+        <el-button
+          size="small"
+          data-testid="quarantine-refresh"
+          @click="store.fetchGroups(); store.fetchRecords()"
+        >
+          刷新
+        </el-button>
+      </div>
+    </div>
+
     <!-- summary bar -->
     <div
       v-if="summary"
@@ -203,18 +230,9 @@ onMounted(() => {
 
     <!-- group table -->
     <div class="d2a-card">
-      <div class="toolbar">
-        <h3 class="card-title card-title--flush">
-          对象分组
-        </h3>
-        <el-button
-          size="small"
-          data-testid="quarantine-refresh"
-          @click="store.fetchGroups(); store.fetchRecords()"
-        >
-          刷新
-        </el-button>
-      </div>
+      <h3 class="card-title">
+        对象分组
+      </h3>
 
       <!-- groups loading / error / empty -->
       <LoadingState v-if="groups.status === 'idle' || groups.status === 'loading'" />
@@ -359,25 +377,14 @@ onMounted(() => {
 
     <!-- record table (filtered by selected group) -->
     <div class="d2a-card">
-      <div class="toolbar">
-        <h3 class="card-title card-title--flush">
-          <template v-if="selectedGroup">
-            隔离记录:{{ selectedGroupName }}
-          </template>
-          <template v-else>
-            所有隔离记录
-          </template>
-        </h3>
-        <el-button
-          v-if="selectedGroup"
-          size="small"
-          data-testid="clear-group-filter"
-          @click="onClearGroup"
-        >
-          清除筛选
-        </el-button>
-        <span class="toolbar__total">共 {{ recordsTotal }} 条</span>
-      </div>
+      <h3 class="card-title">
+        <template v-if="selectedGroup">
+          隔离记录:{{ selectedGroupName }}
+        </template>
+        <template v-else>
+          所有隔离记录
+        </template>
+      </h3>
 
       <LoadingState v-if="records.status === 'idle' || records.status === 'loading'" />
       <ErrorState
@@ -454,14 +461,12 @@ onMounted(() => {
             width="110"
           />
         </el-table>
-        <el-pagination
-          class="pager"
-          layout="prev, pager, next"
+        <Pager
           :total="recordsTotal"
-          :page-size="page.limit"
-          :current-page="page.offset / page.limit + 1"
+          :limit="page.limit"
+          :offset="page.offset"
           data-testid="quarantine-pager"
-          @current-change="onPageChange"
+          @change="onPagerChange"
         />
       </template>
     </div>
@@ -733,16 +738,8 @@ onMounted(() => {
   font-weight: 400;
 }
 
-/* toolbar */
-.toolbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.toolbar__total {
-  margin-left: auto;
+/* toolbar 提示文本(通栏工具栏左侧) */
+.toolbar-hint {
   font-size: 12px;
   color: var(--d2a-text-secondary);
 }
@@ -769,12 +766,6 @@ onMounted(() => {
 .unknown-hint {
   font-size: 11px;
   color: var(--d2a-status-unknown);
-}
-
-/* pager */
-.pager {
-  margin-top: 10px;
-  justify-content: flex-end;
 }
 
 /* detail drawer sections */

@@ -5,6 +5,7 @@
  */
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { HttpResponse, http } from '@/test/http'
 import { createPinia, type Pinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
@@ -43,7 +44,7 @@ async function mountView(): Promise<{
   await router.push('/quarantine')
   await router.isReady()
   const wrapper = mount(QuarantineView, {
-    global: { plugins: [pinia, ElementPlus, router] },
+    global: { plugins: [pinia, [ElementPlus, { locale: zhCn }], router] },
   })
   await flushPromises()
   return { wrapper, router }
@@ -162,7 +163,7 @@ describe('QuarantineView(M5)', () => {
     await rows[0]!.trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('共 2 条')
-    await wrapper.find('[data-testid="clear-group-filter"]').trigger('click')
+    await wrapper.find('[data-testid="clear-group-filter"] .el-tag__close').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('所有隔离记录')
     expect(wrapper.text()).toContain('共 4 条')
