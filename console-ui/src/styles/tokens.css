@@ -136,3 +136,9 @@ body,
 .d2a-toolbar .el-input {
   flex: 0 0 auto;
 }
+
+/* 工具栏内的辅助提示文本(当前筛选/排序状态等) */
+.d2a-toolbar .toolbar-hint {
+  font-size: 12px;
+  color: var(--d2a-text-secondary);
+}

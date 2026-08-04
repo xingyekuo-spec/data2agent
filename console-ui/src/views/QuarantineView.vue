@@ -738,12 +738,6 @@ onMounted(() => {
   font-weight: 400;
 }
 
-/* toolbar 提示文本(通栏工具栏左侧) */
-.toolbar-hint {
-  font-size: 12px;
-  color: var(--d2a-text-secondary);
-}
-
 /* refresh warning */
 .refresh-warning {
   margin: 0 0 8px;

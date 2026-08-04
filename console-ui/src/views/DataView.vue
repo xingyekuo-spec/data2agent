@@ -8,6 +8,7 @@ import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
+import Pager from '@/components/shared/Pager.vue'
 import ObjectLineageDrawer from '@/components/shared/ObjectLineageDrawer.vue'
 import RawDataDrawer from '@/components/shared/RawDataDrawer.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
@@ -120,14 +121,16 @@ const datasetDetailObjects = computed(() =>
   datasetDetail.value?.status === 'success' ? (datasetDetail.value.data.objects ?? []) : [],
 )
 
-function onObjPage(current: number): void {
-  objQuery.offset = (current - 1) * objQuery.limit
+function onObjPage(offset: number, limit: number): void {
+  objQuery.offset = offset
+  objQuery.limit = limit
   void store.browseObject()
   syncRouteQuery()
 }
 
-function onDatasetPage(current: number): void {
-  datasetPage.offset = (current - 1) * datasetPage.limit
+function onDatasetPage(offset: number, limit: number): void {
+  datasetPage.offset = offset
+  datasetPage.limit = limit
   void datasetsStore.refresh()
   syncRouteQuery()
 }
@@ -302,7 +305,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 </script>
 
 <template>
-  <section class="data-page">
+  <section class="data-page d2a-page-flush">
     <el-tabs
       v-model="activeTab"
       data-testid="data-tabs"
@@ -538,19 +541,24 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
         <div
           v-if="objPage"
-          class="d2a-card"
+          class="d2a-card d2a-toolbar"
         >
-          <div class="toolbar">
-            <el-input
-              v-model="objQuery.q"
-              :placeholder="objPage.status === 'success' && objPage.data.searchable ? '按业务键搜索' : '该资源没有可搜索业务键'"
-              size="small"
-              clearable
-              class="toolbar__search"
-              :disabled="!objSearchable"
-              data-testid="obj-search"
-              @change="searchObject()"
-            />
+          <el-input
+            v-model="objQuery.q"
+            :placeholder="objPage.status === 'success' && objPage.data.searchable ? '按业务键搜索' : '该资源没有可搜索业务键'"
+            size="small"
+            clearable
+            :disabled="!objSearchable"
+            data-testid="obj-search"
+            @change="searchObject()"
+          />
+          <span
+            v-if="objPage.status === 'success'"
+            class="toolbar-hint"
+          >
+            {{ objSel }} · 排序 {{ objPage.data.sort }}
+          </span>
+          <div class="d2a-toolbar__actions">
             <el-button
               size="small"
               data-testid="obj-refresh"
@@ -558,12 +566,12 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             >
               刷新
             </el-button>
-            <span class="toolbar__meta">
-              <template v-if="objPage.status === 'success'">
-                {{ objSel }} · 共 {{ objPage.data.total }} 行 · 排序 {{ objPage.data.sort }}
-              </template>
-            </span>
           </div>
+        </div>
+        <div
+          v-if="objPage"
+          class="d2a-card"
+        >
           <LoadingState v-if="objPage.status === 'loading'" />
           <ErrorState
             v-else-if="objPage.status === 'error'"
@@ -650,14 +658,12 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               {{ objPage.data.truncations.length }} 行存在截断字段(预览不是完整值):
               {{ objPage.data.truncations.map((t) => `#${t.row_index}(${t.fields.join('/')})`).join(', ') }}
             </p>
-            <el-pagination
-              class="pager"
-              layout="prev, pager, next"
+            <Pager
               :total="objPage.data.total"
-              :page-size="objQuery.limit"
-              :current-page="objQuery.offset / objQuery.limit + 1"
+              :limit="objQuery.limit"
+              :offset="objQuery.offset"
               data-testid="obj-pager"
-              @current-change="onObjPage"
+              @change="onObjPage"
             />
           </template>
         </div>
@@ -720,16 +726,15 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           </p>
         </div>
 
-        <div class="d2a-card">
-          <div class="toolbar">
-            <el-select
-              v-model="datasetFilters.status"
-              placeholder="状态"
-              clearable
-              size="small"
-              data-testid="dataset-filter-status"
-              @change="datasetsStore.refresh()"
-            >
+        <div class="d2a-card d2a-toolbar">
+          <el-select
+            v-model="datasetFilters.status"
+            placeholder="状态"
+            clearable
+            size="small"
+            data-testid="dataset-filter-status"
+            @change="datasetsStore.refresh()"
+          >
               <el-option
                 label="building"
                 value="building"
@@ -747,6 +752,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                 value="retired"
               />
             </el-select>
+          <div class="d2a-toolbar__actions">
             <el-button
               size="small"
               data-testid="datasets-refresh"
@@ -754,8 +760,10 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             >
               刷新
             </el-button>
-            <span class="toolbar__meta">共 {{ datasetTotal }} 个版本</span>
           </div>
+        </div>
+
+        <div class="d2a-card">
           <p
             v-if="listRefreshError"
             class="refresh-warning"
@@ -875,14 +883,12 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                 </template>
               </el-table-column>
             </el-table>
-            <el-pagination
-              class="pager"
-              layout="prev, pager, next"
+            <Pager
               :total="datasetTotal"
-              :page-size="datasetPage.limit"
-              :current-page="datasetPage.offset / datasetPage.limit + 1"
+              :limit="datasetPage.limit"
+              :offset="datasetPage.offset"
               data-testid="datasets-pager"
-              @current-change="onDatasetPage"
+              @change="onDatasetPage"
             />
           </template>
         </div>
@@ -1054,11 +1060,6 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
   margin: 8px 0 0;
   font-size: 12px;
   color: var(--d2a-status-stale);
-}
-
-.pager {
-  margin-top: 10px;
-  justify-content: flex-end;
 }
 
 .json-view {

@@ -1,5 +1,6 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { HttpResponse, http } from '@/test/http'
 import { createPinia, type Pinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
@@ -18,7 +19,7 @@ async function mountView(): Promise<ReturnType<typeof mount>> {
   // attachTo 使 el-drawer Teleport 能渲染到真实 DOM
   const wrapper = mount(DataView, {
     attachTo: document.body,
-    global: { plugins: [pinia, ElementPlus, router] },
+    global: { plugins: [pinia, [ElementPlus, { locale: zhCn }], router] },
   })
   await flushPromises()
   return wrapper
@@ -34,7 +35,7 @@ async function mountViewWithQuery(query: Record<string, string>): Promise<{
   await router.isReady()
   const wrapper = mount(DataView, {
     attachTo: document.body,
-    global: { plugins: [pinia, ElementPlus, router] },
+    global: { plugins: [pinia, [ElementPlus, { locale: zhCn }], router] },
   })
   await flushPromises()
   return { wrapper, router }
@@ -190,7 +191,8 @@ describe('DataView(M4)', () => {
     })
     expect(wrapper.find('[data-testid="obj-table"]').exists()).toBe(true)
     expect((router.currentRoute.value.query.object)).toBe('Customer')
-    expect(wrapper.text()).toContain('Customer · 共 1 行')
+    expect(wrapper.text()).toContain('Customer · 排序')
+    expect(wrapper.find('[data-testid="obj-pager"]').text()).toContain('共 1 条')
   })
 
   it('刷新失败保留上一次 raw 成功数据并标记失败', async () => {
