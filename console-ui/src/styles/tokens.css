@@ -77,14 +77,13 @@ body,
   margin-bottom: 0;
 }
 
-/* A 类列表页工具栏(页面结构规范 §二.2):左筛选、右主操作;
-   与表格同一白色卡片(位于卡片内首行) */
+/* A 类列表页工具栏(页面结构规范 §二.2):独立白色卡片(与表格卡片分开),
+   左筛选、右主操作;用法:<div class="d2a-card d2a-toolbar">,卡片自带底距 */
 .d2a-toolbar {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  margin-bottom: 12px;
 }
 
 .d2a-toolbar__actions {

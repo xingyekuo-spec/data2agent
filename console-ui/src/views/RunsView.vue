@@ -120,50 +120,50 @@ watch(
 
 <template>
   <section class="runs-page">
-    <div class="d2a-card">
-      <!-- 规范工具栏(A 类):左筛选、右操作;与表格同一白色卡片 -->
-      <div class="d2a-toolbar">
-        <el-select
-          v-model="filters.type"
-          placeholder="类型"
-          clearable
+    <!-- 规范工具栏(A 类):独立白色卡片,左筛选、右操作,与内容区对齐 -->
+    <div class="d2a-card d2a-toolbar">
+      <el-select
+        v-model="filters.type"
+        placeholder="类型"
+        clearable
+        size="small"
+        data-testid="filter-type"
+        @change="onFilterChange"
+      >
+        <el-option
+          v-for="t in TYPE_OPTIONS"
+          :key="t"
+          :label="t"
+          :value="t"
+        />
+      </el-select>
+      <el-select
+        v-model="filters.status"
+        placeholder="状态"
+        clearable
+        size="small"
+        data-testid="filter-status"
+        @change="onFilterChange"
+      >
+        <el-option
+          v-for="s in STATUS_OPTIONS"
+          :key="s"
+          :label="s"
+          :value="s"
+        />
+      </el-select>
+      <div class="d2a-toolbar__actions">
+        <el-button
           size="small"
-          data-testid="filter-type"
-          @change="onFilterChange"
+          data-testid="refresh-button"
+          @click="store.refresh()"
         >
-          <el-option
-            v-for="t in TYPE_OPTIONS"
-            :key="t"
-            :label="t"
-            :value="t"
-          />
-        </el-select>
-        <el-select
-          v-model="filters.status"
-          placeholder="状态"
-          clearable
-          size="small"
-          data-testid="filter-status"
-          @change="onFilterChange"
-        >
-          <el-option
-            v-for="s in STATUS_OPTIONS"
-            :key="s"
-            :label="s"
-            :value="s"
-          />
-        </el-select>
-        <div class="d2a-toolbar__actions">
-          <el-button
-            size="small"
-            data-testid="refresh-button"
-            @click="store.refresh()"
-          >
-            刷新
-          </el-button>
-        </div>
+          刷新
+        </el-button>
       </div>
+    </div>
 
+    <div class="d2a-card">
       <LoadingState v-if="list.status === 'idle' || list.status === 'loading'" />
       <ErrorState
         v-else-if="list.status === 'error'"
