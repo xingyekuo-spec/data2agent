@@ -7,7 +7,7 @@ import { ElMessageBox } from 'element-plus'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
-import Pager from '@/components/shared/Pager.vue'
+import PagerBar from '@/components/shared/PagerBar.vue'
 import { useQuarantineStore } from '@/stores/quarantine'
 import { formatDateTime } from '@/utils/time'
 import { formatDuration, formatJsonPretty, formatPercent } from '@/utils/format'
@@ -461,7 +461,7 @@ onMounted(() => {
             width="110"
           />
         </el-table>
-        <Pager
+        <PagerBar
           :total="recordsTotal"
           :limit="page.limit"
           :offset="page.offset"

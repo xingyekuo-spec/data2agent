@@ -7,7 +7,7 @@ import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
-import Pager from '@/components/shared/Pager.vue'
+import PagerBar from '@/components/shared/PagerBar.vue'
 import { useDatasetsStore } from '@/stores/datasets'
 import {
   canPublish,
@@ -338,7 +338,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             </template>
           </el-table-column>
         </el-table>
-        <Pager
+        <PagerBar
           :total="datasetTotal"
           :limit="datasetPage.limit"
           :offset="datasetPage.offset"

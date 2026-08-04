@@ -6,7 +6,7 @@ import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
-import Pager from '@/components/shared/Pager.vue'
+import PagerBar from '@/components/shared/PagerBar.vue'
 import ObjectLineageDrawer from '@/components/shared/ObjectLineageDrawer.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useDataStore } from '@/stores/data'
@@ -368,7 +368,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           {{ objPage.data.truncations.length }} 行存在截断字段(预览不是完整值):
           {{ objPage.data.truncations.map((t) => `#${t.row_index}(${t.fields.join('/')})`).join(', ') }}
         </p>
-        <Pager
+        <PagerBar
           :total="objPage.data.total"
           :limit="objQuery.limit"
           :offset="objQuery.offset"

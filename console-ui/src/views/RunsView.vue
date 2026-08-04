@@ -7,7 +7,7 @@ import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
-import Pager from '@/components/shared/Pager.vue'
+import PagerBar from '@/components/shared/PagerBar.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useRunsStore } from '@/stores/runs'
 import type { HealthStatus } from '@/types/state'
@@ -260,7 +260,7 @@ watch(
             </template>
           </el-table-column>
         </el-table>
-        <Pager
+        <PagerBar
           :total="total"
           :limit="page.limit"
           :offset="page.offset"
@@ -405,18 +405,6 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.toolbar {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.toolbar__total {
-  margin-left: auto;
-  font-size: 12px;
-  color: var(--d2a-text-secondary);
 }
 
 .refresh-warning {

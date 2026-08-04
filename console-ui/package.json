@@ -11,12 +11,13 @@
     "dev": "vite",
     "api:generate": "node scripts/generate-api-types.mjs openapi.json src/types/api.ts",
     "api:check": "node scripts/check-generated.mjs",
-    "lint": "eslint .",
+    "lint": "eslint . && npm run check:pages",
     "typecheck": "vue-tsc -b",
     "test": "vitest run",
     "test:e2e": "node scripts/e2e-acceptance.mjs --real",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check:pages": "node scripts/check-page-structure.mjs"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",

@@ -177,7 +177,7 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
         刷新失败({{ templatesRefreshError.message }}),展示上一次成功数据
       </p>
 
-      <section class="toolbar">
+      <section class="graph-toolbar">
         <el-input
           v-model="keyword"
           :prefix-icon="Search"
@@ -414,7 +414,7 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
   border-radius: 6px;
 }
 
-.toolbar {
+.graph-toolbar {
   display: grid;
   grid-template-columns: minmax(260px, 420px) 1fr;
   gap: 12px;
@@ -623,7 +623,7 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
 }
 
 @media (max-width: 760px) {
-  .toolbar,
+  .graph-toolbar,
   .page-head {
     grid-template-columns: 1fr;
     flex-direction: column;

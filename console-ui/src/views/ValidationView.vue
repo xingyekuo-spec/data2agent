@@ -46,7 +46,7 @@ function checkHealth(status: Report['checks'][number]['status']): 'healthy' | 'w
 
 <template>
   <section class="validation-page">
-    <div class="d2a-card toolbar">
+    <div class="d2a-card action-bar">
       <el-checkbox
         v-model="includeMcpProbe"
         :disabled="loading"
@@ -137,7 +137,7 @@ function checkHealth(status: Report['checks'][number]['status']): 'healthy' | 'w
 
 <style scoped>
 .validation-page { display: grid; gap: 16px; }
-.toolbar { display: flex; gap: 12px; align-items: center; }
+.action-bar { display: flex; gap: 12px; align-items: center; }
 .report { padding: 20px; }
 .report__headline { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .report__headline h2 { margin: 0; }
@@ -146,5 +146,5 @@ function checkHealth(status: Report['checks'][number]['status']): 'healthy' | 'w
 .summary dt { color: var(--d2a-text-secondary); }
 .summary dd { margin: 0; overflow-wrap: anywhere; }
 .empty { color: var(--d2a-text-secondary); }
-@media (max-width: 640px) { .toolbar { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 640px) { .action-bar { align-items: flex-start; flex-direction: column; } }
 </style>

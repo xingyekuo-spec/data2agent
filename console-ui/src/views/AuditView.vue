@@ -7,7 +7,7 @@ import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
-import Pager from '@/components/shared/Pager.vue'
+import PagerBar from '@/components/shared/PagerBar.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useAuditStore } from '@/stores/audit'
 import { formatDateTime } from '@/utils/time'
@@ -296,7 +296,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                 </template>
               </el-table-column>
             </el-table>
-            <Pager
+            <PagerBar
               :total="sqlTotal"
               :limit="sqlPage.limit"
               :offset="sqlPage.offset"
@@ -469,7 +469,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                 </template>
               </el-table-column>
             </el-table>
-            <Pager
+            <PagerBar
               :total="access.status === 'success' ? access.data.total : 0"
               :limit="accessPage.limit"
               :offset="accessPage.offset"

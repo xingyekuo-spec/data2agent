@@ -100,7 +100,7 @@ MCP 服务
    节点 `d2a-page-flush`);左侧搜索框(220px)+ 筛选下拉(140px,EP 新版
    select 默认 100% 宽必须约束),右侧 `d2a-toolbar__actions` 放操作按钮,
    主操作在最右;
-2. **分页栏**:统一 `Pager` 组件(`components/shared/Pager.vue`),
+2. **分页栏**:统一 `PagerBar` 组件(`components/shared/PagerBar.vue`),
    「共 N 条 + 20/50/100 条选择 + 页码」三件套右对齐,事件为
    `change(offset, limit)`,换条数自动回第一页;
 3. **表格**:状态列用彩色语义标签;操作列固定最右、文字链接式,危险操作
@@ -114,9 +114,25 @@ MCP 服务
    `{ locale: zhCn }`(与生产 el-config-provider 对齐,否则分页等文案为英文)。
 
 共享资产(新增 A 类页面直接用):`.d2a-page-flush` / `.d2a-toolbar` /
-`.d2a-toolbar__actions`(tokens.css)、`Pager.vue`、三态组件。
+`.d2a-toolbar__actions`(tokens.css)、`PagerBar.vue`、三态组件。
 
 历史页面以此规范为准逐步改造;新页面必须从规范起步。
+
+### 3.3 规范的机器执行(防返工)
+
+规范不靠自觉,由三道闸保证:
+
+1. **结构检查**:`node scripts/check-page-structure.mjs`(已并入 `npm run lint`,
+   CI 经 verify.py 前端任务执行)。规则:R1 禁止裸 `el-pagination`(必须用
+   PagerBar);R2 视图 scoped 样式禁止自定义 `.toolbar`/`.pager`/`.toolbar__total`
+   保留名;R3 每个页面必须在脚本的 `PAGE_TYPES` 登记表声明类型(A/B/C/D),
+   新页面未登记即失败——强制先想类型再写码;R4 A 类必须 d2a-page-flush +
+   首位规范工具栏 + PagerBar(目录型无分页页面在 `NO_PAGER` 显式豁免并注明原因)。
+2. **脚手架**:`node scripts/new-page.mjs <ViewName> <路径> <标题>` 生成合规的
+   A 类页面 + 测试骨架(含 locale 约定与 TODO 标注),生成后检查器会引导完成
+   登记与路由挂载。
+3. **视觉验收**:页面改动须附 Playwright 截图自审(本仓库既定实践),
+   E2E 巡检(N 页面 testid 冒烟)保持绿。
 
 ## 4. 管理 API
 
