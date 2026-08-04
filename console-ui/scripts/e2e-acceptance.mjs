@@ -323,20 +323,19 @@ landing: ${landing}
     const countsBeforeBrowse = sqliteCounts(landing)
 
     // M4 Real:数据浏览(脱敏 + 无副作用)
-    await page.locator('.el-menu-item', { hasText: '数据浏览' }).click()
+    await page.locator('.el-menu-item', { hasText: '原始数据' }).click()
     await page.locator('[data-testid="raw-catalog"]').waitFor({ state: 'visible' })
     await page.locator('[data-testid="browse-CUSTOMER"]').click()
     // Raw 数据浏览改为抽屉(RawDataDrawer)展示,data-testid 前缀为 raw-drawer-
     await page.locator('[data-testid="raw-drawer-table"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="raw-drawer-table"]')).includes('***'),
       'Real:raw 敏感列脱敏')
-    // 关闭 raw 抽屉，否则遮罩会挡住后续的 tab 点击
+    // 关闭 raw 抽屉,否则遮罩会挡住后续的菜单点击
     // el-drawer 在 jsdom 中可能通过 transition 隐藏,用 force 点击
     const closeBtn = page.locator('.el-overlay.is-drawer:not([style*="display: none"]) .el-drawer__close-btn').first()
     await closeBtn.click({ force: true })
     await page.waitForTimeout(500)
-    const panes = page.locator('.el-tabs__item', { hasText: '对象层' })
-    await panes.click()
+    await page.locator('.el-menu-item', { hasText: '对象数据' }).click()
     await page.locator('[data-testid="obj-catalog"]').waitFor({ state: 'visible' })
     await page.locator('[data-testid="browse-Customer"]').click()
     await page.locator('[data-testid="obj-table"]').waitFor({ state: 'visible' })
@@ -895,14 +894,16 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
     expect((await page.locator('[data-testid="mcp-scope-banner"]').count()) === 1,
       'M5:Real MCP Lab 页可访问')
 
-    // 九页面冒烟(2026-08 起含数据源管理)
+    // 十一页面冒烟(2026-08:数据浏览拆分为三个二级页)
     for (const [path, testid] of [
       ['/', 'stat-grid'],
       ['/sources', 'source-grid'],
       ['/pipeline', 'pipeline-flow'],
       ['/runs', 'runs-table'],
       ['/audit', 'sql-table'],
-      ['/data', 'raw-catalog'],
+      ['/data/raw', 'raw-catalog'],
+      ['/data/objects', 'obj-catalog'],
+      ['/data/datasets', 'datasets-table'],
       ['/quarantine', 'quarantine-refresh'],
       ['/templates', 'tpl-item-Customer'],
       ['/mcp', 'mcp-lab-page'],
@@ -910,7 +911,7 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
       await page.goto(`http://localhost:${REAL_UI_PORT}${path}`, { waitUntil: 'networkidle' })
       await page.waitForTimeout(800)
       const n = await page.locator(`[data-testid="${testid}"]`).count()
-      expect(n > 0, `M6:九页面 ${path} 可见 ${testid}`)
+      expect(n > 0, `M6:十一页面 ${path} 可见 ${testid}`)
     }
 
     // Settings 平台专用配置页(不计入八主页面):只暴露非敏感平台路径。

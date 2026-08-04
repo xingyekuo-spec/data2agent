@@ -14,7 +14,9 @@ const viewComponents = {
   runs: () => import('@/views/RunsView.vue'),
   validation: () => import('@/views/ValidationView.vue'),
   audit: () => import('@/views/AuditView.vue'),
-  data: () => import('@/views/DataView.vue'),
+  'data-raw': () => import('@/views/RawDataView.vue'),
+  'data-objects': () => import('@/views/ObjectsDataView.vue'),
+  'data-datasets': () => import('@/views/DatasetsView.vue'),
   quarantine: () => import('@/views/QuarantineView.vue'),
   'object-graph': () => import('@/views/ObjectGraphView.vue'),
   templates: () => import('@/views/TemplatesView.vue'),
@@ -65,7 +67,9 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     title: '数据管理',
     items: [
-      { name: 'data', path: '/data', title: '数据浏览' },
+      { name: 'data-raw', path: '/data/raw', title: '原始数据' },
+      { name: 'data-objects', path: '/data/objects', title: '对象数据' },
+      { name: 'data-datasets', path: '/data/datasets', title: '数据集版本' },
     ],
   },
   {
@@ -102,6 +106,22 @@ export const routes: RouteRecordRaw[] = [
     component: viewComponents[item.name],
     meta: { title: item.title, readonly: item.readonly === true },
   })),
+  {
+    // 旧三 tab 深链兼容:/data?tab=raw|object|datasets → 对应二级页面
+    path: '/data',
+    redirect: (to) => {
+      const tab = typeof to.query.tab === 'string' ? to.query.tab : ''
+      const target =
+        tab === 'object'
+          ? '/data/objects'
+          : tab === 'datasets'
+            ? '/data/datasets'
+            : '/data/raw'
+      const query = { ...to.query }
+      delete query.tab
+      return { path: target, query }
+    },
+  },
   {
     path: '/setup',
     name: 'setup',
