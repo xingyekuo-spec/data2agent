@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -141,21 +140,6 @@ def test_aware_naive_and_offset_and_invalid():
     assert obs.aware(123) is None
 
 
-def test_freshness_threshold():
-    assert obs.freshness_threshold("30m") == timedelta(seconds=3600)
-    assert obs.freshness_threshold("2m") == timedelta(seconds=300)  # 下限 300s
-    assert obs.freshness_threshold("不是时长") is None
-    assert obs.freshness_threshold(None) is None
-
-
-def test_is_stale_boundary():
-    now = obs.aware("2026-07-18T12:00:00")
-    threshold = timedelta(hours=1)
-    assert obs.is_stale(obs.aware("2026-07-18T11:30:00"), threshold, now) is False
-    assert obs.is_stale(obs.aware("2026-07-18T09:00:00"), threshold, now) is True
-    assert obs.is_stale(None, threshold, now) is False
-
-
 def test_safe_error_summary():
     assert obs.safe_error_summary("  多行\n错误\t摘要  ") == "多行 错误 摘要"
     assert obs.safe_error_summary("x" * 600) == "x" * 500
@@ -202,7 +186,8 @@ def test_erp_extract_failed(db, pack, tmp_path):
     assert nodes["erp"]["last_failure_at"] is not None
 
 
-def test_erp_extract_healthy_and_stale(db, pack, tmp_path):
+def test_erp_extract_healthy_regardless_of_age(db, pack, tmp_path):
+    """2026-08 起不再判新鲜度:成功即 healthy,时间如实展示(新旧由界面呈现)。"""
     _run(db, "sync", "ok", FRESH, FRESH)
     nodes = _nodes(db, pack, _platform_cfg())
     assert nodes["erp"]["status"] == "healthy"
@@ -211,8 +196,9 @@ def test_erp_extract_healthy_and_stale(db, pack, tmp_path):
     db2 = LandingStore(tmp_path / "db2.sqlite")
     _run(db2, "sync", "ok", STALE, STALE)
     nodes2 = _nodes(db2, pack, _platform_cfg())
-    assert nodes2["erp"]["status"] == "stale"
-    assert nodes2["extract"]["status"] == "stale"
+    assert nodes2["erp"]["status"] == "healthy"
+    assert STALE in nodes2["erp"]["status_reason"]  # 原因里如实带完成时间
+    assert nodes2["extract"]["status"] == "healthy"
 
 
 def test_erp_extract_unknown_for_untyped_legacy_runs(db, pack, tmp_path):
@@ -250,7 +236,7 @@ def test_push_failed_when_ingest_down(db, pack, tmp_path):
     assert nodes["push"]["status"] == "failed"
 
 
-def test_push_healthy_and_stale_by_batch(db, pack, tmp_path):
+def test_push_healthy_by_batch_regardless_of_age(db, pack, tmp_path):
     _mk_ingest(db, FRESH)
     nodes = _nodes(db, pack, _platform_cfg(),
                    probes={"ingest": lambda: (True, "http")})
@@ -260,7 +246,8 @@ def test_push_healthy_and_stale_by_batch(db, pack, tmp_path):
     _mk_ingest(db2, STALE)
     nodes2 = _nodes(db2, pack, _platform_cfg(),
                     probes={"ingest": lambda: (True, "http")})
-    assert nodes2["push"]["status"] == "stale"
+    assert nodes2["push"]["status"] == "healthy"
+    assert STALE in nodes2["push"]["status_reason"]
 
 
 # ---- raw ----
@@ -271,7 +258,7 @@ def test_raw_idle_when_empty_and_never_run(db, pack, tmp_path):
     assert nodes["raw"]["status"] == "idle"
 
 
-def test_raw_healthy_and_stale(db, pack, tmp_path):
+def test_raw_healthy_regardless_of_age(db, pack, tmp_path):
     _mk_raw(db, "T1", 7, FRESH)
     nodes = _nodes(db, pack, _platform_cfg())
     assert nodes["raw"]["status"] == "healthy"
@@ -280,7 +267,8 @@ def test_raw_healthy_and_stale(db, pack, tmp_path):
     db2 = LandingStore(tmp_path / "db2.sqlite")
     _mk_raw(db2, "T1", 3, STALE)
     nodes2 = _nodes(db2, pack, _platform_cfg())
-    assert nodes2["raw"]["status"] == "stale"
+    assert nodes2["raw"]["status"] == "healthy"
+    assert STALE in nodes2["raw"]["status_reason"]
 
 
 # ---- mapping ----
@@ -502,13 +490,14 @@ def test_paused_is_warning_not_failure(db, pack, tmp_path):
     assert erp2["last_failure_at"] is None
 
 
-def test_success_with_threshold_uses_freshness(db, pack, tmp_path):
-    """PlatformConfig 默认 30m 节奏,2020 年的成功超出阈值判 stale。"""
+def test_success_with_age_shows_time_not_stale(db, pack, tmp_path):
+    """2020 年的成功也判 healthy(不再判新鲜度),原因如实带时间。"""
     _run(db, "sync", "ok", "2020-01-01T00:00:00", "2020-01-01T00:00:05")
     _mk_raw(db, "CUSTOMER", 5, "2020-01-01T00:00:00")
     nodes = {n["node"]: n for n in obs.compute_nodes(db, pack, None, SOURCE, now=NOW)}
-    assert nodes["erp"]["status"] == "stale"
-    assert nodes["raw"]["status"] == "stale"
+    assert nodes["erp"]["status"] == "healthy"
+    assert nodes["raw"]["status"] == "healthy"
+    assert "2020-01-01" in nodes["raw"]["status_reason"]
 
 
 def test_objects_unknown_when_raw_undetectable(db, pack, tmp_path):
@@ -590,9 +579,10 @@ def test_apply_running_is_not_failure_for_objects(db, pack, tmp_path):
     assert "apply 失败" not in nodes["objects"]["status_reason"]
 
 
-def test_push_stale_with_default_threshold(db, pack, tmp_path):
-    """PlatformConfig 默认 30m 节奏,2020 年旧 ingest 判 stale。"""
+def test_push_healthy_with_old_batch(db, pack, tmp_path):
+    """旧 ingest 批次也判 healthy(不再判新鲜度),原因如实带时间。"""
     _mk_ingest(db, "2020-01-01T00:00:00")
     cfg = _platform_cfg()
     nodes = _nodes(db, pack, cfg, probes={"ingest": lambda: (True, "http")})
-    assert nodes["push"]["status"] == "stale"
+    assert nodes["push"]["status"] == "healthy"
+    assert "2020-01-01" in nodes["push"]["status_reason"]

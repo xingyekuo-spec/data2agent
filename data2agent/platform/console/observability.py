@@ -15,7 +15,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from ...shared.config import PlatformConfig, parse_duration_seconds
+from ...shared.config import PlatformConfig
 from ...shared.store.dataset_publish import (
     PublishedSnapshotError,
     published_read_tx,
@@ -57,32 +57,6 @@ def now_aware() -> datetime:
 
 def iso(dt: datetime | None) -> datetime | None:
     return dt
-
-
-# ---- 新鲜度阈值 ----
-
-
-def freshness_threshold(sync_every: str | None) -> timedelta | None:
-    """默认新鲜度阈值:max(2 × sync_every_seconds, 300 秒)。
-
-    sync_every 缺失或无法解析时不猜阈值,返回 None(调用方判 unknown)。
-    """
-    if not sync_every:
-        return None
-    try:
-        seconds = parse_duration_seconds(sync_every)
-    except (ValueError, TypeError):
-        return None
-    if seconds <= 0:
-        return None
-    return timedelta(seconds=max(2 * seconds, 300))
-
-
-def is_stale(at: datetime | None, threshold: timedelta, now: datetime) -> bool:
-    """at 早于 (now - threshold) 为陈旧;at 缺失不判陈旧(由调用方判 idle/unknown)。"""
-    if at is None:
-        return False
-    return (now - at) > threshold
 
 
 # ---- 安全错误摘要 ----
@@ -289,18 +263,17 @@ def raw_table_names(db: LandingStore, source: str) -> list[str]:
 Probe = Callable[[], tuple[bool, str]]
 
 
-def _run_status(facts: dict[str, Any], threshold: timedelta | None, now: datetime,
-                *, never: str = "从未运行",
-                require_threshold: bool = True) -> tuple[str, str]:
+def _run_status(facts: dict[str, Any], now: datetime,
+                *, never: str = "从未运行") -> tuple[str, str]:
     """run 类节点的通用状态规则(erp/extract/mapping 共享):
 
-    有效运行中(最新一条)> 最近失败 > 窗口暂停(warning)>
-    阈值内成功(healthy)/超阈值(stale) > 从未运行(idle) > 不可判定(unknown)。
+    有效运行中(最新一条)> 最近失败 > 窗口暂停(warning)> 成功(healthy,附完成时间)
+    > 从未运行(idle)> 不可判定(unknown)。
 
+    2026-08 起平台不再按新鲜度阈值判 stale:节奏在中间机配置,平台无从得知,
+    硬编码假设会误报;成功即 healthy,新旧由界面上「最近成功时间」如实呈现。
+    (objects 节点的 stale 是层间一致性语义:对象层落后于 raw,与新鲜度无关。)
     - 崩溃遗留的旧 running(id 小于更新的 run)是孤儿,不得覆盖更新的结果;
-    - require_threshold=True 时(erp/extract/raw 的数据新鲜度判断)缺少阈值
-      不猜:成功只能判 unknown;mapping 的 apply run 不受此约束(其新旧由
-      objects 节点的时间差表达),成功可判 healthy;
     - paused 是合法窗口暂停(已落批次幂等,下窗口续跑),映射 warning。
     """
     running, latest = facts["running"], facts["latest"]
@@ -316,11 +289,7 @@ def _run_status(facts: dict[str, Any], threshold: timedelta | None, now: datetim
         return "failed", safe_error_summary(latest["detail"]) or f"最近运行失败({status})"
     if finished is None:
         return "unknown", "最近运行时间不可判定(legacy 时间解析失败)"
-    if require_threshold and threshold is None:
-        return "unknown", "缺少同步节奏配置(sync_every),无法判定数据新鲜度"
-    if threshold is not None and is_stale(finished, threshold, now):
-        return "stale", f"最近一次成功在 {finished.isoformat()},已超出新鲜度阈值"
-    return "healthy", "最近一次运行成功"
+    return "healthy", f"最近一次运行成功({finished.isoformat()})"
 
 
 def _run_fields(facts: dict[str, Any], source: str, now: datetime) -> dict[str, Any]:
@@ -390,7 +359,6 @@ def compute_nodes(
     """
     now = now or now_aware()
     probes = probes or {}
-    threshold = freshness_threshold("30m")
     is_http_sink = True  # 平台始终接收 HTTP 推送，不再读取中间机配置
 
     nodes: list[dict[str, Any]] = []
@@ -421,7 +389,7 @@ def compute_nodes(
                                "存在历史运行但未记录类型(老库),无法判定同步状态",
                                source=source))
             continue
-        status, reason = _run_status(sync_facts, threshold, now, never=never_text)
+        status, reason = _run_status(sync_facts, now, never=never_text)
         err_run = sync_facts["failed"]
         nodes.append(_node(node_id, status, reason,
                            error=safe_error_summary(err_run["detail"] if err_run else None),
@@ -465,17 +433,11 @@ def compute_nodes(
             elif at is None:
                 nodes.append(_node("push", "unknown", "最近批次时间不可判定",
                                    rows_in=batch["rows"], source=source))
-            elif threshold is None:
-                nodes.append(_node("push", "unknown",
-                                   "缺少同步节奏配置(sync_every),无法判定推送新鲜度",
-                                   observed_at=at, rows_in=batch["rows"], source=source))
-            elif is_stale(at, threshold, now):
-                nodes.append(_node("push", "stale",
-                                   f"最近批次在 {at.isoformat()},已超出新鲜度阈值",
-                                   observed_at=at, rows_in=batch["rows"], source=source))
             else:
-                nodes.append(_node("push", "healthy", "最近推送批次已落地",
-                                   observed_at=at, rows_in=batch["rows"], source=source))
+                nodes.append(_node("push", "healthy",
+                                   f"最近推送批次已落地({at.isoformat()})",
+                                   observed_at=at, rows_in=batch["rows"],
+                                   source=source))
 
     # -- raw:活跃行 + 最新抽取时间 --
     raw_error: sqlite3.Error | None = None
@@ -500,18 +462,9 @@ def compute_nodes(
     elif raw_latest is None:
         nodes.append(_node("raw", "unknown", "raw 最新抽取时间缺失",
                            rows_in=raw_rows, rows_out=raw_rows, source=source))
-    elif threshold is None:
-        nodes.append(_node("raw", "unknown",
-                           "缺少同步节奏配置(sync_every),无法判定数据新鲜度",
-                           observed_at=raw_latest, rows_in=raw_rows, rows_out=raw_rows,
-                           source=source))
-    elif is_stale(raw_latest, threshold, now):
-        nodes.append(_node("raw", "stale",
-                           f"最新抽取在 {raw_latest.isoformat()},已超出新鲜度阈值",
-                           observed_at=raw_latest, rows_in=raw_rows, rows_out=raw_rows,
-                           source=source))
     else:
-        nodes.append(_node("raw", "healthy", "raw 数据在新鲜度阈值内",
+        nodes.append(_node("raw", "healthy",
+                           f"最新抽取在 {raw_latest.isoformat()}",
                            observed_at=raw_latest, rows_in=raw_rows, rows_out=raw_rows,
                            source=source))
 
@@ -534,9 +487,8 @@ def compute_nodes(
     elif qp is None:
         nodes.append(_node("mapping", "unknown", "隔离计数查询失败", source=source))
     else:
-        map_status, map_reason = _run_status(apply_facts, None, now,
-                                             never="从未执行 apply",
-                                             require_threshold=False)
+        map_status, map_reason = _run_status(apply_facts, now,
+                                             never="从未执行 apply")
         if map_status == "healthy" and (bs["draft"] > 0 or qp > 0):
             reasons = []
             if bs["draft"] > 0:
