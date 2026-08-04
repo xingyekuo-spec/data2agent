@@ -119,7 +119,7 @@ watch(
 </script>
 
 <template>
-  <section class="runs-page">
+  <section class="runs-page d2a-page-flush">
     <!-- 规范工具栏(A 类):独立白色卡片,左筛选、右操作,与内容区对齐 -->
     <div class="d2a-card d2a-toolbar">
       <el-select

@@ -93,6 +93,36 @@ body,
   margin-left: auto;
 }
 
+/* A 类列表页通栏工具栏:工具栏卡片上沿贴顶栏、左右与顶栏同宽
+   (抵消内容区内距);表格卡片保持内容边距。
+   用法:<section class="d2a-page-flush"> + <div class="d2a-card d2a-toolbar"> */
+.d2a-page-flush {
+  margin: -8px -12px 0;
+}
+
+.d2a-page-flush > .d2a-toolbar {
+  border-top: none;
+  border-right: none;
+  border-left: none;
+  border-radius: 0;
+}
+
+.d2a-page-flush > .d2a-card:not(.d2a-toolbar) {
+  margin-right: 12px;
+  margin-left: 12px;
+}
+
+@media (max-width: 900px) {
+  .d2a-page-flush {
+    margin: -8px -8px 0;
+  }
+
+  .d2a-page-flush > .d2a-card:not(.d2a-toolbar) {
+    margin-right: 8px;
+    margin-left: 8px;
+  }
+}
+
 /* 工具栏筛选控件固定宽度(EP 新版 select 默认 100% 宽,须约束) */
 .d2a-toolbar .el-select {
   width: 140px;
