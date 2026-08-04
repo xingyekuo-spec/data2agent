@@ -48,7 +48,9 @@ Vue 生产 base 固定为 `/`;便携包必须包含 `app/console-ui/dist`。
   └─ 隔离区        /quarantine
 
 数据管理
-  └─ 数据浏览      /data
+  ├─ 原始数据      /data/raw
+  ├─ 对象数据      /data/objects
+  └─ 数据集版本    /data/datasets
 
 本体库
   ├─ 模板          /templates
