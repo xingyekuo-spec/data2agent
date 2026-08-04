@@ -123,6 +123,35 @@ body,
   }
 }
 
+/* 页签页(A 类变体):页签条为贴顶栏的白色通栏带(参考样式),
+   文本式页签 + 激活下划线;页签内容区恢复左右边距。
+   用法:<section class="d2a-page-flush"> 内直接放 <el-tabs> */
+.d2a-page-flush > .el-tabs .el-tabs__header {
+  padding: 0 12px;
+  margin-bottom: 8px;
+  background: #fff;
+  border-bottom: 1px solid var(--d2a-border);
+}
+
+/* 用通栏带的底边线替代 el-tabs 默认分隔线 */
+.d2a-page-flush > .el-tabs .el-tabs__nav-wrap::after {
+  display: none;
+}
+
+.d2a-page-flush > .el-tabs .el-tabs__content {
+  padding: 0 12px;
+}
+
+@media (max-width: 900px) {
+  .d2a-page-flush > .el-tabs .el-tabs__header {
+    padding: 0 8px;
+  }
+
+  .d2a-page-flush > .el-tabs .el-tabs__content {
+    padding: 0 8px;
+  }
+}
+
 /* 工具栏筛选控件固定宽度(EP 新版 select 默认 100% 宽,须约束) */
 .d2a-toolbar .el-select {
   width: 140px;
