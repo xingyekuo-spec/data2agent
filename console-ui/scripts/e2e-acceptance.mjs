@@ -325,8 +325,8 @@ landing: ${landing}
     // M4 Real:数据浏览(脱敏 + 无副作用)
     await page.locator('.el-menu-item', { hasText: '原始数据' }).click()
     await page.locator('[data-testid="raw-catalog"]').waitFor({ state: 'visible' })
-    await page.locator('[data-testid="browse-CUSTOMER"]').click()
-    // Raw 数据浏览改为抽屉(RawDataDrawer)展示,data-testid 前缀为 raw-drawer-
+    // 详情入口一律行点击(规范 §3.2-3),raw 浏览在抽屉(RawDataDrawer)展示
+    await page.locator('[data-testid="raw-catalog"] tbody tr', { hasText: 'CUSTOMER' }).first().click()
     await page.locator('[data-testid="raw-drawer-table"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="raw-drawer-table"]')).includes('***'),
       'Real:raw 敏感列脱敏')
@@ -337,7 +337,8 @@ landing: ${landing}
     await page.waitForTimeout(500)
     await page.locator('.el-menu-item', { hasText: '对象数据' }).click()
     await page.locator('[data-testid="obj-catalog"]').waitFor({ state: 'visible' })
-    await page.locator('[data-testid="browse-Customer"]').click()
+    // 对象数据详情同样行点击开抽屉(ObjectDataDrawer),安全 JSON 折叠在抽屉内
+    await page.locator('[data-testid="obj-catalog"] tbody tr', { hasText: 'Customer' }).first().click()
     await page.locator('[data-testid="obj-table"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="obj-table"]')).includes('***'),
       'Real:对象敏感属性脱敏')
@@ -894,7 +895,7 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
     expect((await page.locator('[data-testid="mcp-scope-banner"]').count()) === 1,
       'M5:Real MCP Lab 页可访问')
 
-    // 十一页面冒烟(2026-08:数据浏览拆分为三个二级页)
+    // 十四页面冒烟(2026-08:数据浏览三个二级页;本体库 拓扑/类/属性/对象关系 四页)
     for (const [path, testid] of [
       ['/', 'stat-grid'],
       ['/sources', 'source-grid'],
@@ -905,13 +906,16 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
       ['/data/objects', 'obj-catalog'],
       ['/data/datasets', 'datasets-table'],
       ['/quarantine', 'quarantine-refresh'],
+      ['/ontology/topology', 'topology-graph'],
+      ['/ontology/classes', 'classes-table'],
+      ['/ontology/properties', 'props-table'],
       ['/templates', 'tpl-item-Customer'],
       ['/mcp', 'mcp-lab-page'],
     ]) {
       await page.goto(`http://localhost:${REAL_UI_PORT}${path}`, { waitUntil: 'networkidle' })
       await page.waitForTimeout(800)
       const n = await page.locator(`[data-testid="${testid}"]`).count()
-      expect(n > 0, `M6:十一页面 ${path} 可见 ${testid}`)
+      expect(n > 0, `M6:十四页面 ${path} 可见 ${testid}`)
     }
 
     // Settings 平台专用配置页(不计入八主页面):只暴露非敏感平台路径。

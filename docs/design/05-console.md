@@ -53,8 +53,11 @@ Vue 生产 base 固定为 `/`;便携包必须包含 `app/console-ui/dist`。
   └─ 数据集版本    /data/datasets
 
 本体库
-  ├─ 模板          /templates
-  └─ 对象关系      /object-graph
+  ├─ 拓扑          /ontology/topology
+  ├─ 类            /ontology/classes
+  ├─ 属性          /ontology/properties
+  ├─ 对象关系      /object-graph
+  └─ 模板          /templates
 
 MCP 服务
   ├─ 呆滞验证      /dead-stock
@@ -103,14 +106,20 @@ MCP 服务
 2. **分页栏**:统一 `PagerBar` 组件(`components/shared/PagerBar.vue`),
    「共 N 条 + 20/50/100 条选择 + 页码」三件套右对齐,事件为
    `change(offset, limit)`,换条数自动回第一页;
-3. **表格**:状态列用彩色语义标签;操作列固定最右、文字链接式,危险操作
-   红色 + 二次确认;空值显示 `—`;行点击开详情;
+3. **表格**:状态列用彩色语义标签;操作列固定最右、只放真实动作(发布/回滚等),
+   危险操作红色 + 二次确认;空值显示 `—`;**详情入口一律行点击**
+   (`@row-click`),操作列不放「详情」「浏览」入口按钮;
 4. **三态必备**:加载 `LoadingState` / 失败 `ErrorState`(可重试)/ 空数据
    `EmptyState`(带引导文案);
-5. **详情用右侧抽屉**(el-drawer),不页内跳转;
-6. **文案**:辅助说明 12px 灰字;术语用专业口径(水位/隔离区等),不白话化;
-7. **响应式**:≤900px 工具栏折行、表格横向滚动;
-8. **测试**:每页视图测试覆盖三态 + 关键交互;挂载 ElementPlus 须带
+5. **详情用右侧抽屉**(el-drawer),不页内跳转,也不用页内详情卡片;抽屉内
+   同样三态 + 刷新失败警告(refresh-warning);**安全 JSON 折叠在详情抽屉内
+   底部**(json-toggle + json-view),不单独占页面卡片;抽屉交互与深链同步
+   (打开写 query、关闭清除)以运行记录页为基准;
+6. **内容卡片不加卡标题**:单一内容卡片不用 `h3.card-title`(页面标题由顶栏
+   承担);仅多内容卡片页面(如隔离区:分组 + 记录)可用 card-title 分区;
+7. **文案**:辅助说明 12px 灰字;术语用专业口径(水位/隔离区等),不白话化;
+8. **响应式**:≤900px 工具栏折行、表格横向滚动;
+9. **测试**:每页视图测试覆盖三态 + 关键交互;挂载 ElementPlus 须带
    `{ locale: zhCn }`(与生产 el-config-provider 对齐,否则分页等文案为英文)。
 
 共享资产(新增 A 类页面直接用):`.d2a-page-flush` / `.d2a-toolbar` /
@@ -127,7 +136,10 @@ MCP 服务
    PagerBar);R2 视图 scoped 样式禁止自定义 `.toolbar`/`.pager`/`.toolbar__total`
    保留名;R3 每个页面必须在脚本的 `PAGE_TYPES` 登记表声明类型(A/B/C/D),
    新页面未登记即失败——强制先想类型再写码;R4 A 类必须 d2a-page-flush +
-   首位规范工具栏 + PagerBar(目录型无分页页面在 `NO_PAGER` 显式豁免并注明原因)。
+   首位规范工具栏 + PagerBar(目录型无分页页面在 `NO_PAGER` 显式豁免并注明原因);
+   R5 严格 A 类详情必须右侧抽屉(el-drawer/详情抽屉组件),A(tabs) 展开行变体除外;
+   R6 A 类禁止「详情」「浏览」入口按钮(详情入口一律行点击);R7 严格 A 类表格
+   必须 `@row-click` 开详情。
 2. **脚手架**:`node scripts/new-page.mjs <ViewName> <路径> <标题>` 生成合规的
    A 类页面 + 测试骨架(含 locale 约定与 TODO 标注),生成后检查器会引导完成
    登记与路由挂载。

@@ -5,10 +5,14 @@ import { setScenario } from './scenario'
 // jsdom 无 canvas:全局 mock ECharts(真实渲染由浏览器验收覆盖)
 vi.mock('echarts/core', () => ({
   use: () => {},
-  init: () => ({ setOption: () => {}, resize: () => {}, dispose: () => {} }),
+  init: () => ({ setOption: () => {}, resize: () => {}, dispose: () => {}, on: () => {} }),
 }))
-vi.mock('echarts/charts', () => ({ BarChart: {} }))
-vi.mock('echarts/components', () => ({ GridComponent: {}, TooltipComponent: {} }))
+vi.mock('echarts/charts', () => ({ BarChart: {}, GraphChart: {} }))
+vi.mock('echarts/components', () => ({
+  GridComponent: {},
+  TooltipComponent: {},
+  LegendComponent: {},
+}))
 vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
 // jsdom 缺 ResizeObserver:补最小 stub,组件 resize 路径仍可测试

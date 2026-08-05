@@ -19,6 +19,9 @@ const viewComponents = {
   'data-datasets': () => import('@/views/DatasetsView.vue'),
   quarantine: () => import('@/views/QuarantineView.vue'),
   'object-graph': () => import('@/views/ObjectGraphView.vue'),
+  topology: () => import('@/views/TopologyView.vue'),
+  'ontology-classes': () => import('@/views/OntologyClassesView.vue'),
+  'ontology-properties': () => import('@/views/OntologyPropertiesView.vue'),
   templates: () => import('@/views/TemplatesView.vue'),
   'dead-stock-validation': () => import('@/views/DeadStockValidationView.vue'),
   'mcp-lab': () => import('@/views/McpLabView.vue'),
@@ -75,8 +78,11 @@ export const NAV_GROUPS: readonly NavGroup[] = [
   {
     title: '本体库',
     items: [
-      { name: 'templates', path: '/templates', title: '模板' },
+      { name: 'topology', path: '/ontology/topology', title: '拓扑' },
+      { name: 'ontology-classes', path: '/ontology/classes', title: '类' },
+      { name: 'ontology-properties', path: '/ontology/properties', title: '属性' },
       { name: 'object-graph', path: '/object-graph', title: '对象关系' },
+      { name: 'templates', path: '/templates', title: '模板' },
     ],
   },
   {

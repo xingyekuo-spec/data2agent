@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { Refresh, Search } from '@element-plus/icons-vue'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import { useTemplatesStore } from '@/stores/templates'
+import { makeDomainColor } from '@/utils/domain'
 import type { components } from '@/types/api'
 
 type TemplateObject = components['schemas']['TemplateObject']
@@ -35,6 +37,7 @@ type GraphEdge = {
 
 const store = useTemplatesStore()
 const { templates, templatesRefreshError } = storeToRefs(store)
+const router = useRouter()
 const selectedObjectName = ref('')
 const keyword = ref('')
 
@@ -92,6 +95,12 @@ const graphNodes = computed<GraphNode[]>(() => {
 const domains = computed(() =>
   [...new Set(graphNodes.value.map((node) => node.domain))].sort(),
 )
+
+const domainColor = computed(() => makeDomainColor(domains.value))
+
+function openInClasses(objectName: string): void {
+  void router.push({ path: '/ontology/classes', query: { object: objectName } })
+}
 
 const selectedObject = computed(() =>
   objectByName.value.get(selectedObjectName.value) ?? objects.value[0] ?? null,
@@ -151,7 +160,7 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
     <header class="page-head">
       <div>
         <h1>对象关系</h1>
-        <p>基于模板 YAML 的 relations 生成对象模型图，展示 schema 关系、构建状态和对象行数。</p>
+        <p>对象构建状态与引用清单:物化状态、行数与 relations 入/出边;节点按领域着色。结构图谱见「拓扑」。</p>
       </div>
       <el-button
         :icon="Refresh"
@@ -195,6 +204,24 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
         </div>
       </section>
 
+      <!-- 领域图例(与节点着色同源) -->
+      <div
+        v-if="objects.length"
+        class="domain-legend"
+        data-testid="object-graph-legend"
+      >
+        <span
+          v-for="d in domains"
+          :key="d"
+          class="domain-legend__item"
+        >
+          <i
+            class="domain-dot"
+            :style="{ background: domainColor(d) }"
+          />{{ d }}
+        </span>
+      </div>
+
       <EmptyState
         v-if="objects.length === 0"
         title="没有模板对象"
@@ -216,6 +243,7 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
               type="button"
               class="graph-node"
               :class="{ 'graph-node--selected': selectedObject?.object === node.object }"
+              :style="{ borderLeftColor: domainColor(node.domain) }"
               :data-testid="`graph-node-${node.object}`"
               @click="selectObject(node.object)"
             >
@@ -286,6 +314,17 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
               >
                 {{ materializedTag(selectedNode.state).label }}
               </el-tag>
+            </div>
+            <div class="detail-actions">
+              <el-button
+                size="small"
+                text
+                type="primary"
+                data-testid="object-graph-open-class"
+                @click="openInClasses(selectedObject.object)"
+              >
+                在类页查看属性 / 绑定
+              </el-button>
             </div>
             <dl class="object-facts">
               <dt>领域</dt>
@@ -481,6 +520,32 @@ function relationTone(edge: GraphEdge): 'out' | 'in' {
   gap: 4px;
   min-height: 112px;
   padding: 10px;
+  border-left-width: 3px;
+}
+
+.domain-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--d2a-text-secondary);
+}
+
+.domain-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.domain-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.detail-actions {
+  margin: -4px 0 10px;
 }
 
 .graph-node:hover,

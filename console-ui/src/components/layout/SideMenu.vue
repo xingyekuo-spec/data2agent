@@ -5,9 +5,12 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   Coin,
+  Collection,
+  CollectionTag,
   Connection,
   Document,
   Files,
+  Grid,
   MagicStick,
   Notebook,
   Odometer,
@@ -37,6 +40,9 @@ const icons: Record<ViewName, typeof Odometer> = {
   'data-datasets': Document,
   quarantine: Warning,
   'object-graph': Share,
+  topology: Grid,
+  'ontology-classes': Collection,
+  'ontology-properties': CollectionTag,
   templates: Files,
   'dead-stock-validation': Files,
   'mcp-lab': MagicStick,

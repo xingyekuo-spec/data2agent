@@ -3,10 +3,10 @@ import { describe, expect, it } from 'vitest'
 import { NAV_GROUPS, NAV_ITEMS, createAppRouter, routes } from './index'
 
 describe('router', () => {
-  it('16 个主页面 + 首次配置隐藏路由 + /data 旧链重定向', () => {
-    expect(NAV_ITEMS).toHaveLength(16)
-    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(16)
-    expect(routes.filter((r) => r.name)).toHaveLength(17)
+  it('19 个主页面 + 首次配置隐藏路由 + /data 旧链重定向', () => {
+    expect(NAV_ITEMS).toHaveLength(19)
+    expect(NAV_ITEMS.filter((i) => !i.readonly)).toHaveLength(19)
+    expect(routes.filter((r) => r.name)).toHaveLength(20)
     // /data 旧三 tab 深链重定向保留(无 name)
     const legacy = routes.find((r) => r.path === '/data')
     expect(legacy?.redirect).toBeTypeOf('function')
@@ -21,7 +21,7 @@ describe('router', () => {
       'MCP 服务',
       '平台管理',
     ])
-    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([1, 4, 3, 2, 2, 4])
+    expect(NAV_GROUPS.map((g) => g.items.length)).toEqual([1, 4, 3, 5, 2, 4])
   })
 
   it('路径与规格一致:MCP Lab 固定 /mcp', () => {
@@ -36,8 +36,11 @@ describe('router', () => {
       '/data/raw',
       '/data/objects',
       '/data/datasets',
-      '/templates',
+      '/ontology/topology',
+      '/ontology/classes',
+      '/ontology/properties',
       '/object-graph',
+      '/templates',
       '/dead-stock',
       '/mcp',
       '/settings',
