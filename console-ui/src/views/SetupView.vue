@@ -1,8 +1,10 @@
 <script setup lang="ts">
 // 平台首次配置页。
+// 成功后不立即跳转:展示常驻完成面板与重启指引(启动器只在启动时拉起
+// ingest/apply/mcp,首配后需重启应用才会启动后台服务,否则管道页推送/
+// MCP 节点报失败——05-console 设计缺口,由本页提示兜底)。
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import { getSetupStatus, postSetup } from '@/api/services'
@@ -19,6 +21,7 @@ const saving = ref(false)
 const error = ref<ApiError | null>(null)
 const fieldErrors = ref<FieldError[]>([])
 const statusText = ref('')
+const doneMessage = ref('')
 
 const form = reactive({
   ingest_token: '',
@@ -57,8 +60,8 @@ async function submit(): Promise<void> {
   }
   if (result.data.ok) {
     session.login(form.console_token)
-    ElMessage.success(result.data.message)
-    await router.replace('/')
+    // 不立即跳转:展示重启指引,由用户确认后进入控制台
+    doneMessage.value = result.data.message
   } else {
     fieldErrors.value = result.data.errors
   }
@@ -71,7 +74,42 @@ onMounted(() => {
 
 <template>
   <section>
-    <div class="d2a-card setup-card">
+    <div
+      v-if="doneMessage"
+      class="d2a-card setup-card"
+      data-testid="setup-done"
+    >
+      <h3 class="card-title card-title--compact">
+        配置已保存
+      </h3>
+      <p class="card-subtitle">
+        {{ doneMessage }}
+      </p>
+      <el-alert
+        type="warning"
+        :closable="false"
+        class="restart-notice"
+      >
+        <p><strong>请重启应用以启动后台服务</strong>(退出后重新双击 data2agent.exe,或重启 Windows 服务)。</p>
+        <p>
+          数据接收(ingest)、物化(apply)、MCP 等后台服务在重启后才会启动;
+          未重启前,管道状态页的「推送」「MCP 网关」节点显示失败属预期,重启后自动恢复。
+        </p>
+      </el-alert>
+      <div class="setup-actions">
+        <el-button
+          type="primary"
+          data-testid="setup-enter"
+          @click="router.replace('/')"
+        >
+          已了解,进入控制台
+        </el-button>
+      </div>
+    </div>
+    <div
+      v-else
+      class="d2a-card setup-card"
+    >
       <h3 class="card-title card-title--compact">
         平台首次配置
       </h3>
@@ -177,5 +215,14 @@ onMounted(() => {
 .setup-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+.restart-notice {
+  margin: 0 0 12px;
+}
+
+.restart-notice p {
+  margin: 0;
+  line-height: 1.6;
 }
 </style>

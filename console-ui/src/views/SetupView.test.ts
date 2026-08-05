@@ -34,17 +34,26 @@ describe('SetupView(首次配置)', () => {
     expect(wrapper.find('[data-testid="setup-mcp-token"]').exists()).toBe(true)
   })
 
-  it('提交合法 Token:登录并跳转控制台首页', async () => {
+  it('提交合法 Token:登录并展示重启指引,确认后进入控制台', async () => {
     const { wrapper, router } = await mountSetup()
     await wrapper.find('[data-testid="setup-ingest-token"]').setValue('ingest-secret')
     await wrapper.find('[data-testid="setup-console-token"]').setValue('console-secret')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
+
+    // 成功:用 console_token 完成登录,但不立即跳转——展示常驻重启指引
+    expect(getToken()).toBe('console-secret')
+    expect(router.currentRoute.value.path).toBe('/setup')
+    const done = wrapper.find('[data-testid="setup-done"]')
+    expect(done.exists()).toBe(true)
+    expect(done.text()).toContain('请重启应用以启动后台服务')
+    expect(done.text()).toContain('推送')
+
+    // 用户确认后进入控制台
+    await wrapper.find('[data-testid="setup-enter"]').trigger('click')
+    await flushPromises()
     await vi.dynamicImportSettled()
     await flushPromises()
-
-    // 成功:用 console_token 完成登录,跳转 /
-    expect(getToken()).toBe('console-secret')
     expect(router.currentRoute.value.path).toBe('/')
   })
 
