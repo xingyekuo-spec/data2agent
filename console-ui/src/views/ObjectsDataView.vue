@@ -1,33 +1,26 @@
 <script setup lang="ts">
-// 对象数据(原数据浏览 对象层 tab):对象目录 + 业务键搜索浏览 + 血缘抽屉 + 安全 JSON。
-import { computed, onMounted, ref, watch } from 'vue'
+// 对象数据(原数据浏览 对象层 tab):对象目录 + 浏览抽屉(搜索/分页/血缘/安全 JSON)。
+// 详情规范(05-console §3.2):行点击开右侧抽屉,安全 JSON 折叠在抽屉内。
+import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
 import LoadingState from '@/components/shared/LoadingState.vue'
-import PagerBar from '@/components/shared/PagerBar.vue'
+import ObjectDataDrawer from '@/components/shared/ObjectDataDrawer.vue'
 import ObjectLineageDrawer from '@/components/shared/ObjectLineageDrawer.vue'
 import StatusBadge from '@/components/shared/StatusBadge.vue'
 import { useDataStore } from '@/stores/data'
 import { useLineageStore } from '@/stores/lineage'
 import { formatDateTime } from '@/utils/time'
-import { formatCell } from '@/utils/format'
 
 const store = useDataStore()
-const {
-  objCatalog,
-  objCatalogRefreshError,
-  objSel,
-  objPage,
-  objPageRefreshError,
-} = storeToRefs(store)
-const { objQuery } = store
+const { objCatalog, objCatalogRefreshError, objSel, objPage } = storeToRefs(store)
 const route = useRoute()
 const router = useRouter()
 const lineageStore = useLineageStore()
+const objDrawerVisible = ref(false)
 const lineageDrawerVisible = ref(false)
-const showJson = ref(false)
 let restoringQuery = false
 
 function openLineage(rowIndex: number) {
@@ -43,30 +36,6 @@ function openLineage(rowIndex: number) {
 
 function closeLineage() {
   lineageDrawerVisible.value = false
-}
-
-const hasLineageRefs = computed(() => {
-  const page = objPage.value
-  return page?.status === 'success'
-    && Array.isArray(page.data.lineage_refs)
-    && page.data.lineage_refs.length > 0
-})
-
-const objCols = computed(() =>
-  objPage.value?.status === 'success' ? objPage.value.data.columns : [],
-)
-const objSearchable = computed(() =>
-  objPage.value?.status !== 'success' || objPage.value.data.searchable,
-)
-const currentJson = computed(() =>
-  objPage.value?.status === 'success' ? objPage.value.data : null,
-)
-
-function onObjPage(offset: number, limit: number): void {
-  objQuery.offset = offset
-  objQuery.limit = limit
-  void store.browseObject()
-  syncRouteQuery()
 }
 
 function firstString(value: unknown): string {
@@ -88,17 +57,19 @@ function applyRouteQuery(query: LocationQuery, browse: boolean): void {
   let browseObject = false
   const nextObj = firstString(query.object)
   const nextObjQ = firstString(query.q)
-  const nextObjOffset = pageOffset(query.page, objQuery.limit)
+  const nextObjOffset = pageOffset(query.page, store.objQuery.limit)
   const objResourceChanged = objSel.value !== nextObj
-  if (objSel.value !== nextObj || objQuery.q !== nextObjQ || objQuery.offset !== nextObjOffset) {
+  if (objSel.value !== nextObj || store.objQuery.q !== nextObjQ
+    || store.objQuery.offset !== nextObjOffset) {
     objSel.value = nextObj
-    objQuery.q = nextObjQ
-    objQuery.offset = nextObjOffset
+    store.objQuery.q = nextObjQ
+    store.objQuery.offset = nextObjOffset
     if (objResourceChanged || !nextObj) {
       objPage.value = null
     }
     browseObject = Boolean(nextObj)
   }
+  objDrawerVisible.value = Boolean(nextObj)
   restoringQuery = false
   if (browse && browseObject) {
     void store.browseObject()
@@ -112,9 +83,9 @@ function syncRouteQuery(): void {
   void router.replace({
     query: {
       ...(objSel.value ? { object: objSel.value } : {}),
-      ...(objQuery.q ? { q: objQuery.q } : {}),
-      ...(pageQuery(objQuery.offset, objQuery.limit) ? {
-        page: pageQuery(objQuery.offset, objQuery.limit),
+      ...(store.objQuery.q ? { q: store.objQuery.q } : {}),
+      ...(pageQuery(store.objQuery.offset, store.objQuery.limit) ? {
+        page: pageQuery(store.objQuery.offset, store.objQuery.limit),
       } : {}),
     },
   })
@@ -122,11 +93,12 @@ function syncRouteQuery(): void {
 
 function selectObject(object: string): void {
   store.selectObject(object)
+  objDrawerVisible.value = true
   syncRouteQuery()
 }
 
-function searchObject(): void {
-  store.searchObject()
+function closeObjDrawer(): void {
+  objDrawerVisible.value = false
   syncRouteQuery()
 }
 
@@ -147,28 +119,9 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
 <template>
   <section class="data-page d2a-page-flush">
-    <!-- 通栏工具栏(A 类规范):对象搜索;未选对象时禁用并引导 -->
+    <!-- 通栏工具栏(A 类规范):左提示、右操作;对象数据详情在抽屉内 -->
     <div class="d2a-card d2a-toolbar">
-      <el-input
-        v-model="objQuery.q"
-        :placeholder="objSel ? (objSearchable ? '按业务键搜索' : '该资源没有可搜索业务键') : '先在下方目录选择对象'"
-        size="small"
-        clearable
-        :disabled="!objSel || !objSearchable"
-        data-testid="obj-search"
-        @change="searchObject()"
-      />
-      <span
-        v-if="objPage?.status === 'success'"
-        class="toolbar-hint"
-      >
-        {{ objSel }} · 排序 {{ objPage.data.sort }}
-      </span>
-      <span
-        v-else
-        class="toolbar-hint"
-        data-testid="obj-toolbar-hint"
-      >{{ objSel || '未选择对象' }}</span>
+      <span class="toolbar-hint">对象目录(点击行浏览对象数据)</span>
       <div class="d2a-toolbar__actions">
         <el-button
           size="small"
@@ -181,9 +134,6 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
     </div>
 
     <div class="d2a-card">
-      <h3 class="card-title">
-        对象目录
-      </h3>
       <LoadingState v-if="objCatalog.status === 'idle' || objCatalog.status === 'loading'" />
       <ErrorState
         v-else-if="objCatalog.status === 'error'"
@@ -206,6 +156,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           :data="objCatalog.data"
           size="small"
           data-testid="obj-catalog"
+          @row-click="(row: { object: string }) => selectObject(row.object)"
         >
           <el-table-column
             prop="display_name"
@@ -262,140 +213,16 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               {{ row.warning ?? '' }}
             </template>
           </el-table-column>
-          <el-table-column width="90">
-            <template #default="{ row }">
-              <el-button
-                size="small"
-                text
-                :data-testid="`browse-${row.object}`"
-                @click="selectObject(row.object)"
-              >
-                浏览
-              </el-button>
-            </template>
-          </el-table-column>
         </el-table>
       </template>
     </div>
 
-    <div
-      v-if="objPage"
-      class="d2a-card"
-    >
-      <LoadingState v-if="objPage.status === 'loading'" />
-      <ErrorState
-        v-else-if="objPage.status === 'error'"
-        :error="objPage.error"
-        @retry="store.browseObject()"
-      />
-      <template v-else-if="objPage.status === 'success'">
-        <p
-          v-if="objPageRefreshError"
-          class="refresh-warning"
-          data-testid="obj-page-refresh-error"
-        >
-          刷新失败({{ objPageRefreshError.message }}),展示上一次成功数据
-        </p>
-        <ul
-          v-if="objPage.data.warnings.length"
-          class="warnings"
-          data-testid="obj-warnings"
-        >
-          <li
-            v-for="w in objPage.data.warnings"
-            :key="w"
-          >
-            {{ w }}
-          </li>
-        </ul>
-        <el-table
-          :data="objPage.data.rows"
-          size="small"
-          data-testid="obj-table"
-        >
-          <el-table-column
-            v-for="col in objCols"
-            :key="col.name"
-            :prop="col.name"
-            min-width="120"
-          >
-            <template #header>
-              <span>{{ col.name }}</span>
-              <el-tag
-                v-if="col.classification === 'sensitive'"
-                size="small"
-                type="warning"
-                class="col-flag"
-              >
-                脱敏
-              </el-tag>
-              <el-tag
-                v-else-if="col.classification === 'unknown'"
-                size="small"
-                type="info"
-                class="col-flag"
-              >
-                未知
-              </el-tag>
-            </template>
-            <template #default="{ row }">
-              {{ formatCell(row[col.name]) }}
-            </template>
-          </el-table-column>
-          <el-table-column
-            v-if="hasLineageRefs"
-            label="血缘"
-            width="80"
-            data-testid="obj-lineage-col"
-          >
-            <template #default="{ $index }">
-              <el-button
-                size="small"
-                text
-                :data-testid="`lineage-btn-${$index}`"
-                @click="openLineage($index)"
-              >
-                血缘
-              </el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <p
-          v-if="objPage.data.truncations.length"
-          class="trunc-note"
-          data-testid="obj-truncations"
-        >
-          {{ objPage.data.truncations.length }} 行存在截断字段(预览不是完整值):
-          {{ objPage.data.truncations.map((t) => `#${t.row_index}(${t.fields.join('/')})`).join(', ') }}
-        </p>
-        <PagerBar
-          :total="objPage.data.total"
-          :limit="objQuery.limit"
-          :offset="objQuery.offset"
-          data-testid="obj-pager"
-          @change="onObjPage"
-        />
-      </template>
-    </div>
-
-    <div
-      v-if="currentJson"
-      class="d2a-card"
-    >
-      <el-button
-        size="small"
-        text
-        data-testid="json-toggle"
-        @click="showJson = !showJson"
-      >
-        {{ showJson ? '隐藏' : '查看' }}安全 JSON(与表格同源)
-      </el-button>
-      <pre
-        v-if="showJson"
-        class="json-view"
-        data-testid="json-view"
-      >{{ JSON.stringify(currentJson, null, 2) }}</pre>
-    </div>
+    <ObjectDataDrawer
+      :visible="objDrawerVisible"
+      data-testid="obj-data-drawer"
+      @close="closeObjDrawer"
+      @open-lineage="openLineage"
+    />
 
     <ObjectLineageDrawer
       :visible="lineageDrawerVisible"
@@ -416,41 +243,9 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
   color: var(--d2a-text-secondary);
 }
 
-.warnings {
-  padding: 8px 12px;
-  margin: 0 0 8px;
-  font-size: 12px;
-  color: var(--d2a-status-stale);
-  background: var(--el-fill-color-light);
-  border-left: 3px solid var(--d2a-status-warning);
-  list-style: none;
-}
-
 .refresh-warning {
   margin: 0 0 8px;
   font-size: 12px;
   color: var(--d2a-status-stale);
-}
-
-.col-flag {
-  margin-left: 4px;
-}
-
-.trunc-note {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: var(--d2a-status-stale);
-}
-
-.json-view {
-  max-height: 320px;
-  margin: 8px 0 0;
-  padding: 10px;
-  overflow: auto;
-  font-size: 11px;
-  background: var(--el-fill-color-light);
-  border-radius: 6px;
-  white-space: pre-wrap;
-  word-break: break-all;
 }
 </style>

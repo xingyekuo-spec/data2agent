@@ -37,6 +37,7 @@ const loading = ref(false)
 const items = ref<unknown[]>([])
 const total = ref(0)
 const page = { offset: 0, limit: 50 }
+const drawerOpen = ref(false)
 
 function refresh(): void {
   // TODO: 调 store 刷新
@@ -46,6 +47,11 @@ function onPagerChange(offset: number, limit: number): void {
   page.offset = offset
   page.limit = limit
   refresh()
+}
+
+function openRow(_row: unknown): void {
+  // TODO: 加载详情后打开抽屉(详情入口一律行点击,规范 §3.2-3)
+  drawerOpen.value = true
 }
 
 onMounted(refresh)
@@ -75,7 +81,13 @@ onMounted(refresh)
         title="暂无数据"
       />
       <template v-else>
-        <!-- TODO: el-table 列定义;状态列用 StatusBadge;空值 —;操作列最右 -->
+        <!-- TODO: el-table 列定义;状态列用 StatusBadge;空值 —;
+             行点击 @row-click 开详情;操作列只放真实动作(禁详情/浏览按钮) -->
+        <el-table
+          :data="items"
+          size="small"
+          @row-click="openRow"
+        />
         <Pager
           :total="total"
           :limit="page.limit"
@@ -84,6 +96,15 @@ onMounted(refresh)
         />
       </template>
     </div>
+
+    <!-- 详情抽屉(规范 §3.2-5):三态 + 刷新失败警告;安全 JSON 折叠在抽屉内底部 -->
+    <el-drawer
+      v-model="drawerOpen"
+      title="详情"
+      size="560px"
+    >
+      <!-- TODO: 详情内容(summary dl + 小节表格 + 安全 JSON toggle) -->
+    </el-drawer>
   </section>
 </template>
 `, 'utf-8')

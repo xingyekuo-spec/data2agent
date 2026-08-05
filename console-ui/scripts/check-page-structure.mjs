@@ -9,7 +9,12 @@
  *  R3 每个页面必须在 PAGE_TYPES 登记表声明类型(A/B/C/D),未登记即失败
  *     —— 新页面强制先想类型再写码;
  *  R4 A 类页面:根节点须 d2a-page-flush、首个卡片须为 d2a-card d2a-toolbar、
- *     须使用 Pager(除非显式 noPager: true,如无分页的纯目录页)。
+ *     须使用 Pager(除非显式 noPager: true,如无分页的纯目录页);
+ *  R5 严格 A 类页面:详情一律右侧抽屉(模板含 el-drawer 或 XxxDrawer 组件)
+ *     —— 禁止页内详情卡片;A(tabs) 变体(展开行详情)不受此限;
+ *  R6 A 类页面(含 A(tabs)):禁止「详情」「浏览」文字按钮
+ *     —— 详情入口一律行点击,操作列只放真实动作;
+ *  R7 严格 A 类页面:表格须 @row-click 开详情(与 R5 配套)。
  *
  * 用法: node scripts/check-page-structure.mjs   (CI 由 verify.py 前端任务调用)
  */
@@ -26,10 +31,13 @@ const PAGE_TYPES = {
   RunsView: 'A',
   QuarantineView: 'A',
   RawDataView: 'A',         // 目录型:分页在浏览抽屉内,页面本身无分页
-  ObjectsDataView: 'A',
+  ObjectsDataView: 'A',     // 目录型:分页在浏览抽屉内,页面本身无分页
+  OntologyClassesView: 'A', // 目录型:类目录为全量小数据,无分页
+  OntologyPropertiesView: 'A',
   DatasetsView: 'A',
   TemplatesView: 'D',
   ObjectGraphView: 'B',
+  TopologyView: 'B',
   DeadStockValidationView: 'D',
   McpLabView: 'D',
   SettingsView: 'C',
@@ -39,8 +47,8 @@ const PAGE_TYPES = {
   SetupView: 'C',
 }
 
-/** A 类但页面级无分页(分页在抽屉/子组件内),须在注释中说明原因 */
-const NO_PAGER = new Set(['RawDataView'])
+/** A 类但页面级无分页(目录为全量小数据/分页在抽屉内),须注明原因 */
+const NO_PAGER = new Set(['RawDataView', 'ObjectsDataView', 'OntologyClassesView'])
 
 const violations = []
 const files = readdirSync(VIEWS).filter((f) => f.endsWith('.vue'))
@@ -71,6 +79,13 @@ for (const file of files) {
     }
   }
 
+  // R6: 详情/浏览入口按钮(详情一律行点击,A 类全部形态)
+  if (type.startsWith('A') && />\s*(详情|浏览)\s*<\/el-button>/.test(text)) {
+    violations.push(
+      `${file}: 禁止「详情」「浏览」入口按钮,详情入口一律行点击(规范 §3.2-3)`,
+    )
+  }
+
   // R4: A 类结构
   if (type.startsWith('A')) {
     if (!/d2a-page-flush/.test(text)) {
@@ -81,6 +96,15 @@ for (const file of files) {
     }
     if (!/from '@\/components\/shared\/PagerBar\.vue'/.test(text) && !NO_PAGER.has(name)) {
       violations.push(`${file}: A 类页面须使用 PagerBar 分页组件(规范 §3.2-2)`)
+    }
+    // R5/R7: 严格 A 类(A(tabs) 展开行变体除外):详情右侧抽屉 + 行点击开详情
+    if (type === 'A') {
+      if (!/<el-drawer[\s>]|[A-Z][A-Za-z]*Drawer/.test(text)) {
+        violations.push(`${file}: A 类页面详情须用右侧抽屉(el-drawer/详情抽屉组件)(规范 §3.2-5)`)
+      }
+      if (!/@row-click/.test(text)) {
+        violations.push(`${file}: A 类页面表格须 @row-click 开详情(规范 §3.2-3)`)
+      }
     }
   }
 }

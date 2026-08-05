@@ -1,57 +1,54 @@
 <script setup lang="ts">
 /**
- * Raw 数据浏览抽屉：搜索 / 表格 / 分页 / 截断标记 / 安全 JSON。
- * 警告默认折叠，减少对数据的遮挡。
- * 详情规范(05-console §3.2):安全 JSON 折叠在详情抽屉内底部。
+ * 对象数据浏览抽屉:搜索 / 表格 / 分页 / 截断标记 / 血缘入口 / 安全 JSON。
+ * 与 RawDataDrawer 对称(05-console §3.2):详情一律右侧抽屉,
+ * 安全 JSON 折叠在抽屉内底部;血缘入口经 open-lineage 事件交父视图处理。
  */
 import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import LoadingState from '@/components/shared/LoadingState.vue'
 import ErrorState from '@/components/shared/ErrorState.vue'
+import PagerBar from '@/components/shared/PagerBar.vue'
 import { useDataStore } from '@/stores/data'
 import { formatCell } from '@/utils/format'
 
 const props = defineProps<{ visible: boolean }>()
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; 'open-lineage': [rowIndex: number] }>()
 
 const store = useDataStore()
-const { rawSel, rawQuery } = store
-const { rawPage, rawPageRefreshError } = storeToRefs(store)
+const { objQuery } = store
+// objSel/objPage 是 ref,必须经 storeToRefs 保持响应式(直接解构会拿到快照)
+const { objSel, objPage, objPageRefreshError } = storeToRefs(store)
 
-const showWarnings = ref(false)
 const showJson = ref(false)
 
-const rawCols = computed(() =>
-  rawPage.value?.status === 'success' ? rawPage.value.data.columns : [],
-)
-
-// Only report page-level error on first-load or auth failure.
-const isFirstError = computed(
-  () => rawPage.value?.status === 'error',
-)
-
-const isLoading = computed(
-  () => rawPage.value?.status === 'loading' || rawPage.value === null,
-)
-
 const successData = computed(() =>
-  rawPage.value?.status === 'success' ? rawPage.value.data : null,
+  objPage.value?.status === 'success' ? objPage.value.data : null,
+)
+const isLoading = computed(
+  () => objPage.value?.status === 'loading' || objPage.value === null,
+)
+const isFirstError = computed(() => objPage.value?.status === 'error')
+
+const objCols = computed(() => successData.value?.columns ?? [])
+const objSearchable = computed(() => successData.value?.searchable !== false)
+const hasLineageRefs = computed(() =>
+  Array.isArray(successData.value?.lineage_refs)
+  && (successData.value?.lineage_refs.length ?? 0) > 0,
 )
 
-const totalRows = computed(() => successData.value?.total ?? 0)
-const currentPage = computed(() => rawQuery.offset / rawQuery.limit + 1)
-
-function onPageChange(current: number): void {
-  rawQuery.offset = (current - 1) * rawQuery.limit
-  void store.browseRaw()
+function onSearch(): void {
+  store.searchObject()
 }
 
 function onRefresh(): void {
-  void store.browseRaw()
+  void store.browseObject()
 }
 
-function onSearch(): void {
-  void store.browseRaw()
+function onPagerChange(offset: number, limit: number): void {
+  objQuery.offset = offset
+  objQuery.limit = limit
+  void store.browseObject()
 }
 </script>
 
@@ -62,17 +59,18 @@ function onSearch(): void {
     size="70%"
     :close-on-click-modal="true"
     :destroy-on-close="false"
-    data-testid="raw-drawer"
+    data-testid="obj-drawer"
     @close="emit('close')"
   >
     <template #header>
       <div class="drawer-header">
-        <span class="drawer-title">Raw 数据浏览</span>
+        <span class="drawer-title">对象数据浏览</span>
         <span
-          v-if="successData"
+          v-if="objSel"
           class="drawer-source"
+          data-testid="obj-drawer-target"
         >
-          {{ rawSel.source }} / {{ rawSel.table }}
+          {{ objSel }}
         </span>
       </div>
     </template>
@@ -80,18 +78,18 @@ function onSearch(): void {
     <!-- 工具栏 -->
     <div class="drawer-toolbar">
       <el-input
-        :model-value="rawQuery.q"
-        :placeholder="successData?.searchable ? '按业务键搜索' : '该资源没有可搜索业务键'"
+        v-model="objQuery.q"
+        :placeholder="objSearchable ? '按业务键搜索' : '该资源没有可搜索业务键'"
         size="small"
         clearable
         class="toolbar-search"
-        :disabled="!successData?.searchable"
-        data-testid="raw-drawer-search"
-        @change="rawQuery.q = $event; onSearch()"
+        :disabled="!objSel || !objSearchable"
+        data-testid="obj-search"
+        @change="onSearch()"
       />
       <el-button
         size="small"
-        data-testid="raw-drawer-refresh"
+        data-testid="obj-drawer-refresh"
         @click="onRefresh"
       >
         刷新
@@ -108,59 +106,42 @@ function onSearch(): void {
 
     <ErrorState
       v-else-if="isFirstError"
-      :error="(rawPage as any).error"
+      :error="(objPage as any).error"
       @retry="onRefresh"
     />
 
     <template v-else-if="successData">
-      <!-- 刷新错误 -->
       <p
-        v-if="rawPageRefreshError"
+        v-if="objPageRefreshError"
         class="refresh-note"
-        data-testid="raw-drawer-refresh-error"
+        data-testid="obj-page-refresh-error"
       >
-        刷新失败({{ rawPageRefreshError.message }}),展示上一次成功数据
+        刷新失败({{ objPageRefreshError.message }}),展示上一次成功数据
       </p>
 
-      <!-- 折叠警告 -->
-      <div
+      <ul
         v-if="successData.warnings.length"
-        class="warnings-block"
+        class="warnings-list"
+        data-testid="obj-warnings"
       >
-        <button
-          class="warnings-toggle"
-          data-testid="raw-drawer-warnings-toggle"
-          @click="showWarnings = !showWarnings"
+        <li
+          v-for="w in successData.warnings"
+          :key="w"
         >
-          <span class="toggle-icon">{{ showWarnings ? '▾' : '▸' }}</span>
-          {{ successData.warnings.length }} 条列分类警告
-          <span class="toggle-hint">{{ showWarnings ? '收起' : '展开' }}</span>
-        </button>
-        <ul
-          v-if="showWarnings"
-          class="warnings-list"
-          data-testid="raw-drawer-warnings"
-        >
-          <li
-            v-for="w in successData.warnings"
-            :key="w"
-          >
-            {{ w }}
-          </li>
-        </ul>
-      </div>
+          {{ w }}
+        </li>
+      </ul>
 
-      <!-- 表格 -->
       <el-table
         :data="successData.rows"
         size="small"
-        data-testid="raw-drawer-table"
+        data-testid="obj-table"
       >
         <el-table-column
-          v-for="col in rawCols"
+          v-for="col in objCols"
           :key="col.name"
           :prop="col.name"
-          min-width="130"
+          min-width="120"
         >
           <template #header>
             <span>{{ col.name }}</span>
@@ -185,28 +166,40 @@ function onSearch(): void {
             {{ formatCell(row[col.name]) }}
           </template>
         </el-table-column>
+        <el-table-column
+          v-if="hasLineageRefs"
+          label="血缘"
+          width="80"
+          data-testid="obj-lineage-col"
+        >
+          <template #default="{ $index }">
+            <el-button
+              size="small"
+              text
+              :data-testid="`lineage-btn-${$index}`"
+              @click="emit('open-lineage', $index)"
+            >
+              血缘
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
 
-      <!-- 截断提示 -->
       <p
         v-if="successData.truncations.length"
         class="trunc-note"
-        data-testid="raw-drawer-truncations"
+        data-testid="obj-truncations"
       >
         {{ successData.truncations.length }} 行存在截断字段(预览不是完整值):
-        {{ successData.truncations.map((t: { row_index: number; fields: string[] }) => `#${t.row_index}(${t.fields.join('/')})`).join(', ') }}
+        {{ successData.truncations.map((t) => `#${t.row_index}(${t.fields.join('/')})`).join(', ') }}
       </p>
 
-      <!-- 分页 -->
-      <el-pagination
-        v-if="totalRows > rawQuery.limit"
-        class="drawer-pager"
-        layout="prev, pager, next"
-        :total="totalRows"
-        :page-size="rawQuery.limit"
-        :current-page="currentPage"
-        data-testid="raw-drawer-pager"
-        @current-change="onPageChange"
+      <PagerBar
+        :total="successData.total"
+        :limit="objQuery.limit"
+        :offset="objQuery.offset"
+        data-testid="obj-pager"
+        @change="onPagerChange"
       />
 
       <!-- 安全 JSON(与表格同源,折叠在抽屉底部) -->
@@ -228,7 +221,7 @@ function onSearch(): void {
 
     <el-empty
       v-else
-      description="点击目录行浏览 raw 数据"
+      description="点击目录行浏览对象数据"
     />
   </el-drawer>
 </template>
@@ -271,39 +264,8 @@ function onSearch(): void {
   color: var(--d2a-status-stale);
 }
 
-/* 折叠警告 */
-.warnings-block {
-  margin-bottom: 10px;
-}
-.warnings-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--d2a-status-stale);
-  background: var(--el-fill-color-light);
-  border: 1px solid var(--d2a-border);
-  border-radius: 4px;
-  padding: 4px 10px;
-  cursor: pointer;
-  transition: background 0.15s;
-  font-family: inherit;
-}
-.warnings-toggle:hover {
-  background: var(--el-fill-color);
-}
-.toggle-icon {
-  font-size: 10px;
-  width: 12px;
-  text-align: center;
-}
-.toggle-hint {
-  margin-left: 8px;
-  color: var(--d2a-text-secondary);
-  font-size: 11px;
-}
 .warnings-list {
-  margin: 6px 0 0;
+  margin: 0 0 8px;
   padding: 8px 12px;
   font-size: 12px;
   color: var(--d2a-status-stale);
@@ -311,8 +273,6 @@ function onSearch(): void {
   border-left: 3px solid var(--d2a-status-warning);
   list-style: none;
   border-radius: 4px;
-  max-height: 200px;
-  overflow-y: auto;
 }
 
 .col-flag {
@@ -323,11 +283,6 @@ function onSearch(): void {
   margin: 8px 0 0;
   font-size: 12px;
   color: var(--d2a-status-stale);
-}
-
-.drawer-pager {
-  margin-top: 12px;
-  justify-content: flex-end;
 }
 
 .json-toggle {

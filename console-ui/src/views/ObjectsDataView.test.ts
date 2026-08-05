@@ -28,6 +28,20 @@ async function mountView(query: Record<string, string> = {}): Promise<{
   return { wrapper, router }
 }
 
+// 点击目录行(详情入口一律行点击,规范 §3.2-3)
+async function clickCatalogRow(wrapper: ReturnType<typeof mount>, text: string): Promise<void> {
+  const row = wrapper.findAll('[data-testid="obj-catalog"] .el-table__row')
+    .find((r) => r.text().includes(text))
+  expect(row, `目录应包含行 ${text}`).toBeTruthy()
+  await row!.trigger('click')
+  await flushPromises()
+}
+
+// 抽屉 teleport 到 body 且历史用例的抽屉不卸载,取最后一个(最新打开)
+function inDrawer(selector: string): Element | undefined {
+  return [...document.querySelectorAll(selector)].at(-1)
+}
+
 describe('ObjectsDataView(对象数据)', () => {
   beforeEach(() => setScenario('healthy'))
 
@@ -36,19 +50,20 @@ describe('ObjectsDataView(对象数据)', () => {
     expect(wrapper.find('[data-testid="obj-version"]').text()).toContain('ov-cust-1')
   })
 
-  it('对象未物化(409):具名错误视图', async () => {
+  it('对象未物化(409):抽屉内具名错误视图', async () => {
     server.use(
       http.get('*/api/objects/:object', () =>
         HttpResponse.json({ detail: "对象 'Customer' 尚未物化" }, { status: 409 })),
     )
     const { wrapper } = await mountView()
-    await wrapper.find('[data-testid="browse-Customer"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-testid="error-state"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('409')
+    await clickCatalogRow(wrapper, 'Customer')
+    // el-drawer 不透传 data-testid,直接查抽屉内容(teleport 到 body)
+    const errorState = inDrawer('[data-testid="error-state"]')
+    expect(errorState).toBeTruthy()
+    expect(errorState!.textContent).toContain('409')
   })
 
-  it('对象 warnings/truncations 可见', async () => {
+  it('对象 warnings/truncations 在浏览抽屉内可见', async () => {
     server.use(
       http.get('*/api/objects/:object', ({ request }) => {
         const url = new URL(request.url)
@@ -65,21 +80,22 @@ describe('ObjectsDataView(对象数据)', () => {
       }),
     )
     const { wrapper } = await mountView()
-    await wrapper.find('[data-testid="browse-Customer"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-testid="obj-warnings"]').text()).toContain('NOTE')
-    expect(wrapper.find('[data-testid="obj-truncations"]').text()).toContain('#0(name)')
+    await clickCatalogRow(wrapper, 'Customer')
+    expect(inDrawer('[data-testid="obj-warnings"]')?.textContent).toContain('NOTE')
+    expect(inDrawer('[data-testid="obj-truncations"]')?.textContent).toContain('#0(name)')
   })
 
-  it('route query 恢复 resource/search/page', async () => {
-    const { wrapper, router } = await mountView({
+  it('route query 恢复 resource/search/page 并打开浏览抽屉', async () => {
+    const { router } = await mountView({
       object: 'Customer',
       q: 'C-001',
       page: '2',
     })
-    expect(wrapper.find('[data-testid="obj-table"]').exists()).toBe(true)
+    expect(inDrawer('[data-testid="obj-table"]')).toBeTruthy()
     expect((router.currentRoute.value.query.object)).toBe('Customer')
-    expect(wrapper.text()).toContain('Customer · 排序')
-    expect(wrapper.find('[data-testid="obj-pager"]').text()).toContain('共 1 条')
+    expect(inDrawer('[data-testid="obj-drawer-target"]')?.textContent).toContain('Customer')
+    expect(inDrawer('[data-testid="obj-table"]')?.textContent).toBeTruthy()
+    expect(inDrawer('.toolbar-meta')?.textContent).toContain('排序')
+    expect(inDrawer('[data-testid="obj-pager"]')?.textContent).toContain('共 1 条')
   })
 })

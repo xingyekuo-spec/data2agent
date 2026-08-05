@@ -43,10 +43,17 @@ describe('DatasetsView(数据集版本)', () => {
     await flushPromises()
     expect(wrapper.find('[data-testid="dataset-action-result"]').text()).toContain('ds-20260718-095000-e5f6')
 
-    await wrapper.find('[data-testid="dataset-detail-ds-20260718-095000-e5f6"]').trigger('click')
+    // 行点击开详情抽屉(详情入口一律行点击,规范 §3.2-3)
+    const row = wrapper.findAll('[data-testid="datasets-table"] .el-table__row')
+      .find((r) => r.text().includes('ds-20260718-095000-e5f6'))
+    expect(row).toBeTruthy()
+    await row!.trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-testid="dataset-objects-table"]').text()).toContain('Customer')
-    expect(wrapper.find('[data-testid="dataset-objects-table"]').text()).toContain('built')
+    // el-drawer teleport 到 body
+    const objectsTable = [...document.querySelectorAll('[data-testid="dataset-objects-table"]')].at(-1)
+    expect(objectsTable).toBeTruthy()
+    expect(objectsTable!.textContent).toContain('Customer')
+    expect(objectsTable!.textContent).toContain('built')
   })
 
   it('stage-only apply 返回 published=false', async () => {

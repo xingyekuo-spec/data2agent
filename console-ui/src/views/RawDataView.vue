@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// 原始数据(原数据浏览 Raw tab):raw 目录 + 浏览抽屉 + 安全 JSON。
+// 原始数据(原数据浏览 Raw tab):raw 目录 + 浏览抽屉(内含安全 JSON)。
 // Raw:目录驱动、服务端列驱动表格、脱敏/截断;raw 数据仅在抽屉打开时请求。
-import { computed, onMounted, ref, watch } from 'vue'
+// 详情规范(05-console §3.2):行点击开右侧抽屉,安全 JSON 折叠在抽屉内。
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import EmptyState from '@/components/shared/EmptyState.vue'
@@ -13,26 +14,61 @@ import { useDataStore } from '@/stores/data'
 import { formatDateTime } from '@/utils/time'
 
 const store = useDataStore()
-const { rawCatalog, rawCatalogRefreshError, rawPage, rawPageRefreshError } = storeToRefs(store)
+const { rawCatalog, rawCatalogRefreshError, rawPage } = storeToRefs(store)
 const { rawSel, rawQuery } = store
 const route = useRoute()
 const router = useRouter()
 const rawDrawerVisible = ref(false)
-const showJson = ref(false)
 let restoringQuery = false
 
 const rawCatalogData = computed(() =>
   rawCatalog.value.status === 'success' ? rawCatalog.value.data : null,
 )
-const currentJson = computed(() =>
-  rawPage.value?.status === 'success' ? rawPage.value.data : null,
+
+// 目录筛选:来源 / 表 / 抽取时间段(目录为全量小数据,客户端筛选即可)
+const catalogFilters = reactive({
+  source: '',
+  table: '',
+  extractedRange: null as [string, string] | null,
+})
+
+const catalogSources = computed(() =>
+  [...new Set((rawCatalogData.value?.items ?? []).map((i) => i.source))].sort(),
 )
-const raw403 = computed(
-  () =>
-    (rawCatalog.value.status === 'error' && rawCatalog.value.error.status === 403)
-    || (rawPage.value?.status === 'error' && rawPage.value.error.status === 403)
-    || rawPageRefreshError.value?.status === 403,
+const catalogTables = computed(() =>
+  [...new Set(
+    (rawCatalogData.value?.items ?? [])
+      .filter((i) => !catalogFilters.source || i.source === catalogFilters.source)
+      .map((i) => i.table),
+  )].sort(),
 )
+
+function inExtractedRange(extractedAt: string | null): boolean {
+  if (!catalogFilters.extractedRange) {
+    return true
+  }
+  if (!extractedAt) {
+    return false // 无抽取时间的行不进入时间段筛选结果
+  }
+  const [start, end] = catalogFilters.extractedRange
+  const t = new Date(extractedAt).getTime()
+  return t >= new Date(`${start}T00:00:00`).getTime()
+    && t <= new Date(`${end}T23:59:59.999`).getTime()
+}
+
+const filteredCatalogItems = computed(() =>
+  (rawCatalogData.value?.items ?? []).filter((i) =>
+    (!catalogFilters.source || i.source === catalogFilters.source)
+    && (!catalogFilters.table || i.table === catalogFilters.table)
+    && inExtractedRange(i.extracted_at)),
+)
+
+watch(() => catalogFilters.source, () => {
+  // 来源变化后清掉不再可用的表筛选
+  if (catalogFilters.table && !catalogTables.value.includes(catalogFilters.table)) {
+    catalogFilters.table = ''
+  }
+})
 
 function firstString(value: unknown): string {
   return typeof value === 'string' ? value : ''
@@ -108,9 +144,47 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 
 <template>
   <section class="data-page d2a-page-flush">
-    <!-- 通栏工具栏(A 类规范):左提示右操作 -->
+    <!-- 通栏工具栏(A 类规范):左筛选、右操作 -->
     <div class="d2a-card d2a-toolbar">
-      <span class="toolbar-hint">raw 原始数据目录(点「浏览」查看表数据)</span>
+      <el-select
+        v-model="catalogFilters.source"
+        placeholder="来源"
+        clearable
+        size="small"
+        data-testid="filter-source"
+      >
+        <el-option
+          v-for="s in catalogSources"
+          :key="s"
+          :label="s"
+          :value="s"
+        />
+      </el-select>
+      <el-select
+        v-model="catalogFilters.table"
+        placeholder="表"
+        clearable
+        filterable
+        size="small"
+        data-testid="filter-table"
+      >
+        <el-option
+          v-for="t in catalogTables"
+          :key="t"
+          :label="t"
+          :value="t"
+        />
+      </el-select>
+      <el-date-picker
+        v-model="catalogFilters.extractedRange"
+        type="daterange"
+        range-separator="至"
+        start-placeholder="抽取开始"
+        end-placeholder="抽取结束"
+        value-format="YYYY-MM-DD"
+        size="small"
+        class="toolbar-daterange"
+      />
       <div class="d2a-toolbar__actions">
         <el-button
           size="small"
@@ -123,18 +197,19 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
     </div>
 
     <div class="d2a-card">
-      <h3 class="card-title">
-        raw 目录
-      </h3>
       <LoadingState v-if="rawCatalog.status === 'idle' || rawCatalog.status === 'loading'" />
       <ErrorState
-        v-else-if="rawCatalog.status === 'error' && rawCatalog.error.status !== 403"
+        v-else-if="rawCatalog.status === 'error'"
         :error="rawCatalog.error"
         @retry="store.refreshRawCatalog()"
       />
       <EmptyState
         v-else-if="rawCatalogData && rawCatalogData.items.length === 0"
         title="没有可浏览的 raw 表"
+      />
+      <EmptyState
+        v-else-if="rawCatalogData && filteredCatalogItems.length === 0"
+        title="没有符合筛选条件的 raw 表"
       />
       <template v-else-if="rawCatalogData">
         <p
@@ -157,9 +232,10 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           </li>
         </ul>
         <el-table
-          :data="rawCatalogData.items"
+          :data="filteredCatalogItems"
           size="small"
           data-testid="raw-catalog"
+          @row-click="(row: { source: string; table: string }) => selectRaw(row.source, row.table)"
         >
           <el-table-column
             prop="source"
@@ -210,54 +286,8 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
               />
             </template>
           </el-table-column>
-          <el-table-column width="90">
-            <template #default="{ row }">
-              <el-button
-                size="small"
-                text
-                :data-testid="`browse-${row.table}`"
-                @click="selectRaw(row.source, row.table)"
-              >
-                浏览
-              </el-button>
-            </template>
-          </el-table-column>
         </el-table>
       </template>
-    </div>
-
-    <!-- 403:安全配置指引(不降级到对象或 Mock) -->
-    <div
-      v-if="raw403"
-      class="d2a-card security-guide"
-      data-testid="raw-403-guide"
-    >
-      <h3 class="card-title">
-        raw 浏览已按安全基线关闭
-      </h3>
-      <p>
-        raw 原始数据只允许授权管理主体访问:当前控制台未配置 Token。
-        请在管理页完成首次配置,或以 D2A_CONSOLE_TOKEN 启动控制台后重试。
-      </p>
-    </div>
-
-    <div
-      v-if="currentJson"
-      class="d2a-card"
-    >
-      <el-button
-        size="small"
-        text
-        data-testid="json-toggle"
-        @click="showJson = !showJson"
-      >
-        {{ showJson ? '隐藏' : '查看' }}安全 JSON(与表格同源)
-      </el-button>
-      <pre
-        v-if="showJson"
-        class="json-view"
-        data-testid="json-view"
-      >{{ JSON.stringify(currentJson, null, 2) }}</pre>
     </div>
 
     <RawDataDrawer
@@ -269,12 +299,6 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
 </template>
 
 <style scoped>
-.data-page {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
 .warnings {
   padding: 8px 12px;
   margin: 0 0 8px;
@@ -285,27 +309,20 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
   list-style: none;
 }
 
+.data-page {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toolbar-daterange {
+  width: 260px;
+  flex: 0 0 auto;
+}
+
 .refresh-warning {
   margin: 0 0 8px;
   font-size: 12px;
   color: var(--d2a-status-stale);
-}
-
-.security-guide p {
-  margin: 0;
-  font-size: 13px;
-  color: var(--d2a-text-secondary);
-}
-
-.json-view {
-  max-height: 320px;
-  margin: 8px 0 0;
-  padding: 10px;
-  overflow: auto;
-  font-size: 11px;
-  background: var(--el-fill-color-light);
-  border-radius: 6px;
-  white-space: pre-wrap;
-  word-break: break-all;
 }
 </style>

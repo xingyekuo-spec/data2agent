@@ -1,6 +1,7 @@
 <script setup lang="ts">
 // 数据集版本(原数据浏览 数据集 tab):构建/发布操作条、版本列表、
-// publish/rollback、stage-only apply、详情卡、安全 JSON。
+// publish/rollback、stage-only apply、详情抽屉(内含安全 JSON)。
+// 详情规范(05-console §3.2):行点击开右侧抽屉,安全 JSON 折叠在抽屉内。
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { storeToRefs } from 'pinia'
@@ -78,6 +79,8 @@ function applyRouteQuery(query: LocationQuery, load: boolean): void {
     void datasetsStore.refresh()
     if (nextVersion) {
       void datasetsStore.openDetail(nextVersion)
+    } else if (datasetsStore.detailVersion !== null) {
+      datasetsStore.closeDetail()
     }
   }
 }
@@ -97,7 +100,13 @@ function syncRouteQuery(): void {
 }
 
 function openDataset(version: string): void {
+  showJson.value = false
   void datasetsStore.openDetail(version)
+  syncRouteQuery()
+}
+
+function closeDrawer(): void {
+  datasetsStore.closeDetail()
   syncRouteQuery()
 }
 
@@ -256,6 +265,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           :data="datasetList.data"
           size="small"
           data-testid="datasets-table"
+          @row-click="(row: { dataset_version: string }) => openDataset(row.dataset_version)"
         >
           <el-table-column
             prop="dataset_version"
@@ -303,25 +313,17 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
           </el-table-column>
           <el-table-column
             label="操作"
-            width="220"
+            width="140"
             fixed="right"
           >
             <template #default="{ row }">
-              <el-button
-                size="small"
-                text
-                :data-testid="`dataset-detail-${row.dataset_version}`"
-                @click="openDataset(row.dataset_version)"
-              >
-                详情
-              </el-button>
               <el-button
                 v-if="canPublish(row, objectsByVersion[row.dataset_version])"
                 size="small"
                 type="primary"
                 text
                 :data-testid="`dataset-publish-${row.dataset_version}`"
-                @click="onPublish(row.dataset_version)"
+                @click.stop="onPublish(row.dataset_version)"
               >
                 发布
               </el-button>
@@ -331,7 +333,7 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
                 type="warning"
                 text
                 :data-testid="`dataset-rollback-${row.dataset_version}`"
-                @click="onRollback(row)"
+                @click.stop="onRollback(row)"
               >
                 回滚
               </el-button>
@@ -348,33 +350,40 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
       </template>
     </div>
 
-    <div
-      v-if="datasetDetail"
-      class="d2a-card"
-      data-testid="dataset-detail"
+    <el-drawer
+      :model-value="datasetDetail !== null"
+      title="数据集详情"
+      size="560px"
+      data-testid="dataset-detail-drawer"
+      @close="closeDrawer"
     >
-      <LoadingState v-if="datasetDetail.status === 'loading'" />
+      <LoadingState v-if="datasetDetail?.status === 'loading'" />
       <ErrorState
-        v-else-if="datasetDetail.status === 'error'"
+        v-else-if="datasetDetail?.status === 'error'"
         :error="datasetDetail.error"
         @retry="datasetsStore.detailVersion && datasetsStore.openDetail(datasetsStore.detailVersion)"
       />
-      <template v-else-if="datasetDetail.status === 'success'">
+      <template v-else-if="datasetDetail?.status === 'success'">
         <p
           v-if="detailRefreshError"
           class="refresh-warning"
         >
-          刷新失败({{ detailRefreshError.message }})
+          刷新失败({{ detailRefreshError.message }}),展示上一次成功数据
         </p>
-        <h3 class="card-title">
-          {{ datasetDetail.data.dataset_version }}
-          · {{ datasetStatusLabel(datasetDetail.data, datasetDetailObjects) }}
-        </h3>
-        <p class="detail-meta">
-          template {{ datasetDetail.data.template_version }}
-          · previous {{ datasetDetail.data.previous_dataset_version ?? '—' }}
-          · error {{ datasetDetail.data.error ?? '—' }}
-        </p>
+        <dl class="summary">
+          <dt>版本</dt>
+          <dd>{{ datasetDetail.data.dataset_version }}</dd>
+          <dt>状态</dt>
+          <dd>{{ datasetStatusLabel(datasetDetail.data, datasetDetailObjects) }}</dd>
+          <dt>template</dt>
+          <dd>{{ datasetDetail.data.template_version }}</dd>
+          <dt>上一版本</dt>
+          <dd>{{ datasetDetail.data.previous_dataset_version ?? '—' }}</dd>
+          <dt>错误</dt>
+          <dd>{{ datasetDetail.data.error ?? '—' }}</dd>
+        </dl>
+
+        <h4>对象</h4>
         <el-table
           :data="datasetDetailObjects"
           size="small"
@@ -406,27 +415,23 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
             min-width="180"
           />
         </el-table>
-      </template>
-    </div>
 
-    <div
-      v-if="currentJson"
-      class="d2a-card"
-    >
-      <el-button
-        size="small"
-        text
-        data-testid="json-toggle"
-        @click="showJson = !showJson"
-      >
-        {{ showJson ? '隐藏' : '查看' }}安全 JSON(与表格同源)
-      </el-button>
-      <pre
-        v-if="showJson"
-        class="json-view"
-        data-testid="json-view"
-      >{{ JSON.stringify(currentJson, null, 2) }}</pre>
-    </div>
+        <el-button
+          class="json-toggle"
+          size="small"
+          text
+          data-testid="json-toggle"
+          @click="showJson = !showJson"
+        >
+          {{ showJson ? '隐藏' : '查看' }}安全 JSON(与表格同源)
+        </el-button>
+        <pre
+          v-if="showJson"
+          class="json-view"
+          data-testid="json-view"
+        >{{ JSON.stringify(currentJson, null, 2) }}</pre>
+      </template>
+    </el-drawer>
   </section>
 </template>
 
@@ -462,9 +467,25 @@ watch(() => route.query, (query) => applyRouteQuery(query, true))
   color: var(--d2a-text-secondary);
 }
 
-.detail-meta {
+.summary {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 6px 12px;
+  margin: 0 0 12px;
+}
+
+.summary dt {
   font-size: 12px;
   color: var(--d2a-text-secondary);
+}
+
+.summary dd {
+  margin: 0;
+  font-size: 13px;
+}
+
+.json-toggle {
+  margin-top: 12px;
 }
 
 .refresh-warning {
