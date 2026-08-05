@@ -690,8 +690,6 @@ def create_app(landing: str | None = None, templates: str = "templates",
 
     def auth(request: Request) -> None:
         path = request.url.path
-        if path == "/api/data/raw" or path.startswith("/api/data/raw/"):
-            return
         if _is_quarantine_detail(path):
             return  # 隔离详情自行做强制 Bearer + 审计
         if _is_mapping_preview(path):
@@ -779,33 +777,13 @@ def create_app(landing: str | None = None, templates: str = "templates",
             return ""
         return header[7:].strip()
 
-    def require_raw_browse_auth(db: LandingStore, request: Request, *,
-                                source: str | None, resource: str,
-                                offset: int | None = None,
-                                limit: int | None = None) -> None:
-        tok = state["token"]
-        if not tok:
-            db.log_access(
-                subject="anonymous", resource_type="raw", source=source,
-                resource=resource, allowed=False,
-                reason_code="token_not_configured",
-                page_offset=offset, page_limit=limit)
-            raise HTTPException(403, "raw 浏览需配置控制台 Token 并显式认证")
-        if _auth_supplied(request) != tok:
-            db.log_access(
-                subject="anonymous", resource_type="raw", source=source,
-                resource=resource, allowed=False, reason_code="unauthorized",
-                page_offset=offset, page_limit=limit)
-            raise HTTPException(401, "需要有效的管理界面登录密码")
-
     def _is_raw_api_path(path: str) -> bool:
         return path == "/api/data/raw" or path.startswith("/api/data/raw/")
 
     def _requires_bearer_only(path: str) -> bool:
-        """需要强制 Bearer 的 API 路径:raw 浏览 + 隔离详情 + mapping preview + lineage。"""
+        """需要强制 Bearer 的 API 路径:隔离详情 + mapping preview + lineage。"""
         return (
-            _is_raw_api_path(path)
-            or path == "/api/quarantine/{id}"
+            path == "/api/quarantine/{id}"
             or path == "/api/mappings/{object}/preview"
             or path == "/api/objects/{object}/{key}/lineage"
         )
@@ -991,15 +969,6 @@ def create_app(landing: str | None = None, templates: str = "templates",
             source, resource = _raw_audit_target(request)
             offset = _query_int_or_none(request, "offset")
             limit = _query_int_or_none(request, "limit")
-            try:
-                require_raw_browse_auth(
-                    db, request, source=source, resource=resource,
-                    offset=offset, limit=limit)
-            except HTTPException as auth_error:
-                return JSONResponse(
-                    status_code=auth_error.status_code,
-                    content={"detail": auth_error.detail},
-                )
             db.log_access(
                 subject="console-admin", resource_type="raw", source=source,
                 resource=resource, allowed=False, reason_code="invalid_query",
@@ -1339,8 +1308,8 @@ def create_app(landing: str | None = None, templates: str = "templates",
             for method, op in item.items():
                 if method not in ("get", "post", "put", "patch", "delete"):
                     continue
-                # 普通管理 API 的 Token 可按部署关闭;raw 原始数据浏览与隔离详情始终
-                # 要求显式 Bearer,与运行时强门禁保持一致。
+                # 普通管理 API 的 Token 可按部署关闭;隔离详情、mapping preview 与
+                # lineage 始终要求显式 Bearer,与运行时强门禁保持一致。
                 op["security"] = (
                     [{"HTTPBearer": []}]
                     if _requires_bearer_only(path)
@@ -3296,15 +3265,17 @@ def create_app(landing: str | None = None, templates: str = "templates",
         response_model=RawTableCatalogResponse,
         responses={
             401: _RESP_HTTP_ERROR[401],
-            403: {"model": HttpError, "description": "未配置控制台 Token,raw 目录关闭"},
             409: _RESP_HTTP_ERROR[409],
             500: _RESP_HTTP_ERROR[500],
         },
     )
-    def data_raw_catalog(request: Request) -> dict:
-        """raw 目录:允许来源下确实存在的表(不含 SQLite 内部表)。"""
+    def data_raw_catalog() -> dict:
+        """raw 目录:允许来源下确实存在的表(不含 SQLite 内部表)。
+
+        默认开放展示接收到的所有数据,不再要求额外安全基线门禁;
+        每次访问仍写不泄密访问审计。
+        """
         db = store()
-        require_raw_browse_auth(db, request, source=None, resource="__catalog__")
         pack = require_pack()
         try:
             items, warnings = br.raw_catalog(
@@ -3333,23 +3304,20 @@ def create_app(landing: str | None = None, templates: str = "templates",
         response_model=RawDataPageResponse,
         responses={
             401: _RESP_HTTP_ERROR[401],
-            403: {"model": HttpError, "description": "未配置控制台 Token,raw 浏览关闭"},
             404: {"model": HttpError},
             409: _RESP_HTTP_ERROR[409],
             422: _RESP_HTTP_ERROR[422],
         },
     )
-    def data_raw(source: str, table: str, request: Request,
+    def data_raw(source: str, table: str,
                  offset: int = 0, limit: int = 50, q: str = "") -> dict:
-        """raw 分页浏览(强鉴权 + 访问审计,§4.7)。
+        """raw 分页浏览(访问审计,§4.7)。
 
-        必须配置控制台 Token 且请求携带有效 Bearer;每次尝试(允许/拒绝)
-        都写不泄密访问审计;审计失败则请求失败关闭。
+        默认开放展示接收到的数据,不再要求额外安全基线门禁;
+        每次访问(允许/拒绝)都写不泄密访问审计;审计失败则请求失败关闭。
         """
         db = store()
         pack = require_pack()
-        require_raw_browse_auth(
-            db, request, source=source, resource=table, offset=offset, limit=limit)
         try:
             br.require_source(
                 br.allowed_sources(pack, _allowed_sources()), db, source)

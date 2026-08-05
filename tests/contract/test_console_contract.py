@@ -241,9 +241,8 @@ def test_openapi_declares_optional_bearer_security(tmp_path):
     optional = [{"HTTPBearer": []}, {}]
     overview = spec["paths"]["/api/overview"]["get"]
     assert overview.get("security") == optional
-    assert spec["paths"]["/api/data/raw"]["get"].get("security") == [{"HTTPBearer": []}]
-    assert spec["paths"]["/api/data/raw/{source}/{table}"]["get"].get("security") == [
-        {"HTTPBearer": []}]
+    assert spec["paths"]["/api/data/raw"]["get"].get("security") == optional
+    assert spec["paths"]["/api/data/raw/{source}/{table}"]["get"].get("security") == optional
     assert spec["paths"]["/api/mappings/{object}/preview"]["post"].get("security") == [
         {"HTTPBearer": []}]
     # Setup routes use the same optional Bearer: after first-time setup + token,

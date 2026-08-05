@@ -151,6 +151,9 @@ export interface paths {
         /**
          * Data Raw Catalog
          * @description raw 目录:允许来源下确实存在的表(不含 SQLite 内部表)。
+         *
+         *     默认开放展示接收到的所有数据,不再要求额外安全基线门禁;
+         *     每次访问仍写不泄密访问审计。
          */
         get: operations["data_raw_catalog_api_data_raw_get"];
         put?: never;
@@ -170,10 +173,10 @@ export interface paths {
         };
         /**
          * Data Raw
-         * @description raw 分页浏览(强鉴权 + 访问审计,§4.7)。
+         * @description raw 分页浏览(访问审计,§4.7)。
          *
-         *     必须配置控制台 Token 且请求携带有效 Bearer;每次尝试(允许/拒绝)
-         *     都写不泄密访问审计;审计失败则请求失败关闭。
+         *     默认开放展示接收到的数据,不再要求额外安全基线门禁;
+         *     每次访问(允许/拒绝)都写不泄密访问审计;审计失败则请求失败关闭。
          */
         get: operations["data_raw_api_data_raw__source___table__get"];
         put?: never;
@@ -4325,15 +4328,6 @@ export interface operations {
                     "application/json": components["schemas"]["HttpError"];
                 };
             };
-            /** @description 未配置控制台 Token,raw 目录关闭 */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpError"];
-                };
-            };
             /** @description 冲突/未配置/只读/熔断 */
             409: {
                 headers: {
@@ -4381,15 +4375,6 @@ export interface operations {
             };
             /** @description 缺少或无效的 Bearer Token */
             401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpError"];
-                };
-            };
-            /** @description 未配置控制台 Token,raw 浏览关闭 */
-            403: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -8073,7 +8073,7 @@
     },
     "/api/data/raw": {
       "get": {
-        "description": "raw 目录:允许来源下确实存在的表(不含 SQLite 内部表)。",
+        "description": "raw 目录:允许来源下确实存在的表(不含 SQLite 内部表)。\n\n默认开放展示接收到的所有数据,不再要求额外安全基线门禁;\n每次访问仍写不泄密访问审计。",
         "operationId": "data_raw_catalog_api_data_raw_get",
         "responses": {
           "200": {
@@ -8095,16 +8095,6 @@
               }
             },
             "description": "缺少或无效的 Bearer Token"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "未配置控制台 Token,raw 目录关闭"
           },
           "409": {
             "content": {
@@ -8130,14 +8120,15 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Data Raw Catalog"
       }
     },
     "/api/data/raw/{source}/{table}": {
       "get": {
-        "description": "raw 分页浏览(强鉴权 + 访问审计,§4.7)。\n\n必须配置控制台 Token 且请求携带有效 Bearer;每次尝试(允许/拒绝)\n都写不泄密访问审计;审计失败则请求失败关闭。",
+        "description": "raw 分页浏览(访问审计,§4.7)。\n\n默认开放展示接收到的数据,不再要求额外安全基线门禁;\n每次访问(允许/拒绝)都写不泄密访问审计;审计失败则请求失败关闭。",
         "operationId": "data_raw_api_data_raw__source___table__get",
         "parameters": [
           {
@@ -8210,16 +8201,6 @@
             },
             "description": "缺少或无效的 Bearer Token"
           },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HttpError"
-                }
-              }
-            },
-            "description": "未配置控制台 Token,raw 浏览关闭"
-          },
           "404": {
             "content": {
               "application/json": {
@@ -8254,7 +8235,8 @@
         "security": [
           {
             "HTTPBearer": []
-          }
+          },
+          {}
         ],
         "summary": "Data Raw"
       }

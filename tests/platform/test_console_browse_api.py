@@ -1,4 +1,4 @@
-"""M4-T07 raw/object API 测试:目录、分页浏览、强鉴权、访问审计、脱敏、错误语义。"""
+"""M4-T07 raw/object API 测试:目录、分页浏览、访问审计、脱敏、错误语义。"""
 
 from datetime import date
 from pathlib import Path
@@ -64,7 +64,7 @@ def test_raw_catalog(env):
     assert all(not i.table.startswith(("sqlite_", "d2a_")) for i in body.items)
 
 
-def test_raw_catalog_requires_token_and_includes_allowed_source_tables(env):
+def test_raw_catalog_includes_allowed_source_tables(env):
     db = LandingStore(env.db_path)
     db.con.execute('CREATE TABLE "raw_orphan__SECRET" ("Id" INTEGER PRIMARY KEY)')
     db.con.execute(
@@ -76,11 +76,9 @@ def test_raw_catalog_requires_token_and_includes_allowed_source_tables(env):
         (1, "visible", "2026-07-10T00:00:00+08:00", None, "b-secret"))
     db.con.commit()
     client = _client(env)
+    # 配置 Token 后走普通管理鉴权:错误 Bearer 被路由级拒绝(不写 raw 访问审计)
     wrong = client.get("/api/data/raw", headers={"Authorization": "Bearer wrong"})
     assert wrong.status_code == 401
-    row = LandingStore(env.db_path).con.execute(
-        "SELECT * FROM d2a_console_access_audit ORDER BY id DESC LIMIT 1").fetchone()
-    assert row["allowed"] == 0 and row["reason_code"] == "unauthorized"
     ok = client.get("/api/data/raw", headers=_auth())
     assert ok.status_code == 200
     items = {(i["source"], i["table"]) for i in ok.json()["items"]}
@@ -111,28 +109,27 @@ def test_raw_catalog_unexpected_failure_is_audited_without_leak(env, monkeypatch
     assert "catalog boom" not in str(dict(row))
 
 
-# ---- raw 强鉴权 ----
+# ---- raw 默认开放(无安全基线门禁) ----
 
 
-def test_raw_requires_configured_token(env):
+def test_raw_browse_open_without_configured_token(env):
+    """未配置 Token 时默认展示接收到的数据,仍写不泄密允许审计。"""
     client = _client(env, token=None)  # 未配置 Token
     r = client.get(f"/api/data/raw/{SOURCE}/CUSTOMER")
-    assert r.status_code == 403
-    HttpError.model_validate(r.json())
-    # 拒绝也写审计(不泄密)
+    assert r.status_code == 200
+    body = RawDataPageResponse.model_validate(r.json())
+    assert body.total == 24
     row = LandingStore(env.db_path).con.execute(
         "SELECT * FROM d2a_console_access_audit ORDER BY id DESC LIMIT 1").fetchone()
-    assert row["allowed"] == 0 and row["reason_code"] == "token_not_configured"
-    assert row["subject"] == "anonymous"
+    assert row["allowed"] == 1 and row["reason_code"] == "ok"
+    assert TOKEN not in str(dict(row))
 
 
 def test_raw_rejects_wrong_token_and_allows_valid(env):
     client = _client(env)
+    # 错误 Token 被普通管理鉴权拒绝(路由级 401)
     assert client.get(f"/api/data/raw/{SOURCE}/CUSTOMER",
                       headers={"Authorization": "Bearer wrong"}).status_code == 401
-    row = LandingStore(env.db_path).con.execute(
-        "SELECT * FROM d2a_console_access_audit ORDER BY id DESC LIMIT 1").fetchone()
-    assert row["allowed"] == 0 and row["reason_code"] == "unauthorized"
     r = client.get(f"/api/data/raw/{SOURCE}/CUSTOMER", headers=_auth())
     assert r.status_code == 200
     body = RawDataPageResponse.model_validate(r.json())
@@ -258,7 +255,7 @@ def test_browse_has_no_business_side_effects(env):
     before = {t: env.con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
               for t in ("d2a_sync_state", "d2a_quarantine", "d2a_sync_run")}
     client = _client(env)
-    client.get("/api/data/raw").json()
+    client.get("/api/data/raw", headers=_auth()).json()
     client.get(f"/api/data/raw/{SOURCE}/CUSTOMER", headers=_auth())
     client.get("/api/objects/Customer", headers=_auth())
     after = {t: env.con.execute(f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]
