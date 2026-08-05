@@ -8,9 +8,13 @@ import { baseFixture } from '@/test/fixtures/base'
 import { setScenario } from '@/test/scenario'
 import { useOverviewStore } from '@/stores/overview'
 import { usePipelineStore } from '@/stores/pipeline'
+import { formatTimeHM } from '@/utils/time'
 import PipelineView from './PipelineView.vue'
 
 const basePipelineFixture = baseFixture.pipeline
+// fixture 时间戳带 +08:00 偏移,展示按本地时区;期望值经同一格式化函数
+// 计算,避免 CI(UTC)与本地(UTC+8)渲染差异导致时区敏感断言
+const HM = formatTimeHM('2026-07-18T09:12:00+08:00')
 
 async function mountView(): Promise<ReturnType<typeof mount>> {
   const pinia: Pinia = createPinia()
@@ -32,7 +36,7 @@ describe('PipelineView(M3)', () => {
 
     // P2:连接线流量标签(下游节点行数 + 时间)+ 页头刷新指示
     const labels = wrapper.findAll('[data-testid="connector-label"]').map((n) => n.text())
-    expect(labels).toContain('1284 行 · 09:12')
+    expect(labels).toContain(`1284 行 · ${HM}`)
     expect(wrapper.find('[data-testid="pipeline-poll-at"]').text()).toContain('刷新于')
   })
 

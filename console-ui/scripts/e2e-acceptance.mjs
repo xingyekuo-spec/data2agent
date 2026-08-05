@@ -295,11 +295,18 @@ landing: ${landing}
     const deniedRaw = await page.request.get(
       `http://localhost:${CONSOLE_PORT}/api/data/raw/${SOURCE}/CUSTOMER`,
     )
-    expect(deniedRaw.status() === 401, 'Real:raw 无 token 请求被拒绝')
+    expect(deniedRaw.status() === 401, 'Real:raw 无 token 请求被拒绝(路由级)')
+    // raw 已取消强制 Bearer 门禁:路由级 401 不写 raw 访问审计;
+    // 拒绝审计改由仍保留强制 Bearer+审计的隔离详情产生
+    const deniedQuarantine = await page.request.get(
+      `http://localhost:${CONSOLE_PORT}/api/quarantine/1`,
+      { headers: { Authorization: 'Bearer wrong' } },
+    )
+    expect(deniedQuarantine.status() === 401, 'Real:隔离详情错误 token 被拒绝')
     await page.goto(`http://localhost:${REAL_UI_PORT}/audit?tab=access&allowed=false`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="access-table"]').waitFor({ state: 'visible' })
     expect((await page.textContent('[data-testid="access-table"]')).includes('unauthorized'),
-      'Real:raw 拒绝请求进入访问审计')
+      'Real:拒绝请求进入访问审计')
     const injected = await page.request.get(
       `http://localhost:${CONSOLE_PORT}/api/data/raw/${SOURCE}/CUSTOMER`,
       {
