@@ -158,6 +158,7 @@
 
   <div class="tabs" role="tablist" aria-label="日常配置分组">
     <button type="button" class="tab active" data-tabs="daily" data-tab="daily-conn">连接测试</button>
+    <button type="button" class="tab" data-tabs="daily" data-tab="daily-link">平台对接</button>
     <button type="button" class="tab" data-tabs="daily" data-tab="daily-paths">路径</button>
     <button type="button" class="tab" data-tabs="daily" data-tab="daily-source">数据源</button>
   </div>
@@ -169,6 +170,29 @@
       <a href="/metadata?from=config" id="link-metadata" style="display:none">下一步：前往元数据扫描选表 →</a>
     </div>
     <p id="conn-result" class="meta-line conn-result"></p>
+  </div>
+
+  <div id="daily-link" class="tab-panel" data-tabs="daily">
+    <p class="panel-lead">
+      平台换发/重置推送口令后在此更新，无需重做首次配置；口令只写入本机
+      <code>config/secrets.env</code>，不回显。保存后需重启抽取进程生效。
+    </p>
+    <label class="field">
+      <span class="field-label">数据平台接收地址</span>
+      <input type="text" id="link-url" placeholder="http://平台IP:8850">
+      <span class="field-hint">平台机内网地址 + <code>8850</code>。</span>
+    </label>
+    <label class="field">
+      <span class="field-label">新推送口令（留空则不修改）</span>
+      <input type="password" id="link-token" placeholder="仅需要更换时填写">
+      <span class="field-hint">与平台「数据源管理」中签发的专属 Token 相同。</span>
+    </label>
+    <div class="actions" style="margin-top:0;padding-top:0;border-top:0">
+      <button type="button" id="btn-link-save">保存对接信息</button>
+      <button type="button" id="btn-link-check">测试与平台连通</button>
+    </div>
+    <p id="link-save-result" class="meta-line conn-result"></p>
+    <p id="link-check-result" class="meta-line conn-result"></p>
   </div>
 
   <form id="config-form">
@@ -252,8 +276,8 @@
     var active = document.querySelector('.tab-panel[data-tabs="daily"].active');
     var actions = document.getElementById('daily-save-actions');
     if (!actions) return;
-    // 连接测试页不显示保存；路径/数据源显示
-    actions.style.display = (active && active.id !== 'daily-conn') ? 'flex' : 'none';
+    // 连接测试/平台对接页不显示保存;路径/数据源显示
+    actions.style.display = (active && active.id !== 'daily-conn' && active.id !== 'daily-link') ? 'flex' : 'none';
   }
 
   document.querySelectorAll('.tab[data-tab]').forEach(function (btn) {
@@ -367,14 +391,67 @@
         document.getElementById('cfg-templates').value = x.j.templates || '';
         document.getElementById('cfg-landing').value = x.j.landing || '';
         var html = '';
+        var firstSinkUrl = '';
         Object.keys(x.j.sources || {}).forEach(function (name) {
           html += renderSource(name, x.j.sources[name]);
+          if (!firstSinkUrl && x.j.sources[name].sink) firstSinkUrl = x.j.sources[name].sink.url || '';
         });
         sourcesEl.innerHTML = html || '<p class="meta-line">当前配置中没有数据源。</p>';
         bindSourceSubtabs();
         syncDailySaveActions();
+        // 平台对接页签:回填地址 + 自动跑一次连通/协议检查
+        document.getElementById('link-url').value = firstSinkUrl;
+        checkConnection();
       });
   }
+
+  function checkConnection() {
+    var box = document.getElementById('link-check-result');
+    box.textContent = '连通检查中…';
+    fetch('/api/config/connection-check', {headers: authHeaders()})
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) {
+          box.textContent = '平台对接:' + (j.detail || '检查失败');
+          return;
+        }
+        var proto = '本机协议 v' + (j.local_protocol || '?') +
+          ' ↔ 平台支持 [' + (j.platform_supported || []).join(', ') + ']';
+        box.textContent = '平台对接:连通正常 · ' + proto + ' · ' + (j.compatible ? '兼容' : '不兼容') +
+          (j.token_configured ? '' : ' · 警告:推送口令未配置');
+      })
+      .catch(function () { box.textContent = '平台对接:检查请求失败'; });
+  }
+
+  document.getElementById('btn-link-check').addEventListener('click', checkConnection);
+
+  document.getElementById('btn-link-save').addEventListener('click', function () {
+    var box = document.getElementById('link-save-result');
+    var body = {
+      platform_url: document.getElementById('link-url').value,
+      revision: currentRevision
+    };
+    var tok = document.getElementById('link-token').value;
+    if (tok.trim()) body.ingest_token = tok.trim();
+    fetch('/api/config/connection', {method: 'POST', headers: authHeaders(), body: JSON.stringify(body)})
+      .then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
+      .then(function (x) {
+        var j = x.j;
+        if (!x.ok || !j.ok) {
+          box.textContent = (j.errors || []).map(function (e) { return e.message; }).join('; ') ||
+            (typeof j.detail === 'string' ? j.detail : '保存失败');
+          return;
+        }
+        currentRevision = j.revision || currentRevision;
+        document.getElementById('link-token').value = '';
+        box.textContent = '对接信息已保存' +
+          (j.token_updated ? '(含新推送口令)' : '') +
+          ',重启抽取进程后生效。';
+        var b = document.getElementById('restart-banner');
+        b.style.display = 'block';
+        b.textContent = '对接信息已保存,请重启抽取进程后生效。';
+      });
+  });
 
   function validateSetupForm(form) {
     var required = form.querySelectorAll('[required]');

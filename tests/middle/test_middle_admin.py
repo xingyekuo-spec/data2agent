@@ -618,3 +618,132 @@ def test_alert_silences_expired_not_listed(middle_env):
         db.con.close()
     listed = client.get("/api/alerts/silences", headers=h)
     assert not any(s["alert_key"] == "k" for s in listed.json()["silences"])
+
+
+# ---- 平台对接信息更新与连通检查 ----
+
+
+def test_connection_update_requires_revision(middle_env):
+    client, _ = middle_env
+    h = {"Authorization": "Bearer secret"}
+    r = client.post("/api/config/connection", headers=h,
+                    json={"platform_url": "http://platform.local:8850"})
+    assert r.status_code == 409
+
+
+def test_connection_update_url_and_token(middle_env, tmp_path, monkeypatch):
+    """地址进 YAML,Token 只写 secrets.env 且不回显;无 home 时拒绝改 Token。"""
+    monkeypatch.delenv("D2A_INGEST_TOKEN", raising=False)
+    client, cfg = middle_env
+    h = {"Authorization": "Bearer secret"}
+    # 无 --home:改 Token 被拒
+    rev = client.get("/api/config", headers=h).json()["revision"]
+    r = client.post("/api/config/connection", headers=h,
+                    json={"ingest_token": "tok-x", "revision": rev})
+    assert r.status_code == 409
+
+    home = tmp_path / "home"
+    c2 = TestClient(create_app(config_path=cfg, token="secret",
+                               log_path=tmp_path / "c2.log", home=home))
+    rev = c2.get("/api/config", headers=h).json()["revision"]
+    r = c2.post("/api/config/connection", headers=h, json={
+        "platform_url": "http://platform.local:8850",
+        "ingest_token": "new-token-123",
+        "revision": rev,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True and body["token_updated"] is True
+    assert body["restart_required"] is True
+    assert "new-token-123" not in str(body), "响应不得回显 Token 明文"
+    assert "http://platform.local:8850" in cfg.read_text(encoding="utf-8")
+    secrets = (home / "config" / "secrets.env").read_text(encoding="utf-8")
+    assert "new-token-123" in secrets
+    # 非法地址
+    rev = c2.get("/api/config", headers=h).json()["revision"]
+    bad = c2.post("/api/config/connection", headers=h,
+                  json={"platform_url": "ftp://x", "revision": rev})
+    assert bad.status_code == 200 and bad.json()["ok"] is False
+
+
+def test_connection_check_local_mode(middle_env):
+    client, _ = middle_env
+    h = {"Authorization": "Bearer secret"}
+    r = client.get("/api/config/connection-check", headers=h)
+    body = r.json()
+    assert body["ok"] is False and "local" in body["detail"]
+
+
+def _http_sink_client(tmp_path, cfg):
+    """把 fixture 配置改成 http sink 后另起 app。"""
+    from data2agent.shared.config import load_config
+    old = load_config(cfg)
+    scfg = old.sources[SOURCE]
+    new = tmp_path / "connect-http.yaml"
+    new.write_text(
+        f"templates: {old.templates}\n"
+        f"landing: {old.landing}\n"
+        "sources:\n"
+        f"  {SOURCE}:\n"
+        "    adapter: sqlite_readonly\n"
+        f"    path: {scfg.path}\n"
+        "    sync_every: 30m\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: LAST_MODIFIED_DATE\n"
+        "    sink:\n"
+        "      type: http\n"
+        "      url: http://platform.local:8850\n"
+        "      token_env: D2A_INGEST_TOKEN\n"
+        "      allow_insecure_http: true\n",
+        encoding="utf-8")
+    return TestClient(create_app(config_path=new, token="secret",
+                                 log_path=tmp_path / "c3.log"))
+
+
+def test_connection_check_protocol_compatible(middle_env, tmp_path, monkeypatch):
+    monkeypatch.delenv("D2A_INGEST_TOKEN", raising=False)
+    client, cfg = middle_env
+    c = _http_sink_client(tmp_path, cfg)
+    monkeypatch.setattr(middle_app, "_http_get_json", lambda *a, **k: {
+        "ok": True,
+        "active_ingest_protocol_version": "3",
+        "supported_ingest_protocol_versions": ["2", "3"],
+    })
+    h = {"Authorization": "Bearer secret"}
+    body = c.get("/api/config/connection-check", headers=h).json()
+    assert body["ok"] is True and body["compatible"] is True
+    assert body["local_protocol"] == "3"
+    assert body["platform_supported"] == ["2", "3"]
+    assert body["token_configured"] is False
+
+
+def test_connection_check_protocol_incompatible(middle_env, tmp_path, monkeypatch):
+    client, cfg = middle_env
+    c = _http_sink_client(tmp_path, cfg)
+    monkeypatch.setattr(middle_app, "_http_get_json", lambda *a, **k: {
+        "ok": True,
+        "active_ingest_protocol_version": "4",
+        "supported_ingest_protocol_versions": ["4"],
+    })
+    h = {"Authorization": "Bearer secret"}
+    body = c.get("/api/config/connection-check", headers=h).json()
+    assert body["ok"] is True and body["compatible"] is False
+    assert "升级中间机" in body["detail"]
+
+
+def test_connection_check_401_hint(middle_env, tmp_path, monkeypatch):
+    import urllib.error
+
+    client, cfg = middle_env
+    c = _http_sink_client(tmp_path, cfg)
+
+    def boom(*a, **k):
+        raise urllib.error.HTTPError(
+            "http://platform.local:8850/ingest/health", 401, "unauthorized", None, None)
+
+    monkeypatch.setattr(middle_app, "_http_get_json", boom)
+    h = {"Authorization": "Bearer secret"}
+    body = c.get("/api/config/connection-check", headers=h).json()
+    assert body["ok"] is False and "401" in body["detail"]

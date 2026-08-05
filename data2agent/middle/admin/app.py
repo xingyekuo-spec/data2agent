@@ -9,9 +9,11 @@ import shutil
 import tempfile
 import threading
 import time
+import json as _json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any
+from urllib.request import Request as _UrlRequest, urlopen as _urlopen
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -161,6 +163,22 @@ class SetupBody(BaseModel):
     lookback: str = "3d"
     batch_size: int = 5000
     rows_per_second: int = 2000
+
+
+class ConnectionInfoBody(BaseModel):
+    """日常更新平台对接信息:平台地址入 YAML,Token 只写 secrets.env(不回显)。"""
+    platform_url: str | None = None
+    ingest_token: str | None = None
+    revision: str | None = None
+
+
+def _http_get_json(url: str, token: str | None, timeout: float) -> dict:
+    """中间机管理端最小 GET JSON(连通检查用;与 sink 同为 urllib,不引新依赖)。"""
+    req = _UrlRequest(url)
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    with _urlopen(req, timeout=timeout) as resp:
+        return _json.loads(resp.read().decode("utf-8"))
 
 
 _DSN_PATTERN = re.compile(
@@ -599,6 +617,113 @@ def create_app(
     def validate_config(body: ConfigPatch) -> dict:
         ok, errors = _validate_merged(cfg_path, _patch_to_dict(body))
         return {"ok": ok, "errors": errors}
+
+    @api.post("/config/connection")
+    def post_connection_info(body: ConnectionInfoBody) -> dict:
+        """日常更新平台对接信息:平台地址进 YAML,Token 只写 secrets.env。
+
+        平台换发/重置 Token 后在这里更新,无需重做首次配置;重启抽取进程生效。
+        """
+        with config_write_lock:
+            if needs_setup():
+                raise http_error(
+                    409, "尚未完成首次配置",
+                    "打开 /config 完成首次配置后再更新对接信息",
+                )
+            current = config_revision(cfg_path)
+            if body.revision is None or body.revision != current:
+                raise http_error(
+                    409,
+                    "配置已被其他会话修改,请刷新后重新提交。",
+                    "重新加载配置页后再更新对接信息",
+                    current_revision=current,
+                )
+            cfg = reload_config()
+            name, scfg = _resolve_source(cfg, None)
+            if body.platform_url is not None:
+                url = body.platform_url.strip()
+                if not url.startswith("http"):
+                    return {"ok": False, "errors": [field_error(
+                        "platform_url", "须为 http(s) URL",
+                        "填写平台 ingest 根地址,例如 https://platform.example.com",
+                    )], "restart_required": False, "revision": current}
+                ok, errors = merge_whitelist_and_save(
+                    cfg_path, MIDDLE_EDITABLE,
+                    {"sources": {name: {"sink": {"url": url}}}},
+                    validate=load_config)
+                if not ok:
+                    return {"ok": False, "errors": errors,
+                            "restart_required": False, "revision": current}
+            token_updated = False
+            if body.ingest_token is not None and body.ingest_token.strip():
+                if home_layout is None:
+                    raise http_error(
+                        409, "未启用 --home,无法写 secrets.env",
+                        "以 --home <目录> 启动中间机管理进程后再更新推送口令",
+                    )
+                env_name = scfg.sink.token_env or "D2A_INGEST_TOKEN"
+                save_secrets(home_layout.secrets_env,
+                             {env_name: body.ingest_token.strip()})
+                apply_secrets_to_environ(home_layout.secrets_env)
+                token_updated = True
+            revision = config_revision(cfg_path)
+        return {"ok": True, "errors": [], "restart_required": True,
+                "revision": revision, "token_updated": token_updated}
+
+    @api.get("/config/connection-check")
+    def connection_check() -> dict:
+        """平台连通 + 协议兼容检查:GET {sink.url}/ingest/health(不回显 Token)。"""
+        if needs_setup():
+            raise http_error(
+                409, "尚未完成首次配置",
+                "打开 /config 完成首次配置后再测试连通",
+            )
+        cfg = reload_config()
+        _, scfg = _resolve_source(cfg, None)
+        from ...protocol.ingest import INGEST_PROTOCOL_VERSION
+        base: dict[str, Any] = {
+            "platform_url": scfg.sink.url,
+            "local_protocol": INGEST_PROTOCOL_VERSION,
+            "sink_type": scfg.sink.type,
+        }
+        if scfg.sink.type != "http" or not scfg.sink.url:
+            return {**base, "ok": False,
+                    "detail": "local 落地模式,无平台接收端点(仅开发/参考链)"}
+        env_name = scfg.sink.token_env or "D2A_INGEST_TOKEN"
+        token = os.environ.get(env_name) or None
+        try:
+            health = _http_get_json(
+                scfg.sink.url.rstrip("/") + "/ingest/health", token, timeout=8)
+        except Exception as e:
+            code = getattr(e, "code", None)
+            if code == 401:
+                detail = "平台拒绝(401):推送口令无效,请在平台重新签发后更新"
+            elif code == 403:
+                detail = "平台拒绝(403):数据源未登记或已停用,请先在平台数据源管理中登记"
+            else:
+                detail = f"连接失败:{_sanitize_detail(str(e))}"
+            return {**base, "ok": False, "token_configured": token is not None,
+                    "detail": detail}
+        supported = health.get("supported_ingest_protocol_versions")
+        if isinstance(supported, list) and supported:
+            supported = [str(v) for v in supported]
+        else:
+            remote = (health.get("active_ingest_protocol_version")
+                      or health.get("ingest_protocol_version"))
+            supported = [str(remote)] if remote else []
+        compatible = INGEST_PROTOCOL_VERSION in supported
+        return {
+            **base,
+            "ok": True,
+            "token_configured": token is not None,
+            "platform_active": (health.get("active_ingest_protocol_version")
+                                or health.get("ingest_protocol_version")),
+            "platform_supported": supported,
+            "compatible": compatible,
+            "detail": ("兼容"
+                       if compatible
+                       else "平台不再接受本机协议版本,请升级中间机"),
+        }
 
     @api.get("/extraction-tables")
     def get_extraction_tables(source: str | None = None) -> dict:
