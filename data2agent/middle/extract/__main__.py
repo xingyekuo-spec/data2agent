@@ -237,6 +237,8 @@ def main() -> int:
             adapter, landing, args.source, watermarks,
             lookback_days=scfg.lookback_days(),
             key_columns=scfg.table_key_columns(),
+            # 与 serve 调度路径一致:start_date 下界在一次性命令同样生效
+            start_dates=scfg.table_start_dates(),
             estimate_rows=scfg.estimate_rows,
             sink=sink,
         )

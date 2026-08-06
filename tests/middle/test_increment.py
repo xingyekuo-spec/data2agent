@@ -227,3 +227,50 @@ def test_initial_sync_respects_start_date(pack, source_db, landing):
     # 水位已建立:第二轮走增量,不会重扫全量
     cur = landing.get_sync_cursor(SOURCE, "CUSTOMER")
     assert cur is not None and cur[0] is not None
+
+
+def test_cli_sync_one_shot_respects_start_date(pack, source_db, tmp_path, monkeypatch):
+    """回归:一次性 sync 命令也须生效 start_date 下界(曾只有 serve 调度路径传)。"""
+    import sys
+
+    from data2agent.middle.extract.__main__ import main
+
+    src = sqlite3.connect(source_db)
+    (total,) = src.execute('SELECT COUNT(*) FROM "CUSTOMER"').fetchone()
+    (start,) = src.execute(
+        'SELECT LAST_MODIFIED_DATE FROM "CUSTOMER" '
+        'ORDER BY LAST_MODIFIED_DATE LIMIT 1 OFFSET ?', (total // 2,)).fetchone()
+    start_day = start[:10]
+    (want,) = src.execute(
+        'SELECT COUNT(*) FROM "CUSTOMER" WHERE LAST_MODIFIED_DATE >= ?',
+        (start_day,)).fetchone()
+    src.close()
+    assert 0 < want < total
+
+    landing_db = tmp_path / "cli-landing.sqlite"
+    cfg = tmp_path / "connect.yaml"
+    cfg.write_text(
+        f"templates: {ROOT / 'templates'}\n"
+        f"landing: {landing_db}\n"
+        "sources:\n"
+        f"  {SOURCE}:\n"
+        "    adapter: sqlite_readonly\n"
+        f"    path: {source_db}\n"
+        "    sync_every: 30m\n"
+        f'    start_date: "{start_day}"\n'
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: LAST_MODIFIED_DATE\n"
+        "    sink:\n"
+        "      type: local\n",
+        encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["extract", "sync", "--config", str(cfg)])
+    assert main() == 0
+    con = sqlite3.connect(landing_db)
+    n, min_wm = con.execute(
+        f'SELECT COUNT(*), MIN(LAST_MODIFIED_DATE) '
+        f'FROM "{raw_table_name(SOURCE, "CUSTOMER")}"').fetchone()
+    con.close()
+    assert n == want, "CLI 一次性 sync 首轮应只抽 start_date 之后的行"
+    assert min_wm >= start_day
