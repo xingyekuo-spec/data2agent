@@ -196,7 +196,8 @@ jobs:
             d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
 
       - name: 生成平台更新清单 latest.json
-        if: github.ref_type == 'tag' || inputs.create_release
+        # latest.json 是平台包更新清单;仅构建中间机(roles=middle)时无平台 zip,跳过
+        if: github.ref_type == 'tag' || (inputs.create_release && inputs.roles != 'middle')
         shell: pwsh
         run: |
           $v = "${{ steps.ver.outputs.version }}"
@@ -241,6 +242,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('prerelease-{0}', steps.ver.outputs.version) }}
+          # 部分构建(roles=middle/platform)时不存在的附件跳过而非报错;
+          # 构建步骤自身失败会先中断任务,不会静默出残包
+          fail_on_unmatched_files: false
           files: |
             d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
             d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
