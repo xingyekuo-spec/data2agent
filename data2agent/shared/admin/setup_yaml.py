@@ -17,6 +17,7 @@ def build_middle_connect_yaml(
     platform_url: str,
     sync_every: str = "30m",
     sync_start_at: str | None = None,
+    start_date: str | None = None,
     lookback: str = "3d",
     batch_size: int = 5000,
     rows_per_second: int = 2000,
@@ -46,6 +47,8 @@ def build_middle_connect_yaml(
         source["sink"]["allow_insecure_http"] = True
     if sync_start_at:
         source["sync_start_at"] = sync_start_at
+    if start_date:
+        source["start_date"] = start_date
     return {
         "templates": templates,
         "landing": landing,

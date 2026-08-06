@@ -57,10 +57,15 @@ def test_build_middle_yaml_can_set_sync_start_at(tmp_path):
         platform_url="http://10.0.0.1:8850",
         sync_every="1d",
         sync_start_at="02:00",
+        start_date="2026-01-01",
     )
     source = data["sources"]["digiwin_e10"]
     assert source["sync_every"] == "1d"
     assert source["sync_start_at"] == "02:00"
+    assert source["start_date"] == "2026-01-01"
+    # 缺省不写 start_date(留空按回看窗口起抽)
+    data2 = build_middle_connect_yaml(home, platform_url="http://10.0.0.1:8850")
+    assert "start_date" not in data2["sources"]["digiwin_e10"]
 
 
 def test_load_home_secrets_if_present(tmp_path, monkeypatch):
@@ -119,6 +124,7 @@ def test_middle_browser_setup(tmp_path):
             "ingest_token": "ingest-tok",
             "admin_token": "admin-tok",
             "sync_start_at": "02:00",
+            "start_date": "2026-01-01",
         })
         assert r.status_code == 200 and r.json()["ok"] is True
         assert home.connect_yaml.is_file()
@@ -129,6 +135,7 @@ def test_middle_browser_setup(tmp_path):
         assert "password" not in home.connect_yaml.read_text(encoding="utf-8").lower()
         cfg = load_config(home.connect_yaml)
         assert cfg.sources["digiwin_e10"].sync_start_at == "02:00"
+        assert cfg.sources["digiwin_e10"].start_date == "2026-01-01"
 
         # after setup, protected APIs need token
         assert client.get("/api/status").status_code == 401

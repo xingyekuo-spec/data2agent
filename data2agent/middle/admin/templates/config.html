@@ -140,6 +140,11 @@
         <input type="text" name="sync_start_at" placeholder="例如 02:00">
         <span class="field-hint">填 <code>02:00</code> 表示服务启动后等到下一个 02:00 再跑首轮；留空=服务启动即尝试抽取。</span>
       </label>
+      <label class="field">
+        <span class="field-label">数据抓取开始日期（可空）</span>
+        <input type="text" name="start_date" placeholder="例如 2026-01-01">
+        <span class="field-hint">格式 <code>YYYY-MM-DD</code>。增量表首轮从此日期起抽，不抽更早历史；留空=按回看窗口起抽。事后也可在「配置 → 数据源 → 抽取节奏」修改。</span>
+      </label>
     </div>
   </div>
 

@@ -160,6 +160,7 @@ class SetupBody(BaseModel):
     admin_token: str
     sync_every: str = "30m"
     sync_start_at: str | None = None
+    start_date: str | None = None
     lookback: str = "3d"
     batch_size: int = 5000
     rows_per_second: int = 2000
@@ -531,6 +532,7 @@ def create_app(
             platform_url=body.platform_url,
             sync_every=body.sync_every,
             sync_start_at=body.sync_start_at,
+            start_date=(body.start_date or "").strip() or None,
             lookback=body.lookback,
             batch_size=body.batch_size,
             rows_per_second=body.rows_per_second,
