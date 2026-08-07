@@ -153,8 +153,17 @@ Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` �
    1. 在配置页「测试数据库连接」通过后，打开 `/metadata`（或点「下一步：元数据」）；
    2. 「刷新元数据」扫描表结构，打开详情「加入抽取计划」；
    3. 在 `/tables` 确认模式、业务键与水位，校验通过后保存；
-   4. 重启抽取进程使新 `tables` 生效。
-9. 确认两台机器托盘「运行状态」均为正常。
+   4. 保存后配置会在下一轮自动重载；首次配置落盘后 launcher 会自动拉起 connector，无需再次双击。
+9. 在中间机以管理员 PowerShell 运行 `安装开机自启.ps1`：
+   - 安装 `SYSTEM` 开机任务，重启主机后无需用户登录；
+   - 以 `--headless` 常驻监控 admin / connector / maintenance；
+   - 崩溃会自动重启，反复崩溃熵断 15 分钟后自动试探；
+   - 卸载用 `卸载开机自启.ps1`，不会删数据或配置。
+10. 确认中间机 `/api/status` 中 `process_status.connector_running=true`，并确认两台机器运行状态正常。
+
+中间机 launcher 另外管理每日 maintenance：对 `middle.sqlite` 做 SQLite
+Online Backup + integrity check，默认保留 14 份，清理 90 天运行历史、
+365 天回执和超过 24 小时的孤儿 staging。可用空间低于 2 GiB 时任务失败并进入进程监控告警状态。
 
 ## 4. 验收
 
@@ -170,6 +179,8 @@ Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` �
 ```text
 data2agent.exe
 升级.bat              # 仅平台包:在线升级入口(详见「平台端在线升级」)
+安装开机自启.ps1      # 仅中间机包
+卸载开机自启.ps1      # 仅中间机包
 runtime\
 app\templates\
 config\

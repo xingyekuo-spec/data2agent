@@ -32,6 +32,10 @@ def build_middle_connect_yaml(
         "rate": {"batch_size": batch_size, "rows_per_second": rows_per_second},
         "lookback": lookback,
         "sync_every": sync_every,
+        # 新部署默认每日做廉价 L1 对账；L2 deep 仍需按现场窗口显式开启。
+        "reconcile_at": "05:30",
+        "reconcile_deep_at": "03:30",
+        "reconcile_deep_day_of_week": "sun",
         "sink": {
             "type": "http",
             "url": platform_url.rstrip("/"),
@@ -80,11 +84,17 @@ def build_odbc_dsn(
     port: int | None = 1433,
     driver: str = "ODBC Driver 18 for SQL Server",
 ) -> str:
+    def value(raw: str) -> str:
+        # ODBC 连接串值用花括号封装；内部 } 按 ODBC 规则双写。
+        # 这不仅支持分号密码，也阻止表单值注入额外 DSN 属性。
+        return "{" + str(raw).replace("}", "}}") + "}"
+
     if "\\" in server or (port is not None and port <= 0):
         server_part = server
     else:
         server_part = f"{server},{port or 1433}"
     return (
-        f"DRIVER={{{driver}}};SERVER={server_part};UID={user};PWD={password};"
-        f"DATABASE={database};Encrypt=yes;TrustServerCertificate=no"
+        f"DRIVER={value(driver)};SERVER={value(server_part)};"
+        f"UID={value(user)};PWD={value(password)};"
+        f"DATABASE={value(database)};Encrypt=yes;TrustServerCertificate=no"
     )

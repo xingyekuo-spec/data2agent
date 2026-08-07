@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import json
 import os
 import socket
 import subprocess
@@ -32,7 +33,10 @@ _SUPERVISE_STOP = threading.Event()
 SUPERVISE_INTERVAL = 5.0
 SUPERVISE_MAX_RESTARTS = 5   # within SUPERVISE_WINDOW before giving up
 SUPERVISE_WINDOW = 60.0
+SUPERVISE_COOLDOWN = 900.0
 ADMIN_STARTUP_TIMEOUT = 180.0
+LOG_MAX_BYTES = 20 * 1024 * 1024
+LOG_BACKUP_COUNT = 5
 
 
 def _msg(title: str, text: str, error: bool = False) -> None:
@@ -179,7 +183,8 @@ def _role_config(role: str, home: Path) -> dict:
         port = int(os.environ.get("D2A_MIDDLE_ADMIN_PORT", "8851"))
         return {
             "title": "data2agent 中间机",
-            "mutex": "Local\\data2agent-middle-launcher",
+            # Global 防止开机任务(Session 0)与登录用户双击各启一套。
+            "mutex": "Global\\data2agent-middle-launcher",
             "port": port,
             "module": "data2agent.middle.admin",
             "config_file": home / "config" / "connect.yaml",
@@ -193,7 +198,7 @@ def _role_config(role: str, home: Path) -> dict:
         port = int(os.environ.get("D2A_CONSOLE_PORT", "8849"))
         return {
             "title": "data2agent 平台",
-            "mutex": "Local\\data2agent-platform-launcher",
+            "mutex": "Global\\data2agent-platform-launcher",
             "port": port,
             "module": "data2agent.platform.console",
             "config_file": home / "config" / "platform.yaml",
@@ -260,7 +265,17 @@ def _merge_secrets_env(home: Path, env: dict[str, str]) -> dict[str, str]:
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, _, v = line.partition("=")
-        env[k.strip()] = v.strip().strip("\"'")
+        raw = v.strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+            try:
+                raw = json.loads(raw)
+            except json.JSONDecodeError:
+                raw = raw[1:-1]
+        elif len(raw) >= 2 and raw[0] == raw[-1] == "'":
+            raw = raw[1:-1]
+        else:
+            raw = raw.replace("\\n", "\n").replace("\\\\", "\\")
+        env[k.strip()] = raw
     return env
 
 
@@ -276,10 +291,12 @@ def _spawn(cmd: list[str], *, home: Path, env: dict[str, str],
     # 子进程输出落到 data/logs/<name>.log,现场可诊断(此前吞进 DEVNULL,
     # 子进程崩溃无从排查 —— 便携包首个版本因此隐藏了两个致命 bug)。
     out: int | object = subprocess.DEVNULL
+    log_path: Path | None = None
     if log_name:
         logs = home / "data" / "logs"
         logs.mkdir(parents=True, exist_ok=True)
-        out = open(logs / f"{log_name}.log", "a", encoding="utf-8")  # noqa: SIM115
+        log_path = logs / f"{log_name}.log"
+        out = subprocess.PIPE
     proc = subprocess.Popen(
         cmd,
         cwd=str(home),
@@ -289,8 +306,59 @@ def _spawn(cmd: list[str], *, home: Path, env: dict[str, str],
         creationflags=_creationflags(),
         start_new_session=(sys.platform != "win32"),
     )
+    if log_path is not None and proc.stdout is not None:
+        threading.Thread(
+            target=_pump_process_log,
+            args=(proc.stdout, log_path),
+            name=f"d2a-log-{log_name}", daemon=True,
+        ).start()
     _CHILDREN.append(proc)
     return proc
+
+
+def _rotate_log(path: Path) -> None:
+    """轮转 path -> path.1，最多保留 LOG_BACKUP_COUNT 份。"""
+    oldest = path.with_name(f"{path.name}.{LOG_BACKUP_COUNT}")
+    oldest.unlink(missing_ok=True)
+    for index in range(LOG_BACKUP_COUNT - 1, 0, -1):
+        current = path.with_name(f"{path.name}.{index}")
+        if current.exists():
+            current.replace(path.with_name(f"{path.name}.{index + 1}"))
+    if path.exists():
+        path.replace(path.with_name(f"{path.name}.1"))
+
+
+def _pump_process_log(stream, path: Path) -> None:
+    """由 launcher 消费子进程 pipe，使 Windows 上也能在运行期轮转日志。"""
+    handle = None
+    try:
+        handle = path.open("ab", buffering=0)
+        size = path.stat().st_size if path.exists() else 0
+        while True:
+            reader = getattr(stream, "read1", stream.read)
+            chunk = reader(64 * 1024)
+            if not chunk:
+                break
+            if size and size + len(chunk) > LOG_MAX_BYTES:
+                handle.close()
+                handle = None
+                _rotate_log(path)
+                handle = path.open("ab", buffering=0)
+                size = 0
+            handle.write(chunk)
+            size += len(chunk)
+    except Exception:
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+        if handle is not None:
+            try:
+                handle.close()
+            except Exception:
+                pass
 
 
 def _kill_process_tree(proc: subprocess.Popen) -> None:
@@ -325,7 +393,11 @@ def _supervisor_log(home: Path, msg: str) -> None:
         line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n"
         logs = home / "data" / "logs"
         logs.mkdir(parents=True, exist_ok=True)
-        (logs / "d2a-launcher.log").open("a", encoding="utf-8").write(line)
+        path = logs / "d2a-launcher.log"
+        if path.exists() and path.stat().st_size + len(line.encode("utf-8")) > LOG_MAX_BYTES:
+            _rotate_log(path)
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(line)
     except Exception:
         pass
 
@@ -354,12 +426,139 @@ def health_summary() -> tuple[int, int, list[str]]:
     return up, len(_MANAGED), down
 
 
+def write_process_status(home: Path) -> None:
+    """将 launcher 真实管理的 PID/存活状态发布给本机管理 API。"""
+    run_dir = home / "data" / "run"
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "updated_at_epoch": time.time(),
+            "launcher_pid": os.getpid(),
+            "processes": [
+                {
+                    "name": managed["name"],
+                    "pid": getattr(managed["proc"], "pid", None),
+                    "alive": managed["proc"].poll() is None,
+                    "failed": bool(managed["failed"]),
+                    "restarts": int(managed["restarts"]),
+                }
+                for managed in _MANAGED
+            ],
+        }
+        target = run_dir / "process-status.json"
+        pending = run_dir / "process-status.json.tmp"
+        pending.write_text(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8")
+        pending.replace(target)
+    except Exception:
+        pass
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """跨平台只读探测 PID；Windows 不使用 os.kill，避免控制信号副作用。"""
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            handle = kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not handle:
+                return False
+            code = ctypes.c_ulong()
+            try:
+                return bool(kernel32.GetExitCodeProcess(
+                    handle, ctypes.byref(code))) and code.value == STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+class _ObservedProcess:
+    """可被 supervisor 接管的既有子进程最小适配器。"""
+
+    def __init__(self, pid: int):
+        self.pid = pid
+
+    def poll(self) -> int | None:
+        return None if _pid_is_alive(self.pid) else 1
+
+
+def adopt_recorded_processes(
+    home: Path,
+    specs: list[tuple[str, int | None, list[str], str]],
+    *,
+    env: dict[str, str],
+    max_age_seconds: float = 300.0,
+) -> list[str]:
+    """launcher 异常退出后，从短期状态快照接管仍存活的子进程。
+
+    Global mutex 已证明旧 launcher 不在；仅接受新鲜快照和配置内已知角色，
+    避免按陈旧 PID 误接管无关进程。接管后可继续健康检查、停止及崩溃重启。
+    """
+    path = home / "data" / "run" / "process-status.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        updated = float(payload["updated_at_epoch"])
+        if time.time() - updated > max_age_seconds:
+            return []
+        records = {
+            str(item.get("name")): item
+            for item in payload.get("processes", [])
+            if isinstance(item, dict)
+        }
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return []
+    adopted: list[str] = []
+    existing = {managed["name"] for managed in _MANAGED}
+    for name, listen, cmd, log_name in specs:
+        if name in existing:
+            continue
+        item = records.get(name)
+        try:
+            pid = int(item.get("pid")) if item is not None else 0
+        except (TypeError, ValueError):
+            pid = 0
+        if not item or not item.get("alive") or not _pid_is_alive(pid):
+            continue
+        proc = _ObservedProcess(pid)
+        _CHILDREN.append(proc)  # type: ignore[arg-type]
+        _MANAGED.append({
+            "name": name, "cmd": cmd, "home": home, "env": env,
+            "log_name": log_name, "listen": listen, "proc": proc,
+            "restarts": int(item.get("restarts") or 0),
+            "window_start": time.time(), "failed": False,
+        })
+        adopted.append(name)
+        _supervisor_log(home, f"adopted orphan {name} pid={pid}")
+    return adopted
+
+
 def supervise_once(home: Path, *, max_restarts: int = SUPERVISE_MAX_RESTARTS,
                    window: float = SUPERVISE_WINDOW) -> None:
     """One monitoring pass: respawn dead workers unless the breaker tripped."""
     now = time.time()
     for m in _MANAGED:
-        if m["failed"] or m["proc"].poll() is None:
+        if m["failed"]:
+            if now - float(m.get("failed_at", now)) < SUPERVISE_COOLDOWN:
+                continue
+            m["failed"] = False
+            m["restarts"] = 0
+            m["window_start"] = now
+            _supervisor_log(
+                home, f"{m['name']} 熵断冷却 {SUPERVISE_COOLDOWN:.0f}s 后自动试探重启")
+        if m["proc"].poll() is None:
             continue
         if now - m["window_start"] > window:
             m["window_start"] = now
@@ -367,6 +566,7 @@ def supervise_once(home: Path, *, max_restarts: int = SUPERVISE_MAX_RESTARTS,
         if m["restarts"] >= max_restarts:
             if not m["failed"]:
                 m["failed"] = True
+                m["failed_at"] = now
                 _supervisor_log(home, f"{m['name']} 在 {window:.0f}s 内退出 "
                                       f"{max_restarts} 次,停止重启(需人工排查日志)")
             continue
@@ -375,6 +575,10 @@ def supervise_once(home: Path, *, max_restarts: int = SUPERVISE_MAX_RESTARTS,
             continue
         m["restarts"] += 1
         try:
+            try:
+                _CHILDREN.remove(m["proc"])
+            except ValueError:
+                pass
             m["proc"] = _spawn(m["cmd"], home=home, env=m["env"],
                                log_name=m["log_name"])
             _supervisor_log(home, f"重启 {m['name']}(第 {m['restarts']} 次)")
@@ -382,12 +586,80 @@ def supervise_once(home: Path, *, max_restarts: int = SUPERVISE_MAX_RESTARTS,
             _supervisor_log(home, f"重启 {m['name']} 失败:{e}")
 
 
-def start_supervisor(home: Path) -> threading.Thread:
+def ensure_configured_workers(
+    role: str, home: Path, python: Path, base_env: dict[str, str],
+) -> list[str]:
+    """配置文件在启动后创建时也要拉起 worker。
+
+    首次安装会先启动管理页再在浏览器写 connect.yaml，因此不能
+    只在 launcher 启动瞬间判断一次 configured。
+    """
+    existing = {m["name"] for m in _MANAGED}
+    started: list[str] = []
+    env = _merge_secrets_env(home, dict(base_env))
+    landing = landing_db_path(role, home)
+    if landing is not None and worker_commands(role, home, python):
+        ensure_landing_db(python, landing, home=home, env=env)
+    for name, listen, cmd in worker_commands(role, home, python):
+        if name in existing:
+            continue
+        if listen is not None and _port_open("127.0.0.1", listen):
+            _supervisor_log(
+                home, f"skip unmanaged {name}: port 127.0.0.1:{listen} already open")
+            continue
+        try:
+            proc = spawn_managed(
+                name, cmd, home=home, env=env,
+                log_name=f"d2a-{name}", listen=listen)
+            started.append(name)
+            _supervisor_log(
+                home, f"started configured worker {name} pid={getattr(proc, 'pid', '?')}")
+        except OSError as exc:
+            _supervisor_log(home, f"start configured worker {name} failed:{exc}")
+    return started
+
+
+def restart_configured_workers(
+    role: str, home: Path, python: Path, base_env: dict[str, str],
+) -> list[str]:
+    """响应管理端的凭据变更标记，仅重启业务 worker，不动 admin。"""
+    flag = home / "data" / "restart-workers.flag"
+    if not flag.is_file():
+        return []
+    # 先消费标记再停止进程；若标记因权限/磁盘问题无法删除，保留现有
+    # worker，避免 supervisor 每轮重复杀进程形成永久重启风暴。
+    try:
+        flag.unlink()
+    except OSError as exc:
+        _supervisor_log(home, f"remove restart flag failed:{exc}")
+        return []
+    for managed in list(_MANAGED):
+        if managed["name"] == "admin":
+            continue
+        _kill_process_tree(managed["proc"])
+        try:
+            _CHILDREN.remove(managed["proc"])
+        except ValueError:
+            pass
+        _MANAGED.remove(managed)
+    _supervisor_log(home, "configuration/secrets changed; restarting workers")
+    return ensure_configured_workers(role, home, python, base_env)
+
+
+def start_supervisor(
+    home: Path, *,
+    worker_context: tuple[str, Path, dict[str, str]] | None = None,
+) -> threading.Thread:
     _SUPERVISE_STOP.clear()
 
     def loop() -> None:
         while not _SUPERVISE_STOP.wait(SUPERVISE_INTERVAL):
+            if worker_context is not None:
+                role, python, base_env = worker_context
+                restart_configured_workers(role, home, python, base_env)
+                ensure_configured_workers(role, home, python, base_env)
             supervise_once(home)
+            write_process_status(home)
 
     t = threading.Thread(target=loop, name="d2a-supervisor", daemon=True)
     t.start()
@@ -403,7 +675,9 @@ def acquire_single_instance(mutex_name: str) -> bool:
         kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
         handle = kernel32.CreateMutexW(None, False, mutex_name)
         if not handle:
-            return True
+            # 无法建立 Global mutex 时必须 fail closed；继续启动会让开机任务
+            # 与登录用户各跑一套 connector，破坏调度和维护的单实例假设。
+            return False
         ERROR_ALREADY_EXISTS = 183
         if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
             kernel32.CloseHandle(handle)
@@ -454,8 +728,19 @@ def worker_commands(role: str, home: Path, python: Path) -> list[tuple[str, int 
         cfg = home / "config" / "connect.yaml"
         if not cfg.is_file():
             return []
-        return [("connector", None, [py, "-m", "data2agent.middle.extract", "serve",
-                                     "--config", str(cfg)])]
+        return [
+            ("connector", None, [
+                py, "-m", "data2agent.middle.extract", "serve",
+                "--config", str(cfg),
+            ]),
+            ("maintenance", None, [
+                py, "-m", "data2agent.middle.maintenance",
+                "--config", str(cfg),
+                "--backup-dir", str(home / "data" / "backups"),
+                "--status-file", str(home / "data" / "run" / "maintenance-status.json"),
+                "--every", "86400",
+            ]),
+        ]
 
     cfg = home / "config" / "platform.yaml"
     if not cfg.is_file():
@@ -540,7 +825,10 @@ def _health_text(title: str) -> str:
     return f"{title} — {up}/{total} 正常;异常:{', '.join(down)}"
 
 
-def run_tray(*, title: str, url: str, home: Path | None = None) -> int:
+def run_tray(
+    *, title: str, url: str, home: Path | None = None,
+    worker_context: tuple[str, Path, dict[str, str]] | None = None,
+) -> int:
     """Block on system tray until user quits. Returns process exit code."""
     try:
         import pystray
@@ -560,7 +848,7 @@ def run_tray(*, title: str, url: str, home: Path | None = None) -> int:
             return 0
 
     if home is not None:
-        start_supervisor(home)
+        start_supervisor(home, worker_context=worker_context)
 
     def on_open(icon, item):  # noqa: ARG001
         open_admin(url)
@@ -581,6 +869,7 @@ def run_tray(*, title: str, url: str, home: Path | None = None) -> int:
     def on_quit(icon, item):  # noqa: ARG001
         _SUPERVISE_STOP.set()
         stop_children()
+        write_process_status(home or Path.cwd())
         release_single_instance()
         icon.stop()
 
@@ -610,7 +899,28 @@ def run_tray(*, title: str, url: str, home: Path | None = None) -> int:
     icon.run()
     _SUPERVISE_STOP.set()
     stop_children()
+    if home is not None:
+        write_process_status(home)
     release_single_instance()
+    return 0
+
+
+def run_headless(
+    *, home: Path,
+    worker_context: tuple[str, Path, dict[str, str]] | None,
+) -> int:
+    """Windows 开机任务/Session 0 模式：无托盘，但保留进程监控与重启。"""
+    start_supervisor(home, worker_context=worker_context)
+    try:
+        while not _SUPERVISE_STOP.wait(60.0):
+            write_process_status(home)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _SUPERVISE_STOP.set()
+        stop_children()
+        write_process_status(home)
+        release_single_instance()
     return 0
 
 
@@ -625,6 +935,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="只开管理界面,不拉起 connector/ingest 等")
     ap.add_argument("--no-tray", action="store_true",
                     help="不进入托盘(测试/无 GUI);启动后立即返回")
+    ap.add_argument("--headless", action="store_true",
+                    help="无 GUI 常驻并监控 worker(开机任务/Session 0)")
     args = ap.parse_args(argv)
 
     if args.home is not None:
@@ -681,11 +993,11 @@ def main(argv: list[str] | None = None) -> int:
     env = _merge_secrets_env(home, env)
     env.update(portable_vue_dist_env(home, env))
 
+    admin_log = "d2a-console" if args.role == "platform" else "d2a-middle-admin"
+    admin_cmd = [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]]
     admin_already_up = _port_open(host, port)
     if not admin_already_up:
         try:
-            admin_log = "d2a-console" if args.role == "platform" else "d2a-middle-admin"
-            admin_cmd = [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]]
             _supervisor_log(home, f"spawning admin cmd={_display_cmd(admin_cmd)}")
             admin_proc = spawn_managed(
                 "admin", admin_cmd, home=home, env=env,
@@ -727,20 +1039,31 @@ def main(argv: list[str] | None = None) -> int:
             _msg(title, failure_message, error=True)
             return 4
 
-    # Only start workers when we ourselves brought admin up. If admin was
-    # already listening (e.g. tray crashed), avoid duplicate connector/etc.
-    if not args.no_workers and configured and not admin_already_up:
-        landing = landing_db_path(args.role, home)
-        if landing is not None:
-            ensure_landing_db(venv_py, landing, home=home, env=env)
-        for name, listen, cmd in worker_commands(args.role, home, venv_py):
-            if listen is not None and _port_open("127.0.0.1", listen):
-                continue
-            try:
-                spawn_managed(name, cmd, home=home, env=env,
-                              log_name=f"d2a-{name}", listen=listen)
-            except OSError:
-                _msg(title, f"无法启动 {name}", error=True)
+    worker_context = None
+    if admin_already_up:
+        specs = [("admin", port, admin_cmd, admin_log)]
+        specs.extend(
+            (name, listen, cmd, f"d2a-{name}")
+            for name, listen, cmd in worker_commands(
+                args.role, home, venv_py)
+        )
+        adopted = adopt_recorded_processes(home, specs, env=env)
+        if "admin" not in adopted:
+            _supervisor_log(
+                home, "admin port already open but no fresh process record; "
+                "leaving external admin untouched")
+    if not args.no_workers:
+        worker_context = (args.role, venv_py, env)
+        # 已配置的安装立即启动；未配置的安装由 supervisor 在
+        # connect.yaml/platform.yaml 落盘后自动发现并启动。若 launcher
+        # 异常退出后重启，上一段会先接管仍存活的 worker，避免重复拉起。
+        started = ensure_configured_workers(args.role, home, venv_py, env)
+        if configured and not started and not worker_commands(args.role, home, venv_py):
+            _msg(title, "配置已存在，但未生成后台任务命令。", error=True)
+    write_process_status(home)
+
+    if args.headless:
+        return run_headless(home=home, worker_context=worker_context)
 
     if args.no_tray:
         if not args.no_browser:
@@ -758,11 +1081,13 @@ def main(argv: list[str] | None = None) -> int:
             pass
         _CHILDREN.clear()  # do not kill on exit in no-tray mode
         _MANAGED.clear()   # no supervision in no-tray mode
+        write_process_status(home)
         release_single_instance()
         return 0
 
     run_tray._skip_auto_open = bool(args.no_browser)  # type: ignore[attr-defined]
-    return run_tray(title=title, url=url, home=home)
+    return run_tray(
+        title=title, url=url, home=home, worker_context=worker_context)
 
 
 if __name__ == "__main__":

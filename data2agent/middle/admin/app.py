@@ -173,6 +173,18 @@ class ConnectionInfoBody(BaseModel):
     revision: str | None = None
 
 
+def _request_worker_restart(home_layout) -> None:
+    """通知便携启动器重载凭据。
+
+    标记文件是可恢复的：启动器不在时保留，下次启动后消费。
+    """
+    if home_layout is None:
+        return
+    flag = home_layout.root / "data" / "restart-workers.flag"
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.touch()
+
+
 def _http_get_json(url: str, token: str | None, timeout: float) -> dict:
     """中间机管理端最小 GET JSON(连通检查用;与 sink 同为 urllib,不引新依赖)。"""
     req = _UrlRequest(url)
@@ -212,6 +224,9 @@ def _config_subset(cfg: ConnectConfig) -> dict:
             "sync_every": scfg.sync_every,
             "sync_start_at": scfg.sync_start_at,
             "start_date": scfg.start_date,
+            "reconcile_at": scfg.reconcile_at,
+            "reconcile_deep_at": scfg.reconcile_deep_at,
+            "reconcile_deep_day_of_week": scfg.reconcile_deep_day_of_week,
             "tables": {
                 tbl: {
                     "mode": spec.mode,
@@ -565,8 +580,9 @@ def create_app(
         return {
             "ok": True,
             "restart_required": True,
+            "restart_automatic": True,
             "message": "配置已写入。请用刚设置的管理界面登录密码登录;"
-                       "抽取服务需另行启动或重启后生效。",
+                       "便携启动器将自动启动抽取服务。",
             "admin_token_hint": "已保存到 config/secrets.env",
         }
 
@@ -613,7 +629,13 @@ def create_app(
                     "根据报错修正配置字段后重试",
                 )], "restart_required": False, "revision": current}
             revision = config_revision(cfg_path) if ok else current
-        return {"ok": ok, "errors": errors, "restart_required": ok, "revision": revision}
+            if ok:
+                _request_worker_restart(home_layout)
+        return {
+            "ok": ok, "errors": errors, "restart_required": ok,
+            "restart_automatic": bool(ok and home_layout is not None),
+            "revision": revision,
+        }
 
     @api.post("/config/validate")
     def validate_config(body: ConfigPatch) -> dict:
@@ -668,8 +690,11 @@ def create_app(
                              {env_name: body.ingest_token.strip()})
                 apply_secrets_to_environ(home_layout.secrets_env)
                 token_updated = True
+            if body.platform_url is not None or token_updated:
+                _request_worker_restart(home_layout)
             revision = config_revision(cfg_path)
         return {"ok": True, "errors": [], "restart_required": True,
+                "restart_automatic": home_layout is not None,
                 "revision": revision, "token_updated": token_updated}
 
     @api.get("/config/connection-check")

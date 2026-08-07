@@ -195,6 +195,12 @@ def main() -> int:
 
     pack, adapter, landing, watermarks, scfg, cfg = _build(args, ap)
 
+    # 一次性 CLI 与 serve 调度必须使用同一 schema 屏障；否则运维人员手工
+    # 执行 sync/reconcile 会绕过管理页已确认的结构指纹。
+    if args.cmd in ("sync", "reconcile"):
+        from .scheduler import validate_configured_schemas
+        validate_configured_schemas(args.source, scfg, landing)
+
     if args.cmd == "reset-cursor":
         if args.table not in watermarks:
             ap.error(
@@ -254,11 +260,13 @@ def main() -> int:
         sink = build_sink(scfg, landing, source=args.source)
         report = reconcile_remote(
             adapter, landing, sink, args.source, watermarks, deep=args.deep,
-            key_columns=scfg.table_key_columns())
+            key_columns=scfg.table_key_columns(),
+            start_dates=scfg.table_start_dates())
     else:
         report = reconcile(
             adapter, landing, args.source, watermarks, deep=args.deep,
-            key_columns=scfg.table_key_columns())
+            key_columns=scfg.table_key_columns(),
+            start_dates=scfg.table_start_dates())
     mode = "deep" if args.deep else "L1"
     print(f"对账完成({mode}):run #{report.run_id},检查 {len(report.segments)} 段,"
           f"不一致 {len(report.mismatched)} 段,软删 {report.total_soft_deleted} 行")

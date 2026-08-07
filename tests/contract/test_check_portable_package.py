@@ -38,6 +38,8 @@ def test_check_portable_middle_ok(tmp_path: Path, monkeypatch):
     src = ROOT / "data2agent" / "middle" / "admin" / "templates"
     shutil.copytree(src, pkg / "templates")
     _write(pkg / "__init__.py", "")
+    _write(portable / "安装开机自启.ps1")
+    _write(portable / "卸载开机自启.ps1")
 
     monkeypatch.setattr(
         "sys.argv",

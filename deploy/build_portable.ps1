@@ -134,6 +134,12 @@ $v1Note = if ($Role -eq 'platform') {
   5. Vue Console: open http://127.0.0.1:8849/ (requires app\console-ui\dist).
 "@
 } else { '' }
+$middleNote = if ($Role -eq 'middle') {
+    @"
+  5. After setup, run 安装开机自启.ps1 in an Administrator PowerShell.
+     It runs headless as SYSTEM at machine startup and restarts on failure.
+"@
+} else { '' }
 $readme = @"
 data2agent portable ($Role) $Version
 ====================================
@@ -145,11 +151,20 @@ Extract anywhere.
   3. Tray icon (system tray): Open admin UI / Quit.
   4. If already running, double-click only reopens the admin UI.
 $v1Note
+$middleNote
 Middle also needs Microsoft ODBC Driver 18 for SQL Server (MSI).
 
 Keep this folder intact (runtime\ must stay next to data2agent.exe).
 "@
 Set-Content -Path (Join-Path $portable 'README.txt') -Value $readme -Encoding utf8
+
+if ($Role -eq 'middle') {
+    Write-Step 'Copy middle autostart install/uninstall scripts'
+    Copy-Item -Force (Join-Path $root 'deploy\install_middle_autostart.ps1') `
+        (Join-Path $portable '安装开机自启.ps1')
+    Copy-Item -Force (Join-Path $root 'deploy\uninstall_middle_autostart.ps1') `
+        (Join-Path $portable '卸载开机自启.ps1')
+}
 
 # --- 5a. 平台端在线升级入口(单一事实来源:data2agent.platform.updater.apply_script) ---
 if ($Role -eq 'platform') {

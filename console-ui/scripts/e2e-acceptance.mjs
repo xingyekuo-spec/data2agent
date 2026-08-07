@@ -78,12 +78,21 @@ from data2agent.platform.ingest.app import create_app
 from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION
 
 client = TestClient(create_app(${JSON.stringify(landing)}))
+generation_id = "e2e-generation-001"
+resp = client.post("/ingest/run-begin", json={
+    "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+    "source": ${JSON.stringify(SOURCE)},
+    "generation_id": generation_id,
+    "tables": ["CUSTOMER"],
+})
+resp.raise_for_status()
 body = {
     # 真实中间机推送会携带协议与写入模式；E2E 必须遵守同一 wire contract。
     # schema 与 sqlite 适配器一致(main):v0.4 raw 身份账本锁定物理 schema,
     # 缺省会按「跨物理表增量混写」被拒(409)。
     "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
     "source": ${JSON.stringify(SOURCE)},
+    "generation_id": generation_id,
     "schema": "main",
     "table": "CUSTOMER",
     "mode": "incremental",
@@ -106,6 +115,7 @@ body = {
     ],
     "pk": ["Id"],
     "batch_id": "e2e-ingest-001",
+    "table_run_id": "e2e-customer-run-001",
     "rows": [{
         "Id": 999,
         "CUSTOMER_CODE": "C999",
@@ -125,6 +135,26 @@ body = {
     }],
 }
 resp = client.post("/ingest/batch", json=body)
+resp.raise_for_status()
+resp = client.post("/ingest/table-complete", json={
+    "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+    "source": ${JSON.stringify(SOURCE)},
+    "generation_id": generation_id,
+    "schema": "main",
+    "table": "CUSTOMER",
+    "mode": "incremental",
+    "columns": body["columns"],
+    "pk": ["Id"],
+    "completion_id": "e2e-customer-run-001",
+    "rows": 1,
+    "batches": 1,
+})
+resp.raise_for_status()
+resp = client.post("/ingest/run-complete", json={
+    "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+    "source": ${JSON.stringify(SOURCE)},
+    "generation_id": generation_id,
+})
 resp.raise_for_status()
 `
   sh(PYTHON, ['-c', script], { cwd: ROOT })
@@ -169,15 +199,44 @@ async function waitText(page, selector, timeoutMs = 10000) {
 }
 
 function startProc(cmd, args, name, cwd = ROOT) {
-  const proc = spawn(cmd, args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+  const grouped = process.platform !== 'win32'
+  const proc = spawn(cmd, args, {
+    cwd,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: grouped,
+  })
   proc.stdout.on('data', () => {})
   proc.stderr.on('data', () => {})
-  const stop = () => {
-    if (!proc.killed) {
-      proc.kill('SIGTERM')
+  const signal = (kind) => {
+    if (proc.exitCode !== null) return
+    try {
+      if (grouped) process.kill(-proc.pid, kind)
+      else proc.kill(kind)
+    } catch {
+      // 已退出
     }
   }
-  process.on('exit', stop)
+  const stopOnExit = () => signal('SIGTERM')
+  const stop = async () => {
+    if (proc.exitCode !== null) return
+    const waitForExit = (timeoutMs) => {
+      if (proc.exitCode !== null) return Promise.resolve()
+      return Promise.race([
+        new Promise((resolve) => proc.once('exit', resolve)),
+        new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+      ])
+    }
+    const gracefulExit = waitForExit(3000)
+    signal('SIGTERM')
+    await gracefulExit
+    if (proc.exitCode === null) {
+      const forcedExit = waitForExit(3000)
+      signal('SIGKILL')
+      await forcedExit
+    }
+    process.off('exit', stopOnExit)
+  }
+  process.on('exit', stopOnExit)
   return { proc, stop, name }
 }
 
@@ -238,6 +297,7 @@ landing: ${landing}
   try {
     await waitFor(`http://localhost:${REAL_UI_PORT}/`)
     const page = await browser.newPage()
+    page.on('pageerror', (error) => console.error('  PAGE ERROR', error.message))
     await page.addInitScript((token) => {
       sessionStorage.setItem('d2a_token', token)
     }, 'e2e-token')
@@ -269,13 +329,30 @@ landing: ${landing}
     expect((await rows.count()) >= 5, 'Real:运行列表含 sync/apply/reconcile/ingest/legacy')
     const runTypes = ['sync', 'apply', 'reconcile', 'ingest']
     for (const runType of runTypes) {
+      const runsResponsePromise = page.waitForResponse((response) => {
+        const url = new URL(response.url())
+        return url.pathname === '/api/runs' && url.searchParams.get('type') === runType &&
+          response.request().method() === 'GET'
+      })
       await page.goto(`http://localhost:${REAL_UI_PORT}/runs?type=${runType}`, { waitUntil: 'networkidle' })
+      const runsResponse = await runsResponsePromise
+      expect(runsResponse.ok(), `Real:${runType} 运行筛选 API 成功`)
+      const filteredRuns = await runsResponse.json()
+      if (!Array.isArray(filteredRuns) || !filteredRuns.some((run) => run.type === runType)) {
+        console.error(`  DEBUG ${runType} response ${runsResponse.url()}:`, filteredRuns)
+      }
+      expect(Array.isArray(filteredRuns) && filteredRuns.some((run) => run.type === runType),
+        `Real:${runType} 运行筛选返回对应记录`)
       await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
       await page.locator('[data-testid="runs-table"] tbody tr').first().click()
       await page.locator('[data-testid="steps-table"]').waitFor({ state: 'visible' })
       expect((await page.locator('[data-testid="steps-table"] tbody tr').count()) > 0,
         `Real:${runType} 运行有结构化 step`)
       await page.locator('.el-drawer__close-btn').click()
+      await page.locator('.el-drawer').waitFor({ state: 'hidden' })
+      // 关闭抽屉会异步清除 run_id；等待路由同步完成，避免它在下一次
+      // page.goto 后把旧查询参数写回并卸载 runs-table。
+      await page.waitForFunction(() => !new URL(location.href).searchParams.has('run_id'))
     }
     await page.goto(`http://localhost:${REAL_UI_PORT}/runs`, { waitUntil: 'networkidle' })
     await page.locator('[data-testid="runs-table"]').waitFor({ state: 'visible' })
@@ -744,11 +821,14 @@ else:
     // 点击确认按钮
     const confirmBtn = confirmBox.locator('.el-button--primary').first()
     await confirmBtn.click()
-    await page.waitForTimeout(3000)
     // 等待 retry 结果对话框(成功或失败)——必须存在
     const resultBox = page.locator('[data-testid="retry-result-dialog"]')
     const retryRunLink = page.locator('[data-testid="retry-run-link"]')
     const retryErrorRunLink = page.locator('[data-testid="retry-error-run-link"]')
+    await resultBox.waitFor({ state: 'visible', timeout: 30000 })
+    await retryRunLink.or(retryErrorRunLink).first().waitFor({
+      state: 'visible', timeout: 30000,
+    })
     const hasResult = await resultBox.count()
     const hasRunLink = await retryRunLink.count() > 0
     const hasErrorLink = await retryErrorRunLink.count() > 0
@@ -939,8 +1019,7 @@ print(f"mapped_at={mapped_at} updated={updated.rowcount} phys={phys}")
 
     await page.close()
   } finally {
-    dev.stop()
-    consoleProc.stop()
+    await Promise.all([dev.stop(), consoleProc.stop()])
   }
 }
 

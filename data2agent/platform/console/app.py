@@ -726,13 +726,14 @@ def create_app(landing: str | None = None, templates: str = "templates",
         """平台所有手动构建入口统一遵守 ingest generation 屏障。"""
         from ...shared.store.generation_apply import GenerationApplyLease
 
-        lease = None
-        if db.has_ingest_generations(source):
-            lease = GenerationApplyLease.claim(db, source)
-            if lease is None:
-                raise HTTPException(
-                    409, "没有可 apply 的完整 generation；"
-                    "请等待当前推送完成或现有 apply 结束")
+        # 即使这是该 source 的首次人工构建，也先建立 manual 租约；否则
+        # “尚无 generation”检查与首轮 run-begin 之间仍存在并发窗口。
+        lease = GenerationApplyLease.claim(db, source)
+        if lease is None:
+            lease = GenerationApplyLease.claim_manual(db, source)
+        if lease is None:
+            raise HTTPException(
+                409, "当前有数据推送或 apply 正在执行；请完成后重试")
         try:
             result = build_dataset(
                 db, require_pack(), source, auto_publish=auto_publish)

@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
+import time
+from types import SimpleNamespace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -51,7 +54,9 @@ def test_worker_commands_empty_until_configured(tmp_path):
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "connect.yaml").write_text("x: 1", encoding="utf-8")
     mid = mod.worker_commands("middle", tmp_path, py)
-    assert len(mid) == 1 and mid[0][0] == "connector"
+    assert {name for name, _, _ in mid} == {"connector", "maintenance"}
+    maintenance_cmd = next(cmd for name, _, cmd in mid if name == "maintenance")
+    assert "--status-file" in maintenance_cmd
 
     (tmp_path / "config" / "platform.yaml").write_text("x: 1", encoding="utf-8")
     plat = mod.worker_commands("platform", tmp_path, py)
@@ -62,6 +67,158 @@ def test_worker_commands_empty_until_configured(tmp_path):
     assert "--config" not in apply_cmd
     assert "--templates" in apply_cmd
     assert "--landing" in apply_cmd
+
+
+def test_supervisor_discovers_middle_config_created_after_startup(
+    tmp_path, monkeypatch,
+):
+    """首次启动时尚无 connect.yaml，浏览器配置落盘后必须自动启动 connector。"""
+    mod = _load_launcher()
+    mod._MANAGED.clear()
+    py = tmp_path / "runtime" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_bytes(b"")
+    spawned: list[str] = []
+
+    def fake_spawn_managed(name, cmd, **kwargs):
+        spawned.append(name)
+        proc = _FakeProc(alive=True)
+        mod._MANAGED.append({
+            "name": name, "cmd": cmd, "home": tmp_path,
+            "env": kwargs["env"], "log_name": kwargs["log_name"],
+            "listen": kwargs.get("listen"), "proc": proc,
+            "restarts": 0, "window_start": 0.0, "failed": False,
+        })
+        return proc
+
+    monkeypatch.setattr(mod, "spawn_managed", fake_spawn_managed)
+    assert mod.ensure_configured_workers("middle", tmp_path, py, {}) == []
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "connect.yaml").write_text("x: 1", encoding="utf-8")
+    assert mod.ensure_configured_workers("middle", tmp_path, py, {}) == [
+        "connector", "maintenance"]
+    assert spawned == ["connector", "maintenance"]
+    # 后续巡检不得重复拉起。
+    assert mod.ensure_configured_workers("middle", tmp_path, py, {}) == []
+    mod._MANAGED.clear()
+
+
+def test_restart_flag_restarts_worker_with_fresh_secrets(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    mod._MANAGED.clear()
+    py = tmp_path / "runtime" / "python.exe"
+    py.parent.mkdir(parents=True)
+    py.write_bytes(b"")
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "connect.yaml").write_text("x: 1", encoding="utf-8")
+    (tmp_path / "config" / "secrets.env").write_text(
+        "D2A_INGEST_TOKEN=fresh\n", encoding="utf-8")
+    old = _FakeProc(alive=True)
+    mod._MANAGED.append({
+        "name": "connector", "cmd": ["old"], "home": tmp_path, "env": {},
+        "log_name": "d2a-connector", "listen": None, "proc": old,
+        "restarts": 0, "window_start": 0.0, "failed": False,
+    })
+    killed: list[object] = []
+    captured_env: list[dict[str, str]] = []
+    monkeypatch.setattr(mod, "_kill_process_tree", lambda proc: killed.append(proc))
+
+    def fake_spawn_managed(name, cmd, **kwargs):
+        captured_env.append(kwargs["env"])
+        proc = _FakeProc(alive=True)
+        mod._MANAGED.append({
+            "name": name, "cmd": cmd, "home": tmp_path,
+            "env": kwargs["env"], "log_name": kwargs["log_name"],
+            "listen": kwargs.get("listen"), "proc": proc,
+            "restarts": 0, "window_start": 0.0, "failed": False,
+        })
+        return proc
+
+    monkeypatch.setattr(mod, "spawn_managed", fake_spawn_managed)
+    flag = tmp_path / "data" / "restart-workers.flag"
+    flag.parent.mkdir()
+    flag.touch()
+    assert mod.restart_configured_workers("middle", tmp_path, py, {}) == [
+        "connector", "maintenance"]
+    assert killed == [old]
+    assert not flag.exists()
+    assert captured_env[0]["D2A_INGEST_TOKEN"] == "fresh"
+    mod._MANAGED.clear()
+
+
+def test_restart_flag_unlink_failure_keeps_workers_running(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    mod._MANAGED.clear()
+    old = _FakeProc(alive=True)
+    mod._MANAGED.append({
+        "name": "connector", "cmd": ["old"], "home": tmp_path, "env": {},
+        "log_name": "d2a-connector", "listen": None, "proc": old,
+        "restarts": 0, "window_start": 0.0, "failed": False,
+    })
+    flag = tmp_path / "data" / "restart-workers.flag"
+    flag.parent.mkdir(parents=True)
+    flag.touch()
+    killed: list[object] = []
+    real_unlink = Path.unlink
+
+    def fail_flag_unlink(path, *args, **kwargs):
+        if path == flag:
+            raise PermissionError("read only")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_flag_unlink)
+    monkeypatch.setattr(mod, "_kill_process_tree", lambda proc: killed.append(proc))
+
+    assert mod.restart_configured_workers(
+        "middle", tmp_path, Path(sys.executable), {}) == []
+    assert killed == []
+    assert mod._MANAGED[0]["proc"] is old
+    mod._MANAGED.clear()
+
+
+def test_adopt_recorded_processes_avoids_duplicate_workers(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    mod._MANAGED.clear()
+    mod._CHILDREN.clear()
+    run_dir = tmp_path / "data" / "run"
+    run_dir.mkdir(parents=True)
+    (run_dir / "process-status.json").write_text(json.dumps({
+        "updated_at_epoch": time.time(),
+        "launcher_pid": 999,
+        "processes": [
+            {"name": "connector", "pid": 101, "alive": True, "restarts": 2},
+            {"name": "maintenance", "pid": 102, "alive": True, "restarts": 0},
+        ],
+    }), encoding="utf-8")
+    monkeypatch.setattr(mod, "_pid_is_alive", lambda pid: pid in {101, 102})
+    specs = [
+        ("connector", None, ["python", "connector"], "d2a-connector"),
+        ("maintenance", None, ["python", "maintenance"], "d2a-maintenance"),
+    ]
+
+    assert mod.adopt_recorded_processes(
+        tmp_path, specs, env={}) == ["connector", "maintenance"]
+    assert {item["name"] for item in mod._MANAGED} == {
+        "connector", "maintenance"}
+    assert mod.health_summary()[:2] == (2, 2)
+    mod._MANAGED.clear()
+    mod._CHILDREN.clear()
+
+
+def test_windows_mutex_creation_failure_is_fail_closed(monkeypatch):
+    mod = _load_launcher()
+
+    class Kernel32:
+        @staticmethod
+        def CreateMutexW(*args):
+            return 0
+
+    import ctypes
+    monkeypatch.setattr(mod.sys, "platform", "win32")
+    monkeypatch.setattr(
+        ctypes, "windll", SimpleNamespace(kernel32=Kernel32()), raising=False)
+
+    assert mod.acquire_single_instance("Global\\data2agent-test") is False
 
 
 def test_landing_db_path_platform_only(tmp_path):

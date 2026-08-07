@@ -6,8 +6,16 @@ import secrets
 import threading
 import weakref
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
-from mcp.server.fastmcp import Context, FastMCP
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import Context, FastMCP
+else:
+    try:
+        from mcp.server.fastmcp import Context, FastMCP
+    except ModuleNotFoundError:
+        Context = Any
+        FastMCP = None
 
 from .core import QueryService
 from ...shared.store.evidence import EvidenceContext
@@ -51,6 +59,9 @@ def create_server(db: str | Path, templates: str | Path = "templates",
                   rate_per_minute: int = 0, audit_sink=None,
                   transport: str = "stdio",
                   principal: str | None = None) -> FastMCP:
+    if FastMCP is None:
+        raise RuntimeError(
+            "未安装 MCP 运行时；请安装 data2agent[mcp] 后再启动 MCP 服务")
     from .http import RateLimiter
 
     svc = QueryService(db, templates, source, max_tier=max_tier, audit_sink=audit_sink)

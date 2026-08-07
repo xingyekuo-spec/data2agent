@@ -274,3 +274,20 @@ def test_cli_sync_one_shot_respects_start_date(pack, source_db, tmp_path, monkey
     con.close()
     assert n == want, "CLI 一次性 sync 首轮应只抽 start_date 之后的行"
     assert min_wm >= start_day
+
+
+def test_nullable_watermark_fails_before_silently_skipping_rows(tmp_path):
+    src = tmp_path / "nullable.sqlite"
+    con = sqlite3.connect(src)
+    con.execute("CREATE TABLE T (ID INTEGER PRIMARY KEY, WM TEXT, V TEXT)")
+    con.executemany(
+        "INSERT INTO T VALUES (?, ?, ?)",
+        [(1, "2026-01-01 00:00:00", "ok"), (2, None, "would-be-lost")])
+    con.commit()
+    con.close()
+    landing = LandingStore(tmp_path / "landing.sqlite")
+    with pytest.raises(ValueError, match="水位列.*NULL"):
+        incremental_sync(
+            SqliteReadOnlyAdapter(str(src), {"T"}), landing, "demo",
+            watermarks={"T": "WM"})
+    assert not landing.raw_table_exists("demo", "T")

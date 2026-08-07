@@ -50,6 +50,39 @@
 <script>
 function renderStatus(data) {
   var html = '';
+  var ps = data.process_status || {};
+  var processes = ps.processes || [];
+  var alive = processes.filter(function (p) { return p.alive && !p.failed; }).length;
+  html += '<div class="card"><div class="src-head"><h2>后台进程</h2>';
+  if (!ps.available) {
+    html += '<span class="badge badge-warn">状态文件不可用</span>';
+  } else if (ps.stale) {
+    html += '<span class="badge badge-warn">监管状态已过期</span>';
+  } else if (!ps.connector_running) {
+    html += '<span class="badge badge-warn">抽取进程未运行</span>';
+  } else {
+    html += '<span class="badge badge-ok">监管正常 ' + alive + '/' + processes.length + '</span>';
+  }
+  html += '</div>';
+  if (processes.length) {
+    html += '<p class="meta" style="margin:8px 0 0">' + processes.map(function (p) {
+      return esc(p.name) + ':' + (p.alive && !p.failed ? '运行中' : '异常') +
+        (p.restarts ? '(已重启 ' + esc(p.restarts) + ' 次)' : '');
+    }).join(' · ') + '</p>';
+  } else {
+    html += '<p class="meta" style="margin:8px 0 0">没有可用的 launcher 进程记录，请检查 d2a-launcher.log。</p>';
+  }
+  var mt = data.maintenance || {};
+  if (mt.available) {
+    html += '<p class="meta" style="margin:8px 0 0">维护任务：' +
+      (mt.status === 'ok' ? '最近执行成功' : '最近执行失败') +
+      (mt.finished_at ? ' · ' + esc(mt.finished_at) : '') +
+      (mt.next_run_at ? ' · 下次 ' + esc(mt.next_run_at) : '') +
+      (mt.error ? ' · ' + esc(mt.error) : '') + '</p>';
+  } else {
+    html += '<p class="meta" style="margin:8px 0 0">维护任务尚无执行记录。</p>';
+  }
+  html += '</div>';
   (data.sources || []).forEach(function (src) {
     var inWin = src.in_window;
     var configured = !!src.tables_configured;

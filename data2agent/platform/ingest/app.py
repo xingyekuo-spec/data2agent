@@ -26,6 +26,7 @@ from ...protocol.ingest import (
     TableBeginBody,
     TableCompleteBody,
     batch_payload_digest,
+    decode_transport_rows,
     health_protocol_fields,
 )
 
@@ -99,6 +100,14 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
                 403, f"数据源 {source} 未在平台登记;签发制下请先在数据源管理中登记")
         # 引导期:空登记簿且无全局 Token,保持内网开放
 
+    def open_landing():
+        """每个请求独占连接，并在所有返回/异常路径统一释放。"""
+        db = LandingStore.open_existing(landing_path)
+        try:
+            yield db
+        finally:
+            db.con.close()
+
     app = FastAPI(title="data2agent ingest")
 
     @app.get("/ingest/health")
@@ -110,13 +119,18 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
         }
 
     @app.post("/ingest/table-begin", dependencies=[Depends(auth)])
-    def ingest_table_begin(body: TableBeginBody) -> dict:
+    def ingest_table_begin(
+        body: TableBeginBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
         info = _info_from_body(
             body.table, body.columns, body.pk, body.schema_name)
-        landing = LandingStore.open_existing(landing_path)
         if body.mode == "incremental":
             try:
-                landing.ensure_raw_table(body.source, info)
+                if body.generation_id is not None:
+                    landing.begin_incremental_ingest_table(
+                        body.source, body.generation_id, info)
+                else:
+                    landing.ensure_raw_table(body.source, info)
             except ValueError as e:
                 raise HTTPException(409, str(e)) from e
             return {
@@ -124,7 +138,12 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
                 "snapshot_id": None,
             }
         assert body.snapshot_id is not None
-        result = landing.begin_snapshot(body.source, info, body.snapshot_id)
+        try:
+            result = landing.begin_snapshot(
+                body.source, info, body.snapshot_id,
+                generation_id=body.generation_id)
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
         return {
             "begun": True, "table": body.table, "mode": body.mode,
             "snapshot_id": result["snapshot_id"],
@@ -133,8 +152,9 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
         }
 
     @app.post("/ingest/run-begin", dependencies=[Depends(auth)])
-    def ingest_run_begin(body: RunBeginBody) -> dict:
-        landing = LandingStore.open_existing(landing_path)
+    def ingest_run_begin(
+        body: RunBeginBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
         try:
             return landing.begin_ingest_generation(
                 body.source, body.generation_id, body.tables)
@@ -142,8 +162,9 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
             raise HTTPException(409, str(e)) from e
 
     @app.post("/ingest/run-complete", dependencies=[Depends(auth)])
-    def ingest_run_complete(body: RunCompleteBody) -> dict:
-        landing = LandingStore.open_existing(landing_path)
+    def ingest_run_complete(
+        body: RunCompleteBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
         try:
             result = landing.complete_ingest_generation(
                 body.source, body.generation_id)
@@ -152,26 +173,47 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
         return {"generation_id": body.generation_id, **result}
 
     @app.post("/ingest/run-abort", dependencies=[Depends(auth)])
-    def ingest_run_abort(body: RunCompleteBody) -> dict:
-        landing = LandingStore.open_existing(landing_path)
+    def ingest_run_abort(
+        body: RunCompleteBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
         landing.abort_ingest_generation(body.source, body.generation_id)
         return {"generation_id": body.generation_id, "aborted": True}
 
+    @app.post("/ingest/run-heartbeat", dependencies=[Depends(auth)])
+    def ingest_run_heartbeat(
+        body: RunCompleteBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
+        try:
+            landing.touch_ingest_generation(body.source, body.generation_id)
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
+        finally:
+            landing.con.close()
+        return {"generation_id": body.generation_id, "alive": True}
+
     @app.post("/ingest/batch", dependencies=[Depends(auth)])
-    def ingest_batch(body: BatchBody) -> dict:
+    def ingest_batch(
+        body: BatchBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
         info = _info_from_body(
             body.table, body.columns, body.pk, body.schema_name)
-        landing = LandingStore.open_existing(landing_path)
         payload_sha256 = batch_payload_digest(
             body.model_dump(by_alias=True, exclude_none=True))
+        try:
+            decoded_rows = decode_transport_rows(body.rows, body.columns)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
         if body.mode == "full_refresh":
             assert body.snapshot_id is not None
             try:
                 result = landing.write_snapshot_batch(
-                    body.source, info, body.snapshot_id, body.batch_id, body.rows,
-                    payload_sha256=payload_sha256)
+                    body.source, info, body.snapshot_id, body.batch_id, decoded_rows,
+                    payload_sha256=payload_sha256,
+                    generation_id=body.generation_id)
             except ValueError as e:
-                status = 409 if "摘要不同" in str(e) else 422
+                status = 409 if (
+                    "摘要不同" in str(e) or "generation" in str(e)
+                ) else 422
                 raise HTTPException(status, str(e)) from e
             return {
                 "ingested": result["ingested"], "table": body.table,
@@ -181,20 +223,21 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
             }
 
         try:
-            landing.ensure_raw_table(body.source, info)
             if body.ingest_protocol_version == "2":
                 # v2 旧中间机一张表的所有分页复用同一 batch_id，不能套用
                 # v3 的“同 ID 同摘要”规则；保留旧 upsert 语义直至现场升级。
+                landing.ensure_raw_table(body.source, info)
                 n_legacy = landing.upsert_rows(
-                    body.source, info, body.rows, body.batch_id)
+                    body.source, info, decoded_rows, body.batch_id)
                 result = {
                     "ingested": n_legacy, "duplicate": False,
                     "payload_sha256": payload_sha256,
                 }
             else:
                 result = landing.commit_ingest_batch(
-                    body.source, info, body.rows, body.batch_id,
-                    body.table_run_id or body.batch_id, payload_sha256)
+                    body.source, info, decoded_rows, body.batch_id,
+                    body.table_run_id or body.batch_id, payload_sha256,
+                    generation_id=body.generation_id)
         except ValueError as e:
             raise HTTPException(409, str(e)) from e
         n = int(result["ingested"])
@@ -253,18 +296,22 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
         }
 
     @app.post("/ingest/table-complete", dependencies=[Depends(auth)])
-    def ingest_table_complete(body: TableCompleteBody) -> dict:
+    def ingest_table_complete(
+        body: TableCompleteBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
         info = _info_from_body(
             body.table, body.columns, body.pk, body.schema_name)
-        landing = LandingStore.open_existing(landing_path)
-
+        # 必须在发布 snapshot / 接受增量完成证据之前校验 generation；
+        # 否则失败或被抢占的 generation 仍可修改当前 raw。
         if body.mode == "full_refresh":
             assert body.snapshot_id is not None
             try:
                 result = landing.complete_snapshot(
-                    body.source, info, body.snapshot_id, body.rows, body.batches)
+                    body.source, info, body.snapshot_id, body.rows, body.batches,
+                    generation_id=body.generation_id)
             except ValueError as e:
-                raise HTTPException(422, str(e)) from e
+                status = 409 if "generation" in str(e) else 422
+                raise HTTPException(status, str(e)) from e
             # 完成观测(幂等)
             existing = landing.con.execute(
                 "SELECT s.id, s.run_id, s.status AS step_status, r.status AS run_status "
@@ -287,13 +334,6 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
                 landing.update_step(step_id, status="ok",
                                     rows_in=body.rows, rows_out=body.rows)
                 landing.finish_run(run_id, tables=1, rows=body.rows, status="ok")
-            if body.generation_id is not None:
-                try:
-                    landing.record_ingest_table_commit(
-                        body.source, body.generation_id, body.table,
-                        body.rows, body.batches)
-                except ValueError as e:
-                    raise HTTPException(409, str(e)) from e
             return {
                 "completed": True, "table": body.table,
                 "completion_id": body.completion_id,
@@ -303,11 +343,12 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
         # incremental: 零行表也必须建立空 raw
         try:
-            landing.ensure_raw_table(body.source, info)
-            if body.ingest_protocol_version != "2":
-                landing.verify_ingest_table_run(
-                    body.source, body.table, body.completion_id,
-                    body.rows, body.batches)
+            if body.generation_id is not None:
+                landing.complete_incremental_ingest_table(
+                    body.source, body.generation_id, info,
+                    body.completion_id, body.rows, body.batches)
+            else:
+                landing.ensure_raw_table(body.source, info)
         except ValueError as e:
             raise HTTPException(409, str(e)) from e
         existing = landing.con.execute(
@@ -317,13 +358,6 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
             (body.source, body.table, body.completion_id),
         ).fetchone()
         if existing is not None and existing["step_status"] == "ok" and existing["run_status"] == "ok":
-            if body.generation_id is not None:
-                try:
-                    landing.record_ingest_table_commit(
-                        body.source, body.generation_id, body.table,
-                        body.rows, body.batches)
-                except ValueError as e:
-                    raise HTTPException(409, str(e)) from e
             return {"completed": True, "table": body.table,
                     "completion_id": body.completion_id, "duplicate": True}
 
@@ -347,21 +381,21 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
             except Exception:
                 pass
             raise HTTPException(500, f"表 {body.table} 完成记录失败:{e}") from e
-        if body.generation_id is not None:
-            try:
-                landing.record_ingest_table_commit(
-                    body.source, body.generation_id, body.table,
-                    body.rows, body.batches)
-            except ValueError as e:
-                raise HTTPException(409, str(e)) from e
         return {"completed": True, "table": body.table,
                 "completion_id": body.completion_id}
 
     @app.post("/ingest/table-abort", dependencies=[Depends(auth)])
-    def ingest_table_abort(body: TableAbortBody) -> dict:
+    def ingest_table_abort(
+        body: TableAbortBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
         """丢弃未发布 snapshot staging,保留当前 raw。幂等。"""
         assert body.snapshot_id is not None
-        landing = LandingStore.open_existing(landing_path)
+        if body.generation_id is not None:
+            try:
+                landing.touch_ingest_generation(
+                    body.source, body.generation_id, body.table)
+            except ValueError as e:
+                raise HTTPException(409, str(e)) from e
         landing.abort_snapshot(body.source, body.table, body.snapshot_id)
         return {
             "aborted": True,
@@ -371,10 +405,13 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
         }
 
     @app.post("/ingest/reconcile", dependencies=[Depends(auth)])
-    def ingest_reconcile_stats(body: ReconcileStatsBody) -> dict:
+    def ingest_reconcile_stats(
+        body: ReconcileStatsBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
         """E6b L1：仅返回平台 raw 的同口径统计。"""
-        landing = LandingStore.open_existing(landing_path)
         try:
+            landing.touch_ingest_generation(
+                body.source, body.generation_id, body.table)
             result = landing.reconcile_stats(
                 body.source, body.table, body.watermark_col,
                 body.start, body.end)
@@ -385,9 +422,10 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
         return {"table": body.table, **result}
 
     @app.post("/ingest/reconcile-run-complete", dependencies=[Depends(auth)])
-    def ingest_reconcile_run_complete(body: RunBeginBody) -> dict:
+    def ingest_reconcile_run_complete(
+        body: RunBeginBody, landing: LandingStore = Depends(open_landing),
+    ) -> dict:
         """E6b 整轮完成屏障：所有 raw 修复完成后一次性提交 generation。"""
-        landing = LandingStore.open_existing(landing_path)
         try:
             for table in body.tables:
                 landing.record_ingest_table_commit(
@@ -403,14 +441,14 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     @app.post("/ingest/reconcile-repair-begin", dependencies=[Depends(auth)])
     def ingest_reconcile_repair_begin(
         body: ReconcileRepairBeginBody,
+        landing: LandingStore = Depends(open_landing),
     ) -> dict:
         info = _info_from_body(
             body.table, body.columns, body.pk, body.schema_name)
-        landing = LandingStore.open_existing(landing_path)
         try:
             return landing.begin_reconcile_repair(
                 body.source, info, body.repair_id, body.watermark_col,
-                body.start, body.end)
+                body.start, body.end, generation_id=body.generation_id)
         except ValueError as e:
             raise HTTPException(409, str(e)) from e
         finally:
@@ -419,16 +457,21 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     @app.post("/ingest/reconcile-repair-batch", dependencies=[Depends(auth)])
     def ingest_reconcile_repair_batch(
         body: ReconcileRepairBatchBody,
+        landing: LandingStore = Depends(open_landing),
     ) -> dict:
         canonical = json.dumps(
             body.model_dump(), ensure_ascii=False, sort_keys=True,
             separators=(",", ":"), default=str).encode("utf-8")
         digest = "sha256:" + hashlib.sha256(canonical).hexdigest()
-        landing = LandingStore.open_existing(landing_path)
+        try:
+            decoded_rows = decode_transport_rows(body.rows)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
         try:
             result = landing.write_reconcile_repair_batch(
                 body.source, body.table, body.repair_id,
-                body.batch_id, body.rows, digest)
+                body.batch_id, decoded_rows, digest,
+                generation_id=body.generation_id)
         except ValueError as e:
             raise HTTPException(409, str(e)) from e
         finally:
@@ -441,12 +484,13 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     @app.post("/ingest/reconcile-repair-complete", dependencies=[Depends(auth)])
     def ingest_reconcile_repair_complete(
         body: ReconcileRepairCompleteBody,
+        landing: LandingStore = Depends(open_landing),
     ) -> dict:
-        landing = LandingStore.open_existing(landing_path)
         try:
             result = landing.complete_reconcile_repair(
                 body.source, body.table, body.repair_id,
-                body.rows, body.batches)
+                body.rows, body.batches,
+                generation_id=body.generation_id)
         except ValueError as e:
             raise HTTPException(409, str(e)) from e
         finally:
@@ -458,11 +502,15 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     @app.post("/ingest/reconcile-repair-abort", dependencies=[Depends(auth)])
     def ingest_reconcile_repair_abort(
         body: ReconcileRepairCompleteBody,
+        landing: LandingStore = Depends(open_landing),
     ) -> dict:
-        landing = LandingStore.open_existing(landing_path)
         try:
+            landing.touch_ingest_generation(
+                body.source, body.generation_id, body.table)
             landing.abort_reconcile_repair(
                 body.source, body.table, body.repair_id)
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
         finally:
             landing.con.close()
         return {

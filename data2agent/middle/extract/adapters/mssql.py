@@ -44,7 +44,10 @@ class MssqlReadOnlyAdapter(SourceAdapter):
         if "trustservercertificate=" not in conn_str.lower():
             conn_str = (
                 conn_str.rstrip(";") + ";TrustServerCertificate=no")
-        self.con = pyodbc.connect(conn_str, readonly=True, timeout=login_timeout)
+        # 普通增量查询用 autocommit，避免 pyodbc 默认事务跨 HTTP
+        # 推送长期持有 ERP 共享锁。每条 SELECT 仍是语句级一致读。
+        self.con = pyodbc.connect(
+            conn_str, readonly=True, timeout=login_timeout, autocommit=True)
         self.con.timeout = query_timeout  # 语句超时(秒)
 
     def _execute(self, sql: str, params: tuple = ()) -> list[dict]:
@@ -56,15 +59,35 @@ class MssqlReadOnlyAdapter(SourceAdapter):
     def _stream_execute(self, sql: str, params: tuple = ()):
         cur = self.con.cursor()
         try:
-            cur.execute(sql, params)
+            # full_refresh 要求整条 SELECT 是同一数据库快照。优先使用
+            # SNAPSHOT（不阻塞 ERP 写）；数据库未开启时退化到
+            # SERIALIZABLE。上层会先将游标快速落本机 spool 再推送，
+            # 因此退化锁不会被 HTTP 延迟拉长。
+            try:
+                cur.execute("SET TRANSACTION ISOLATION LEVEL SNAPSHOT")
+                cur.execute(sql, params)
+            except Exception as exc:
+                message = str(exc).lower()
+                if "snapshot isolation" not in message and "3951" not in message:
+                    raise
+                cur.close()
+                cur = self.con.cursor()
+                cur.execute("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+                cur.execute(sql, params)
             names = [d[0] for d in cur.description]
             while True:
                 batch = cur.fetchmany(self.batch_size)
                 if not batch:
-                    return
+                    break
                 yield [dict(zip(names, row)) for row in batch]
         finally:
             cur.close()
+            try:
+                reset = self.con.cursor()
+                reset.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                reset.close()
+            except Exception:
+                pass
 
     def table_info(self, name: str) -> TableInfo:
         self._check_table(name)
@@ -81,6 +104,22 @@ class MssqlReadOnlyAdapter(SourceAdapter):
             key_source="database_pk",
             schema=schema,
         )
+
+    def validate_watermark(self, table: TableInfo, column: str) -> None:
+        schema = table.schema or self.table_schemas.get(table.name, "dbo")
+        rows = self._audited_fetch(
+            "SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+            (schema, table.name, column), action="validate_watermark_type")
+        if not rows:
+            raise ValueError(f"{table.name}: 水位列 '{column}' 不存在")
+        sql_type = str(rows[0]["DATA_TYPE"]).lower()
+        allowed = {"date", "datetime", "datetime2", "smalldatetime", "datetimeoffset"}
+        if sql_type not in allowed:
+            raise ValueError(
+                f"{table.name}: 水位列 '{column}' 类型为 {sql_type}，"
+                f"只支持 {sorted(allowed)}；time/rowversion 不支持日历回看")
+        super().validate_watermark(table, column)
 
     def _page_sql(self, table: TableInfo, limit: int, offset: int) -> str:
         # ROW_NUMBER 分页:兼容 SQL Server 2008 R2(不支持 OFFSET/FETCH,2012+)

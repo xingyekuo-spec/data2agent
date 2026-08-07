@@ -49,6 +49,32 @@ class GenerationApplyLease:
         lease._thread.start()
         return lease
 
+    @classmethod
+    def claim_manual(
+        cls, store: LandingStore, source: str, *,
+        lease_seconds: float = 300.0,
+    ) -> "GenerationApplyLease | None":
+        """为控制台重试/手工构建领取互斥租约，不依赖新推送。"""
+        owner_id = f"manual-apply-{uuid.uuid4().hex}"
+        generation_id = store.claim_manual_generation_apply(
+            source, owner_id=owner_id, lease_seconds=lease_seconds)
+        if generation_id is None:
+            return None
+        lease = cls(
+            db_path=store.db_path,
+            source=source,
+            generation_id=generation_id,
+            owner_id=owner_id,
+            lease_seconds=max(30.0, float(lease_seconds)),
+        )
+        lease._thread = threading.Thread(
+            target=lease._heartbeat,
+            name=f"d2a-manual-generation-lease-{source}",
+            daemon=True,
+        )
+        lease._thread.start()
+        return lease
+
     def _heartbeat(self) -> None:
         interval = max(10.0, self.lease_seconds / 3)
         while not self._stop.wait(interval):

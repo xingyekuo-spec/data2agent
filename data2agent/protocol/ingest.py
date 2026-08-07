@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -32,6 +34,63 @@ LEGACY_HEALTH_INGEST_PROTOCOL_VERSION = "2"
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SOURCE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$")
 _PORTABLE_TYPES = {"int", "real", "text", "blob"}
+BINARY_ENCODING = "base64-v1"
+_BINARY_TAG = "$d2a_base64"
+
+
+def encode_transport_rows(
+    columns: list[tuple[str, str]] | list[list[str]], rows: list[dict],
+) -> list[dict]:
+    """将 blob 按显式标记的 base64 传输，不允许 JSON default=str 破坏原字节。"""
+    types = {name: portable for name, portable in columns}
+    out: list[dict] = []
+    for row in rows:
+        encoded: dict = {}
+        for name in types:
+            value = row.get(name)
+            if types[name] == "blob" and value is not None:
+                if not isinstance(value, (bytes, bytearray, memoryview)):
+                    raise ValueError(
+                        f"blob 列 '{name}' 必须是 bytes，got {type(value).__name__}")
+                encoded[name] = {
+                    _BINARY_TAG: base64.b64encode(bytes(value)).decode("ascii")}
+            else:
+                encoded[name] = value
+        out.append(encoded)
+    return out
+
+
+def decode_transport_rows(
+    rows: list[dict],
+    columns: list[tuple[str, str]] | list[list[str]] | None = None,
+) -> list[dict]:
+    """平台在摘要校验后还原带标记的二进制值。"""
+    types = ({name: portable for name, portable in columns}
+             if columns is not None else None)
+    out: list[dict] = []
+    for row in rows:
+        decoded: dict = {}
+        for name, value in row.items():
+            if isinstance(value, dict) and set(value) == {_BINARY_TAG}:
+                if types is not None and types.get(name) != "blob":
+                    raise ValueError(f"非 blob 列 '{name}' 不得使用二进制标记")
+                raw = value[_BINARY_TAG]
+                if not isinstance(raw, str):
+                    raise ValueError(f"blob 列 '{name}' base64 载荷必须为字符串")
+                try:
+                    decoded[name] = base64.b64decode(raw, validate=True)
+                except (ValueError, binascii.Error) as exc:
+                    raise ValueError(f"blob 列 '{name}' base64 载荷无效") from exc
+            else:
+                if (
+                    types is not None and types.get(name) == "blob"
+                    and value is not None
+                ):
+                    raise ValueError(
+                        f"blob 列 '{name}' 缺少 {BINARY_ENCODING} 编码标记")
+                decoded[name] = value
+        out.append(decoded)
+    return out
 
 
 def batch_payload_digest(payload: dict) -> str:
@@ -83,6 +142,8 @@ def health_protocol_fields() -> dict[str, object]:
         "active_ingest_protocol_version": INGEST_PROTOCOL_VERSION,
         "supported_ingest_protocol_versions": list(SUPPORTED_INGEST_PROTOCOL_VERSIONS),
         "reconcile_protocol_version": "1",
+        "binary_encoding": BINARY_ENCODING,
+        "generation_heartbeat": True,
     }
 
 
@@ -113,6 +174,11 @@ class _VersionedRequest(BaseModel):
     @model_validator(mode="after")
     def _protocol_and_mode(self):
         _require_protocol_version(self.ingest_protocol_version)
+        if (
+            self.ingest_protocol_version == INGEST_PROTOCOL_VERSION
+            and self.generation_id is None
+        ):
+            raise ValueError("ingest v3 写请求必须提供 generation_id")
         if self.mode == "full_refresh" and not self.snapshot_id:
             raise ValueError("full_refresh 必须提供 snapshot_id")
         if self.mode == "incremental" and not self.pk:
@@ -220,6 +286,7 @@ class ReconcileStatsBody(BaseModel):
     ingest_protocol_version: str
     source: str = Field(min_length=1, max_length=128)
     table: str = Field(min_length=1, max_length=128)
+    generation_id: str = Field(min_length=1, max_length=128)
     watermark_col: str | None = None
     start: str | None = None
     end: str | None = None
@@ -268,6 +335,7 @@ class ReconcileRepairBatchBody(BaseModel):
     ingest_protocol_version: str
     source: str = Field(min_length=1, max_length=128)
     table: str = Field(min_length=1, max_length=128)
+    generation_id: str = Field(min_length=1, max_length=128)
     repair_id: str = Field(min_length=1, max_length=64)
     batch_id: str = Field(min_length=1, max_length=128)
     rows: list[dict] = Field(max_length=50_000)
@@ -288,6 +356,7 @@ class ReconcileRepairCompleteBody(BaseModel):
     ingest_protocol_version: str
     source: str = Field(min_length=1, max_length=128)
     table: str = Field(min_length=1, max_length=128)
+    generation_id: str = Field(min_length=1, max_length=128)
     repair_id: str = Field(min_length=1, max_length=64)
     rows: int = Field(ge=0)
     batches: int = Field(ge=0)

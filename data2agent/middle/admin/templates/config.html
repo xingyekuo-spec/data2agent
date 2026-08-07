@@ -346,6 +346,15 @@
           field('回看窗口',
             '增量抽取时往回多看多久，避免漏数。例：<code>3d</code>=3 天。',
             '<input type="text" data-key="lookback" value="' + esc(src.lookback || '') + '">') +
+          field('每日 L1 对账时间（可空）',
+            '每天仅比较源端与平台统计，格式 <code>HH:MM</code>；留空=不自动执行。',
+            '<input type="text" data-key="reconcile_at" value="' + esc(src.reconcile_at || '') + '" placeholder="例如 05:30">') +
+          field('L2 深度修复时间（可空）',
+            '按运行键重抽并识别物理删除，格式 <code>HH:MM</code>；建议低峰执行。',
+            '<input type="text" data-key="reconcile_deep_at" value="' + esc(src.reconcile_deep_at || '') + '" placeholder="例如 02:10">') +
+          field('L2 执行星期（可空）',
+            '填 <code>mon</code>…<code>sun</code>；留空表示每天。仅配置了 L2 时间时生效。',
+            '<input type="text" data-key="reconcile_deep_day_of_week" value="' + esc(src.reconcile_deep_day_of_week || '') + '" placeholder="例如 sun">') +
         '</div>' +
       '</div>' +
 
@@ -451,10 +460,12 @@
         document.getElementById('link-token').value = '';
         box.textContent = '对接信息已保存' +
           (j.token_updated ? '(含新推送口令)' : '') +
-          ',重启抽取进程后生效。';
+          (j.restart_automatic ? '，抽取进程将自动重启。' : '，请重启抽取进程后生效。');
         var b = document.getElementById('restart-banner');
         b.style.display = 'block';
-        b.textContent = '对接信息已保存,请重启抽取进程后生效。';
+        b.textContent = j.restart_automatic
+          ? '对接信息已保存，便携启动器将在数秒内自动重启抽取进程。'
+          : '对接信息已保存，请重启抽取进程后生效。';
       });
   });
 
@@ -515,7 +526,9 @@
           src.rate[key.slice(5)] = val === '' ? null : Number(val);
         } else if (key === 'sink.url') {
           src.sink.url = val;
-        } else if (key === 'sync_start_at' || key === 'start_date') {
+        } else if (key === 'sync_start_at' || key === 'start_date' ||
+                   key === 'reconcile_at' || key === 'reconcile_deep_at' ||
+                   key === 'reconcile_deep_day_of_week') {
           src[key] = val === '' ? null : val.trim();
         } else {
           src[key] = val;
@@ -545,7 +558,9 @@
         currentRevision = j.revision || currentRevision;
         var b = document.getElementById('restart-banner');
         b.style.display = 'block';
-        b.innerHTML = '配置已保存。请重启抽取进程后生效（便携包可再双击 <code>data2agent.exe</code>；或重启 Windows 服务）。' +
+        b.innerHTML = (j.restart_automatic
+          ? '配置已保存，便携启动器将在数秒内自动重启抽取进程。'
+          : '配置已保存，请重启抽取进程后生效。') +
           ' 若尚未选表，请到 <a href="/metadata?from=config">元数据</a> 扫描并加入抽取计划。';
       });
   });

@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -67,10 +68,48 @@ def build_sink(scfg: SourceConfig, landing: LandingStore, *,
 
         from .sink import HttpPushSink
         token = os.environ.get(scfg.sink.token_env or "", "") or None
-        return HttpPushSink(scfg.sink.url, token,
-                            landing=landing, source=source, run_id=run_id)
+        return HttpPushSink(
+            scfg.sink.url, token,
+            timeout=scfg.sink.timeout_seconds,
+            retries=scfg.sink.retries,
+            ca_bundle=scfg.sink.ca_bundle,
+            landing=landing, source=source, run_id=run_id)
     from .sink import LocalSink
     return LocalSink(landing)
+
+
+def validate_configured_schemas(
+    source: str, scfg: SourceConfig, landing: LandingStore, *,
+    only_tables: set[str] | None = None,
+) -> None:
+    """把元数据页保存的 schema_fingerprint 变成运行时屏障。"""
+    pending = [
+        (table, spec)
+        for table, spec in (scfg.tables or {}).items()
+        if spec.schema_fingerprint
+        and (only_tables is None or table in only_tables)
+        and not landing.schema_recently_validated(
+            source, table, spec.schema_fingerprint)
+    ]
+    if not pending:
+        return
+    from .metadata import build_discoverer
+
+    discoverer = build_discoverer(scfg)
+    try:
+        default_schema = discoverer.default_schema()
+        for table, spec in pending:
+            actual = discoverer.get_table(
+                spec.schema or default_schema, table).schema_fingerprint
+            if actual != spec.schema_fingerprint:
+                raise RuntimeError(
+                    f"{table}: ERP 表结构已变更"
+                    f"(configured={spec.schema_fingerprint}, actual={actual})；"
+                    "已在抽取前停止，请在元数据页重新扫描、确认并保存")
+            landing.record_schema_validation(
+                source, table, spec.schema_fingerprint)
+    finally:
+        discoverer.close()
 
 
 def check_sync_preflight(name: str, scfg: SourceConfig) -> SyncCycleResult:
@@ -132,6 +171,9 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
         try:
             adapter = build_adapter(name, scfg, landing)
             sink = build_sink(scfg, landing, source=name, run_id=run_id)
+            validate_configured_schemas(
+                name, scfg, landing,
+                only_tables=set(tables) if tables else None)
         except Exception as exc:
             landing.finish_running_run(run_id, status="failed",
                                        detail=_brief_error(exc))
@@ -190,13 +232,21 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
 
 
 def run_reconcile_cycle(name: str, scfg: SourceConfig,
-                        landing_path: str, deep: bool = False) -> bool:
+                        landing_path: str, deep: bool = False,
+                        wait_for_lock_seconds: float = 0.0) -> bool:
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip reconcile source=%s reason=窗口外", name)
         return False
     from .sync_lock import SourceSyncLock
 
+    deadline = time.monotonic() + max(0.0, wait_for_lock_seconds)
     lock = SourceSyncLock.try_acquire(landing_path, name)
+    while lock is None and time.monotonic() < deadline:
+        time.sleep(min(30.0, max(0.1, deadline - time.monotonic())))
+        if not in_window(datetime.now().time(), scfg.windows):
+            log.info("skip reconcile source=%s reason=window_closed_while_waiting", name)
+            return False
+        lock = SourceSyncLock.try_acquire(landing_path, name)
     if lock is None:
         log.info("skip reconcile source=%s reason=sync_or_reconcile_running", name)
         return False
@@ -207,11 +257,13 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig,
             sink = build_sink(scfg, landing, source=name)
             report = reconcile_remote(
                 adapter, landing, sink, name, scfg.table_watermarks(),
-                deep=deep, key_columns=scfg.table_key_columns())
+                deep=deep, key_columns=scfg.table_key_columns(),
+                start_dates=scfg.table_start_dates())
         else:
             report = reconcile(
                 adapter, landing, name, scfg.table_watermarks(), deep=deep,
-                key_columns=scfg.table_key_columns())
+                key_columns=scfg.table_key_columns(),
+                start_dates=scfg.table_start_dates())
         log.info(
             "reconcile source=%s run=%s deep=%s segments=%s "
             "mismatched=%s soft_deleted=%s",
@@ -250,12 +302,15 @@ def run_sync_cycle_from_config(config_path: str, source: str) -> SyncCycleResult
 
 def run_reconcile_cycle_from_config(
     config_path: str, source: str, deep: bool = False,
+    wait_for_lock_seconds: float = 0.0,
 ) -> bool:
     loaded = _reload_source(config_path, source)
     if loaded is None:
         return False
     cfg, scfg = loaded
-    return run_reconcile_cycle(source, scfg, cfg.landing, deep=deep)
+    return run_reconcile_cycle(
+        source, scfg, cfg.landing, deep=deep,
+        wait_for_lock_seconds=wait_for_lock_seconds)
 
 
 def serve(
@@ -264,6 +319,31 @@ def serve(
 ) -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
+
+    # connector 被断电/强制结束时 SQLite 会留下 running。只有成功获得
+    # source 锁的新实例才能回收，避免误伤另一个正常 connector。
+    from .sync_lock import SourceSyncLock
+    recovery_store = LandingStore(cfg.landing)
+    try:
+        for source in cfg.sources:
+            recovery_lock = SourceSyncLock.try_acquire(cfg.landing, source)
+            if recovery_lock is None:
+                log.warning(
+                    "skip abandoned-run recovery source=%s reason=lock_held",
+                    source,
+                )
+                continue
+            try:
+                recovered = recovery_store.recover_abandoned_runs(source)
+                if recovered:
+                    log.warning(
+                        "recovered abandoned runs source=%s count=%s",
+                        source, recovered,
+                    )
+            finally:
+                recovery_lock.release()
+    finally:
+        recovery_store.con.close()
 
     if once:
         for name, scfg in cfg.sources.items():
@@ -277,7 +357,13 @@ def serve(
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
 
-    scheduler = BlockingScheduler()
+    # Windows 主机休眠/短暂高负载后仍允许一小时内补跑；
+    # APScheduler 默认 1 秒 misfire 会让每日对账无声丢失。
+    scheduler = BlockingScheduler(job_defaults={
+        "misfire_grace_time": 3600,
+        "coalesce": True,
+        "max_instances": 1,
+    })
     for name, scfg in cfg.sources.items():
         next_run_time = scfg.sync_start_datetime_after(datetime.now())
         sync_func = run_sync_cycle
@@ -298,12 +384,15 @@ def serve(
                 continue
             hh, mm = at.split(":")
             reconcile_func = run_reconcile_cycle
-            reconcile_args = (name, scfg, cfg.landing, deep)
+            reconcile_args = (name, scfg, cfg.landing, deep, 3600.0)
             if config_path is not None:
                 reconcile_func = run_reconcile_cycle_from_config
-                reconcile_args = (config_path, name, deep)
+                reconcile_args = (config_path, name, deep, 3600.0)
+            cron_kwargs = {"hour": int(hh), "minute": int(mm)}
+            if deep and scfg.reconcile_deep_day_of_week:
+                cron_kwargs["day_of_week"] = scfg.reconcile_deep_day_of_week
             scheduler.add_job(
-                reconcile_func, CronTrigger(hour=int(hh), minute=int(mm)),
+                reconcile_func, CronTrigger(**cron_kwargs),
                 args=reconcile_args,
                 id=f"reconcile{'-deep' if deep else ''}:{name}",
                 max_instances=1, coalesce=True)

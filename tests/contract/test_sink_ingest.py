@@ -18,7 +18,7 @@ from data2agent.middle.extract.sink import HttpPushSink, LocalSink  # noqa: E402
 from tests.helpers import whitelist_from_pack  # noqa: E402
 from data2agent.platform.console.validation import build_validation_report  # noqa: E402
 from data2agent.platform.ingest.app import create_app  # noqa: E402
-from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION  # noqa: E402
+from data2agent.protocol.ingest import BINARY_ENCODING, INGEST_PROTOCOL_VERSION  # noqa: E402
 from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
@@ -30,6 +30,17 @@ TABLES = ["CURRENCY", "CUSTOMER", "ITEM", "ITEM_WAREHOUSE", "QUOTATION", "SALES_
 def _v(body: dict) -> dict:
     """附加强制协议版本字段。"""
     return {"ingest_protocol_version": INGEST_PROTOCOL_VERSION, **body}
+
+
+def _open_generation(
+    client: TestClient, generation_id: str, tables: list[str], *,
+    headers: dict | None = None,
+) -> str:
+    response = client.post("/ingest/run-begin", json=_v({
+        "source": SOURCE, "generation_id": generation_id, "tables": tables,
+    }), headers=headers or {})
+    assert response.status_code == 200
+    return generation_id
 
 
 @pytest.fixture(scope="module")
@@ -101,6 +112,64 @@ def test_ingest_health_reports_protocol_version(tmp_path):
     assert body["active_ingest_protocol_version"] == "3"
     assert body["supported_ingest_protocol_versions"] == ["2", "3"]
     assert body["reconcile_protocol_version"] == "1"
+    assert body["binary_encoding"] == BINARY_ENCODING
+
+
+def test_active_generation_rejects_duplicate_connector_and_stale_is_recoverable(
+    tmp_path,
+):
+    landing = LandingStore(tmp_path / "platform.sqlite")
+    landing.begin_ingest_generation(SOURCE, "g-active", ["T"])
+    with pytest.raises(ValueError, match="仍在活动"):
+        landing.begin_ingest_generation(SOURCE, "g-duplicate", ["T"])
+    landing.con.execute(
+        "UPDATE d2a_ingest_generation SET last_activity_at = '2000-01-01T00:00:00' "
+        "WHERE source = ? AND generation_id = 'g-active'", (SOURCE,))
+    landing.con.commit()
+    result = landing.begin_ingest_generation(SOURCE, "g-recovered", ["T"])
+    assert result["status"] == "open"
+    assert landing.con.execute(
+        "SELECT status FROM d2a_ingest_generation "
+        "WHERE source = ? AND generation_id = 'g-active'", (SOURCE,)
+    ).fetchone()["status"] == "failed"
+
+
+def test_closed_generation_cannot_modify_raw(tmp_path):
+    landing = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(landing.db_path))
+    assert client.post("/ingest/run-begin", json=_v({
+        "source": SOURCE, "generation_id": "g-closed", "tables": ["T"],
+    })).status_code == 200
+    assert client.post("/ingest/run-abort", json=_v({
+        "source": SOURCE, "generation_id": "g-closed",
+    })).status_code == 200
+    response = client.post("/ingest/batch", json=_v({
+        "source": SOURCE, "generation_id": "g-closed", "table": "T",
+        "mode": "incremental", "columns": [["ID", "int"]], "pk": ["ID"],
+        "batch_id": "b-closed", "table_run_id": "r-closed", "rows": [{"ID": 1}],
+    }))
+    assert response.status_code == 409
+    assert not landing.raw_table_exists(SOURCE, "T")
+
+
+def test_blob_round_trips_over_http_without_string_corruption(tmp_path):
+    platform = LandingStore(tmp_path / "platform.sqlite")
+    client = TestClient(create_app(platform.db_path))
+    sink = _push_sink(client)
+    info = TableInfo(
+        "BINARY_T", [("ID", "int"), ("PAYLOAD", "blob")], ["ID"])
+    raw = b"\x00\xffbinary;not-text\x80"
+    sink.begin_sync(SOURCE, [info.name], 1)
+    sink.begin_table(SOURCE, info, mode="incremental")
+    assert sink.write(
+        SOURCE, info, [{"ID": 1, "PAYLOAD": raw}], "blob-batch",
+        table_run_id="blob-run") == 1
+    sink.complete_table(SOURCE, info, "blob-run", 1, 1)
+    sink.complete_sync(SOURCE)
+    stored = platform.con.execute(
+        f'SELECT PAYLOAD FROM "{raw_table_name(SOURCE, info.name)}" WHERE ID = 1'
+    ).fetchone()["PAYLOAD"]
+    assert stored == raw and isinstance(stored, bytes)
 
 
 def test_expired_generation_apply_lease_is_recoverable(tmp_path):
@@ -125,10 +194,36 @@ def test_expired_generation_apply_lease_is_recoverable(tmp_path):
         SOURCE, "g-expire", success=True, owner_id="replacement")
 
 
+def test_manual_generation_lease_serializes_retry_without_new_push(tmp_path):
+    landing = LandingStore(tmp_path / "platform.sqlite")
+    landing.begin_ingest_generation(SOURCE, "g-applied", [])
+    landing.complete_ingest_generation(SOURCE, "g-applied")
+    assert landing.claim_committed_generation(
+        SOURCE, owner_id="worker") == "g-applied"
+    landing.finish_generation_apply(
+        SOURCE, "g-applied", success=True, owner_id="worker")
+
+    manual = landing.claim_manual_generation_apply(
+        SOURCE, owner_id="console-retry")
+    assert manual and manual.startswith("manual-")
+    with pytest.raises(ValueError, match="仍处于 applying"):
+        landing.begin_ingest_generation(SOURCE, "g-overlap", [])
+    landing.finish_generation_apply(
+        SOURCE, manual, success=False, owner_id="console-retry")
+    assert landing.con.execute(
+        "SELECT status FROM d2a_ingest_generation "
+        "WHERE source = ? AND generation_id = ?", (SOURCE, manual),
+    ).fetchone()["status"] == "failed"
+    assert landing.claim_manual_generation_apply(
+        SOURCE, owner_id="console-retry-2") is not None
+
+
 def test_ingest_batch_lands_rows(tmp_path):
     landing = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(landing.db_path))
-    body = _v({"source": SOURCE, "table": "CURRENCY", "mode": "incremental",
+    generation = _open_generation(client, "g-batch-lands", ["CURRENCY"])
+    body = _v({"source": SOURCE, "generation_id": generation,
+               "table": "CURRENCY", "mode": "incremental",
                "columns": [["Id", "int"], ["CURRENCY_CODE", "text"], ["_x", "text"]],
                "pk": ["Id"], "batch_id": "b1",
                "rows": [{"Id": 1, "CURRENCY_CODE": "USD", "_x": None},
@@ -144,8 +239,10 @@ def test_ingest_batch_lands_rows(tmp_path):
 def test_ingest_rejects_same_batch_id_with_different_payload(tmp_path):
     landing = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(landing.db_path))
+    generation = _open_generation(client, "g-batch-conflict", ["T"])
     base = _v({
-        "source": SOURCE, "table": "T", "mode": "incremental",
+        "source": SOURCE, "generation_id": generation,
+        "table": "T", "mode": "incremental",
         "columns": [["ID", "int"], ["V", "text"]], "pk": ["ID"],
         "batch_id": "same-id", "table_run_id": "run-1",
     })
@@ -201,15 +298,37 @@ def test_ingest_rejects_missing_or_wrong_protocol_version(tmp_path):
     assert client.post("/ingest/batch", json=legacy).status_code == 422
     wrong = {**legacy, "ingest_protocol_version": "1"}
     assert client.post("/ingest/batch", json=wrong).status_code == 422
-    ok = _v(legacy)
+    generation = _open_generation(client, "g-protocol", ["CURRENCY"])
+    ok = _v({**legacy, "generation_id": generation})
     assert client.post("/ingest/batch", json=ok).status_code == 200
+
+
+def test_v3_write_and_reconcile_requests_require_generation_id(tmp_path):
+    """v3 的数据写入与 E6b 请求都不能退化为无 generation 的旁路。"""
+    client = TestClient(create_app(LandingStore(tmp_path / "p.sqlite").db_path))
+    batch = _v({
+        "source": SOURCE, "table": "T", "mode": "incremental",
+        "columns": [["ID", "int"]], "pk": ["ID"],
+        "batch_id": "b-no-generation", "rows": [{"ID": 1}],
+    })
+    reconcile_stats = _v({"source": SOURCE, "table": "T"})
+
+    assert client.post("/ingest/batch", json=batch).status_code == 422
+    assert client.post("/ingest/reconcile", json=reconcile_stats).status_code == 422
+
+    # v2 兼容窗口仍保留旧写法，避免升级平台时直接切断旧中间机。
+    assert client.post("/ingest/batch", json={
+        **batch, "ingest_protocol_version": "2",
+    }).status_code == 200
 
 
 def test_ingest_batch_retry_keeps_original_completion_time(tmp_path):
     """重放历史数据批次不能把它伪装成新的表级证据。"""
     landing = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(landing.db_path))
-    body = _v({"source": SOURCE, "table": "CURRENCY", "mode": "incremental",
+    generation = _open_generation(client, "g-retry-time", ["CURRENCY"])
+    body = _v({"source": SOURCE, "generation_id": generation,
+               "table": "CURRENCY", "mode": "incremental",
                "columns": [["Id", "int"]],
                "pk": ["Id"], "batch_id": "retry-time", "rows": [{"Id": 1}]})
     assert client.post("/ingest/batch", json=body).status_code == 200
@@ -231,7 +350,9 @@ def test_table_complete_creates_zero_row_raw_table(tmp_path):
     """零行表也必须有 raw 表和表级完成事件。"""
     landing = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(landing.db_path))
-    body = _v({"source": SOURCE, "table": "EMPTY_DIM", "mode": "incremental",
+    generation = _open_generation(client, "g-empty", ["EMPTY_DIM"])
+    body = _v({"source": SOURCE, "generation_id": generation,
+               "table": "EMPTY_DIM", "mode": "incremental",
                "columns": [["Id", "int"]],
                "pk": ["Id"], "completion_id": "empty-1", "rows": 0, "batches": 0})
     result = client.post("/ingest/table-complete", json=body)
@@ -291,12 +412,15 @@ def test_ingest_rejects_missing_pk(tmp_path):
 def test_ingest_token_auth(tmp_path):
     landing = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(landing.db_path, token="s3cret"))
-    body = _v({"source": SOURCE, "table": "CURRENCY", "mode": "incremental",
+    headers = {"Authorization": "Bearer s3cret"}
+    generation = _open_generation(
+        client, "g-auth", ["CURRENCY"], headers=headers)
+    body = _v({"source": SOURCE, "generation_id": generation,
+               "table": "CURRENCY", "mode": "incremental",
                "columns": [["Id", "int"]],
                "pk": ["Id"], "batch_id": "b1", "rows": [{"Id": 1}]})
     assert client.post("/ingest/batch", json=body).status_code == 401
-    ok = client.post("/ingest/batch", json=body,
-                     headers={"Authorization": "Bearer s3cret"})
+    ok = client.post("/ingest/batch", json=body, headers=headers)
     assert ok.status_code == 200
 
 
@@ -407,6 +531,7 @@ def test_http_abort_cleans_remote_staging_after_begin(tmp_path):
     client = TestClient(create_app(platform.db_path))
     info = TableInfo("CURRENCY", [("CODE", "text"), ("NAME", "text")], ["CODE"])
     sink = _push_sink(client)
+    sink.begin_sync(SOURCE, [info.name], 1)
     sink.begin_table(SOURCE, info, mode="full_refresh", snapshot_id="snap-begin")
     row = platform.con.execute(
         "SELECT status, staging_table FROM d2a_snapshot "
@@ -434,6 +559,7 @@ def test_http_push_log_counts_write_rows_once_and_records_abort(tmp_path):
         get_json=_testclient_get_json(client), landing=middle, source=SOURCE,
     )
     batch_id = "increment-1"
+    sink.begin_sync(SOURCE, [info.name], 1)
     sink.begin_table(SOURCE, info, mode="incremental")
     sink.write(
         SOURCE, info, [{"CODE": "USD", "NAME": "美元"}],
@@ -465,6 +591,7 @@ def test_http_abort_cleans_after_batch_and_failed_complete(tmp_path):
     info = TableInfo("CURRENCY", [("CODE", "text"), ("NAME", "text")], ["CODE"])
     sink = _push_sink(client)
     sid = "snap-batch"
+    sink.begin_sync(SOURCE, [info.name], 1)
     sink.begin_table(SOURCE, info, mode="full_refresh", snapshot_id=sid)
     sink.write(SOURCE, info, [{"CODE": "USD", "NAME": "美元"}], "b1",
                mode="full_refresh", snapshot_id=sid)
@@ -476,7 +603,8 @@ def test_http_abort_cleans_after_batch_and_failed_complete(tmp_path):
 
     # 完成行数不符 → 422,随后 abort
     bad = _v({
-        "source": SOURCE, "table": "CURRENCY", "mode": "full_refresh",
+        "source": SOURCE, "generation_id": sink._generation_id,
+        "table": "CURRENCY", "mode": "full_refresh",
         "columns": [["CODE", "text"], ["NAME", "text"]], "pk": ["CODE"],
         "snapshot_id": sid, "completion_id": "c1", "rows": 99, "batches": 1,
     })

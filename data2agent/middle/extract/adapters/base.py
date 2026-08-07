@@ -182,6 +182,20 @@ class SourceAdapter(ABC):
                 f"{table.name}: 运行键不唯一({dup['c']} 组重复),"
                 f"键来源={table.key_source}")
 
+    def validate_watermark(self, table: TableInfo, column: str) -> None:
+        """运行前确认水位实际数据无 NULL，防止 WHERE wm >= ? 静默漏行。"""
+        known = {name for name, _ in table.columns}
+        if column not in known:
+            raise RuntimeKeyError(f"{table.name}: 水位列 '{column}' 不存在")
+        sql = (
+            f"SELECT COUNT(*) AS c FROM {self._table_ref(table)} "
+            f"WHERE {self._quote(column)} IS NULL")
+        (row,) = self._audited_fetch(sql, action="validate_watermark")
+        if int(row["c"]) > 0:
+            raise RuntimeKeyError(
+                f"{table.name}: 水位列 '{column}' 存在 NULL({row['c']} 行)，"
+                "这些行会被增量条件永久排除；请先修复源数据或更换水位列")
+
     def read_increment(self, table: TableInfo, since=None,
                        watermark_col: Optional[str] = None,
                        resume_after: tuple | None = None) -> Iterator[list[dict]]:

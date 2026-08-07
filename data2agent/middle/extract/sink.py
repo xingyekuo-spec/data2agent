@@ -11,15 +11,23 @@ LocalSink 与 HttpPushSink 共用同一生命周期:
 from __future__ import annotations
 
 import json
+import random
+import ssl
 import time
 import urllib.error
 import urllib.request
+import uuid
 from typing import Callable, Literal, Protocol, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ...shared.store.landing import LandingStore
 
-from ...protocol.ingest import INGEST_PROTOCOL_VERSION, batch_payload_digest
+from ...protocol.ingest import (
+    BINARY_ENCODING,
+    INGEST_PROTOCOL_VERSION,
+    batch_payload_digest,
+    encode_transport_rows,
+)
 from ...shared.store.table import TableInfo
 from ...shared.store.landing import LandingStore, normalize_value
 
@@ -117,22 +125,26 @@ class LocalSink:
 
 def _urllib_post(
     url: str, payload: dict, token: str | None, timeout: float,
+    context: ssl.SSLContext | None = None,
 ) -> dict | None:
     data = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     req = urllib.request.Request(
         url, data=data, method="POST", headers={"Content-Type": "application/json"})
     if token:
         req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
         body = resp.read()
         return json.loads(body.decode("utf-8")) if body else None
 
 
-def _urllib_get_json(url: str, token: str | None, timeout: float) -> dict:
+def _urllib_get_json(
+    url: str, token: str | None, timeout: float,
+    context: ssl.SSLContext | None = None,
+) -> dict:
     req = urllib.request.Request(url, method="GET")
     if token:
         req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=context) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
@@ -145,6 +157,7 @@ class HttpPushSink:
 
     def __init__(self, url: str, token: str | None = None, *,
                  timeout: float = 30.0, retries: int = 3,
+                 ca_bundle: str | None = None,
                  post: Callable[[str, dict, str | None, float], dict | None] | None = None,
                  get_json: Callable[[str, str | None, float], dict] | None = None,
                  landing: "LandingStore | None" = None,
@@ -156,15 +169,23 @@ class HttpPushSink:
         self.token = token
         self.timeout = timeout
         self.retries = max(1, retries)
-        self._post = post or _urllib_post
-        self._get_json = get_json or _urllib_get_json
+        context = ssl.create_default_context(cafile=ca_bundle) if ca_bundle else None
+        self._post = post or (
+            lambda endpoint, payload, auth, request_timeout:
+            _urllib_post(endpoint, payload, auth, request_timeout, context))
+        self._get_json = get_json or (
+            lambda endpoint, auth, request_timeout:
+            _urllib_get_json(endpoint, auth, request_timeout, context))
         self._protocol_checked = False
         self._reconcile_protocol_version: str | None = None
+        self._binary_encoding: str | None = None
+        self._generation_heartbeat = False
         # push log 写入
         self._landing = landing
         self._source = source
         self._run_id = run_id
         self._generation_id: str | None = None
+        self._reconcile_generation_id: str | None = None
 
     def _log_push(self, step_kind: str, table: str, mode: SyncMode,
                   batch_id: str | None = None, rows_count: int | None = None,
@@ -222,7 +243,19 @@ class HttpPushSink:
         remote_reconcile = health.get("reconcile_protocol_version")
         self._reconcile_protocol_version = (
             str(remote_reconcile) if remote_reconcile is not None else None)
+        remote_binary = health.get("binary_encoding")
+        self._binary_encoding = (
+            str(remote_binary) if remote_binary is not None else None)
+        self._generation_heartbeat = health.get("generation_heartbeat") is True
         self._protocol_checked = True
+
+    def _ensure_table_capabilities(self, info: TableInfo) -> None:
+        if any(portable == "blob" for _, portable in info.columns):
+            if self._binary_encoding != BINARY_ENCODING:
+                raise ProtocolVersionError(
+                    f"{info.name}: 包含 blob，但平台未声明 "
+                    f"binary_encoding={BINARY_ENCODING}；已拒绝推送以避免二进制损坏，"
+                    "请先升级平台 ingest")
 
     def ensure_reconcile_protocol(self) -> None:
         self.ensure_protocol()
@@ -238,9 +271,17 @@ class HttpPushSink:
             try:
                 return self._post(
                     f"{self.url}{path}", payload, self.token, self.timeout)
+            except urllib.error.HTTPError as e:
+                # 鉴权/校验/冲突是确定性错误，重试只会延迟报错并增加负载。
+                if e.code not in (408, 425, 429) and e.code < 500:
+                    raise RuntimeError(
+                        f"推送 {path} 被平台拒绝(HTTP {e.code})") from e
+                last = e
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last = e
-                time.sleep(min(2 ** attempt, 10))
+            if attempt + 1 < self.retries:
+                delay = min(2 ** attempt, 10)
+                time.sleep(delay + random.uniform(0, delay * 0.2))
         elapsed = (time.time() - t0) * 1000
         raise RuntimeError(
             f"推送 {path} 失败(重试 {self.retries} 次):{last}。"
@@ -263,7 +304,9 @@ class HttpPushSink:
 
     def begin_sync(self, source: str, tables: list[str], run_id: int) -> None:
         self.ensure_protocol()
-        self._generation_id = f"sync-{source}-{run_id}"
+        # generation ID 必须跨状态库恢复、重装和多中间机全局唯一。
+        # 本地自增 run_id 只用于观测，不能承担跨机幂等身份。
+        self._generation_id = f"sync-{uuid.uuid4().hex}"
         self._post_with_retry("/ingest/run-begin", {
             "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
             "source": source,
@@ -289,9 +332,19 @@ class HttpPushSink:
             "generation_id": self._generation_id,
         })
 
+    def heartbeat_sync(self, source: str) -> None:
+        if self._generation_id is None or not self._generation_heartbeat:
+            return
+        self._post_with_retry("/ingest/run-heartbeat", {
+            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+            "source": source,
+            "generation_id": self._generation_id,
+        })
+
     def begin_table(self, source: str, info: TableInfo, *, mode: SyncMode,
                     snapshot_id: str | None = None) -> None:
         self.ensure_protocol()
+        self._ensure_table_capabilities(info)
         t0 = time.time()
         try:
             payload = self._base_payload(source, info, mode, snapshot_id)
@@ -309,14 +362,19 @@ class HttpPushSink:
               snapshot_id: str | None = None,
               table_run_id: str | None = None) -> int:
         self.ensure_protocol()
+        self._ensure_table_capabilities(info)
         t0 = time.time()
         log_batch_id = table_run_id or batch_id
         try:
+            normalized = [
+                {c: normalize_value(r.get(c)) for c, _ in info.columns}
+                for r in rows
+            ]
             payload = {
                 **self._base_payload(source, info, mode, snapshot_id),
                 "batch_id": batch_id,
                 "table_run_id": table_run_id or batch_id,
-                "rows": [{c: normalize_value(r.get(c)) for c, _ in info.columns} for r in rows],
+                "rows": encode_transport_rows(info.columns, normalized),
             }
             expected_digest = batch_payload_digest(payload)
             receipt = self._post_with_retry("/ingest/batch", payload)
@@ -384,14 +442,21 @@ class HttpPushSink:
 
     # ---- E6b 跨机对账（中间机驱动，平台只接收入站请求）----
 
+    def _active_reconcile_generation(self) -> str:
+        if self._reconcile_generation_id is None:
+            raise RuntimeError("对账 generation 尚未开启")
+        return self._reconcile_generation_id
+
     def reconcile_stats(
         self, source: str, info: TableInfo, watermark_col: str | None = None,
         start=None, end=None,
     ) -> dict:
         self.ensure_reconcile_protocol()
+        self._ensure_table_capabilities(info)
         result = self._post_with_retry("/ingest/reconcile", {
             "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
             "source": source, "table": info.name,
+            "generation_id": self._active_reconcile_generation(),
             "watermark_col": watermark_col, "start": start, "end": end,
         })
         if not isinstance(result, dict) or "count" not in result:
@@ -407,6 +472,7 @@ class HttpPushSink:
             "source": source, "generation_id": generation_id,
             "tables": tables,
         })
+        self._reconcile_generation_id = generation_id
 
     def complete_reconcile_generation(
         self, source: str, generation_id: str, tables: list[str],
@@ -416,6 +482,7 @@ class HttpPushSink:
             "source": source, "generation_id": generation_id,
             "tables": tables,
         })
+        self._reconcile_generation_id = None
 
     def abort_reconcile_generation(
         self, source: str, generation_id: str,
@@ -424,6 +491,8 @@ class HttpPushSink:
             "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
             "source": source, "generation_id": generation_id,
         })
+        if self._reconcile_generation_id == generation_id:
+            self._reconcile_generation_id = None
 
     def begin_reconcile_repair(
         self, source: str, info: TableInfo, repair_id: str,
@@ -433,6 +502,7 @@ class HttpPushSink:
         self._post_with_retry("/ingest/reconcile-repair-begin", {
             "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
             "source": source, "table": info.name, "schema": info.schema,
+            "generation_id": self._active_reconcile_generation(),
             "columns": [[c, t] for c, t in info.columns],
             "pk": list(info.pk), "repair_id": repair_id,
             "watermark_col": watermark_col, "start": start, "end": end,
@@ -443,14 +513,17 @@ class HttpPushSink:
         batch_id: str, rows: list[dict],
     ) -> int:
         self.ensure_reconcile_protocol()
+        self._ensure_table_capabilities(info)
+        normalized = [
+            {c: normalize_value(row.get(c)) for c, _ in info.columns}
+            for row in rows
+        ]
         result = self._post_with_retry("/ingest/reconcile-repair-batch", {
             "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
             "source": source, "table": info.name, "repair_id": repair_id,
+            "generation_id": self._active_reconcile_generation(),
             "batch_id": batch_id,
-            "rows": [
-                {c: normalize_value(row.get(c)) for c, _ in info.columns}
-                for row in rows
-            ],
+            "rows": encode_transport_rows(info.columns, normalized),
         })
         if not isinstance(result, dict):
             raise RuntimeError(f"{info.name}: 平台 repair 批次响应无效")
@@ -464,6 +537,7 @@ class HttpPushSink:
         result = self._post_with_retry("/ingest/reconcile-repair-complete", {
             "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
             "source": source, "table": info.name, "repair_id": repair_id,
+            "generation_id": self._active_reconcile_generation(),
             "rows": rows, "batches": batches,
         })
         if not isinstance(result, dict):
@@ -476,5 +550,6 @@ class HttpPushSink:
         self._post_with_retry("/ingest/reconcile-repair-abort", {
             "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
             "source": source, "table": info.name, "repair_id": repair_id,
+            "generation_id": self._active_reconcile_generation(),
             "rows": 0, "batches": 0,
         })

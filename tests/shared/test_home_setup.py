@@ -27,6 +27,29 @@ def test_secrets_roundtrip(tmp_path, monkeypatch):
     assert os.environ["D2A_INGEST_TOKEN"] == "abc"
 
 
+def test_secrets_roundtrip_preserves_backslashes_newlines_and_quotes(tmp_path):
+    path = tmp_path / "secrets.env"
+    values = {
+        "D2A_E10_DSN": r"SERVER=HOST\INSTANCE;PWD=p;a}ss\\word",
+        "D2A_INGEST_TOKEN": "line1\nline2\"quoted\"",
+    }
+    save_secrets(path, values)
+    assert load_secrets(path) == values
+
+
+def test_odbc_dsn_braces_form_values_to_prevent_attribute_injection():
+    dsn = build_odbc_dsn(
+        server="erp;TrustServerCertificate=yes",
+        database="E10;Encrypt=no",
+        user="ro;UID=admin",
+        password="p;a}ss",
+    )
+    assert "SERVER={erp;TrustServerCertificate=yes,1433}" in dsn
+    assert "DATABASE={E10;Encrypt=no}" in dsn
+    assert "UID={ro;UID=admin}" in dsn
+    assert "PWD={p;a}}ss}" in dsn
+
+
 def test_build_middle_yaml_validates(tmp_path):
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
@@ -40,6 +63,9 @@ def test_build_middle_yaml_validates(tmp_path):
     assert cfg.sources["digiwin_e10"].sink.type == "http"
     assert cfg.sources["digiwin_e10"].sink.url == "http://10.0.0.1:8850"
     assert cfg.sources["digiwin_e10"].tables == {}
+    assert cfg.sources["digiwin_e10"].reconcile_at == "05:30"
+    assert cfg.sources["digiwin_e10"].reconcile_deep_at == "03:30"
+    assert cfg.sources["digiwin_e10"].reconcile_deep_day_of_week == "sun"
 
 
 def test_new_install_has_empty_tables(tmp_path):
@@ -131,7 +157,7 @@ def test_middle_browser_setup(tmp_path):
         assert home.secrets_env.is_file()
         secrets = load_secrets(home.secrets_env)
         assert secrets["D2A_INGEST_TOKEN"] == "ingest-tok"
-        assert "PWD=secret" in secrets["D2A_E10_DSN"]
+        assert "PWD={secret}" in secrets["D2A_E10_DSN"]
         assert "password" not in home.connect_yaml.read_text(encoding="utf-8").lower()
         cfg = load_config(home.connect_yaml)
         assert cfg.sources["digiwin_e10"].sync_start_at == "02:00"

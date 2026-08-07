@@ -194,6 +194,8 @@ sources:
     lookback: 3d
     sync_every: 30m                 # 窗口内的同步节奏
     reconcile_at: "05:30"           # 每日 L1 对账
+    reconcile_deep_at: "03:30"      # L2 修复（新安装默认每周日）
+    reconcile_deep_day_of_week: sun
     apply_after_sync: true          # 同步后自动物化对象层(sink=http 时忽略)
 ```
 
@@ -295,7 +297,8 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
 - 落地出口抽象为 Sink(`connect/sink.py`):`LocalSink`(写本地库 —— 仅限内部开发/
   参考链/测试,非交付形态;同时是本节「推送与直连逐行一致」验证的对照实现)、
   `HttpPushSink`(POST 给平台;生产中间机唯一允许的形态,stdlib urllib 零额外依赖、
-  值推送前归一化、失败指数退避重试);`incremental_sync` 默认 `LocalSink(landing)`,
+  值推送前归一化、BLOB 用 `base64-v1` 标记无损传输、可配私有 CA、
+  仅对网络/429/5xx 做带 jitter 的指数退避);`incremental_sync` 默认 `LocalSink(landing)`,
   行为向后兼容;
 - 平台接收端 `data2agent.platform.ingest`(FastAPI):`POST /ingest/batch` 只负责幂等落地;
   中间机在一张表的全部批次成功后再 `POST /ingest/table-complete`。完成事件包含表结构、
@@ -321,8 +324,18 @@ batch ID 和内容摘要后才推进对应批次水位。一次 sync 另有 gene
 - 中间机校验 receipt 后才推进对应表水位;
 - 相同 batch ID + 相同摘要重推返回原 receipt;相同 ID + 不同摘要拒绝;
 - schema 不兼容明确拒绝,不静默丢列/改类型;
+- generation ID 使用 UUID，不依赖可回滚的中间机本地 run ID；平台对每个写请求校验 open generation，并用心跳租约拒绝重复 connector;
 - generation apply 使用 owner + 心跳租约；进程崩溃后租约过期会自动回收，所有手动和
-  常驻 apply 入口共用同一屏障。
+  常驻 apply 入口共用同一屏障。没有待处理推送时，控制台重试会创建 `manual-*`
+  generation 租约，与新推送和后台 apply 互斥；人工构建失败后标记 `failed`，不进入
+  后台无限重试。generation 校验、原始行/快照/对账写入和批次回执在同一 SQLite
+  写事务中提交，禁止“先校验、后关闭、仍写入”的竞态。
+
+`full_refresh` 不在 HTTP 推送期间持有 ERP 游标：SQL Server 优先使用
+SNAPSHOT 隔离的单条 SELECT（未开启时退化为 SERIALIZABLE），先流式写入中间机
+临时 spool，关闭源游标后再推平台。增量连接用 autocommit 语句级读，
+避免 pyodbc 默认事务跨网络批次持锁。水位列仅允许可做日历回看的日期时间类型，
+配置与运行时都拒绝 NULL；`start_date` 同时约束增量与对账范围。
 
 **E6b · 对账劈开(已实现)**:纯出站推送下平台不能回调中间,故对账**中间驱动** ——
 中间算源侧段统计 POST `/ingest/reconcile` → 平台比对落地侧、响应回不一致段 →

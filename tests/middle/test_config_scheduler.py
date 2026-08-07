@@ -142,6 +142,24 @@ def test_config_rejects_bad_window(tmp_path):
         load_config(cfg_file)
 
 
+@pytest.mark.parametrize("fragment, message", [
+    ("sync_every: 0s", "sync_every"),
+    ("windows: [\"02:00-02:00\"]", "起止相同"),
+    ("rate: {batch_size: 50001, rows_per_second: 1}", "less than or equal"),
+    ("rate: {batch_size: 1, rows_per_second: 0}", "greater than or equal"),
+])
+def test_config_rejects_unsafe_schedule_and_rate_bounds(
+    tmp_path, fragment, message,
+):
+    cfg_file = tmp_path / "connect.yaml"
+    cfg_file.write_text(
+        "sources:\n  e10:\n    adapter: sqlite_readonly\n    path: x\n"
+        "    tables: {}\n    " + fragment + "\n",
+        encoding="utf-8")
+    with pytest.raises(ValueError, match=message):
+        load_config(cfg_file)
+
+
 # ---- 批次边界暂停 ----
 
 @pytest.fixture(scope="module")
@@ -268,6 +286,9 @@ def test_serve_schedules_first_run_at_sync_start_at(tmp_path, monkeypatch):
     captured = []
 
     class FakeBlockingScheduler:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
         def add_job(self, func, trigger, args=(), id=None,
                     max_instances=None, coalesce=None, next_run_time=None):
             captured.append({

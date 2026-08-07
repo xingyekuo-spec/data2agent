@@ -9,7 +9,6 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.platform.ingest.app import create_app  # noqa: E402
-from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION  # noqa: E402
 from data2agent.shared.store.landing import LandingStore  # noqa: E402
 
 SOURCE = "factory_a_e10"
@@ -18,7 +17,8 @@ SOURCE_TOKEN = "src-token-aaa"
 
 def _batch(source: str = SOURCE) -> dict:
     return {
-        "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+        # 授权矩阵刻意走仍受支持的 v2，隔离 generation 契约对鉴权断言的影响。
+        "ingest_protocol_version": "2",
         "source": source,
         "table": "CUSTOMER",
         "mode": "incremental",

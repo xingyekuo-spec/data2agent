@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from ...shared.config import ConnectConfig, SourceConfig, in_window, parse_window
 from ...shared.store.landing import LandingStore
@@ -108,4 +111,40 @@ def build_status(cfg: ConnectConfig, now: datetime | None = None) -> dict:
             "latest_run": latest,
             "running_run": running,
         })
-    return {"schedule_source": "derived_from_yaml", "sources": sources}
+    process_file = Path(cfg.landing).parent / "run" / "process-status.json"
+    process_status: dict = {
+        "available": False, "stale": True, "processes": [],
+    }
+    try:
+        payload = json.loads(process_file.read_text(encoding="utf-8"))
+        updated = float(payload.get("updated_at_epoch", 0))
+        process_status = {
+            "available": True,
+            "stale": time.time() - updated > 3 * 5.0,
+            "updated_at_epoch": updated,
+            "launcher_pid": payload.get("launcher_pid"),
+            "processes": payload.get("processes", []),
+        }
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    connector = next(
+        (item for item in process_status["processes"]
+         if item.get("name") == "connector"), None)
+    process_status["connector_running"] = bool(
+        connector and connector.get("alive") and not process_status["stale"])
+    maintenance_status: dict = {"available": False, "status": "unknown"}
+    maintenance_file = Path(cfg.landing).parent / "run" / "maintenance-status.json"
+    try:
+        maintenance_status = json.loads(
+            maintenance_file.read_text(encoding="utf-8"))
+        maintenance_status["available"] = True
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    result = {
+        "schedule_source": "derived_from_yaml",
+        "process_status": process_status,
+        "maintenance": maintenance_status,
+        "sources": sources,
+    }
+    db.con.close()
+    return result

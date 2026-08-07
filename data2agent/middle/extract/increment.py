@@ -13,6 +13,9 @@ from __future__ import annotations
 
 import json
 import hashlib
+import pickle
+import tempfile
+import time
 import uuid
 from datetime import datetime, timedelta
 from typing import Callable, Optional
@@ -67,6 +70,13 @@ def subtract_lookback(high_water: str, days: float) -> str:
         except ValueError:
             continue
         return (dt - timedelta(days=days)).strftime(fmt)
+    # datetimeoffset 由 pyodbc 返回带时区 ISO 字符串。
+    try:
+        dt = datetime.fromisoformat(high_water.replace("Z", "+00:00"))
+    except ValueError:
+        dt = None
+    if dt is not None and dt.tzinfo is not None:
+        return (dt - timedelta(days=days)).isoformat(sep=" ")
     raise ValueError(f"无法解析水位值 '{high_water}'(支持格式:{_WM_FORMATS})")
 
 
@@ -116,11 +126,16 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
 
         ordinal = 0
         for raw_info in table_infos:
+            ordinal += 1
+            current_step = landing.add_step(
+                report.run_id, ordinal, "table", raw_info.name)
             if should_continue and not should_continue():
+                landing.update_step(
+                    current_step, status="paused",
+                    error="错峰窗口已结束，本表尚未开始")
+                current_step = None
                 report.paused = True
                 break
-            ordinal += 1
-            current_step = landing.add_step(report.run_id, ordinal, "table", raw_info.name)
             wm_col = watermarks.get(raw_info.name)
             is_full = wm_col is None
             mode = "full_refresh" if is_full else "incremental"
@@ -142,6 +157,7 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     "table": info.name,
                     "columns": info.columns,
                     "keys": info.pk,
+                    "watermark": wm_col,
                 }, sort_keys=True, separators=(",", ":"))
                 strategy_fingerprint = hashlib.sha256(
                     strategy_raw.encode("utf-8")).hexdigest()
@@ -151,6 +167,8 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                         source, info.name, strategy_fingerprint)
                 ):
                     adapter.validate_runtime_keys(info)
+                    if wm_col is not None:
+                        adapter.validate_watermark(info, wm_col)
                     landing.record_runtime_key_validation(
                         source, info.name, strategy_fingerprint)
             landing.log_audit(
@@ -204,9 +222,37 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                 except Exception:
                     pass
             try:
-                for batch in adapter.read_increment(
-                    info, since=since, watermark_col=wm_col, resume_after=resume_after,
-                ):
+                batch_iterator = adapter.read_increment(
+                    info, since=since, watermark_col=wm_col,
+                    resume_after=resume_after)
+                spool = None
+                if is_full:
+                    # 先快速读完源库单语句快照并落到本机临时文件，
+                    # 再做 HTTP 推送；避免网络重试/限流期间长时持有 ERP 游标和锁。
+                    spool = tempfile.TemporaryFile(prefix="d2a-full-", suffix=".spool")
+                    last_heartbeat = time.monotonic()
+                    for source_batch in batch_iterator:
+                        if should_continue and not should_continue():
+                            interrupted = True
+                            break
+                        pickle.dump(source_batch, spool, protocol=pickle.HIGHEST_PROTOCOL)
+                        if time.monotonic() - last_heartbeat >= 60:
+                            heartbeat = getattr(sink, "heartbeat_sync", None)
+                            if callable(heartbeat):
+                                heartbeat(source)
+                            last_heartbeat = time.monotonic()
+                    if not interrupted:
+                        spool.seek(0)
+
+                        def _spooled_batches():
+                            while True:
+                                try:
+                                    yield pickle.load(spool)
+                                except EOFError:
+                                    return
+
+                        batch_iterator = _spooled_batches()
+                for batch in batch_iterator:
                     if should_continue and not should_continue():
                         interrupted = True
                         break
@@ -238,6 +284,8 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                             watermark_col=None,
                             rows_in=rows, rows_out=rows, batches=batches,
                             batch_id=table_batch_id)
+                if spool is not None:
+                    spool.close()
                 if interrupted:
                     if is_full:
                         sink.abort_table(
@@ -251,6 +299,8 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     source, info, table_batch_id, rows, batches,
                     mode=mode, snapshot_id=snapshot_id)
             except Exception:
+                if "spool" in locals() and spool is not None:
+                    spool.close()
                 if is_full:
                     try:
                         sink.abort_table(

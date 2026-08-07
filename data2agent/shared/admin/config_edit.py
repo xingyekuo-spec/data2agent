@@ -24,6 +24,9 @@ MIDDLE_EDITABLE = {
     "sources.*.sync_every",
     "sources.*.sync_start_at",
     "sources.*.start_date",
+    "sources.*.reconcile_at",
+    "sources.*.reconcile_deep_at",
+    "sources.*.reconcile_deep_day_of_week",
     "sources.*.sink.url",
 }
 

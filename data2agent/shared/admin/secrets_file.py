@@ -6,8 +6,11 @@ File mode is user-restrictive when the OS allows.
 
 from __future__ import annotations
 
+import json
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 _LINE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
@@ -25,8 +28,16 @@ def load_secrets(path: Path) -> dict[str, str]:
         if not m:
             continue
         key, val = m.group(1), m.group(2)
-        if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+        if len(val) >= 2 and val[0] == val[-1] == '"':
+            try:
+                val = json.loads(val)
+            except json.JSONDecodeError:
+                val = val[1:-1]
+        elif len(val) >= 2 and val[0] == val[-1] == "'":
             val = val[1:-1]
+        else:
+            # 兼容旧版 save_secrets 的反斜杠/换行转义。
+            val = val.replace("\\n", "\n").replace("\\\\", "\\")
         out[key] = val
     return out
 
@@ -75,10 +86,21 @@ def save_secrets(path: Path, updates: dict[str, str], merge: bool = True) -> Non
             current[k] = v
     lines = ["# data2agent secrets — do not commit; written by admin UI", ""]
     for k in sorted(current):
-        val = current[k].replace("\\", "\\\\").replace("\n", "\\n")
-        lines.append(f"{k}={val}")
+        lines.append(f"{k}={json.dumps(current[k], ensure_ascii=False)}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     try:
         os.chmod(path, 0o600)
     except OSError:
         pass
+    if sys.platform == "win32":
+        username = os.environ.get("USERNAME", "").strip()
+        if username:
+            try:
+                subprocess.run(
+                    ["icacls", str(path), "/inheritance:r", "/grant:r",
+                     f"{username}:(F)", "/grant:r", "SYSTEM:(F)"],
+                    capture_output=True, check=False,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except OSError:
+                pass

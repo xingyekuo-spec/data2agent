@@ -129,6 +129,9 @@ def _check_middle_admin(portable: Path) -> None:
         _fail("middle_admin pages missing /api/extraction-tables")
     if 'href="/metadata"' not in layout or 'href="/tables"' not in layout:
         _fail("middle_admin nav missing /metadata or /tables")
+    for script in ("安装开机自启.ps1", "卸载开机自启.ps1"):
+        if not (portable / script).is_file():
+            _fail(f"middle autostart script missing: {script}")
 
 
 def main() -> int:

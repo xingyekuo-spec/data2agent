@@ -48,7 +48,9 @@ class MssqlMetadataDiscoverer:
         if "applicationintent" not in conn_str.lower():
             conn_str = conn_str.rstrip(";") + ";ApplicationIntent=ReadOnly"
         try:
-            self._con = pyodbc.connect(conn_str, readonly=True, timeout=login_timeout)
+            self._con = pyodbc.connect(
+                conn_str, readonly=True, timeout=login_timeout,
+                autocommit=True)
             self._con.timeout = query_timeout
         except Exception as e:
             raise map_odbc_error(e) from e
@@ -382,10 +384,19 @@ class MssqlMetadataDiscoverer:
         type_l = col.sql_type.lower()
         # 当前回看窗口按日历时间运算；数值/rowversion 需要另一套游标策略，
         # 在协议实现前 fail-closed，避免首轮成功、第二轮无法解析水位。
-        allowed = any(h in type_l for h in ("date", "time"))
-        if not allowed:
+        allowed = {
+            "date", "datetime", "datetime2", "smalldatetime", "datetimeoffset"}
+        if type_l not in allowed:
             return WatermarkCheckResult(
-                False, "watermark_invalid", "字段类型不适合作为水位",
+                False, "watermark_invalid",
+                "字段类型不支持日历回看(time/rowversion 不可用)",
+                sql_type=col.sql_type, candidate=candidate,
+            )
+        if col.nullable:
+            return WatermarkCheckResult(
+                False, "watermark_invalid",
+                "水位列允许 NULL，增量 WHERE 条件会永久漏行；"
+                "请选择 NOT NULL 水位或先修复源表约束",
                 sql_type=col.sql_type, candidate=candidate,
             )
         return WatermarkCheckResult(

@@ -58,6 +58,26 @@ def test_clean_state_is_consistent(env, pack):
     assert all(s.repaired_rows == 0 for s in report.segments), "一致段不应触发 L2"
 
 
+def test_reconcile_never_scans_before_configured_start_date(env, pack):
+    source_db, landing = env
+    adapter = _adapter(source_db, pack)
+    calls: list[tuple[str, str]] = []
+    original = adapter.segment_stats
+
+    def recording(info, watermark_col, start, end):
+        if info.name == "CUSTOMER":
+            calls.append((start, end))
+        return original(info, watermark_col, start, end)
+
+    adapter.segment_stats = recording
+    configured_start = "2026-04-15 00:00:00"
+    reconcile(
+        adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE),
+        start_dates={"CUSTOMER": configured_start})
+    assert calls
+    assert min(start for start, _ in calls) >= configured_start
+
+
 def test_physical_delete_soft_deleted(env, pack):
     source_db, landing = env
     rw = sqlite3.connect(source_db)

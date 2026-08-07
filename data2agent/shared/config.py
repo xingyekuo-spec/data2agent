@@ -54,8 +54,9 @@ def in_window(now: dtime, windows: list[str]) -> bool:
 
 class RateConfig(BaseModel):
     model_config = {"extra": "forbid"}
-    batch_size: int = 5000
-    rows_per_second: int = 2000
+    # 平台协议单批上限为 50k；0/负数会导致死循环或节流数学错误。
+    batch_size: int = Field(default=5000, ge=1, le=50_000)
+    rows_per_second: int = Field(default=2000, ge=1, le=1_000_000)
 
 
 class SinkConfig(BaseModel):
@@ -68,6 +69,9 @@ class SinkConfig(BaseModel):
     token_env: str | None = None          # http:Token 所在环境变量(凭据不落配置)
     allow_insecure_http: bool = False      # 仅显式开发/受控内网例外
     allow_unauthenticated: bool = False    # 仅显式开发例外
+    timeout_seconds: float = Field(default=30.0, ge=1.0, le=600.0)
+    retries: int = Field(default=3, ge=1, le=10)
+    ca_bundle: str | None = None            # 私有 CA PEM 路径；不禁用主机名校验
 
 
 class TableExtractConfig(BaseModel):
@@ -143,7 +147,8 @@ class SourceConfig(BaseModel):
     sync_start_at: str | None = None       # "HH:MM",首轮自动抽取启动时间;None=服务启动即跑
     start_date: str | None = None          # 全局抽取起始日期(表级 start_date 未配置时的默认值)
     reconcile_at: str | None = None       # "HH:MM",每日 L1 对账;None 不排
-    reconcile_deep_at: str | None = None  # "HH:MM",每日 L2 修复;建议低频错峰
+    reconcile_deep_at: str | None = None  # "HH:MM",L2 修复
+    reconcile_deep_day_of_week: str | None = None  # mon..sun;None=每日
     apply_after_sync: bool = True         # sink=http 时忽略(映射在平台侧)
     estimate_rows: bool = False           # COUNT 仅用于进度；生产默认关闭以减轻 ERP
     sink: SinkConfig = SinkConfig()
@@ -159,7 +164,25 @@ class SourceConfig(BaseModel):
     @classmethod
     def windows_parse(cls, v: list[str]) -> list[str]:
         for w in v:
-            parse_window(w)
+            start, end = parse_window(w)
+            if start == end:
+                raise ValueError(
+                    f"窗口 '{w}' 起止相同，实际上永远不会运行")
+        return v
+
+    @field_validator("sync_every")
+    @classmethod
+    def sync_every_positive(cls, v: str) -> str:
+        seconds = parse_duration_seconds(v)
+        if seconds < 1:
+            raise ValueError("sync_every 必须至少为 1 秒")
+        return v
+
+    @field_validator("lookback")
+    @classmethod
+    def lookback_nonnegative(cls, v: str) -> str:
+        if parse_duration_seconds(v) < 0:
+            raise ValueError("lookback 不能为负数")
         return v
 
     @field_validator("sync_start_at", mode="before")
@@ -193,6 +216,16 @@ class SourceConfig(BaseModel):
         if len(raw) != 5:
             raise ValueError(f"对账时间格式须为 'HH:MM',got '{v}'")
         return parsed.strftime("%H:%M")
+
+    @field_validator("reconcile_deep_day_of_week", mode="before")
+    @classmethod
+    def reconcile_weekday_parse(cls, v: str | None) -> str | None:
+        if v is None or not str(v).strip():
+            return None
+        raw = str(v).strip().lower()
+        if raw not in {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}:
+            raise ValueError("reconcile_deep_day_of_week 必须是 mon..sun")
+        return raw
 
     @field_validator("start_date", mode="before")
     @classmethod
@@ -228,6 +261,13 @@ class SourceConfig(BaseModel):
                     f"表名大小写冲突: '{name}' 与 '{folded[lower]}' 折叠后重复")
             folded[lower] = name
         return v
+
+    @model_validator(mode="after")
+    def reconcile_schedule_consistent(self):
+        if self.reconcile_deep_day_of_week and not self.reconcile_deep_at:
+            raise ValueError(
+                "reconcile_deep_day_of_week 需要同时配置 reconcile_deep_at")
+        return self
 
     def table_whitelist(self) -> set[str]:
         if self.tables is None:

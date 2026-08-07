@@ -282,9 +282,10 @@ def test_reconcile_monthly_stats_error_writes_failed_step(tmp_path):
 
 
 def _batch(batch_id: str, rows: list[dict]) -> dict:
-    from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION
     return {
-        "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+        # 本组只验证 ingest 观测 Run/Step；使用仍受支持的 v2 将该关注点
+        # 与 v3 generation 生命周期隔离，v3 原子屏障由 contract 测试覆盖。
+        "ingest_protocol_version": "2",
         "source": SOURCE,
         "table": "CUSTOMER",
         "mode": "incremental",

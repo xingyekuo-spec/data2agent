@@ -110,7 +110,9 @@ def test_legacy_middle_fails_if_platform_drops_v2():
         legacy_ensure({"ingest_protocol_version": "3"}, mine="2")
 
 
-def test_push_contract_current_platform_with_v2_middle(tmp_path: Path):
+def test_push_contract_current_platform_with_v2_middle(
+    tmp_path: Path, monkeypatch,
+):
     """当前平台 + 发送 v2 的中间机:端到端 begin 可通(协议门禁通过)。"""
     platform = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(platform.db_path))
@@ -126,6 +128,8 @@ def test_push_contract_current_platform_with_v2_middle(tmp_path: Path):
         r.raise_for_status()
         return r.json()
 
+    import data2agent.middle.extract.sink as sink_module
+    monkeypatch.setattr(sink_module, "INGEST_PROTOCOL_VERSION", "2")
     sink = HttpPushSink("http://platform", post=post, get_json=get_json)
     info = TableInfo("CURRENCY", [("CODE", "text")], ["CODE"])
     sink.begin_table(SOURCE, info, mode="incremental")

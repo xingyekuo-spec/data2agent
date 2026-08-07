@@ -106,9 +106,11 @@ def _repair_local_stream(
 
 def reconcile(adapter: SourceAdapter, landing: LandingStore, source: str,
               watermarks: dict[str, str] | None = None, deep: bool = False,
-              key_columns: dict[str, list[str]] | None = None) -> ReconcileReport:
+              key_columns: dict[str, list[str]] | None = None,
+              start_dates: dict[str, str] | None = None) -> ReconcileReport:
     watermarks = watermarks or {}
     key_columns = key_columns or {}
+    start_dates = start_dates or {}
     report = ReconcileReport(source=source, run_id=landing.start_run(source, "reconcile"), deep=deep)
     try:
         for raw_info in adapter.tables():
@@ -118,7 +120,9 @@ def reconcile(adapter: SourceAdapter, landing: LandingStore, source: str,
             if wm_col is None:
                 _reconcile_full_table(adapter, landing, source, info, deep, report)
             else:
-                _reconcile_by_month(adapter, landing, source, info, wm_col, deep, report)
+                _reconcile_by_month(
+                    adapter, landing, source, info, wm_col, deep, report,
+                    start_date=start_dates.get(info.name))
     except Exception as e:
         landing.finish_run(
             report.run_id,
@@ -137,13 +141,20 @@ def reconcile(adapter: SourceAdapter, landing: LandingStore, source: str,
 
 
 def _reconcile_by_month(adapter, landing, source, info: TableInfo, wm_col: str,
-                        deep: bool, report: ReconcileReport) -> None:
+                        deep: bool, report: ReconcileReport,
+                        start_date: str | None = None) -> None:
     min_wm = landing.min_watermark(source, info.name, wm_col)
     high = landing.get_high_water(source, info.name)
     if min_wm is None or high is None:
         return  # 尚未同步过,跳过对账
+    if start_date is not None:
+        min_wm = max(str(min_wm), start_date)
     max_wm = max(high, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     for label, start, end in month_segments(min_wm, max_wm):
+        # 首段不得回退到 start_date 所在月的月初，否则会超出用户
+        # 明确配置的 ERP 抽取范围。
+        if start_date is not None:
+            start = max(start, start_date)
         step_id = landing.add_step(
             report.run_id, len(landing.steps_for_run(report.run_id)) + 1,
             "segment", f"{info.name}:{label}")
@@ -244,14 +255,17 @@ def reconcile_remote(
     source: str, watermarks: dict[str, str] | None = None,
     deep: bool = False,
     key_columns: dict[str, list[str]] | None = None,
+    start_dates: dict[str, str] | None = None,
 ) -> ReconcileReport:
     """E6b：中间机读 ERP，平台算落地统计并执行软删，全程仅出站 HTTP。"""
     watermarks = watermarks or {}
     key_columns = key_columns or {}
+    start_dates = start_dates or {}
     report = ReconcileReport(
         source=source, run_id=landing.start_run(source, "reconcile"), deep=deep)
     ordinal = 0
-    generation_id = f"reconcile-{source}-{report.run_id}"
+    # 不使用本地自增 run_id，避免 middle.sqlite 回滚/重装后与平台历史冲突。
+    generation_id = f"reconcile-{uuid.uuid4().hex}"
     generation_open = False
     repaired_any = False
     try:
@@ -296,12 +310,13 @@ def reconcile_remote(
 
             src_bounds = adapter.watermark_bounds(info, wm_col)
             dst_bounds = sink.reconcile_stats(source, info, wm_col)
-            lows = [
+            configured_start = start_dates.get(info.name)
+            lows = ([configured_start] if configured_start is not None else [
                 str(value) for value in (
                     normalize_value(src_bounds.get("min")),
                     normalize_value(dst_bounds.get("min")),
                 ) if value is not None
-            ]
+            ])
             if not lows:
                 continue
             highs = [
@@ -313,6 +328,8 @@ def reconcile_remote(
                 ) if value is not None
             ]
             for label, start, end in month_segments(min(lows), max(highs)):
+                if configured_start is not None:
+                    start = max(start, configured_start)
                 ordinal += 1
                 step_id = landing.add_step(
                     report.run_id, ordinal, "segment",
