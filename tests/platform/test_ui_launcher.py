@@ -205,6 +205,30 @@ def test_adopt_recorded_processes_avoids_duplicate_workers(tmp_path, monkeypatch
     mod._CHILDREN.clear()
 
 
+def test_windows_autostart_probe_replaces_stale_install_marker(tmp_path, monkeypatch):
+    mod = _load_launcher()
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "connect.yaml").write_text(
+        "sources: {}\n", encoding="utf-8")
+    run_dir = tmp_path / "data" / "run"
+    run_dir.mkdir(parents=True)
+    marker = run_dir / "autostart-status.json"
+    marker.write_text(json.dumps({
+        "installed": True, "task_name": "custom-middle-task",
+    }), encoding="utf-8")
+    monkeypatch.setattr(mod.sys, "platform", "win32")
+    monkeypatch.setattr(
+        mod.subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(returncode=1),
+    )
+    mod._AUTOSTART_LAST_CHECK_EPOCH = 0
+    mod._refresh_middle_autostart_status(tmp_path, now=1000)
+    status = json.loads(marker.read_text(encoding="utf-8"))
+    assert status["installed"] is False
+    assert status["task_name"] == "custom-middle-task"
+    assert status["check_source"] == "schtasks"
+
+
 def test_windows_mutex_creation_failure_is_fail_closed(monkeypatch):
     mod = _load_launcher()
 

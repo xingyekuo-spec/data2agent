@@ -36,5 +36,14 @@ $task = New-ScheduledTask `
     -Description 'data2agent 中间机：开机后无 GUI 常驻，崩溃自动重启'
 Register-ScheduledTask -TaskName $TaskName -InputObject $task -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
+$runDir = Join-Path $home 'data\run'
+New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+$status = @{
+    installed = $true
+    task_name = $TaskName
+    checked_at = [DateTimeOffset]::Now.ToString('o')
+} | ConvertTo-Json -Compress
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[IO.File]::WriteAllText((Join-Path $runDir 'autostart-status.json'), $status, $utf8NoBom)
 Write-Host "已安装并启动开机任务: $TaskName" -ForegroundColor Green
 Write-Host "中间机目录: $home"

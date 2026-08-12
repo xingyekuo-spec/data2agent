@@ -10,14 +10,17 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import hashlib
 import json
 import os
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 DEFAULT_HOME = Path(os.environ.get("D2A_HOME", r"C:\d2a"))
@@ -30,6 +33,8 @@ _MUTEX_HANDLE = None
 # thread, with a circuit breaker so a crash-looping worker stops hammering.
 _MANAGED: list[dict] = []
 _SUPERVISE_STOP = threading.Event()
+_STARTUP_MODE = "unknown"
+_AUTOSTART_LAST_CHECK_EPOCH = 0.0
 SUPERVISE_INTERVAL = 5.0
 SUPERVISE_MAX_RESTARTS = 5   # within SUPERVISE_WINDOW before giving up
 SUPERVISE_WINDOW = 60.0
@@ -410,6 +415,8 @@ def spawn_managed(name: str, cmd: list[str], *, home: Path, env: dict[str, str],
         "name": name, "cmd": cmd, "home": home, "env": env,
         "log_name": log_name, "listen": listen, "proc": proc,
         "restarts": 0, "window_start": time.time(), "failed": False,
+        "last_exit_code": None,
+        "loaded_config_revision": _config_revision_for_cmd(cmd),
     })
     return proc
 
@@ -426,14 +433,91 @@ def health_summary() -> tuple[int, int, list[str]]:
     return up, len(_MANAGED), down
 
 
+def _config_revision_for_cmd(cmd: list[str]) -> str | None:
+    try:
+        index = cmd.index("--config")
+        path = Path(cmd[index + 1])
+        content = path.read_bytes()
+        return "sha256:" + hashlib.sha256(content).hexdigest()
+    except (ValueError, IndexError, OSError, TypeError):
+        return None
+
+
+def _managed_config_revision(managed: dict) -> str | None:
+    """进程启动时捕获的 revision；不能读取当前文件冒充已加载版本。"""
+    return managed.get("loaded_config_revision")
+
+
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, pending_name = tempfile.mkstemp(
+        prefix=f".{path.name}-", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, sort_keys=True)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(pending_name, path)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        Path(pending_name).unlink(missing_ok=True)
+        raise
+
+
+def _refresh_middle_autostart_status(home: Path, *, now: float | None = None) -> None:
+    """Windows 上定期查询真实计划任务，避免安装标记长期冒充实际状态。"""
+    global _AUTOSTART_LAST_CHECK_EPOCH
+    current = time.time() if now is None else now
+    if sys.platform != "win32" or not (home / "config" / "connect.yaml").is_file():
+        return
+    if current - _AUTOSTART_LAST_CHECK_EPOCH < 60:
+        return
+    _AUTOSTART_LAST_CHECK_EPOCH = current
+    path = home / "data" / "run" / "autostart-status.json"
+    task_name = "data2agent-middle"
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(previous, dict) and previous.get("task_name"):
+            task_name = str(previous["task_name"])
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        pass
+    try:
+        result = subprocess.run(
+            ["schtasks.exe", "/Query", "/TN", task_name],
+            capture_output=True, timeout=10, check=False,
+            creationflags=_creationflags(),
+        )
+        payload = {
+            "installed": result.returncode == 0,
+            "task_name": task_name,
+            "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "check_source": "schtasks",
+        }
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        payload = {
+            "installed": None,
+            "task_name": task_name,
+            "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "check_source": "schtasks",
+            "error_code": "autostart_check_failed",
+            "error_type": type(exc).__name__,
+        }
+    _write_json_atomic(path, payload)
+
+
 def write_process_status(home: Path) -> None:
     """将 launcher 真实管理的 PID/存活状态发布给本机管理 API。"""
     run_dir = home / "data" / "run"
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
+        _refresh_middle_autostart_status(home)
         payload = {
             "updated_at_epoch": time.time(),
             "launcher_pid": os.getpid(),
+            "startup_mode": _STARTUP_MODE,
             "processes": [
                 {
                     "name": managed["name"],
@@ -441,16 +525,18 @@ def write_process_status(home: Path) -> None:
                     "alive": managed["proc"].poll() is None,
                     "failed": bool(managed["failed"]),
                     "restarts": int(managed["restarts"]),
+                    "last_exit_code": managed.get("last_exit_code"),
+                    "failed_at_epoch": managed.get("failed_at"),
+                    "cooldown_until_epoch": (
+                        float(managed["failed_at"]) + SUPERVISE_COOLDOWN
+                        if managed.get("failed") and managed.get("failed_at") else None
+                    ),
+                    "loaded_config_revision": _managed_config_revision(managed),
                 }
                 for managed in _MANAGED
             ],
         }
-        target = run_dir / "process-status.json"
-        pending = run_dir / "process-status.json.tmp"
-        pending.write_text(
-            json.dumps(payload, ensure_ascii=False, sort_keys=True),
-            encoding="utf-8")
-        pending.replace(target)
+        _write_json_atomic(run_dir / "process-status.json", payload)
     except Exception:
         pass
 
@@ -539,6 +625,8 @@ def adopt_recorded_processes(
             "log_name": log_name, "listen": listen, "proc": proc,
             "restarts": int(item.get("restarts") or 0),
             "window_start": time.time(), "failed": False,
+            "last_exit_code": item.get("last_exit_code"),
+            "loaded_config_revision": item.get("loaded_config_revision"),
         })
         adopted.append(name)
         _supervisor_log(home, f"adopted orphan {name} pid={pid}")
@@ -558,8 +646,10 @@ def supervise_once(home: Path, *, max_restarts: int = SUPERVISE_MAX_RESTARTS,
             m["window_start"] = now
             _supervisor_log(
                 home, f"{m['name']} 熵断冷却 {SUPERVISE_COOLDOWN:.0f}s 后自动试探重启")
-        if m["proc"].poll() is None:
+        exit_code = m["proc"].poll()
+        if exit_code is None:
             continue
+        m["last_exit_code"] = exit_code
         if now - m["window_start"] > window:
             m["window_start"] = now
             m["restarts"] = 0
@@ -581,6 +671,7 @@ def supervise_once(home: Path, *, max_restarts: int = SUPERVISE_MAX_RESTARTS,
                 pass
             m["proc"] = _spawn(m["cmd"], home=home, env=m["env"],
                                log_name=m["log_name"])
+            m["loaded_config_revision"] = _config_revision_for_cmd(m["cmd"])
             _supervisor_log(home, f"重启 {m['name']}(第 {m['restarts']} 次)")
         except OSError as e:
             _supervisor_log(home, f"重启 {m['name']} 失败:{e}")
@@ -925,6 +1016,7 @@ def run_headless(
 
 
 def main(argv: list[str] | None = None) -> int:
+    global _STARTUP_MODE
     ap = argparse.ArgumentParser(description="data2agent portable launcher")
     ap.add_argument("--role", choices=("middle", "platform"), required=True)
     ap.add_argument("--home", type=Path, default=None,
@@ -938,6 +1030,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--headless", action="store_true",
                     help="无 GUI 常驻并监控 worker(开机任务/Session 0)")
     args = ap.parse_args(argv)
+    _STARTUP_MODE = (
+        "headless" if args.headless else
+        "manual" if args.no_tray else
+        "tray"
+    )
 
     if args.home is not None:
         home = args.home
