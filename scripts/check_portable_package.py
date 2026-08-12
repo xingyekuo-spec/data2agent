@@ -109,9 +109,15 @@ def _check_no_legacy_erp_artifacts(portable: Path) -> None:
 
 
 def _check_middle_admin(portable: Path) -> None:
-    pkg = _site_packages(portable) / "data2agent" / "middle" / "admin"
+    data2agent_pkg = _site_packages(portable) / "data2agent"
+    pkg = data2agent_pkg / "middle" / "admin"
     tpl = pkg / "templates"
-    required = ("metadata.html", "tables.html", "config.html", "status.html", "layout.html")
+    shared = data2agent_pkg / "shared" / "admin_templates"
+    static = shared / "static"
+    required = (
+        "metadata.html", "tables.html", "config.html", "status.html",
+        "recovery.html", "layout.html",
+    )
     for name in required:
         path = tpl / name
         if not path.is_file():
@@ -119,16 +125,42 @@ def _check_middle_admin(portable: Path) -> None:
     meta = (tpl / "metadata.html").read_text(encoding="utf-8")
     tables = (tpl / "tables.html").read_text(encoding="utf-8")
     layout = (tpl / "layout.html").read_text(encoding="utf-8")
-    if "d2a_extraction_draft:" not in meta:
+    shared_layout = shared / "layout.html"
+    if not shared_layout.is_file():
+        _fail("middle_admin shared layout missing")
+    required_scripts = (
+        "admin.js", "htmx.min.js", "middle-config.js", "middle-errors.js",
+        "middle-logs.js", "middle-metadata.js", "middle-push-logs.js",
+        "middle-runs.js", "middle-status.js", "middle-tables.js",
+    )
+    for name in required_scripts:
+        if not (static / name).is_file():
+            _fail(f"middle_admin static script missing: {name}")
+    metadata_js = (static / "middle-metadata.js").read_text(encoding="utf-8")
+    tables_js = (static / "middle-tables.js").read_text(encoding="utf-8")
+    if "d2a_extraction_draft:" not in metadata_js:
         _fail("middle_admin metadata draft-key cleanup missing")
-    if "saveTablesPlan" not in tables or "btn-batch-edit" not in tables:
+    if "saveTablesPlan" not in tables_js or "btn-batch-edit" not in tables:
         _fail("middle_admin tables page missing direct-save / batch edit")
-    if "btn-draft-only" in tables or "preferDraft" in tables:
+    if "btn-draft-only" in tables or "preferDraft" in tables_js:
         _fail("middle_admin tables page still exposes draft save flow")
-    if "/api/extraction-tables" not in meta or "/api/extraction-tables" not in tables:
+    if ("/api/extraction-tables" not in metadata_js
+            or "/api/extraction-tables" not in tables_js):
         _fail("middle_admin pages missing /api/extraction-tables")
     if 'href="/metadata"' not in layout or 'href="/tables"' not in layout:
         _fail("middle_admin nav missing /metadata or /tables")
+    for page in tpl.glob("*.html"):
+        page_text = page.read_text(encoding="utf-8")
+        if "<script>" in page_text or "onclick=" in page_text:
+            _fail(f"middle_admin inline script/handler violates CSP: {page.name}")
+    dependency_manifest = shared / "FRONTEND-DEPENDENCIES.md"
+    if not dependency_manifest.is_file():
+        _fail("middle_admin frontend dependency manifest missing")
+    manifest = dependency_manifest.read_text(encoding="utf-8")
+    if "HTMX 2.0.4" not in manifest or "MIT" not in manifest:
+        _fail("middle_admin HTMX version/license manifest incomplete")
+    if "Edge 120" not in manifest or "Chrome 120" not in manifest:
+        _fail("middle_admin browser compatibility baseline missing")
     for script in ("安装开机自启.ps1", "卸载开机自启.ps1"):
         if not (portable / script).is_file():
             _fail(f"middle autostart script missing: {script}")

@@ -2,612 +2,127 @@
 {% block title %}配置 — 中间机管理{% endblock %}
 {% block content %}
 <style>
-  .card h2{font-size:15px;margin:0 0 8px;color:#12314f}
-  .card-lead{font-size:13px;color:#51606f;margin:0 0 16px;line-height:1.5;max-width:720px}
-  .field{display:block;margin-bottom:14px}
-  .field:last-child{margin-bottom:0}
-  .field-label{display:block;font-size:13px;color:#12314f;font-weight:600;margin-bottom:4px}
-  .field-hint{display:block;font-size:12px;color:#6a7682;margin:4px 0 0;line-height:1.45;max-width:560px}
-  .field input[type=text],.field input[type=number],.field input[type=password]{
-    width:100%;max-width:560px;box-sizing:border-box;
-    padding:8px 10px;border:1px solid #d0d7de;border-radius:6px;font-size:14px;background:#fff}
-  .banner{background:#e8f4fd;border:1px solid #b6d9f5;color:#0b4a6f;border-radius:8px;
-          padding:12px 14px;margin-bottom:16px;font-size:13px;line-height:1.5}
-  .banner.warn{background:#fff8e6;border-color:#f0d78c;color:#6b5200}
-  .banner code{background:#fff;padding:2px 6px;border-radius:4px}
-  .errors{color:#b42318;font-size:13px;margin-top:8px;white-space:pre-wrap}
-  .meta-line{font-size:12px;color:#6a7682;margin:0;line-height:1.55}
-  .tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid #e8edf2;margin:0 0 16px}
-  button.tab{appearance:none;background:transparent;border:0;border-bottom:2px solid transparent;
-       color:#51606f;padding:10px 14px;margin-bottom:-1px;border-radius:0;cursor:pointer;
-       font-size:13px;font-weight:600}
-  button.tab:hover{background:#f6f8fa;color:#12314f}
-  button.tab.active{color:#12314f;border-bottom-color:#12314f;background:transparent}
-  .tab-panel{display:none}
-  .tab-panel.active{display:block}
-  .panel-lead{font-size:12px;color:#6a7682;margin:0 0 14px;line-height:1.5;max-width:680px}
-  .group-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:0 18px}
-  .cred-box{display:flex;flex-wrap:wrap;gap:10px 18px;margin:0}
-  .cred-item{font-size:12px;color:#51606f;background:#fafbfc;border:1px solid #e8edf2;border-radius:6px;
-             padding:8px 10px;min-width:180px}
-  .cred-item strong{display:block;color:#12314f;font-size:12px;margin-bottom:2px}
-  .actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-top:16px;
-           padding-top:14px;border-top:1px solid #e8edf2}
-  .conn-result{margin-top:10px}
-  .source-block{border:1px solid #e8edf2;border-radius:10px;padding:14px 16px;margin-bottom:14px;background:#fafbfc}
-  .source-block:last-child{margin-bottom:0}
-  .source-title{margin:0 0 4px;font-size:14px;color:#12314f}
-  .source-lead{margin:0 0 14px;font-size:12px;color:#6a7682}
-  .subtabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
-  button.subtab{appearance:none;background:#fff;border:1px solid #d0d7de;color:#51606f;
-          border-radius:999px;padding:6px 12px;cursor:pointer;font-size:12px;font-weight:600}
-  button.subtab:hover{border-color:#12314f;color:#12314f;background:#fff}
-  button.subtab.active{background:#12314f;border-color:#12314f;color:#fff}
-  button.subtab.active:hover{background:#0f2840;color:#fff}
-  .subpanel{display:none}
-  .subpanel.active{display:block}
+  .card-lead,.panel-lead,.field-hint,.meta-line{color:#647180;font-size:13px;line-height:1.55}
+  .field{display:block;margin-bottom:14px}.field-label{display:block;color:#12314f;font-size:13px;font-weight:600;margin-bottom:5px}
+  .field input,.field select{box-sizing:border-box;width:100%;max-width:560px;padding:8px 10px;border:1px solid #c9d2dc;border-radius:6px;background:#fff;font-size:14px}
+  .field input[type=checkbox]{width:auto;margin-right:7px}.field-hint{display:block;font-size:12px;margin-top:4px;max-width:620px}
+  .banner{border:1px solid #b6d9f5;background:#e8f4fd;color:#0b4a6f;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:13px;line-height:1.55}
+  .banner.warn{border-color:#f0d78c;background:#fff8e6;color:#6b5200}.banner.danger{border-color:#e8a5a0;background:#fdecea;color:#8b1a13}
+  .group-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:0 20px}
+  .tab-panel,.subpanel{display:none}.tab-panel.active,.subpanel.active{display:block}
+  .actions,.subtabs{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-top:14px}
+  .subtabs{margin:0 0 14px}.subtab{background:#fff;color:#51606f;border:1px solid #c9d2dc;border-radius:999px;padding:6px 12px}
+  .subtab.active{background:#12314f;color:#fff;border-color:#12314f}
+  .source-block{border:1px solid #e1e7ed;border-radius:9px;background:#fafbfc;padding:15px;margin-bottom:14px}
+  .source-title{font-size:14px;color:#12314f;margin:0 0 4px}.source-lead{font-size:12px;color:#647180;margin:0 0 13px}
+  .cred-box{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.cred-item{border:1px solid #e1e7ed;border-radius:6px;background:#fff;padding:10px;font-size:12px;color:#51606f}
+  .cred-item strong{display:block;color:#12314f;margin-bottom:4px}.errors{white-space:pre-wrap;color:#b42318;font-size:13px;margin-top:10px}
+  .revision-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;font-size:13px}.revision-grid code{overflow-wrap:anywhere}
+  .diff-table code{white-space:pre-wrap;overflow-wrap:anywhere}.conflict-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
 </style>
 
-<div id="setup-banner" class="banner warn" style="display:{% if needs_setup %}block{% else %}none{% endif %}">
-  本机是<strong>中间服务器</strong>：从工厂 ERP <strong>只读抽取</strong>数据，再推送到<strong>数据平台</strong>。<br>
-  请按页签填写。各类密码只写入本机 <code>config/secrets.env</code>，不会出现在 YAML 里。
+<div id="setup-banner" class="banner warn" {% if not needs_setup %}hidden{% endif %}>
+  本机仅从 ERP 只读抽取并推送至平台。首次配置会启用生产 HTTP 推送、严格无磁盘 spool，
+  密码只写入本机 <code>config/secrets.env</code>。
 </div>
-
-<div id="daily-banner" class="banner" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
-  以下为日常可调参数（白名单字段）。保存后需重启抽取进程才生效。
-  ERP 账号密码、推送口令、管理界面登录密码请改 <code>config/secrets.env</code> 或重新做首次配置，不在本页修改。
+<div id="daily-banner" class="banner" {% if needs_setup %}hidden{% endif %}>
+  中间机只持久化水位、运行和推送审计等控制状态，不在本机状态库保存业务 Raw 数据。
+  保存后页面会明确显示自动重启或人工重启状态。
 </div>
+<div id="restart-banner" class="banner" hidden role="status"></div>
 
-<div id="restart-banner" class="banner" style="display:none"></div>
-
-<!-- 首次配置 -->
-<form id="setup-form" class="card" novalidate style="display:{% if needs_setup %}block{% else %}none{% endif %}">
+<form id="setup-form" class="card" novalidate {% if not needs_setup %}hidden{% endif %}>
   <h2>首次配置</h2>
-  <p class="card-lead">按页签填完后点「保存并启用」，本机即可从 ERP 抽数并推到数据平台。</p>
-
+  <p class="card-lead">完成三个步骤后，再到元数据页扫描并选择抽取表。</p>
   <div class="tabs" role="tablist" aria-label="首次配置分组">
-    <button type="button" class="tab active" data-tabs="setup" data-tab="setup-push">1. 推送目标</button>
-    <button type="button" class="tab" data-tabs="setup" data-tab="setup-erp">2. ERP 连接</button>
-    <button type="button" class="tab" data-tabs="setup" data-tab="setup-local">3. 管理与节奏</button>
+    <button type="button" class="tab active" id="setup-tab-push" role="tab" aria-selected="true" aria-controls="setup-push" tabindex="0" data-tabs="setup" data-tab="setup-push">1. 推送目标</button>
+    <button type="button" class="tab" id="setup-tab-erp" role="tab" aria-selected="false" aria-controls="setup-erp" tabindex="-1" data-tabs="setup" data-tab="setup-erp">2. ERP 连接</button>
+    <button type="button" class="tab" id="setup-tab-local" role="tab" aria-selected="false" aria-controls="setup-local" tabindex="-1" data-tabs="setup" data-tab="setup-local">3. 管理与节奏</button>
   </div>
-
-  <div id="setup-push" class="tab-panel active" data-tabs="setup">
-    <p class="panel-lead">中间机把抽到的数据推到平台「数据接收服务」。口令须与平台首次配置一致。</p>
-    <label class="field">
-      <span class="field-label">数据平台接收地址</span>
-      <input type="text" name="platform_url" placeholder="http://192.168.1.100:8850" required>
-      <span class="field-hint">
-        填<strong>数据平台那台电脑</strong>的内网 IP + 端口 <code>8850</code>。
-        不是本机管理页（8851），也不是平台管理页（8849）。示例：<code>http://10.0.0.20:8850</code>
-      </span>
-    </label>
-    <label class="field">
-      <span class="field-label">推送口令（须与平台「接收口令」相同）</span>
-      <input type="password" name="ingest_token" required>
-      <span class="field-hint">建议先在平台机设好再抄到这里，或两边约定同一串长密码。</span>
-    </label>
-  </div>
-
-  <div id="setup-erp" class="tab-panel" data-tabs="setup">
-    <p class="panel-lead">只读连接 ERP。账号仅需 SELECT 权限，不要使用 sa 或可改业务数据的账号。</p>
+  <section id="setup-push" class="tab-panel active" role="tabpanel" aria-labelledby="setup-tab-push" data-tabs="setup">
+    <p class="panel-lead">填写平台数据接收服务地址（通常为平台 IP 的 8850 端口）和该数据源专属 Token。</p>
+    <label class="field"><span class="field-label">数据平台接收地址</span><input type="url" name="platform_url" placeholder="https://platform.example.com:8850" required><span class="field-hint">推荐 HTTPS；受控内网使用 HTTP 时会作为显式安全例外记录。</span></label>
+    <label class="field"><span class="field-label">推送口令</span><input type="password" name="ingest_token" autocomplete="new-password" required><span class="field-hint">须与平台为本数据源签发的接收 Token 一致。</span></label>
+  </section>
+  <section id="setup-erp" class="tab-panel" role="tabpanel" aria-labelledby="setup-tab-erp" data-tabs="setup" hidden>
+    <p class="panel-lead">使用仅有 SELECT 权限的 ERP 账号；不要使用 sa 或可写业务数据的账号。</p>
     <div class="group-grid">
-      <label class="field">
-        <span class="field-label">ERP 服务器</span>
-        <input type="text" name="erp_server" placeholder="例如 192.168.1.50 或 DESKTOP\SQLEXPRESS" required>
-        <span class="field-hint">主机名或 IP。命名实例请整段填写，例如 <code>DESKTOP\SQLEXPRESS</code>。</span>
-      </label>
-      <label class="field">
-        <span class="field-label">ERP 端口</span>
-        <input type="number" name="erp_port" value="1433">
-        <span class="field-hint">默认实例一般填 <code>1433</code>。命名实例请填 <code>0</code>。</span>
-      </label>
-      <label class="field">
-        <span class="field-label">ERP 数据库名</span>
-        <input type="text" name="erp_database" placeholder="E10 业务库名称" required>
-        <span class="field-hint">要抽取的业务库名称，不是 master 系统库。</span>
-      </label>
-      <label class="field">
-        <span class="field-label">ERP 只读账号</span>
-        <input type="text" name="erp_user" required>
-        <span class="field-hint">仅查询权限的只读账号。</span>
-      </label>
-      <label class="field">
-        <span class="field-label">ERP 密码</span>
-        <input type="password" name="erp_password" required>
-        <span class="field-hint">只保存在本机 <code>secrets.env</code>，不会写入配置 YAML。</span>
-      </label>
+      <label class="field"><span class="field-label">ERP 服务器</span><input type="text" name="erp_server" required><span class="field-hint">IP、主机名或命名实例，例如 <code>SERVER\SQLEXPRESS</code>。</span></label>
+      <label class="field"><span class="field-label">ERP 端口</span><input type="number" name="erp_port" value="1433" min="0" max="65535"><span class="field-hint">命名实例可填 0；其他端口须为 1–65535。</span></label>
+      <label class="field"><span class="field-label">ERP 数据库名</span><input type="text" name="erp_database" required></label>
+      <label class="field"><span class="field-label">ERP 只读账号</span><input type="text" name="erp_user" autocomplete="username" required></label>
+      <label class="field"><span class="field-label">ERP 密码</span><input type="password" name="erp_password" autocomplete="new-password" required></label>
     </div>
-  </div>
-
-  <div id="setup-local" class="tab-panel" data-tabs="setup">
-    <p class="panel-lead">管理页登录密码与自动抽取间隔。抽取间隔一般保持默认即可。</p>
+  </section>
+  <section id="setup-local" class="tab-panel" role="tabpanel" aria-labelledby="setup-tab-local" data-tabs="setup" hidden>
     <div class="group-grid">
-      <label class="field">
-        <span class="field-label">管理界面登录密码</span>
-        <input type="password" name="admin_token" required>
-        <span class="field-hint">以后打开本机管理页时输入。可与推送口令不同。</span>
-      </label>
-      <label class="field">
-        <span class="field-label">抽取间隔</span>
-        <input type="text" name="sync_every" value="30m">
-        <span class="field-hint">
-          支持秒/分钟/小时/天：<code>30s</code>=30 秒，<code>30m</code>=30 分钟，
-          <code>1h</code>=1 小时，<code>1d</code>=1 天。纯数字按秒处理。
-        </span>
-      </label>
-      <label class="field">
-        <span class="field-label">抽取启动时间（可空）</span>
-        <input type="text" name="sync_start_at" placeholder="例如 02:00">
-        <span class="field-hint">填 <code>02:00</code> 表示服务启动后等到下一个 02:00 再跑首轮；留空=服务启动即尝试抽取。</span>
-      </label>
-      <label class="field">
-        <span class="field-label">数据抓取开始日期（可空）</span>
-        <input type="text" name="start_date" placeholder="例如 2026-01-01">
-        <span class="field-hint">格式 <code>YYYY-MM-DD</code>。增量表首轮从此日期起抽，不抽更早历史；留空=按回看窗口起抽。事后也可在「配置 → 数据源 → 抽取节奏」修改。</span>
-      </label>
+      <label class="field"><span class="field-label">管理界面登录密码</span><input type="password" name="admin_token" autocomplete="new-password" required></label>
+      <label class="field"><span class="field-label">抽取间隔</span><input type="text" name="sync_every" value="30m" required><span class="field-hint">支持 <code>30s</code>、<code>30m</code>、<code>1h</code>、<code>1d</code>。</span></label>
+      <label class="field"><span class="field-label">首轮启动时间（可空）</span><input type="time" name="sync_start_at"></label>
+      <label class="field"><span class="field-label">抽取开始日期（可空）</span><input type="date" name="start_date"></label>
     </div>
-  </div>
-
-  <div id="setup-errors" class="errors"></div>
-  <div class="actions">
-    <button type="button" class="tab-nav" data-tabs="setup" data-dir="-1" style="display:none">上一步</button>
-    <button type="button" class="tab-nav" data-tabs="setup" data-dir="1">下一步</button>
-    <button type="submit">保存并启用</button>
-  </div>
+  </section>
+  <div id="setup-errors" class="errors" role="alert"></div>
+  <div class="actions"><button type="button" class="tab-nav btn-ghost" data-tabs="setup" data-dir="-1" hidden>上一步</button><button type="button" class="tab-nav btn-ghost" data-tabs="setup" data-dir="1">下一步</button><button type="submit">保存并启用</button></div>
 </form>
 
-<!-- 日常配置 -->
-<div id="daily-card" class="card" style="display:{% if needs_setup %}none{% else %}block{% endif %}">
-  <h2>配置</h2>
-  <p class="card-lead">按页签查看连接、路径与运行参数。抽取表请到「元数据 / 抽取表」管理。</p>
-
-  <div class="tabs" role="tablist" aria-label="日常配置分组">
-    <button type="button" class="tab active" data-tabs="daily" data-tab="daily-conn">连接测试</button>
-    <button type="button" class="tab" data-tabs="daily" data-tab="daily-link">平台对接</button>
-    <button type="button" class="tab" data-tabs="daily" data-tab="daily-paths">路径</button>
-    <button type="button" class="tab" data-tabs="daily" data-tab="daily-source">数据源</button>
-  </div>
-
-  <div id="daily-conn" class="tab-panel active" data-tabs="daily">
-    <p class="panel-lead">验证 ERP 是否可达与元数据权限。本页不显示密码、DSN 或 Token 明文。</p>
-    <div class="actions" style="margin-top:0;padding-top:0;border-top:0">
-      <button type="button" id="btn-conn-test">测试数据库连接</button>
-      <a href="/metadata?from=config" id="link-metadata" style="display:none">下一步：前往元数据扫描选表 →</a>
+<div id="daily-card" {% if needs_setup %}hidden{% endif %}>
+  <section class="card" aria-labelledby="revision-title">
+    <h2 id="revision-title">配置生效状态</h2>
+    <div class="revision-grid">
+      <div>部署模式：<strong id="deployment-mode">—</strong></div>
+      <div>页面 revision：<code id="config-revision-loaded">—</code></div>
+      <div>connector 已加载：<code id="config-revision-running">—</code></div>
+      <div>结论：<span id="config-revision-state">正在检查…</span></div>
     </div>
-    <p id="conn-result" class="meta-line conn-result"></p>
-  </div>
+    <p id="legacy-state-warning" class="warn" hidden>检测到旧配置键 <code>landing</code>；下次保存会安全迁移为 <code>state_db</code>。</p>
+  </section>
 
-  <div id="daily-link" class="tab-panel" data-tabs="daily">
-    <p class="panel-lead">
-      平台换发/重置推送口令后在此更新，无需重做首次配置；口令只写入本机
-      <code>config/secrets.env</code>，不回显。保存后需重启抽取进程生效。
-    </p>
-    <label class="field">
-      <span class="field-label">数据平台接收地址</span>
-      <input type="text" id="link-url" placeholder="http://平台IP:8850">
-      <span class="field-hint">平台机内网地址 + <code>8850</code>。</span>
-    </label>
-    <label class="field">
-      <span class="field-label">新推送口令（留空则不修改）</span>
-      <input type="password" id="link-token" placeholder="仅需要更换时填写">
-      <span class="field-hint">与平台「数据源管理」中签发的专属 Token 相同。</span>
-    </label>
-    <div class="actions" style="margin-top:0;padding-top:0;border-top:0">
-      <button type="button" id="btn-link-save">保存对接信息</button>
-      <button type="button" id="btn-link-check">测试与平台连通</button>
+  <section class="card">
+    <h2>日常配置</h2>
+    <div class="tabs" role="tablist" aria-label="日常配置分组">
+      <button type="button" class="tab active" id="daily-tab-conn" role="tab" aria-selected="true" aria-controls="daily-conn" tabindex="0" data-tabs="daily" data-tab="daily-conn">连接测试</button>
+      <button type="button" class="tab" id="daily-tab-link" role="tab" aria-selected="false" aria-controls="daily-link" tabindex="-1" data-tabs="daily" data-tab="daily-link">平台对接</button>
+      <button type="button" class="tab" id="daily-tab-paths" role="tab" aria-selected="false" aria-controls="daily-paths" tabindex="-1" data-tabs="daily" data-tab="daily-paths">控制状态库</button>
+      <button type="button" class="tab" id="daily-tab-source" role="tab" aria-selected="false" aria-controls="daily-source" tabindex="-1" data-tabs="daily" data-tab="daily-source">数据源</button>
     </div>
-    <p id="link-save-result" class="meta-line conn-result"></p>
-    <p id="link-check-result" class="meta-line conn-result"></p>
-  </div>
 
-  <form id="config-form">
-    <div id="daily-paths" class="tab-panel" data-tabs="daily">
-      <p class="panel-lead">模板与本机状态库位置。一般保持安装默认，无需修改。</p>
-      <div class="group-grid">
-        <label class="field">
-          <span class="field-label">模板目录</span>
-          <input type="text" name="templates" id="cfg-templates">
-          <span class="field-hint">业务对象定义目录（通常是本包内的 <code>app\templates</code>）。</span>
-        </label>
-        <label class="field">
-          <span class="field-label">本机状态库路径</span>
-          <input type="text" name="landing" id="cfg-landing">
-          <span class="field-hint">水位/审计本地库路径（推送模式下不在此落业务 raw 表）。</span>
-        </label>
+    <section id="daily-conn" class="tab-panel active" role="tabpanel" aria-labelledby="daily-tab-conn" data-tabs="daily">
+      <p class="panel-lead">验证 ERP 连通与元数据权限；凭据不会回显。</p>
+      <label class="field"><span class="field-label">数据源</span><select id="conn-source"></select></label>
+      <div class="actions"><button type="button" id="btn-conn-test">测试 ERP 连接</button><a href="/metadata?from=config" id="link-metadata" hidden>前往元数据扫描选表 →</a></div>
+      <p id="conn-result" class="meta-line" aria-live="polite"></p>
+    </section>
+    <section id="daily-link" class="tab-panel" role="tabpanel" aria-labelledby="daily-tab-link" data-tabs="daily" hidden>
+      <p class="panel-lead">按数据源更新平台地址或 Token。Token 留空时不会修改，也不会回显。</p>
+      <label class="field"><span class="field-label">数据源</span><select id="link-source"></select></label>
+      <label class="field"><span class="field-label">平台接收地址</span><input type="url" id="link-url"></label>
+      <label class="field"><span class="field-label">新推送口令（可空）</span><input type="password" id="link-token" autocomplete="new-password"></label>
+      <div class="actions"><button type="button" id="btn-link-save">保存对接信息</button><button type="button" id="btn-link-check" class="btn-ghost">测试平台连通与协议</button></div>
+      <p id="link-save-result" class="meta-line" aria-live="polite"></p><p id="link-check-result" class="meta-line" aria-live="polite"></p>
+    </section>
+
+    <form id="config-form" novalidate>
+      <section id="daily-paths" class="tab-panel" role="tabpanel" aria-labelledby="daily-tab-paths" data-tabs="daily" hidden>
+        <p class="panel-lead"><strong>中间机状态库仅含控制状态，不含业务 Raw。</strong>备份它只能恢复水位、运行及推送审计，不能恢复配置、secrets、程序或平台 Raw 数据。</p>
+        <div class="group-grid">
+          <label class="field"><span class="field-label">模板目录</span><input type="text" id="cfg-templates"></label>
+          <label class="field"><span class="field-label">中间机状态库路径</span><input type="text" id="cfg-state-db"><span class="field-hint">新安装默认 <code>data/middle-state.sqlite</code>。</span></label>
+        </div>
+      </section>
+      <section id="daily-source" class="tab-panel" role="tabpanel" aria-labelledby="daily-tab-source" data-tabs="daily" hidden>
+        <p class="panel-lead">每个操作始终绑定明确数据源；生产环境仅允许 HTTP sink。</p>
+        <div id="sources-container"></div>
+      </section>
+      <div id="config-errors" class="errors" role="alert"></div>
+      <div id="config-conflict" class="banner danger" hidden role="alert">
+        <strong>配置 revision 冲突。</strong><div id="config-conflict-detail"></div>
+        <div class="conflict-actions"><button type="button" id="btn-conflict-reload" class="btn-ghost">读取服务器新配置</button><button type="button" id="btn-conflict-reapply">在新 revision 上重新应用当前改动</button></div>
       </div>
-    </div>
-
-    <div id="daily-source" class="tab-panel" data-tabs="daily">
-      <p class="panel-lead">控制抽取节奏、资源保护与推送目标。保存后请重启抽取进程。</p>
-      <div id="sources-container"></div>
-    </div>
-
-    <div id="config-errors" class="errors"></div>
-    <div class="actions" id="daily-save-actions" style="display:none">
-      <button type="submit">保存配置</button>
-    </div>
-  </form>
+      <details id="config-diff" open><summary>保存前改动预览（敏感值不显示）</summary><div id="config-diff-body" class="meta-line"></div></details>
+      <div class="actions" id="daily-save-actions" hidden><button type="submit" id="btn-config-save">校验并保存配置</button></div>
+    </form>
+  </section>
 </div>
-
-<script>
-(function () {
-  var sourcesEl = document.getElementById('sources-container');
-  var needsSetup = {{ 'true' if needs_setup else 'false' }};
-  var currentRevision = null;
-
-  function authHeaders(extra) {
-    var h = {'Content-Type': 'application/json'};
-    var token = sessionStorage.getItem('d2a_token');
-    if (token) h['Authorization'] = 'Bearer ' + token;
-    if (extra) Object.assign(h, extra);
-    return h;
-  }
-
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-  }
-
-  function field(label, hint, inputHtml) {
-    return '<label class="field"><span class="field-label">' + label + '</span>' +
-      inputHtml + '<span class="field-hint">' + hint + '</span></label>';
-  }
-
-  function activateTab(tabsKey, tabId) {
-    document.querySelectorAll('.tab[data-tabs="' + tabsKey + '"]').forEach(function (btn) {
-      btn.classList.toggle('active', btn.getAttribute('data-tab') === tabId);
-    });
-    document.querySelectorAll('.tab-panel[data-tabs="' + tabsKey + '"]').forEach(function (panel) {
-      panel.classList.toggle('active', panel.id === tabId);
-    });
-    if (tabsKey === 'setup') syncSetupNav();
-    if (tabsKey === 'daily') syncDailySaveActions();
-  }
-
-  function setupTabIds() {
-    return ['setup-push', 'setup-erp', 'setup-local'];
-  }
-
-  function syncSetupNav() {
-    var ids = setupTabIds();
-    var active = document.querySelector('.tab-panel[data-tabs="setup"].active');
-    var idx = active ? ids.indexOf(active.id) : 0;
-    var prev = document.querySelector('.tab-nav[data-tabs="setup"][data-dir="-1"]');
-    var next = document.querySelector('.tab-nav[data-tabs="setup"][data-dir="1"]');
-    if (prev) prev.style.display = idx > 0 ? 'inline-block' : 'none';
-    if (next) next.style.display = idx >= 0 && idx < ids.length - 1 ? 'inline-block' : 'none';
-  }
-
-  function syncDailySaveActions() {
-    var active = document.querySelector('.tab-panel[data-tabs="daily"].active');
-    var actions = document.getElementById('daily-save-actions');
-    if (!actions) return;
-    // 连接测试/平台对接页不显示保存;路径/数据源显示
-    actions.style.display = (active && active.id !== 'daily-conn' && active.id !== 'daily-link') ? 'flex' : 'none';
-  }
-
-  document.querySelectorAll('.tab[data-tab]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      activateTab(btn.getAttribute('data-tabs'), btn.getAttribute('data-tab'));
-    });
-  });
-
-  document.querySelectorAll('.tab-nav').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var tabsKey = btn.getAttribute('data-tabs');
-      var dir = parseInt(btn.getAttribute('data-dir'), 10);
-      var ids = setupTabIds();
-      var active = document.querySelector('.tab-panel[data-tabs="' + tabsKey + '"].active');
-      var idx = active ? ids.indexOf(active.id) : 0;
-      var next = ids[idx + dir];
-      if (next) activateTab(tabsKey, next);
-    });
-  });
-
-  function activateSubtab(block, subId) {
-    block.querySelectorAll('.subtab').forEach(function (btn) {
-      btn.classList.toggle('active', btn.getAttribute('data-sub') === subId);
-    });
-    block.querySelectorAll('.subpanel').forEach(function (panel) {
-      panel.classList.toggle('active', panel.getAttribute('data-sub') === subId);
-    });
-  }
-
-  function renderSource(name, src) {
-    var w = (src.windows || []).join(', ');
-    var rate = src.rate || {};
-    var sink = src.sink || {};
-    var dsnOk = src.dsn_env_set ? '已配置' : '未配置';
-    var tokOk = sink.token_env_set ? '已配置' : '未配置';
-    var sid = 'src-' + name.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return '<div class="source-block" data-source="' + esc(name) + '">' +
-      '<h3 class="source-title">数据源：' + esc(name) + '</h3>' +
-      '<p class="source-lead">控制该源的抽取节奏、资源用量与推送目标。</p>' +
-      '<div class="subtabs" role="tablist">' +
-        '<button type="button" class="subtab active" data-sub="' + sid + '-pace">抽取节奏</button>' +
-        '<button type="button" class="subtab" data-sub="' + sid + '-rate">资源保护</button>' +
-        '<button type="button" class="subtab" data-sub="' + sid + '-sink">推送到平台</button>' +
-        '<button type="button" class="subtab" data-sub="' + sid + '-cred">凭据状态</button>' +
-      '</div>' +
-
-      '<div class="subpanel active" data-sub="' + sid + '-pace">' +
-        '<div class="group-grid">' +
-          field('抽取间隔',
-            '多久自动抽一轮。支持秒/分钟/小时/天：<code>30s</code>、<code>30m</code>、<code>1h</code>、<code>1d</code>；纯数字按秒处理。',
-            '<input type="text" data-key="sync_every" value="' + esc(src.sync_every || '') + '">') +
-          field('抽取启动时间（可空）',
-            '自动调度首轮启动时间，格式 <code>HH:MM</code>。例：<code>02:00</code>；留空=服务启动即尝试抽取。',
-            '<input type="text" data-key="sync_start_at" value="' + esc(src.sync_start_at || '') + '" placeholder="例如 02:00">') +
-          field('抽取数据开始日期（可空）',
-            '增量表首轮从此日期起抽，不抽更早历史。格式 <code>YYYY-MM-DD</code>。抽取表中单独配置了开始日期的表以表级为准，其余增量表使用此全局日期。',
-            '<input type="text" data-key="start_date" value="' + esc(src.start_date || '') + '" placeholder="例如 2015-01-01">') +
-          field('错峰时间窗（可空）',
-            '仅在这些时段内允许抽取。格式如 <code>22:00-06:00</code>；多个用英文逗号分隔。留空=全天可抽。',
-            '<input type="text" data-key="windows" value="' + esc(w) + '" placeholder="例如 22:00-06:00">') +
-          field('回看窗口',
-            '增量抽取时往回多看多久，避免漏数。例：<code>3d</code>=3 天。',
-            '<input type="text" data-key="lookback" value="' + esc(src.lookback || '') + '">') +
-          field('每日 L1 对账时间（可空）',
-            '每天仅比较源端与平台统计，格式 <code>HH:MM</code>；留空=不自动执行。',
-            '<input type="text" data-key="reconcile_at" value="' + esc(src.reconcile_at || '') + '" placeholder="例如 05:30">') +
-          field('L2 深度修复时间（可空）',
-            '按运行键重抽并识别物理删除，格式 <code>HH:MM</code>；建议低峰执行。',
-            '<input type="text" data-key="reconcile_deep_at" value="' + esc(src.reconcile_deep_at || '') + '" placeholder="例如 02:10">') +
-          field('L2 执行星期（可空）',
-            '填 <code>mon</code>…<code>sun</code>；留空表示每天。仅配置了 L2 时间时生效。',
-            '<input type="text" data-key="reconcile_deep_day_of_week" value="' + esc(src.reconcile_deep_day_of_week || '') + '" placeholder="例如 sun">') +
-        '</div>' +
-      '</div>' +
-
-      '<div class="subpanel" data-sub="' + sid + '-rate">' +
-        '<div class="group-grid">' +
-          field('每批行数',
-            '单次查询最多取多少行。过大可能占 ERP 资源，过小则轮次变多。',
-            '<input type="number" data-key="rate.batch_size" value="' + esc(rate.batch_size != null ? rate.batch_size : '') + '">') +
-          field('限速（行/秒）',
-            '抽取时的大致速度上限。例：<code>2000</code>。',
-            '<input type="number" data-key="rate.rows_per_second" value="' + esc(rate.rows_per_second != null ? rate.rows_per_second : '') + '">') +
-        '</div>' +
-      '</div>' +
-
-      '<div class="subpanel" data-sub="' + sid + '-sink">' +
-        field('数据平台接收地址',
-          '平台机内网地址 + <code>8850</code>。改完后需重启抽取进程。',
-          '<input type="text" data-key="sink.url" value="' + esc(sink.url || '') + '" placeholder="http://平台IP:8850">') +
-      '</div>' +
-
-      '<div class="subpanel" data-sub="' + sid + '-cred">' +
-        '<p class="panel-lead">密码与连接串不在本页展示或修改；请改 secrets.env。</p>' +
-        '<div class="cred-box">' +
-          '<div class="cred-item"><strong>ERP 连接凭据</strong>' + esc(src.dsn_env || '（未命名）') + ' — ' + dsnOk + '</div>' +
-          '<div class="cred-item"><strong>推送口令环境变量</strong>' + esc(sink.token_env || '（未命名）') + ' — ' + tokOk + '</div>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  }
-
-  function bindSourceSubtabs() {
-    sourcesEl.querySelectorAll('.source-block').forEach(function (block) {
-      block.querySelectorAll('.subtab').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          activateSubtab(block, btn.getAttribute('data-sub'));
-        });
-      });
-    });
-  }
-
-  function loadDaily() {
-    fetch('/api/config', {headers: authHeaders()})
-      .then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
-      .then(function (x) {
-        if (!x.ok) return;
-        if (x.j.needs_setup) return;
-        currentRevision = x.j.revision || null;
-        document.getElementById('cfg-templates').value = x.j.templates || '';
-        document.getElementById('cfg-landing').value = x.j.landing || '';
-        var html = '';
-        var firstSinkUrl = '';
-        Object.keys(x.j.sources || {}).forEach(function (name) {
-          html += renderSource(name, x.j.sources[name]);
-          if (!firstSinkUrl && x.j.sources[name].sink) firstSinkUrl = x.j.sources[name].sink.url || '';
-        });
-        sourcesEl.innerHTML = html || '<p class="meta-line">当前配置中没有数据源。</p>';
-        bindSourceSubtabs();
-        syncDailySaveActions();
-        // 平台对接页签:回填地址 + 自动跑一次连通/协议检查
-        document.getElementById('link-url').value = firstSinkUrl;
-        checkConnection();
-      });
-  }
-
-  function checkConnection() {
-    var box = document.getElementById('link-check-result');
-    box.textContent = '连通检查中…';
-    fetch('/api/config/connection-check', {headers: authHeaders()})
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (!j.ok) {
-          box.textContent = '平台对接:' + (j.detail || '检查失败');
-          return;
-        }
-        var proto = '本机协议 v' + (j.local_protocol || '?') +
-          ' ↔ 平台支持 [' + (j.platform_supported || []).join(', ') + ']';
-        box.textContent = '平台对接:连通正常 · ' + proto + ' · ' + (j.compatible ? '兼容' : '不兼容') +
-          (j.token_configured ? '' : ' · 警告:推送口令未配置');
-      })
-      .catch(function () { box.textContent = '平台对接:检查请求失败'; });
-  }
-
-  document.getElementById('btn-link-check').addEventListener('click', checkConnection);
-
-  document.getElementById('btn-link-save').addEventListener('click', function () {
-    var box = document.getElementById('link-save-result');
-    var body = {
-      platform_url: document.getElementById('link-url').value,
-      revision: currentRevision
-    };
-    var tok = document.getElementById('link-token').value;
-    if (tok.trim()) body.ingest_token = tok.trim();
-    fetch('/api/config/connection', {method: 'POST', headers: authHeaders(), body: JSON.stringify(body)})
-      .then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
-      .then(function (x) {
-        var j = x.j;
-        if (!x.ok || !j.ok) {
-          box.textContent = (j.errors || []).map(function (e) { return e.message; }).join('; ') ||
-            (typeof j.detail === 'string' ? j.detail : '保存失败');
-          return;
-        }
-        currentRevision = j.revision || currentRevision;
-        document.getElementById('link-token').value = '';
-        box.textContent = '对接信息已保存' +
-          (j.token_updated ? '(含新推送口令)' : '') +
-          (j.restart_automatic ? '，抽取进程将自动重启。' : '，请重启抽取进程后生效。');
-        var b = document.getElementById('restart-banner');
-        b.style.display = 'block';
-        b.textContent = j.restart_automatic
-          ? '对接信息已保存，便携启动器将在数秒内自动重启抽取进程。'
-          : '对接信息已保存，请重启抽取进程后生效。';
-      });
-  });
-
-  function validateSetupForm(form) {
-    var required = form.querySelectorAll('[required]');
-    for (var i = 0; i < required.length; i++) {
-      var el = required[i];
-      if (String(el.value || '').trim()) continue;
-      var panel = el.closest('.tab-panel');
-      if (panel) activateTab('setup', panel.id);
-      el.focus();
-      return '请先填写：' + ((el.previousElementSibling && el.previousElementSibling.textContent) || el.name);
-    }
-    return '';
-  }
-
-  document.getElementById('setup-form').addEventListener('submit', function (ev) {
-    ev.preventDefault();
-    var errBox = document.getElementById('setup-errors');
-    var missing = validateSetupForm(ev.target);
-    if (missing) { errBox.textContent = missing; return; }
-    var fd = new FormData(ev.target);
-    var body = {};
-    fd.forEach(function (v, k) { body[k] = v; });
-    body.erp_port = parseInt(body.erp_port || '1433', 10);
-    fetch('/api/setup', {method: 'POST', headers: authHeaders(), body: JSON.stringify(body)})
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        var err = document.getElementById('setup-errors');
-        if (!j.ok) {
-          err.textContent = (typeof formatApiError === 'function'
-            ? formatApiError(j, '保存失败')
-            : ((j.errors || []).map(function (e) { return e.message; }).join('; ') || '保存失败'));
-          return;
-        }
-        err.textContent = '';
-        if (body.admin_token) sessionStorage.setItem('d2a_token', body.admin_token);
-        var b = document.getElementById('restart-banner');
-        b.style.display = 'block';
-        b.innerHTML = (j.message || '配置已保存。抽取服务需启动或重启后生效。') +
-          ' 下一步：<a href="/metadata?from=config">扫描 ERP 元数据并选表</a>（默认空表清单，未选表不会访问业务表）。';
-        setTimeout(function () { location.href = '/metadata?from=config'; }, 1200);
-      });
-  });
-
-  document.getElementById('config-form').addEventListener('submit', function (ev) {
-    ev.preventDefault();
-    var sources = {};
-    sourcesEl.querySelectorAll('.source-block').forEach(function (block) {
-      var name = block.getAttribute('data-source');
-      var src = {rate: {}, sink: {}};
-      block.querySelectorAll('[data-key]').forEach(function (inp) {
-        var key = inp.getAttribute('data-key');
-        var val = inp.value;
-        if (key === 'windows') {
-          src[key] = val ? val.split(',').map(function (s) { return s.trim(); }).filter(Boolean) : [];
-        } else if (key.indexOf('rate.') === 0) {
-          src.rate[key.slice(5)] = val === '' ? null : Number(val);
-        } else if (key === 'sink.url') {
-          src.sink.url = val;
-        } else if (key === 'sync_start_at' || key === 'start_date' ||
-                   key === 'reconcile_at' || key === 'reconcile_deep_at' ||
-                   key === 'reconcile_deep_day_of_week') {
-          src[key] = val === '' ? null : val.trim();
-        } else {
-          src[key] = val;
-        }
-      });
-      sources[name] = src;
-    });
-    var body = {
-      templates: document.getElementById('cfg-templates').value,
-      landing: document.getElementById('cfg-landing').value,
-      sources: sources,
-      revision: currentRevision
-    };
-    fetch('/api/config', {method: 'POST', headers: authHeaders(), body: JSON.stringify(body)})
-      .then(function (r) { return r.json().then(function (j) { return {ok: r.ok, j: j}; }); })
-      .then(function (response) {
-        var j = response.j;
-        var err = document.getElementById('config-errors');
-        if (!response.ok || !j.ok) {
-          err.textContent = (typeof formatApiError === 'function'
-            ? formatApiError(j, '保存失败')
-            : ((j.errors || []).map(function (e) { return e.message; }).join('; ') ||
-              (typeof j.detail === 'string' ? j.detail : (j.detail && j.detail.detail) || '保存失败')));
-          return;
-        }
-        err.textContent = '';
-        currentRevision = j.revision || currentRevision;
-        var b = document.getElementById('restart-banner');
-        b.style.display = 'block';
-        b.innerHTML = (j.restart_automatic
-          ? '配置已保存，便携启动器将在数秒内自动重启抽取进程。'
-          : '配置已保存，请重启抽取进程后生效。') +
-          ' 若尚未选表，请到 <a href="/metadata?from=config">元数据</a> 扫描并加入抽取计划。';
-      });
-  });
-
-  if (needsSetup) {
-    syncSetupNav();
-  } else {
-    loadDaily();
-    try {
-      var last = JSON.parse(sessionStorage.getItem('d2a_last_connection_test') || 'null');
-      if (last && last.body) {
-        document.getElementById('conn-result').textContent =
-          '最近结果: ' + JSON.stringify(last.body);
-        if (last.body.status === 'connected' || last.body.status === 'connected_limited') {
-          document.getElementById('link-metadata').style.display = 'inline';
-        }
-      }
-    } catch (e) {}
-    var btn = document.getElementById('btn-conn-test');
-    if (btn) btn.onclick = function () {
-      var out = document.getElementById('conn-result');
-      out.textContent = '测试中…';
-      fetch('/api/connection/test', {method: 'POST', headers: authHeaders(), body: '{}'})
-        .then(function (r) { return r.json(); })
-        .then(function (body) {
-          try {
-            sessionStorage.setItem('d2a_last_connection_test',
-              JSON.stringify({at: Date.now(), body: body}));
-          } catch (e) {}
-          if (body.status === 'failed' || body.error) {
-            out.textContent = (typeof formatApiError === 'function'
-              ? formatApiError(body, '连接失败')
-              : ((body.detail || body.error || '连接失败') +
-                 (body.suggestion ? (' — 建议：' + body.suggestion) : '')));
-          } else {
-            out.textContent = JSON.stringify(body);
-          }
-          var link = document.getElementById('link-metadata');
-          if (body.status === 'connected' || body.status === 'connected_limited') {
-            link.style.display = 'inline';
-          } else {
-            link.style.display = 'none';
-          }
-        });
-    };
-    syncDailySaveActions();
-  }
-})();
-</script>
+<script src="{{ static_url }}/middle-config.js" defer></script>
 {% endblock %}

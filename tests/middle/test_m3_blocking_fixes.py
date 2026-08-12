@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -220,6 +221,58 @@ def test_backfill_uses_configured_runtime_keys(tmp_path: Path, monkeypatch):
     assert n == 2
 
 
+def test_http_backfill_is_rejected_without_creating_middle_raw(
+    tmp_path: Path, monkeypatch, capsys,
+):
+    """旧 backfill 是本地 upsert，HTTP 中间机必须 fail closed。"""
+    from data2agent.middle.extract.__main__ import main
+
+    src = tmp_path / "src.sqlite"
+    con = sqlite3.connect(src)
+    con.execute(
+        "CREATE TABLE ITEM (CODE TEXT PRIMARY KEY, UPDATE_TIME TEXT NOT NULL)")
+    con.commit()
+    con.close()
+    state_db = tmp_path / "middle-state.sqlite"
+    config = tmp_path / "connect.yaml"
+    config.write_text(
+        "deployment_mode: production\n"
+        f"state_db: {state_db}\n"
+        "sources:\n"
+        "  demo:\n"
+        "    adapter: sqlite_readonly\n"
+        f"    path: {src}\n"
+        "    tables:\n"
+        "      ITEM:\n"
+        "        mode: incremental\n"
+        "        watermark: UPDATE_TIME\n"
+        "        key_columns: [CODE]\n"
+        "    sink:\n"
+        "      type: http\n"
+        "      url: http://localhost:8850\n"
+        "    spool:\n"
+        "      policy: strict_stream\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("sys.argv", [
+        "data2agent.middle.extract", "backfill", "--config", str(config),
+        "--source", "demo", "--table", "ITEM", "--from", "2026-01-01",
+        "--to", "2026-02-01",
+    ])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code == 2
+    assert "禁止在中间机创建 Raw 表" in capsys.readouterr().err
+    state = LandingStore(state_db)
+    try:
+        raw_tables = state.con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'raw\\_%' ESCAPE '\\'"
+        ).fetchall()
+        assert raw_tables == []
+    finally:
+        state.con.close()
+
+
 def test_status_views_expose_watermark_scalar_not_cursor_json(tmp_path: Path):
     """对外状态只返回水位时间,不透传含业务键的 JSON 游标。"""
     from data2agent.middle.extract.adapters.base import encode_keyset_cursor
@@ -247,6 +300,23 @@ def test_status_views_expose_watermark_scalar_not_cursor_json(tmp_path: Path):
     assert cur is not None
     assert cur[1] == ["SKU-001", "W1"]
 
+    # 最近三次成功同步水位都未推进；更早一轮有推进。状态页应给出
+    # 稳定的停滞证据，但仍不得透传复合游标里的业务键。
+    for ordinal, (before, after) in enumerate((
+        ("2026-07-10 09:00:00", "2026-07-11 09:00:00"),
+        ("2026-07-11 09:00:00", "2026-07-11 09:00:00"),
+        ("2026-07-11 09:00:00", "2026-07-11 09:00:00"),
+        ("2026-07-11 09:00:00", "2026-07-11 09:00:00"),
+    ), start=1):
+        run_id = landing.start_run(SOURCE, "sync")
+        landing.add_step(
+            run_id, ordinal, "table", "ITEM", status="ok",
+            finished_at=f"2026-07-{10 + ordinal:02d}T09:00:00",
+            watermark_before=json.dumps(before),
+            watermark_after=json.dumps(after),
+        )
+        landing.finish_run(run_id, tables=1, rows=0, status="ok")
+
     cfg = ConnectConfig.model_validate({
         "landing": str(tmp_path / "landing.sqlite"),
         "sources": {
@@ -258,9 +328,62 @@ def test_status_views_expose_watermark_scalar_not_cursor_json(tmp_path: Path):
         },
     })
     status = build_status(cfg)
-    hw = status["sources"][0]["watermarks"][0]["high_water"]
+    watermark = status["sources"][0]["watermarks"][0]
+    hw = watermark["high_water"]
     assert hw == "2026-07-11 09:00:00"
     assert "SKU" not in hw
+    assert watermark["value_type"] == "datetime"
+    assert watermark["recent_advance"] == {
+        "kind": "duration_seconds", "value": 0}
+    assert watermark["unchanged_successive_runs"] == 3
+    assert watermark["stalled"] is True
+    assert watermark["last_advance_at"] == "2026-07-11T09:00:00"
+
+
+def test_status_sync_schedule_ignores_later_reconcile_run(tmp_path: Path):
+    from datetime import datetime
+
+    from data2agent.middle.admin.status import build_status
+    from data2agent.shared.config import ConnectConfig
+
+    state_db = tmp_path / "middle-state.sqlite"
+    store = LandingStore(state_db)
+    sync_run = store.start_run(SOURCE, "sync")
+    reconcile_run = store.start_run(SOURCE, "reconcile")
+    store.con.execute(
+        "UPDATE d2a_sync_run SET started_at = ? WHERE id = ?",
+        ("2026-07-11T08:00:00+00:00", sync_run),
+    )
+    store.con.execute(
+        "UPDATE d2a_sync_run SET started_at = ? WHERE id = ?",
+        ("2026-07-11T10:00:00+00:00", reconcile_run),
+    )
+    store.con.commit()
+    store.con.close()
+    cfg = ConnectConfig.model_validate({
+        "state_db": str(state_db),
+        "sources": {
+            SOURCE: {
+                "adapter": "sqlite_readonly",
+                "path": str(tmp_path / "erp.sqlite"),
+                "sync_every": "4h",
+                "tables": {"ITEM": {
+                    "mode": "incremental", "watermark": "UPDATE_TIME",
+                    "key_columns": ["ID"],
+                }},
+            },
+        },
+    })
+
+    status = build_status(cfg, now=datetime.fromisoformat(
+        "2026-07-11T11:00:00+00:00"))
+    source = status["sources"][0]
+    assert datetime.fromisoformat(source["last_run_at"]).timestamp() == (
+        datetime.fromisoformat("2026-07-11T08:00:00+00:00").timestamp()
+    )
+    assert datetime.fromisoformat(source["next_sync_at"]).timestamp() == (
+        datetime.fromisoformat("2026-07-11T12:00:00+00:00").timestamp()
+    )
 
 
 def test_apply_configured_keys_rejects_duplicates():

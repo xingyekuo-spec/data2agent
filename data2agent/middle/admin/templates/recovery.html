@@ -1,0 +1,34 @@
+{% extends "layout.html" %}
+{% block title %}状态库恢复指引 — 中间机管理{% endblock %}
+{% block content %}
+<section class="card" aria-labelledby="recovery-title">
+  <p class="layer">维护</p>
+  <h2 id="recovery-title">中间机状态库只读校验与离线恢复</h2>
+  <p class="warn"><strong>状态库备份不是业务数据备份。</strong>它只包含水位、运行步骤、推送回执、审计和管理状态；不包含 ERP Raw、平台 Raw、配置、secrets 或程序文件。</p>
+  <p class="meta">受监管便携部署的默认备份目录为 <code>data\backups</code>，当前状态库默认为 <code>data\middle-state.sqlite</code>。备份仍可能包含水位或运行键等业务标识，应按敏感运维数据保护。</p>
+</section>
+
+<section class="card" aria-labelledby="verify-title">
+  <h2 id="verify-title">1. 先做只读校验</h2>
+  <p class="meta">从便携包根目录运行下列命令。它以 SQLite <code>mode=ro</code> 打开备份，不修改文件：</p>
+  <pre class="long-cell"><code>.\runtime\python.exe -c "import sqlite3,sys; from pathlib import Path; u=Path(sys.argv[1]).resolve().as_uri()+'?mode=ro'; c=sqlite3.connect(u,uri=True); print(c.execute('PRAGMA integrity_check').fetchone()[0]); c.close()" .\data\backups\middle-state-&lt;时间&gt;.sqlite</code></pre>
+  <p class="meta">只有输出 <code>ok</code> 才能进入恢复步骤。失败时保留现场文件并联系维护人员，不要反复覆盖。</p>
+</section>
+
+<section class="card" aria-labelledby="offline-title">
+  <h2 id="offline-title">2. 离线恢复顺序</h2>
+  <ol class="meta">
+    <li>退出托盘程序或停止 <code>data2agent-middle</code> 计划任务，确认 launcher、connector、maintenance 均已停止。</li>
+    <li>把当前 <code>middle-state.sqlite</code> 及同目录的 <code>-wal</code>/<code>-shm</code> 文件复制到新的故障留存目录；不要删除。</li>
+    <li>将已通过只读校验的备份复制为 <code>data\middle-state.sqlite</code>。不要复制旧的 WAL/SHM 到新库旁边。</li>
+    <li>重新启动计划任务，检查状态页的配置 revision、进程、最近水位和推送记录，再执行受控同步。</li>
+  </ol>
+  <p class="warn">恢复会把控制状态回退到备份时刻，可能触发重复推送；平台端以 batch/generation 幂等屏障处理。不得用该流程恢复平台业务数据。</p>
+</section>
+
+<section class="card" aria-labelledby="scope-title">
+  <h2 id="scope-title">3. 完整节点灾备另行处理</h2>
+  <p class="meta">配置与凭据应从受控部署记录恢复，程序从经过校验的原始便携包恢复，平台业务数据按平台数据库备份恢复。三者不能用状态库备份替代。</p>
+  <a href="/status">← 返回状态页</a>
+</section>
+{% endblock %}

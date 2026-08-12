@@ -37,6 +37,8 @@ def test_check_portable_middle_ok(tmp_path: Path, monkeypatch):
     pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle" / "admin"
     src = ROOT / "data2agent" / "middle" / "admin" / "templates"
     shutil.copytree(src, pkg / "templates")
+    shared_src = ROOT / "data2agent" / "shared" / "admin_templates"
+    shutil.copytree(shared_src, pkg.parents[1] / "shared" / "admin_templates")
     _write(pkg / "__init__.py", "")
     _write(portable / "安装开机自启.ps1")
     _write(portable / "卸载开机自启.ps1")
@@ -70,6 +72,8 @@ def test_check_portable_middle_rejects_missing_metadata(tmp_path: Path, monkeypa
     pkg = portable / "runtime" / "Lib" / "site-packages" / "data2agent" / "middle" / "admin"
     src = ROOT / "data2agent" / "middle" / "admin" / "templates"
     shutil.copytree(src, pkg / "templates")
+    shared_src = ROOT / "data2agent" / "shared" / "admin_templates"
+    shutil.copytree(shared_src, pkg.parents[1] / "shared" / "admin_templates")
     (pkg / "templates" / "metadata.html").unlink()
     _write(pkg / "__init__.py", "")
 

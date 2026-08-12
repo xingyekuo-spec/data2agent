@@ -1,241 +1,26 @@
 {% extends "layout.html" %}
 {% block title %}运行 — 中间机管理{% endblock %}
 {% block content %}
-<div class="card">
-  <p class="layer">运行历史</p>
-  <h2>同步运行</h2>
-  <p class="hint">点击「详情」查看该运行的逐表步骤;存在运行中的运行时,弹窗每 2 秒自动刷新进度。</p>
+<section class="card">
+  <p class="layer">运行与对账</p><h2>运行历史</h2>
+  <p class="hint">同步和对账记录均保留 source、generation、逐表进度与失败上下文；详情打开时智能刷新。</p>
   <div class="toolbar">
-    <label>源
-      <select id="source-filter" onchange="resetAndLoad()">
-        <option value="">全部源</option>
-      </select>
-    </label>
-    <label>每页
-      <select id="limit-select" onchange="resetAndLoad()">
-        <option value="10">10 条</option>
-        <option value="20" selected>20 条</option>
-        <option value="50">50 条</option>
-      </select>
-    </label>
-    <button type="button" onclick="loadRuns()">刷新</button>
-    <span class="meta" id="page-info" style="margin-left:auto"></span>
-    <button type="button" id="prev-page" onclick="gotoPage(-1)">‹ 上一页</button>
-    <button type="button" id="next-page" onclick="gotoPage(1)">下一页 ›</button>
+    <label for="source-filter">数据源</label><select id="source-filter"><option value="">全部源</option></select>
+    <label for="run-type-filter">类型</label><select id="run-type-filter"><option value="">全部</option><option value="sync">同步</option><option value="reconcile">对账</option></select>
+    <label for="limit-select">每页</label><select id="limit-select"><option value="10">10</option><option value="20" selected>20</option><option value="50">50</option></select>
+    <button type="button" id="runs-refresh">刷新</button>
+    <span class="meta" id="runs-refreshed" aria-live="polite"></span>
+    <span class="meta" id="page-info"></span>
+    <button type="button" id="prev-page" class="btn-ghost">‹ 上一页</button><button type="button" id="next-page" class="btn-ghost">下一页 ›</button>
   </div>
-  <div id="runs-list"><p class="meta">加载中…</p></div>
-</div>
+  <div id="runs-list" aria-live="polite"></div>
+</section>
 
-<!-- 运行详情弹窗 -->
-<div id="run-detail-overlay" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeRunDetail()">
+<div id="run-detail-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="run-detail-title" hidden>
   <div class="modal-card">
-    <div class="modal-header">
-      <h2 id="run-detail-title">运行详情</h2>
-      <button class="modal-close" onclick="closeRunDetail()">&times;</button>
-    </div>
-    <div id="run-detail-body"><p class="meta">加载中…</p></div>
+    <div class="modal-header"><h2 id="run-detail-title">运行详情</h2><button type="button" id="run-detail-close" class="modal-close" aria-label="关闭">&times;</button></div>
+    <div id="run-detail-body" aria-live="polite"></div>
   </div>
 </div>
-
-<script>
-var _watchTimer = null;
-var _activeRunId = null;
-var _page = 1;
-var _knownSources = {};
-
-function resetAndLoad() {
-  _page = 1;
-  loadRuns();
-}
-
-function gotoPage(delta) {
-  _page = Math.max(1, _page + delta);
-  loadRuns();
-}
-
-function updatePager(total, limit) {
-  var pages = Math.max(1, Math.ceil(total / limit));
-  if (_page > pages) _page = pages;
-  document.getElementById('page-info').textContent =
-    '第 ' + _page + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
-  document.getElementById('prev-page').disabled = _page <= 1;
-  document.getElementById('next-page').disabled = _page >= pages;
-}
-
-function renderRuns(data) {
-  if (!data.runs || !data.runs.length) return '<p class="meta">暂无运行记录</p>';
-  var html = '<table class="data"><thead><tr>' +
-    '<th>ID</th><th>源</th><th>状态</th><th>开始</th><th>表数</th><th>行数</th><th>耗时</th><th>操作</th>' +
-    '</tr></thead><tbody>';
-  data.runs.forEach(function (r) {
-    var duration = r.finished_at && r.started_at
-      ? ((new Date(r.finished_at) - new Date(r.started_at)) / 1000).toFixed(0) + 's'
-      : '—';
-    html += '<tr>';
-    html += '<td>#' + r.id + '</td><td>' + esc(r.source) + '</td><td>' + badge(r.status) + '</td>';
-    html += '<td>' + fmtTime(r.started_at) + '</td><td>' + (r.tables || 0) + '</td>';
-    html += '<td>' + (r.rows || 0) + '</td><td>' + duration + '</td>';
-    html += '<td><button type="button" class="btn-ghost" style="font-size:12px;padding:4px 10px" ' +
-            'onclick="openRunDetail(' + r.id + ')">详情</button></td>';
-    html += '</tr>';
-  });
-  html += '</tbody></table>';
-  return html;
-}
-
-function renderProgress(s) {
-  // 有预估行数:进度条 + x/y (百分比);无预估(旧运行/预估失败):退化显示行数
-  if (s.expected_rows === null || s.expected_rows === undefined) {
-    var rowsOut = (s.rows_out !== null && s.rows_out !== undefined) ? s.rows_out : '—';
-    return '<span class="meta">' + rowsOut + ' 行</span>';
-  }
-  var done = s.rows_out || 0;
-  var pct = s.expected_rows > 0
-    ? Math.min(100, Math.round(done / s.expected_rows * 100))
-    : (s.status === 'ok' ? 100 : 0);
-  var color = s.status === 'failed' ? '#b42318' : '#1a56db';
-  return '<div style="min-width:140px">' +
-    '<div class="progress-bar" style="width:120px;display:inline-block;vertical-align:middle">' +
-    '<div class="progress-bar-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' +
-    '<span class="meta" style="margin-left:6px">' + done + '/' + s.expected_rows +
-    ' (' + pct + '%)</span></div>';
-}
-
-function renderSteps(steps) {
-  if (!steps || !steps.length) return '<p class="meta">无步骤记录</p>';
-  var html = '<table class="data" style="margin:0 12px;width:calc(100% - 24px)"><thead><tr>' +
-    '<th>#</th><th>目标</th><th>状态</th><th>进度</th><th>批次</th><th>最后进度</th>' +
-    '</tr></thead><tbody>';
-  steps.forEach(function (s, i) {
-    var hasProgress = s.batches !== null && s.batches !== undefined;
-    var batches = hasProgress ? s.batches : '—';
-    var progressTime = s.progressed_at
-      ? fmtTime(s.progressed_at)
-      : (hasProgress ? fmtTime(s.finished_at || s.started_at)
-         : (s.status === 'failed' ? '—'
-            : (s.status === 'running' ? '等待首批完成…' : '历史运行未记录批次进度')));
-    html += '<tr><td>' + (s.ordinal || i + 1) + '</td><td>' + esc(s.target) + '</td>' +
-      '<td>' + badge(s.status) + '</td>' +
-      '<td>' + renderProgress(s) + '</td>' +
-      '<td>' + batches + '</td>' +
-      '<td>' + progressTime + '</td></tr>';
-    if (s.status === 'running' && s.rows_out === null && s.rows_out !== 0) {
-      html += '<tr><td></td><td colspan="5" style="color:#6a7682">⏳ 等待首批完成…</td></tr>';
-    }
-    if (s.status === 'failed' && s.error) {
-      html += '<tr><td></td><td colspan="5" style="color:#b42318;font-size:12px">失败原因: ' + esc(s.error) + '</td></tr>';
-    }
-  });
-  html += '</tbody></table>';
-  return html;
-}
-
-function renderRunInfo(run) {
-  var duration = run.finished_at && run.started_at
-    ? ((new Date(run.finished_at) - new Date(run.started_at)) / 1000).toFixed(0) + 's'
-    : '—';
-  var html = '<div class="src-kv" style="margin-bottom:10px">';
-  html += '<span>源 <b>' + esc(run.source) + '</b></span>';
-  html += '<span>状态 <b>' + badge(run.status) + '</b></span>';
-  html += '<span>表数 <b>' + (run.tables || 0) + '</b></span>';
-  html += '<span>行数 <b>' + (run.rows || 0) + '</b></span>';
-  html += '<span>开始 <b>' + fmtTime(run.started_at) + '</b></span>';
-  html += '<span>耗时 <b>' + duration + '</b></span>';
-  html += '</div>';
-  if (run.detail) {
-    html += '<p class="meta" style="color:#b42318;margin:0 0 10px">' + esc(run.detail) + '</p>';
-  }
-  return html;
-}
-
-function renderRunDetail(data) {
-  return renderRunInfo(data.run || {}) + renderSteps(data.steps || []);
-}
-
-function openRunDetail(runId) {
-  _activeRunId = runId;
-  document.getElementById('run-detail-overlay').style.display = 'flex';
-  document.getElementById('run-detail-title').textContent = '运行 #' + runId;
-  document.getElementById('run-detail-body').innerHTML = '<p class="meta">加载中…</p>';
-  fetch('/api/runs/' + runId, { headers: authHeaders() })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      if (_activeRunId !== runId) return;
-      document.getElementById('run-detail-body').innerHTML = renderRunDetail(data);
-      // 运行中:弹窗内 2s 轮询进度
-      if (data.run && data.run.status === 'running') startPolling(runId);
-    })
-    .catch(function () {
-      document.getElementById('run-detail-body').innerHTML = '<p class="meta">详情加载失败</p>';
-    });
-}
-
-function startPolling(runId) {
-  if (_watchTimer) clearInterval(_watchTimer);
-  _watchTimer = setInterval(function () {
-    if (_activeRunId !== runId) { stopWatch(); return; }
-    fetch('/api/runs/' + runId, { headers: authHeaders() })
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        if (_activeRunId !== runId) return;
-        document.getElementById('run-detail-body').innerHTML = renderRunDetail(data);
-        if (data.run && data.run.status !== 'running') {
-          stopWatch();
-          loadRuns();
-        }
-      })
-      .catch(function () { /* 忽略网络错误,下次重试 */ });
-  }, 2000);
-}
-
-function closeRunDetail() {
-  document.getElementById('run-detail-overlay').style.display = 'none';
-  stopWatch();
-}
-
-function stopWatch() {
-  if (_watchTimer) { clearInterval(_watchTimer); _watchTimer = null; }
-  _activeRunId = null;
-}
-
-function loadRuns() {
-  var source = document.getElementById('source-filter').value;
-  var limit = parseInt(document.getElementById('limit-select').value, 10);
-  var url = '/api/runs?limit=' + limit + '&offset=' + ((_page - 1) * limit);
-  if (source) url += '&source=' + encodeURIComponent(source);
-  fetch(url, { headers: authHeaders() })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      document.getElementById('runs-list').innerHTML = renderRuns(data);
-      updatePager(data.total || 0, limit);
-      // 源过滤器选项跨页累积(分页后当前页可能只含部分源)
-      (data.runs || []).forEach(function (r) { _knownSources[r.source] = true; });
-      var sel = document.getElementById('source-filter');
-      var current = sel.value;
-      sel.innerHTML = '<option value="">全部源</option>';
-      Object.keys(_knownSources).sort().forEach(function (s) {
-        sel.innerHTML += '<option value="' + esc(s) + '"' + (s === current ? ' selected' : '') + '>' + esc(s) + '</option>';
-      });
-      // 有 running 的运行时自动打开详情弹窗跟踪进度
-      var running = null;
-      (data.runs || []).forEach(function (r) {
-        if (!running && r.status === 'running') running = r;
-      });
-      if (running && _activeRunId !== running.id) openRunDetail(running.id);
-    })
-    .catch(function () {
-      document.getElementById('runs-list').innerHTML = '<p class="meta">加载失败</p>';
-    });
-}
-
-// 供状态页触发后跳转:?watch=<run_id> 直接打开详情弹窗并跟踪
-(function () {
-  var m = location.search.match(/[?&]watch=(\d+)/);
-  loadRuns();
-  if (m) {
-    var runId = parseInt(m[1], 10);
-    setTimeout(function () { openRunDetail(runId); }, 400);
-  }
-})();
-</script>
+<script src="{{ static_url }}/middle-runs.js" defer></script>
 {% endblock %}

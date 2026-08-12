@@ -6,11 +6,13 @@ import logging
 import os
 import re
 import shutil
+import ssl
 import tempfile
 import threading
 import time
 import json as _json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.request import Request as _UrlRequest, urlopen as _urlopen
@@ -21,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, select_autoescape
 from pydantic import BaseModel, Field, ValidationError
+import yaml
 
 from ...shared.admin.config_edit import MIDDLE_EDITABLE, merge_whitelist_and_save
 from ...shared.admin.home_layout import HomeLayout
@@ -51,7 +54,11 @@ from ..extract.metadata import (
     in_extraction_plan,
     is_odbc_timeout_message,
 )
-from ..extract.scheduler import check_sync_preflight, run_sync_cycle
+from ..extract.scheduler import (
+    check_sync_preflight,
+    run_reconcile_cycle,
+    run_sync_cycle,
+)
 from ..extract.sync_lock import SourceSyncLock
 from ...shared.store.landing import LandingStore
 
@@ -65,7 +72,11 @@ from .extraction_tables import (
 from .status import build_status
 
 _SCAN_STORE = ScanStore()
-_TRIGGER_EXECUTOR = ThreadPoolExecutor(max_workers=1)
+# source 锁负责同源互斥；允许不同 source 并行，避免一个长任务让其它源
+# 的已创建 run 长时间排队并占锁。上限固定，防止管理端制造线程风暴。
+_TRIGGER_EXECUTOR = ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="d2a-middle-action")
+_PROBE_STATE_LOCK = threading.Lock()
 log = logging.getLogger("data2agent.middle.admin")
 
 _PKG = Path(__file__).resolve().parent
@@ -73,6 +84,42 @@ _ADMIN_TEMPLATES = _PKG.parents[1] / "shared" / "admin_templates"
 _MIDDLE_TEMPLATES = _PKG / "templates"
 _ADMIN_STATIC = _ADMIN_TEMPLATES / "static"
 _LOOPBACK = {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def _record_readiness_probe(
+    cfg: ConnectConfig, source: str, kind: str, result: dict[str, Any],
+) -> None:
+    """原子记录脱敏连通探测，供 readiness 聚合；不写 DSN/Token/URL。"""
+    path = Path(cfg.state_db).parent / "run" / "readiness-probes.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _PROBE_STATE_LOCK:
+        try:
+            state = _json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                state = {}
+        except (OSError, ValueError, TypeError):
+            state = {}
+        sources = state.setdefault("sources", {})
+        source_state = sources.setdefault(source, {})
+        source_state[kind] = {
+            "checked_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            **result,
+        }
+        fd, temp_name = tempfile.mkstemp(
+            prefix=".readiness-probes-", suffix=".tmp", dir=str(path.parent))
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as stream:
+                _json.dump(state, stream, ensure_ascii=False, indent=2)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_name, path)
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            Path(temp_name).unlink(missing_ok=True)
+            raise
 
 
 def _make_templates() -> Jinja2Templates:
@@ -89,6 +136,8 @@ def _make_templates() -> Jinja2Templates:
 
 class ConfigPatch(BaseModel):
     templates: str | None = None
+    state_db: str | None = None
+    # 旧客户端兼容；保存时转换为 state_db，响应不再使用 landing。
     landing: str | None = None
     sources: dict[str, Any] | None = None
     revision: str | None = None
@@ -102,7 +151,7 @@ class TriggerBody(BaseModel):
 
 class SilenceBody(BaseModel):
     alert_key: str
-    hours: int = 24
+    hours: int = Field(24, ge=1, le=168)
 
 
 class TestConnectionBody(BaseModel):
@@ -168,6 +217,7 @@ class SetupBody(BaseModel):
 
 class ConnectionInfoBody(BaseModel):
     """日常更新平台对接信息:平台地址入 YAML,Token 只写 secrets.env(不回显)。"""
+    source: str | None = None
     platform_url: str | None = None
     ingest_token: str | None = None
     revision: str | None = None
@@ -185,19 +235,26 @@ def _request_worker_restart(home_layout) -> None:
     flag.touch()
 
 
-def _http_get_json(url: str, token: str | None, timeout: float) -> dict:
+def _http_get_json(
+    url: str, token: str | None, timeout: float, ca_bundle: str | None = None,
+) -> dict:
     """中间机管理端最小 GET JSON(连通检查用;与 sink 同为 urllib,不引新依赖)。"""
     req = _UrlRequest(url)
     if token:
         req.add_header("Authorization", f"Bearer {token}")
-    with _urlopen(req, timeout=timeout) as resp:
+    context = ssl.create_default_context(cafile=ca_bundle) if ca_bundle else None
+    with _urlopen(req, timeout=timeout, context=context) as resp:
         return _json.loads(resp.read().decode("utf-8"))
 
 
 _DSN_PATTERN = re.compile(
-    r"(?i)(password\s*=|pwd\s*=|server\s*=|data\s+source\s*=|"
-    r"uid\s*=|user\s+id\s*=|integrated\s+security|"
-    r"file:[^\s?]+|\.sqlite\b|\.db\b)"
+    r"(?i)(password\s*[=:]|pwd\s*[=:]|token\s*[=:]|bearer\s+|"
+    r"authorization\s*[:=]|server\s*=|data\s+source\s*=|"
+    r"uid\s*=|user\s+id\s*=|integrated\s+security|dsn\s*=|"
+    r"connection\s+string|connect\s+string|"
+    r"file:[^\s?]+|\.sqlite\b|\.db\b|"
+    r"\b(select|insert|update|delete|create|alter|drop|truncate|"
+    r"exec|execute|merge|grant|revoke)\b)"
 )
 
 
@@ -214,7 +271,13 @@ def _client_host(request: Request) -> str:
 
 
 def _config_subset(cfg: ConnectConfig) -> dict:
-    out: dict[str, Any] = {"templates": cfg.templates, "landing": cfg.landing, "sources": {}}
+    out: dict[str, Any] = {
+        "templates": cfg.templates,
+        "deployment_mode": cfg.deployment_mode,
+        "state_db": cfg.state_db,
+        "state_db_kind": "middle_state",
+        "sources": {},
+    }
     for name, scfg in cfg.sources.items():
         src: dict[str, Any] = {
             "windows": scfg.windows,
@@ -239,9 +302,22 @@ def _config_subset(cfg: ConnectConfig) -> dict:
                 }
                 for tbl, spec in (scfg.tables or {}).items()
             },
-            "sink": {"url": scfg.sink.url,
-                     "token_env": scfg.sink.token_env,
-                     "token_env_set": _env_set(scfg.sink.token_env)},
+            "sink": {
+                "type": scfg.sink.type,
+                "url": scfg.sink.url,
+                "token_env": scfg.sink.token_env,
+                "token_env_set": _env_set(scfg.sink.token_env),
+                "timeout_seconds": scfg.sink.timeout_seconds,
+                "retries": scfg.sink.retries,
+                "ca_bundle": scfg.sink.ca_bundle,
+                "ca_bundle_configured": bool(scfg.sink.ca_bundle),
+                "allow_insecure_http": scfg.sink.allow_insecure_http,
+            },
+            "spool": {
+                "policy": scfg.spool.policy,
+                "directory": scfg.spool.directory,
+                "encrypted_at_rest": scfg.spool.encrypted_at_rest,
+            },
             "dsn_env": scfg.dsn_env,
             "dsn_env_set": _env_set(scfg.dsn_env),
         }
@@ -250,7 +326,11 @@ def _config_subset(cfg: ConnectConfig) -> dict:
 
 
 def _patch_to_dict(body: ConfigPatch) -> dict[str, Any]:
-    return body.model_dump(exclude_none=True)
+    patch = body.model_dump(exclude_none=True)
+    legacy = patch.pop("landing", None)
+    if legacy is not None and "state_db" not in patch:
+        patch["state_db"] = legacy
+    return patch
 
 
 def _resolve_source(cfg: ConnectConfig, source: str | None) -> tuple[str, SourceConfig]:
@@ -301,8 +381,24 @@ def _with_conn_suggestion(result: dict) -> dict:
 
 def _sanitize_detail(message: str) -> str:
     if _DSN_PATTERN.search(message):
-        return "连接失败(响应中已省略凭据/连接串细节)"
+        return "执行失败(响应中已省略凭据/连接串/Token/SQL 细节)"
     return message[:500]
+
+
+def _error_category(message: str | None) -> str:
+    """服务端稳定错误分类；页面不得再按中英文文案正则自行猜测。"""
+    text = (message or "").lower()
+    if any(token in text for token in ("401", "403", "auth", "权限", "denied", "token")):
+        return "auth"
+    if any(token in text for token in ("timeout", "timed out", "超时")):
+        return "timeout"
+    if any(token in text for token in ("connect", "network", "unreachable", "连接", "网络", "odbc")):
+        return "network"
+    if any(token in text for token in ("schema", "column", "watermark", "duplicate", "结构", "水位", "唯一")):
+        return "schema"
+    if any(token in text for token in ("generation", "lease", "屏障", "租约")):
+        return "generation"
+    return "runtime"
 
 
 def _probe_connection_pure(dsn: str, timeout: int = 10) -> dict:
@@ -365,18 +461,19 @@ def _probe_connection_with_timeout(dsn: str, timeout: float = 10) -> dict:
 
 
 def _validate_merged(path: Path, patch: dict[str, Any]) -> tuple[bool, list[dict[str, str]]]:
-    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    shutil.copy2(path, tmp_path)
-    try:
-        return merge_whitelist_and_save(tmp_path, MIDDLE_EDITABLE, patch, validate=load_config)
-    except Exception as e:
-        return False, [field_error(
-            "", str(e),
-            "根据报错修正配置字段后重新校验",
-        )]
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    # merge 会生成同目录备份；专用临时目录可确保校验请求不在系统
+    # 临时目录长期遗留 .bak 文件。
+    with tempfile.TemporaryDirectory(prefix="d2a-config-validate-") as temp_dir:
+        tmp_path = Path(temp_dir) / "connect.yaml"
+        shutil.copy2(path, tmp_path)
+        try:
+            return merge_whitelist_and_save(
+                tmp_path, MIDDLE_EDITABLE, patch, validate=load_config)
+        except Exception as e:
+            return False, [field_error(
+                "", str(e),
+                "根据报错修正配置字段后重新校验",
+            )]
 
 
 def create_app(
@@ -413,6 +510,7 @@ def create_app(
     )
     _LOG_FILES = {
         "connector": "d2a-connector.log",   # 抽取 / 推送
+        "maintenance": "d2a-maintenance.log",  # 状态库备份 / 清理
         "admin": "d2a-middle-admin.log",    # 管理界面自身(500 报错栈在此)
         "launcher": "d2a-launcher.log",     # 便携包启动器:进程重启记录
     }
@@ -462,6 +560,25 @@ def create_app(
         return load_config(cfg_path)
 
     app = FastAPI(title="data2agent 中间机管理")
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        # 页面脚本均为本地固定版本静态资源；样式仍含模板内联 CSS，故仅
+        # style-src 暂时保留 unsafe-inline，script/object/frame/connect 从严。
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "font-src 'self'; connect-src 'self'; object-src 'none'; "
+            "frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; "
+            "form-action 'self'"
+        )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=()")
+        return response
+
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
     templates = _make_templates()
 
@@ -510,6 +627,11 @@ def create_app(
     def push_logs_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "push-logs.html", page_ctx(request))
 
+    @app.get("/recovery", response_class=HTMLResponse)
+    def recovery_page(request: Request) -> HTMLResponse:
+        """只提供说明，不暴露在线覆盖状态库的危险操作。"""
+        return templates.TemplateResponse(request, "recovery.html", page_ctx(request))
+
     @api.get("/setup/status")
     def setup_status() -> dict:
         return {
@@ -517,6 +639,11 @@ def create_app(
             "config_path": str(cfg_path),
             "home": str(home_layout.root) if home_layout else None,
         }
+
+    @api.get("/auth/check")
+    def auth_check() -> dict:
+        """登录框使用的轻量校验；通过 Depends(auth) 即表示 Token 有效。"""
+        return {"ok": True, "authenticated": True}
 
     @api.post("/setup")
     def run_setup(body: SetupBody, request: Request) -> dict:
@@ -591,6 +718,27 @@ def create_app(
         if needs_setup():
             return {"needs_setup": True, "sources": {}, "revision": None}
         out = _config_subset(reload_config())
+        try:
+            raw_config = yaml.safe_load(
+                cfg_path.read_text(encoding="utf-8")) or {}
+        except (OSError, ValueError, TypeError):
+            raw_config = {}
+        out["legacy_landing_key"] = (
+            "landing" in raw_config and "state_db" not in raw_config)
+        secrets_path = home_layout.secrets_env if home_layout is not None else None
+        secrets_updated_at = None
+        if secrets_path is not None and secrets_path.is_file():
+            try:
+                secrets_updated_at = datetime.fromtimestamp(
+                    secrets_path.stat().st_mtime).astimezone().isoformat(
+                        timespec="seconds")
+            except OSError:
+                secrets_updated_at = None
+        out["sensitive_config"] = {
+            "secrets_file_configured": bool(
+                secrets_path is not None and secrets_path.is_file()),
+            "updated_at": secrets_updated_at,
+        }
         out["needs_setup"] = False
         out["revision"] = config_revision(cfg_path)
         return out
@@ -663,7 +811,7 @@ def create_app(
                     current_revision=current,
                 )
             cfg = reload_config()
-            name, scfg = _resolve_source(cfg, None)
+            name, scfg = _resolve_source(cfg, body.source)
             if body.platform_url is not None:
                 url = body.platform_url.strip()
                 if not url.startswith("http"):
@@ -698,7 +846,7 @@ def create_app(
                 "revision": revision, "token_updated": token_updated}
 
     @api.get("/config/connection-check")
-    def connection_check() -> dict:
+    def connection_check(source: str | None = None) -> dict:
         """平台连通 + 协议兼容检查:GET {sink.url}/ingest/health(不回显 Token)。"""
         if needs_setup():
             raise http_error(
@@ -706,21 +854,36 @@ def create_app(
                 "打开 /config 完成首次配置后再测试连通",
             )
         cfg = reload_config()
-        _, scfg = _resolve_source(cfg, None)
+        name, scfg = _resolve_source(cfg, source)
         from ...protocol.ingest import INGEST_PROTOCOL_VERSION
         base: dict[str, Any] = {
+            "source": name,
             "platform_url": scfg.sink.url,
             "local_protocol": INGEST_PROTOCOL_VERSION,
             "sink_type": scfg.sink.type,
         }
+        def finish(result: dict[str, Any]) -> dict[str, Any]:
+            _record_readiness_probe(cfg, name, "platform", {
+                "ok": bool(result.get("ok")),
+                "compatible": bool(result.get("compatible")),
+                "error_code": result.get("error_code"),
+                "local_protocol": result.get("local_protocol"),
+                "platform_supported": result.get("platform_supported") or [],
+            })
+            return result
         if scfg.sink.type != "http" or not scfg.sink.url:
-            return {**base, "ok": False,
-                    "detail": "local 落地模式,无平台接收端点(仅开发/参考链)"}
+            return finish({
+                **base, "ok": False, "compatible": False,
+                "error_code": "sink_not_http",
+                "detail": "local 落地模式,无平台接收端点(仅开发/参考链)",
+            })
         env_name = scfg.sink.token_env or "D2A_INGEST_TOKEN"
         token = os.environ.get(env_name) or None
         try:
             health = _http_get_json(
-                scfg.sink.url.rstrip("/") + "/ingest/health", token, timeout=8)
+                scfg.sink.url.rstrip("/") + "/ingest/health", token,
+                timeout=min(30, scfg.sink.timeout_seconds),
+                ca_bundle=scfg.sink.ca_bundle)
         except Exception as e:
             code = getattr(e, "code", None)
             if code == 401:
@@ -729,8 +892,13 @@ def create_app(
                 detail = "平台拒绝(403):数据源未登记或已停用,请先在平台数据源管理中登记"
             else:
                 detail = f"连接失败:{_sanitize_detail(str(e))}"
-            return {**base, "ok": False, "token_configured": token is not None,
-                    "detail": detail}
+            return finish({
+                **base, "ok": False, "compatible": False,
+                "token_configured": token is not None,
+                "error_code": (
+                    "auth" if code in (401, 403) else "network"),
+                "detail": detail,
+            })
         supported = health.get("supported_ingest_protocol_versions")
         if isinstance(supported, list) and supported:
             supported = [str(v) for v in supported]
@@ -739,7 +907,7 @@ def create_app(
                       or health.get("ingest_protocol_version"))
             supported = [str(remote)] if remote else []
         compatible = INGEST_PROTOCOL_VERSION in supported
-        return {
+        return finish({
             **base,
             "ok": True,
             "token_configured": token is not None,
@@ -750,7 +918,8 @@ def create_app(
             "detail": ("兼容"
                        if compatible
                        else "平台不再接受本机协议版本,请升级中间机"),
-        }
+            "error_code": None if compatible else "protocol_incompatible",
+        })
 
     @api.get("/extraction-tables")
     def get_extraction_tables(source: str | None = None) -> dict:
@@ -867,7 +1036,15 @@ def create_app(
 
     @api.get("/status")
     def get_status() -> dict:
-        return build_status(reload_config())
+        return build_status(reload_config(), config_path=cfg_path)
+
+    @api.get("/readiness")
+    def get_readiness() -> dict:
+        status = build_status(reload_config(), config_path=cfg_path)
+        return {
+            "observed_at": status["observed_at"],
+            **status["readiness"],
+        }
 
     @api.get("/logs")
     def get_logs(service: str = "connector", lines: int = 200,
@@ -877,7 +1054,7 @@ def create_app(
             return {
                 "ok": False,
                 "text": f"未知服务 '{service}',可用:{sorted(_LOG_FILES)}",
-                "suggestion": "选择 connector / admin / launcher 之一",
+                "suggestion": "选择 connector / maintenance / admin / launcher 之一",
             }
         if _log_dir is not None:
             path = _log_dir / _LOG_FILES[service]
@@ -900,21 +1077,29 @@ def create_app(
         """纯连接测试:只验证 DSN 可连、数据库可访问、元数据权限。不读取 tables。"""
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
+        def finish(result: dict) -> dict:
+            output = _with_conn_suggestion(result)
+            _record_readiness_probe(cfg, name, "erp", {
+                "ok": output.get("status") in ("connected", "connected_limited"),
+                "status": output.get("status", "unknown"),
+                "error_code": output.get("error"),
+            })
+            return output
         if scfg.adapter != "mssql_readonly":
-            return _with_conn_suggestion({
+            return finish({
                 "status": "failed", "error": "unsupported",
                 "detail": "连接测试仅支持 mssql_readonly 适配器",
             })
         dsn = os.environ.get(scfg.dsn_env or "", "")
         if not dsn:
-            return _with_conn_suggestion({
+            return finish({
                 "status": "failed", "error": "missing_dsn",
                 "detail": f"环境变量 {scfg.dsn_env} 未设置",
             })
         started = time.perf_counter()
         result = _probe_connection_with_timeout(dsn, timeout=10)
         result["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
-        return _with_conn_suggestion(result)
+        return finish(result)
 
     def _open_discoverer(scfg: SourceConfig):
         try:
@@ -1250,18 +1435,21 @@ def create_app(
 
     @api.post("/actions/trigger")
     def trigger_action(body: TriggerBody) -> dict:
-        if body.action == "reconcile":
-            raise http_error(
-                400, "中间机管理 v1 不支持 reconcile",
-                "请使用 sync 动作,或在平台侧处理对账流程",
-            )
-        if body.action != "sync":
+        if body.action not in ("sync", "reconcile", "reconcile_deep"):
             raise http_error(
                 400, f"不支持的动作 '{body.action}'",
-                "仅支持 action=sync",
+                "支持 action=sync / reconcile / reconcile_deep",
             )
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
+        if body.action in ("reconcile", "reconcile_deep"):
+            if body.tables:
+                raise http_error(
+                    422, "对账动作不支持限定 tables",
+                    "对账按已配置抽取计划执行；如需定向修复请从对账结果进入",
+                )
+            return _start_reconcile_run(
+                cfg, name, scfg, deep=body.action == "reconcile_deep")
         tables = _validate_trigger_tables(scfg, body.tables)
         return _start_sync_run(cfg, name, scfg, tables)
 
@@ -1305,21 +1493,34 @@ def create_app(
 
     def _start_sync_run(cfg, name, scfg, tables: list[str] | None) -> dict:
 
+        violations = cfg.production_violations()
+        if violations:
+            raise http_error(
+                409, "生产配置未就绪，已拒绝启动同步",
+                "修正数据驻留阻断项后重新执行",
+                code="production_config_not_ready",
+                violations=violations,
+            )
+
         # 1. 预检:窗口外 / tables 为空立即返回,不创建 run
         preflight = check_sync_preflight(name, scfg)
         if not preflight.executed:
             if preflight.reason == "tables_unconfigured":
                 return {
                     "action": "sync", "source": name, "executed": False,
+                    "run_id": None, "status": "not_started",
                     "reason": preflight.reason, "overlap_warning": True,
                     "note": preflight.note,
                     "suggestion": preflight.suggestion,
+                    "follow_up_url": "/metadata",
                 }
             return {
                 "action": "sync", "source": name, "executed": False,
+                "run_id": None, "status": "not_started",
                 "reason": preflight.reason,
                 "note": preflight.note,
                 "suggestion": preflight.suggestion,
+                "follow_up_url": "/status",
             }
 
         # 2. 跨进程锁:已运行时不排队
@@ -1329,8 +1530,10 @@ def create_app(
             return {
                 "action": "sync", "source": name, "executed": False,
                 "reason": "already_running", "run_id": existing,
+                "status": "running",
                 "note": "已有同步正在运行" if existing else "已有同步正在启动中",
                 "suggestion": "等待当前运行完成后再触发",
+                "follow_up_url": f"/runs?watch={existing}" if existing else "/runs",
             }
 
         # 3. 建 run(锁已持有)→ 后台执行
@@ -1367,9 +1570,275 @@ def create_app(
             "action": "sync", "source": name, "run_id": run_id,
             "executed": True, "status": "started",
             "note": f"同步已后台启动, 运行 ID #{run_id}",
+            "follow_up_url": f"/runs?watch={run_id}",
+        }
+
+    def _start_reconcile_run(cfg, name, scfg, *, deep: bool) -> dict:
+        violations = cfg.production_violations()
+        if violations:
+            raise http_error(
+                409, "生产配置未就绪，已拒绝启动对账",
+                "修正数据驻留阻断项后重新执行",
+                code="production_config_not_ready",
+                violations=violations,
+            )
+        if not scfg.table_whitelist():
+            return {
+                "action": "reconcile_deep" if deep else "reconcile",
+                "source": name, "executed": False,
+                "run_id": None, "status": "not_started",
+                "reason": "tables_unconfigured",
+                "note": "尚未配置抽取表，对账不会访问 ERP",
+                "suggestion": "先完成元数据选表和抽取计划",
+                "follow_up_url": "/metadata",
+            }
+        from ...shared.config import in_window
+        if not in_window(datetime.now().time(), scfg.windows):
+            return {
+                "action": "reconcile_deep" if deep else "reconcile",
+                "source": name, "executed": False,
+                "run_id": None, "status": "not_started",
+                "reason": "outside_window",
+                "note": "当前不在允许的抽取窗口内",
+                "suggestion": "等待窗口开启或调整 windows 配置",
+                "follow_up_url": "/status",
+            }
+        lock = SourceSyncLock.try_acquire(cfg.landing, name)
+        if lock is None:
+            existing = SourceSyncLock.find_running_run(cfg.landing, name)
+            return {
+                "action": "reconcile_deep" if deep else "reconcile",
+                "source": name, "executed": False,
+                "reason": "already_running", "run_id": existing,
+                "status": "running",
+                "note": "已有同步或对账正在运行",
+                "suggestion": "等待当前运行完成后再触发",
+                "follow_up_url": f"/runs?watch={existing}" if existing else "/runs",
+            }
+        store = LandingStore(cfg.landing)
+        try:
+            run_id = store.start_run(name, "reconcile")
+            _TRIGGER_EXECUTOR.submit(
+                _run_reconcile_worker,
+                run_id, name, scfg, cfg.landing, deep, lock)
+        except Exception as exc:
+            try:
+                if "run_id" in locals():
+                    store.finish_running_run(
+                        run_id, status="failed", detail=_sanitize_detail(str(exc)))
+            finally:
+                store.con.close()
+                lock.release()
+            raise http_error(
+                500, f"无法提交后台对账任务: {_sanitize_detail(str(exc))}",
+                "重启中间机管理进程后重试",
+            )
+        store.con.close()
+        return {
+            "action": "reconcile_deep" if deep else "reconcile",
+            "source": name, "run_id": run_id,
+            "executed": True, "status": "started",
+            "note": f"{'深度' if deep else 'L1'}对账已后台启动, 运行 ID #{run_id}",
+            "follow_up_url": f"/runs?watch={run_id}",
         }
 
     # ---- 告警静默 ----
+
+    @api.get("/alerts")
+    def alerts() -> dict:
+        """聚合进程、维护、抽取和推送告警，返回稳定分类与生命周期。"""
+        cfg = reload_config()
+        status = build_status(cfg, config_path=cfg_path)
+        db = LandingStore(cfg.landing)
+        try:
+            silences = {
+                row["alert_key"]: row["silenced_until"]
+                for row in db.list_alert_silences()
+            }
+            items: list[dict[str, Any]] = []
+            for alert in status.get("alerts", []):
+                key = str(alert["key"])
+                items.append({
+                    **alert,
+                    "status": "active",
+                    "first_seen_at": status["observed_at"],
+                    "last_seen_at": status["observed_at"],
+                    "occurrences": 1,
+                    "source": None,
+                    "table": None,
+                    "retryable": False,
+                    "silence_allowed": False,
+                    "silenced_until": silences.get(key),
+                })
+
+            failed_steps = db.con.execute(
+                "SELECT r.id AS run_id, r.source, r.run_type, r.started_at, "
+                "r.finished_at, s.target, s.error "
+                "FROM d2a_run_step s JOIN d2a_sync_run r ON r.id = s.run_id "
+                "WHERE s.status = 'failed' AND r.run_type IN ('sync','reconcile') "
+                "ORDER BY r.started_at DESC, s.id DESC LIMIT 200"
+            ).fetchall()
+            grouped: dict[str, dict] = {}
+            for row in failed_steps:
+                category = _error_category(row["error"])
+                key = f"run:{row['source']}:{row['target']}:{category}"
+                item = grouped.setdefault(key, {
+                    "key": key,
+                    "severity": "error",
+                    "category": category,
+                    "title": f"{row['target']} {row['run_type']} 失败",
+                    "source": row["source"], "table": row["target"],
+                    "detail": _sanitize_detail(row["error"] or "运行步骤失败"),
+                    "suggestion": "查看运行步骤和日志，修正后执行定向重试",
+                    "first_seen_at": row["started_at"],
+                    "last_seen_at": row["finished_at"] or row["started_at"],
+                    "occurrences": 0, "run_id": row["run_id"],
+                    "retryable": True, "silence_allowed": True,
+                    "links": [
+                        f"/runs?watch={row['run_id']}",
+                        "/logs?service=connector",
+                    ],
+                })
+                item["occurrences"] += 1
+                if row["started_at"] < item["first_seen_at"]:
+                    item["first_seen_at"] = row["started_at"]
+            for key, item in grouped.items():
+                latest = db.con.execute(
+                    "SELECT s.status, r.started_at FROM d2a_run_step s "
+                    "JOIN d2a_sync_run r ON r.id = s.run_id "
+                    "WHERE r.source = ? AND s.target = ? "
+                    "ORDER BY r.started_at DESC, s.id DESC LIMIT 1",
+                    (item["source"], item["table"]),
+                ).fetchone()
+                item["status"] = "recovered" if latest and latest["status"] == "ok" else "active"
+                item["recovered_at"] = latest["started_at"] if item["status"] == "recovered" else None
+                item["silenced_until"] = silences.get(key)
+                items.append(item)
+
+            failed_pushes = db.con.execute(
+                "SELECT source, table_name, error_detail, error_category, retryable, "
+                "created_at, run_id FROM d2a_http_push_log "
+                "WHERE status = 'failed' ORDER BY created_at DESC LIMIT 200"
+            ).fetchall()
+            push_grouped: dict[str, dict] = {}
+            latest_push = {
+                (item["source"], item["table_name"]): item
+                for item in db.push_log_table_summaries()
+            }
+            for row in failed_pushes:
+                category = row["error_category"] or _error_category(row["error_detail"])
+                key = f"push:{row['source']}:{row['table_name']}:{category}"
+                item = push_grouped.setdefault(key, {
+                    "key": key, "severity": "error", "category": category,
+                    "title": f"{row['table_name']} 推送失败",
+                    "source": row["source"], "table": row["table_name"],
+                    "detail": _sanitize_detail(row["error_detail"] or "推送失败"),
+                    "suggestion": "确认平台、网络和 Token 后定向重推",
+                    "first_seen_at": row["created_at"], "last_seen_at": row["created_at"],
+                    "occurrences": 0, "run_id": row["run_id"],
+                    "retryable": bool(row["retryable"] if row["retryable"] is not None else True),
+                    "silence_allowed": True,
+                    "links": ["/push-logs", "/logs?service=connector"],
+                })
+                item["occurrences"] += 1
+                if row["created_at"] < item["first_seen_at"]:
+                    item["first_seen_at"] = row["created_at"]
+            for key, item in push_grouped.items():
+                latest = latest_push.get((item["source"], item["table"]))
+                item["status"] = "recovered" if latest and latest["status"] == "completed" else "active"
+                item["recovered_at"] = latest.get("last_at") if item["status"] == "recovered" else None
+                item["silenced_until"] = silences.get(key)
+                items.append(item)
+
+            # 持久化根因生命周期。轮询不会增加 occurrences；只有首次出现、
+            # 历史失败计数增长或 recovered→active 再次发生才更新计数。
+            observed_at = status["observed_at"]
+            existing_rows = db.con.execute(
+                "SELECT * FROM d2a_alert_event").fetchall()
+            existing = {row["alert_key"]: row for row in existing_rows}
+            active_items = {
+                str(item["key"]): item for item in items
+                if item.get("status") == "active"
+            }
+            for key, item in active_items.items():
+                row = existing.get(key)
+                payload_json = _json.dumps(
+                    item, ensure_ascii=False, sort_keys=True)
+                first_seen = item.get("first_seen_at") or observed_at
+                last_seen = item.get("last_seen_at") or observed_at
+                observed_occurrences = max(1, int(item.get("occurrences") or 1))
+                if row is None:
+                    db.con.execute(
+                        "INSERT INTO d2a_alert_event "
+                        "(alert_key, status, first_seen_at, last_seen_at, "
+                        "recovered_at, occurrences, payload_json) "
+                        "VALUES (?, 'active', ?, ?, NULL, ?, ?)",
+                        (key, first_seen, last_seen,
+                         observed_occurrences, payload_json),
+                    )
+                elif row["status"] == "recovered":
+                    db.con.execute(
+                        "UPDATE d2a_alert_event SET status = 'active', "
+                        "last_seen_at = ?, recovered_at = NULL, "
+                        "occurrences = occurrences + 1, payload_json = ? "
+                        "WHERE alert_key = ?",
+                        (last_seen, payload_json, key),
+                    )
+                else:
+                    db.con.execute(
+                        "UPDATE d2a_alert_event SET last_seen_at = ?, "
+                        "occurrences = MAX(occurrences, ?), payload_json = ? "
+                        "WHERE alert_key = ?",
+                        (last_seen, observed_occurrences, payload_json, key),
+                    )
+            for key, row in existing.items():
+                if row["status"] == "active" and key not in active_items:
+                    db.con.execute(
+                        "UPDATE d2a_alert_event SET status = 'recovered', "
+                        "recovered_at = ? WHERE alert_key = ?",
+                        (observed_at, key),
+                    )
+            db.con.commit()
+
+            event_rows = db.con.execute(
+                "SELECT * FROM d2a_alert_event "
+                "ORDER BY last_seen_at DESC").fetchall()
+            event_by_key = {row["alert_key"]: row for row in event_rows}
+            current_keys = {str(item["key"]) for item in items}
+            for item in items:
+                event = event_by_key.get(str(item["key"]))
+                if event is None:
+                    continue
+                item["status"] = event["status"]
+                item["first_seen_at"] = event["first_seen_at"]
+                item["last_seen_at"] = event["last_seen_at"]
+                item["recovered_at"] = event["recovered_at"]
+                item["occurrences"] = event["occurrences"]
+            for event in event_rows:
+                if event["status"] != "recovered" or event["alert_key"] in current_keys:
+                    continue
+                try:
+                    recovered_item = _json.loads(event["payload_json"])
+                except (TypeError, ValueError, _json.JSONDecodeError):
+                    continue
+                recovered_item.update({
+                    "status": "recovered",
+                    "first_seen_at": event["first_seen_at"],
+                    "last_seen_at": event["last_seen_at"],
+                    "recovered_at": event["recovered_at"],
+                    "occurrences": event["occurrences"],
+                    "silenced_until": None,
+                })
+                items.append(recovered_item)
+
+            return {
+                "observed_at": status["observed_at"],
+                "alerts": items,
+                "active": sum(1 for item in items if item["status"] == "active"),
+                "recovered": sum(1 for item in items if item["status"] == "recovered"),
+            }
+        finally:
+            db.con.close()
 
     @api.get("/alerts/silences")
     def alert_silences() -> dict:
@@ -1382,8 +1851,13 @@ def create_app(
 
     @api.post("/alerts/silences")
     def alert_silence_create(body: SilenceBody) -> dict:
-        if not (1 <= body.hours <= 24 * 30):
-            raise http_error(422, "hours 须为 1..720", "调整静默时长")
+        if body.alert_key.startswith("readiness:"):
+            raise http_error(
+                409, "生产阻断告警不可静默",
+                "修复进程、备份、磁盘或数据驻留问题后告警会自动恢复",
+            )
+        if not (1 <= body.hours <= 24 * 7):
+            raise http_error(422, "hours 须为 1..168", "调整静默时长")
         cfg = reload_config()
         db = LandingStore(cfg.landing)
         try:
@@ -1407,9 +1881,11 @@ def create_app(
     def _map_run_row(r) -> dict:
         return {
             "id": r["id"], "source": r["source"], "status": r["status"],
+            "run_type": r["run_type"],
             "started_at": r["started_at"], "finished_at": r["finished_at"],
             "tables": r["tables"], "rows": r["rows"],
-            "detail": r["detail"],
+            "detail": _sanitize_detail(r["detail"] or ""),
+            "generation_id": r["generation_id"],
         }
 
     def _map_step_row(s) -> dict:
@@ -1419,15 +1895,20 @@ def create_app(
             "started_at": s["started_at"], "finished_at": s["finished_at"],
             "batch_id": s["batch_id"],
             "rows_in": s["rows_in"], "rows_out": s["rows_out"],
+            "quarantined": s["quarantined"],
+            "repaired": s["repaired"],
+            "soft_deleted": s["soft_deleted"],
             "batches": s["batches"], "progressed_at": s["progressed_at"],
             "expected_rows": s["expected_rows"],
             "watermark_before": s["watermark_before"],
             "watermark_after": s["watermark_after"],
-            "error": s["error"],
+            "error": _sanitize_detail(s["error"] or ""),
+            "error_id": s["error_id"],
         }
 
     @api.get("/runs")
-    def runs(source: str | None = None, limit: int = 20, offset: int = 0) -> dict:
+    def runs(source: str | None = None, run_type: str | None = None,
+             limit: int = 20, offset: int = 0) -> dict:
         if not (1 <= limit <= 50):
             raise http_error(422, "limit 须为 1..50", "调整分页参数")
         if offset < 0:
@@ -1439,20 +1920,28 @@ def create_app(
             name = None
         db = LandingStore(cfg.landing)
         try:
-            where = "WHERE run_type = 'sync'"
+            if run_type not in (None, "sync", "reconcile"):
+                raise http_error(
+                    422, "run_type 仅支持 sync / reconcile",
+                    "调整运行类型过滤条件")
+            where = "WHERE run_type IN ('sync', 'reconcile')"
             params: list[Any] = []
+            if run_type is not None:
+                where += " AND run_type = ?"
+                params.append(run_type)
             if name is not None:
                 where += " AND source = ?"
                 params.append(name)
             (total,) = db.con.execute(
                 f"SELECT COUNT(*) FROM d2a_sync_run {where}", params).fetchone()
             rows = db.con.execute(
-                f"SELECT id, source, status, started_at, finished_at, tables, rows, detail "
+                f"SELECT id, source, run_type, status, started_at, finished_at, "
+                f"tables, rows, detail, generation_id "
                 f"FROM d2a_sync_run {where} "
                 f"ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?",
                 [*params, limit, offset])
             return {
-                "runs": [dict(r) for r in rows],
+                "runs": [_map_run_row(r) for r in rows],
                 "total": total, "limit": limit, "offset": offset,
             }
         finally:
@@ -1468,9 +1957,25 @@ def create_app(
             if r is None:
                 raise http_error(404, f"运行 #{run_id} 不存在", "确认运行 ID")
             steps = db.steps_for_run(run_id)
+            generation_steps = db.con.execute(
+                "SELECT step_kind, status, created_at, error_category, retryable, "
+                "retry_count, error_detail FROM d2a_http_push_log "
+                "WHERE run_id = ? AND generation_id IS NOT NULL "
+                "ORDER BY created_at, id", (run_id,)).fetchall()
             return {
                 "run": _map_run_row(r),
                 "steps": [_map_step_row(s) for s in steps],
+                "generation": {
+                    "generation_id": r["generation_id"],
+                    "events": [
+                        {
+                            **dict(item),
+                            "error_detail": _sanitize_detail(
+                                item["error_detail"] or ""),
+                        }
+                        for item in generation_steps
+                    ],
+                } if r["generation_id"] else None,
             }
         finally:
             db.con.close()
@@ -1483,8 +1988,20 @@ def create_app(
             "step_kind": r["step_kind"], "table_name": r["table_name"],
             "mode": r["mode"], "batch_id": r["batch_id"],
             "rows_count": r["rows_count"], "status": r["status"],
-            "error_detail": r["error_detail"], "retry_count": r["retry_count"],
+            "error_detail": _sanitize_detail(r["error_detail"] or ""),
+            "retry_count": r["retry_count"],
             "duration_ms": r["duration_ms"], "created_at": r["created_at"],
+            "generation_id": r["generation_id"],
+            "error_category": r["error_category"],
+            "retryable": (
+                None if r["retryable"] is None else bool(r["retryable"])),
+            "receipt_received": (
+                None if r["receipt_received"] is None
+                else bool(r["receipt_received"])),
+            "idempotent_replay": (
+                None if r["idempotent_replay"] is None
+                else bool(r["idempotent_replay"])),
+            "receipt_digest": r["receipt_digest"],
         }
 
     @api.get("/push-logs")
@@ -1556,8 +2073,46 @@ def create_app(
         tables: list[str] | None = None,
     ) -> None:
         try:
-            run_sync_cycle(name, scfg, landing_path, templates,
-                           run_id=run_id, acquired_lock=lock, tables=tables)
+            result = run_sync_cycle(
+                name, scfg, landing_path, templates,
+                run_id=run_id, acquired_lock=lock, tables=tables)
+            if not result.executed:
+                skipped_store = LandingStore(landing_path)
+                try:
+                    skipped_store.finish_running_run(
+                        run_id,
+                        status=("paused" if result.reason == "outside_window"
+                                else "failed"),
+                        detail=result.note or result.reason,
+                    )
+                finally:
+                    skipped_store.con.close()
+        except Exception as exc:
+            failed_store = LandingStore(landing_path)
+            try:
+                failed_store.finish_running_run(
+                    run_id, status="failed", detail=_sanitize_detail(str(exc)))
+            finally:
+                failed_store.con.close()
+        finally:
+            lock.release()
+
+    def _run_reconcile_worker(
+        run_id: int, name: str, scfg, landing_path: str, deep: bool, lock,
+    ) -> None:
+        try:
+            executed = run_reconcile_cycle(
+                name, scfg, landing_path, deep=deep,
+                run_id=run_id, acquired_lock=lock)
+            if not executed:
+                skipped_store = LandingStore(landing_path)
+                try:
+                    skipped_store.finish_running_run(
+                        run_id, status="paused",
+                        detail="对账开始前窗口已关闭，未执行",
+                    )
+                finally:
+                    skipped_store.con.close()
         except Exception as exc:
             failed_store = LandingStore(landing_path)
             try:

@@ -219,6 +219,16 @@ def test_logs_admin_service_reads_own_log(middle_env, tmp_path):
     body = r.json()
     assert body["ok"] is True and "Traceback" in body["text"]
 
+    (tmp_path / "d2a-maintenance.log").write_text(
+        "maintenance backup ok\n", encoding="utf-8")
+    maintenance = client.get(
+        "/api/logs?service=maintenance",
+        headers={"Authorization": "Bearer secret"},
+    )
+    assert maintenance.status_code == 200
+    assert maintenance.json()["ok"] is True
+    assert "backup ok" in maintenance.json()["text"]
+
 
 def test_trigger_sync_warns_or_runs(middle_env):
     client, _ = middle_env
@@ -231,28 +241,47 @@ def test_trigger_sync_warns_or_runs(middle_env):
     assert body.get("executed") in (True, False)
 
 
-def test_trigger_rejects_reconcile(middle_env):
+def test_trigger_accepts_controlled_reconcile(middle_env):
     client, _ = middle_env
     r = client.post("/api/actions/trigger", headers={"Authorization": "Bearer secret"},
                     json={"action": "reconcile"})
-    assert r.status_code == 400
+    assert r.status_code == 200
+    body = r.json()
+    assert body["action"] == "reconcile"
+    assert body["status"] in ("started", "running", "not_started")
+    assert "executed" in body
+    assert "follow_up_url" in body
 
 
 def test_html_pages(middle_env):
     client, _ = middle_env
     h = {"Authorization": "Bearer secret"}
-    for path in ("/status", "/runs", "/errors", "/config", "/logs", "/metadata", "/tables", "/push-logs"):
+    for path in ("/status", "/runs", "/errors", "/config", "/logs", "/metadata", "/tables", "/push-logs", "/recovery"):
         r = client.get(path, headers=h)
         assert r.status_code == 200
         body = r.content.lower()
         assert b"htmx" in body or b"hx-" in body or b"nav" in body
 
+    status_page = client.get("/status", headers=h).text
+    status_script = client.get("/static/middle-status.js").text
+    errors_script = client.get("/static/middle-errors.js").text
+    shared_script = client.get("/static/admin.js").text
+    assert 'id="status-source"' in status_page
+    assert "JSON.stringify({ action: action, source: source })" in status_script
+    for script in (status_script, errors_script, shared_script):
+        assert "document.hidden" in script
+        assert "pollFailures" in script or "globalAlertFailures" in script
+        assert "Math.pow(2" in script
+    assert "apiJson('/api/alerts'" in shared_script
+
 
 def test_config_page_keeps_and_submits_revision(middle_env):
     client, _ = middle_env
     page = client.get("/config", headers={"Authorization": "Bearer secret"}).text
-    assert "currentRevision" in page
-    assert "revision: currentRevision" in page
+    assert 'src="/static/middle-config.js"' in page
+    script = client.get("/static/middle-config.js").text
+    assert "currentRevision" in script
+    assert "revision: currentRevision" in script
     assert "抽取表配置" not in page
 
 

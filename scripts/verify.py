@@ -43,6 +43,7 @@ MODULE_TESTS: dict[str, tuple[str, ...]] = {
         "tests/platform/test_console*.py",
         "tests/platform/test_datasets_api.py",
         "tests/middle/test_middle_admin.py",
+        "tests/middle/test_middle_admin_production.py",
         "tests/platform/test_ui_launcher.py",
     ),
     "mcp": (

@@ -98,16 +98,20 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
         _fail("middle: missing token should 401")
     _ok("middle: unauthenticated API → 401")
 
-    for path in ("/status", "/runs", "/errors", "/config", "/logs", "/metadata", "/tables", "/push-logs"):
+    for path in ("/status", "/runs", "/errors", "/config", "/logs", "/metadata", "/tables", "/push-logs", "/recovery"):
         r = client.get(path, headers=h)
         if r.status_code != 200:
             _fail(f"middle: GET {path} → {r.status_code}")
-    _ok("middle: HTML pages /status /runs /errors /config /logs /metadata /tables /push-logs → 200")
+    _ok("middle: HTML pages including status/recovery/config/operations → 200")
 
     nav = client.get("/status", headers=h).text
     if 'href="/metadata"' not in nav or 'href="/tables"' not in nav:
         _fail("middle: nav missing /metadata or /tables")
     _ok("middle: nav includes metadata + tables")
+    csp = client.get("/status", headers=h).headers.get("content-security-policy", "")
+    if "script-src 'self'" not in csp or "object-src 'none'" not in csp:
+        _fail(f"middle: CSP missing required restrictions: {csp}")
+    _ok("middle: CSP restricts scripts/object/frame to local safe baseline")
 
     r = client.get("/api/extraction-tables", headers=h)
     if r.status_code != 200:
@@ -121,12 +125,16 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
 
     meta_page = client.get("/metadata", headers=h).text
     tables_page = client.get("/tables", headers=h).text
-    if "d2a_extraction_draft:" not in meta_page:
+    meta_js = client.get("/static/middle-metadata.js").text
+    tables_js = client.get("/static/middle-tables.js").text
+    if "d2a_extraction_draft:" not in meta_js:
         _fail("middle: metadata page missing draft-key cleanup helper")
-    if "saveTablesPlan" not in tables_page or "btn-batch-edit" not in tables_page:
+    if "saveTablesPlan" not in tables_js or "btn-batch-edit" not in tables_page:
         _fail("middle: tables page missing direct-save / batch edit")
-    if "btn-draft-only" in tables_page or "preferDraft" in tables_page:
+    if "btn-draft-only" in tables_page or "preferDraft" in tables_js:
         _fail("middle: tables page still exposes draft save flow")
+    if "<script>" in meta_page or "<script>" in tables_page:
+        _fail("middle: page still contains inline script")
     if "前往元数据" not in tables_page and 'href="/metadata"' not in tables_page:
         _fail("middle: tables page missing metadata guidance")
     _ok("middle: metadata/tables pages (direct save + batch edit)")
@@ -175,9 +183,9 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
     _ok(f"middle: trigger sync (async, run_id={run_id})")
 
     r = client.post("/api/actions/trigger", headers=h, json={"action": "reconcile"})
-    if r.status_code != 400:
-        _fail(f"middle: reconcile should 400, got {r.status_code}")
-    _ok("middle: reconcile rejected (400)")
+    if r.status_code != 200 or r.json().get("action") != "reconcile":
+        _fail(f"middle: controlled reconcile trigger failed: {r.status_code} {r.text[:200]}")
+    _ok("middle: controlled reconcile trigger returns trackable action result")
 
 
 def smoke_console(cfg: Path, log_dir: Path) -> None:

@@ -33,6 +33,7 @@ include = ["data2agent*"]
 [tool.setuptools.package-data]
 data2agent = [
   "shared/admin_templates/*.html",
+  "shared/admin_templates/*.md",
   "shared/admin_templates/static/*.js",
   "middle/admin/templates/*.html",
   "middle/admin/static/*.js",

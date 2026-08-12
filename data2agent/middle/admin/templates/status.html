@@ -3,248 +3,52 @@
 {% block content %}
 <style>
   .actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-  .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}
+  .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
   .more-link{font-size:13px;display:inline-block;margin-top:8px}
   .src-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .src-head h2{margin:0;flex:1}
-  details.wm{margin-top:8px}
-  details.wm summary{cursor:pointer;font-size:13px;color:#0b6bcb}
-  details.wm[open] summary{margin-bottom:4px}
-  #status-panel .card{padding:14px 20px}
+  .src-head h2{margin:0;flex:1}.status-list{display:grid;gap:8px}
+  .status-item{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
+               padding:8px 0;border-bottom:1px solid #e8edf2}
+  .status-item:last-child{border-bottom:0}.critical-card{border-left:4px solid #b42318}
+  .warning-card{border-left:4px solid #d48b00}.healthy-card{border-left:4px solid #1e7e34}
+  details.wm{margin-top:8px}details.wm summary{cursor:pointer;font-size:13px;color:#0b6bcb}
+  .diagnostic{white-space:pre-wrap;overflow-wrap:anywhere}
 </style>
 
-<div class="card">
+<section class="card" aria-labelledby="status-actions-title">
+  <h2 id="status-actions-title" class="sr-only">运维操作</h2>
   <div class="actions">
-    <button type="button" id="btn-trigger">立即触发同步</button>
-    <button type="button" id="btn-test">测试 ERP 连接</button>
-    <span id="trigger-result" class="meta"></span>
-    <span id="test-result" class="meta"></span>
+    <label class="meta" for="status-source">数据源</label>
+    <select id="status-source" aria-label="运维操作数据源"></select>
+    <button type="button" id="btn-trigger">立即同步</button>
+    <button type="button" id="btn-reconcile" class="btn-ghost">L1 对账</button>
+    <button type="button" id="btn-reconcile-deep" class="btn-ghost">深度对账</button>
+    <button type="button" id="btn-test" class="btn-ghost">测试 ERP 连接</button>
+    <button type="button" id="btn-diagnostic" class="btn-ghost">复制诊断摘要</button>
+    <span id="action-result" class="meta" aria-live="polite"></span>
   </div>
-</div>
+</section>
 
-<div id="status-panel"
-     hx-get="/api/status"
-     hx-trigger="load, every 5s"
-     hx-swap="none">
+<section aria-labelledby="readiness-title">
+  <div id="readiness-panel" class="card"><h2 id="readiness-title">生产就绪度</h2><p class="meta">加载中…</p></div>
+</section>
+
+<div id="status-panel" aria-live="polite">
   <div class="card"><p class="meta">加载状态中…</p></div>
 </div>
 
 <div class="summary-grid">
-  <!-- 最近运行摘要:详情在 /runs -->
-  <div class="card">
-    <p class="layer">运行</p>
-    <h2>最近运行</h2>
+  <section class="card" aria-labelledby="runs-title">
+    <p class="layer">运行</p><h2 id="runs-title">最近运行</h2>
     <div id="runs-summary"><p class="meta">加载中…</p></div>
     <a class="more-link" href="/runs">全部运行记录 →</a>
-  </div>
-
-  <!-- 推送健康摘要:详情在 /push-logs -->
-  <div class="card">
-    <p class="layer">推送</p>
-    <h2>推送健康</h2>
+  </section>
+  <section class="card" aria-labelledby="push-title">
+    <p class="layer">推送</p><h2 id="push-title">推送健康</h2>
     <div id="push-summary"><p class="meta">加载中…</p></div>
     <a class="more-link" href="/push-logs">全部推送记录 →</a>
-  </div>
+  </section>
 </div>
 
-<script>
-function renderStatus(data) {
-  var html = '';
-  var ps = data.process_status || {};
-  var processes = ps.processes || [];
-  var alive = processes.filter(function (p) { return p.alive && !p.failed; }).length;
-  html += '<div class="card"><div class="src-head"><h2>后台进程</h2>';
-  if (!ps.available) {
-    html += '<span class="badge badge-warn">状态文件不可用</span>';
-  } else if (ps.stale) {
-    html += '<span class="badge badge-warn">监管状态已过期</span>';
-  } else if (!ps.connector_running) {
-    html += '<span class="badge badge-warn">抽取进程未运行</span>';
-  } else {
-    html += '<span class="badge badge-ok">监管正常 ' + alive + '/' + processes.length + '</span>';
-  }
-  html += '</div>';
-  if (processes.length) {
-    html += '<p class="meta" style="margin:8px 0 0">' + processes.map(function (p) {
-      return esc(p.name) + ':' + (p.alive && !p.failed ? '运行中' : '异常') +
-        (p.restarts ? '(已重启 ' + esc(p.restarts) + ' 次)' : '');
-    }).join(' · ') + '</p>';
-  } else {
-    html += '<p class="meta" style="margin:8px 0 0">没有可用的 launcher 进程记录，请检查 d2a-launcher.log。</p>';
-  }
-  var mt = data.maintenance || {};
-  if (mt.available) {
-    html += '<p class="meta" style="margin:8px 0 0">维护任务：' +
-      (mt.status === 'ok' ? '最近执行成功' : '最近执行失败') +
-      (mt.finished_at ? ' · ' + esc(mt.finished_at) : '') +
-      (mt.next_run_at ? ' · 下次 ' + esc(mt.next_run_at) : '') +
-      (mt.error ? ' · ' + esc(mt.error) : '') + '</p>';
-  } else {
-    html += '<p class="meta" style="margin:8px 0 0">维护任务尚无执行记录。</p>';
-  }
-  html += '</div>';
-  (data.sources || []).forEach(function (src) {
-    var inWin = src.in_window;
-    var configured = !!src.tables_configured;
-    var wmCount = (src.watermarks || []).length;
-
-    html += '<div class="card">';
-    // 头部:源名 + 状态徽章
-    html += '<div class="src-head"><h2>源 ' + esc(src.source) + '</h2>';
-    html += '<span class="badge ' + (inWin ? 'badge-ok' : 'badge-off') + '">' +
-            (inWin ? '窗口内' : '窗口外') + '</span>';
-    html += configured
-      ? '<span class="badge badge-ok">已配置 ' + wmCount + ' 表</span>'
-      : '<span class="badge badge-warn">未配置抽取表</span>';
-    if (src.running_run) {
-      html += '<span class="badge badge-running">同步中 #' + src.running_run.id + '</span>';
-    }
-    html += '</div>';
-
-    if (!configured) {
-      html += '<p class="warn" style="margin-top:10px">尚未配置抽取表,同步会跳过且不会连接 ERP。' +
-              '请到 <a href="/metadata">元数据</a> 选表后在 <a href="/tables">抽取计划</a> 保存。</p>';
-    }
-
-    // 关键指标一行网格
-    html += '<div class="src-kv">';
-    html += '<span>调度 <b>' + esc(src.sync_every || '—') + '</b></span>';
-    html += '<span>窗口 <b>' + esc((src.windows || []).join(', ') || '全天') + '</b></span>';
-    html += '<span>上次运行 <b>' + esc(src.last_run_at || '—') + '</b></span>';
-    html += '<span>下次预估 <b>' + esc(src.next_sync_at || '—') + '</b></span>';
-    html += '</div>';
-
-    // 最近运行一行
-    if (src.latest_run) {
-      var lr = src.latest_run;
-      html += '<p class="meta" style="margin:4px 0">最近运行 #' + lr.id +
-              ' ' + badge(lr.status) + ' · ' + esc(lr.tables || 0) + ' 表 · ' +
-              esc(lr.rows || 0) + ' 行' + (lr.finished_at ? ' · ' + fmtAge(lr.finished_at) : '') +
-              ' <a href="/runs?watch=' + lr.id + '">详情</a></p>';
-      if (lr.status === 'failed' && lr.detail) {
-        html += '<p class="meta" style="color:#b42318;margin:4px 0">❌ ' + esc(lr.detail) + '</p>';
-      }
-    }
-
-    // 水位默认折叠
-    if (wmCount) {
-      html += '<details class="wm"><summary>水位(' + wmCount + ' 张表)</summary>';
-      html += '<table class="data"><thead><tr><th>表</th><th>水位列</th><th>高水位</th><th>上次同步</th></tr></thead><tbody>';
-      src.watermarks.forEach(function (w) {
-        html += '<tr><td>' + esc(w.table_name) + '</td><td>' + esc(w.watermark_col) +
-                '</td><td>' + esc(w.high_water) + '</td><td>' + esc(w.last_run_at || '—') + '</td></tr>';
-      });
-      html += '</tbody></table></details>';
-    }
-    html += '</div>';
-  });
-  return html || '<div class="card"><p class="meta">无源配置</p></div>';
-}
-
-function renderRunsSummary(data) {
-  if (!data.runs || !data.runs.length) return '<p class="meta">暂无运行记录</p>';
-  var html = '<table class="data"><thead><tr><th>ID</th><th>源</th><th>状态</th><th>行数</th><th>开始</th></tr></thead><tbody>';
-  data.runs.slice(0, 5).forEach(function (r) {
-    html += '<tr class="run-row" onclick="location.href=\'/runs?watch=' + r.id + '\'">';
-    html += '<td>#' + r.id + '</td><td>' + esc(r.source) + '</td><td>' + badge(r.status) + '</td>';
-    html += '<td>' + (r.rows || 0) + '</td><td>' + fmtTime(r.started_at) + '</td></tr>';
-  });
-  html += '</tbody></table>';
-  return html;
-}
-
-function renderPushSummary(data) {
-  var list = data.push_logs || [];
-  if (!list.length) return '<p class="meta">暂无推送记录(仅 sink.type=http 时有记录)</p>';
-  var failed = 0;
-  list.forEach(function (p) { if (p.status === 'failed') failed += 1; });
-  var html = '<p class="meta">最近 ' + list.length + ' 条 · ' +
-    (failed ? '<span style="color:#b42318">' + failed + ' 条失败</span>' : '全部成功') + '</p>';
-  html += '<table class="data"><thead><tr><th>表</th><th>步骤</th><th>状态</th><th>时间</th></tr></thead><tbody>';
-  list.slice(0, 5).forEach(function (p) {
-    html += '<tr class="run-row" onclick="location.href=\'/push-logs\'">';
-    html += '<td>' + esc(p.table_name) + '</td><td>' + esc(p.step_kind) + '</td>';
-    html += '<td>' + badge(p.status) + '</td><td>' + fmtTime(p.created_at) + '</td></tr>';
-  });
-  html += '</tbody></table>';
-  return html;
-}
-
-function loadRunsSummary() {
-  fetch('/api/runs?limit=5', { headers: authHeaders() })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      document.getElementById('runs-summary').innerHTML = renderRunsSummary(data);
-    })
-    .catch(function () {
-      document.getElementById('runs-summary').innerHTML = '<p class="meta">加载失败</p>';
-    });
-}
-
-function loadPushSummary() {
-  fetch('/api/push-logs?limit=10', { headers: authHeaders() })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      document.getElementById('push-summary').innerHTML = renderPushSummary(data);
-    })
-    .catch(function () {
-      document.getElementById('push-summary').innerHTML = '<p class="meta">加载失败</p>';
-    });
-}
-
-document.body.addEventListener('htmx:afterOnLoad', function (e) {
-  if (e.detail.elt.id !== 'status-panel') return;
-  try {
-    var data = JSON.parse(e.detail.xhr.responseText);
-    document.getElementById('status-panel').innerHTML = renderStatus(data);
-  } catch (err) {
-    document.getElementById('status-panel').innerHTML =
-      '<div class="card"><p class="meta">状态解析失败</p></div>';
-  }
-});
-
-document.getElementById('btn-trigger').onclick = async function () {
-  var el = document.getElementById('trigger-result');
-  el.textContent = '触发中…';
-  try {
-    var r = await fetch('/api/actions/trigger', {
-      method: 'POST', headers: authHeaders(),
-      body: JSON.stringify({ action: 'sync' })
-    });
-    var body = await r.json();
-    if (body.status === 'started') {
-      el.innerHTML = '已启动 — <a href="/runs?watch=' + body.run_id + '">运行 #' + body.run_id + '</a>';
-      htmx.trigger(document.getElementById('status-panel'), 'load');
-      loadRunsSummary();
-    } else if (body.reason === 'already_running') {
-      el.innerHTML = body.run_id
-        ? '已在运行 — <a href="/runs?watch=' + body.run_id + '">#' + body.run_id + '</a>'
-        : '正在启动,稍后自动刷新';
-      loadRunsSummary();
-    } else {
-      el.textContent = formatApiError(body, JSON.stringify(body));
-    }
-  } catch (e) {
-    el.textContent = '请求失败: ' + e.message;
-  }
-};
-
-document.getElementById('btn-test').onclick = async function () {
-  var el = document.getElementById('test-result');
-  el.textContent = '测试中…';
-  var r = await fetch('/api/connection/test', {
-    method: 'POST', headers: authHeaders(), body: '{}'
-  });
-  var body = await r.json();
-  try { sessionStorage.setItem('d2a_last_connection_test', JSON.stringify({ at: Date.now(), body: body })); } catch (e) {}
-  if (body.status === 'failed' || body.error) {
-    el.textContent = formatApiError(body, '连接失败');
-  } else {
-    el.textContent = JSON.stringify(body);
-  }
-};
-
-loadRunsSummary();
-loadPushSummary();
-</script>
+<script src="{{ static_url }}/middle-status.js" defer></script>
 {% endblock %}

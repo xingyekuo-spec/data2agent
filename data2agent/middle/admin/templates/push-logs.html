@@ -2,341 +2,40 @@
 {% block title %}推送记录 — 中间机管理{% endblock %}
 {% block content %}
 <style>
-  .push-stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:16px}
-  .push-stat{border:1px solid #e8edf2;border-radius:8px;padding:12px}
-  .push-stat dt{font-size:11px;color:#6a7682;letter-spacing:.03em;text-transform:uppercase}
-  .push-stat dd{font-size:20px;font-weight:600;color:#12314f;margin:4px 0 0}
-  .push-rows{font-size:12px;color:#51606f}
+  .push-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:8px;margin:12px 0}
+  .push-stat{border:1px solid #e1e7ed;border-radius:8px;padding:10px}.push-stat dt{font-size:11px;color:#647180}.push-stat dd{font-size:17px;font-weight:600;color:#12314f;margin:4px 0 0;overflow-wrap:anywhere}
 </style>
-
-<div class="card">
-  <div class="tabs">
-    <button type="button" class="tab active" id="tab-btn-by-table" onclick="switchTab('by-table')">按表概览</button>
-    <button type="button" class="tab" id="tab-btn-detail" onclick="switchTab('detail')">推送明细</button>
-    <span class="meta" style="margin-left:auto;align-self:center">仅 sink.type=http 时有记录</span>
+<section class="card">
+  <p class="layer">平台推送</p><h2>推送、回执与重试</h2>
+  <p class="hint">仅 HTTP sink 产生记录。attempt、generation、平台回执、幂等命中和稳定错误分类都可追踪。</p>
+  <div class="tabs" role="tablist" aria-label="推送记录视图">
+    <button type="button" class="tab active" id="push-tab-summary" role="tab" aria-selected="true" aria-controls="push-summary" tabindex="0" data-panel="push-summary">按表概览</button>
+    <button type="button" class="tab" id="push-tab-detail" role="tab" aria-selected="false" aria-controls="push-detail" tabindex="-1" data-panel="push-detail">推送明细</button>
   </div>
-
-  <!-- Tab:按表概览 -->
-  <div id="tab-by-table">
-    <p class="hint">每张表最近批次的推送状态;点击行跳转到该表的推送明细。</p>
+  <section id="push-summary" role="tabpanel" aria-labelledby="push-tab-summary">
     <div class="toolbar">
-      <label>状态
-        <select id="bt-status-filter" onchange="btResetAndRender()">
-          <option value="">全部状态</option>
-          <option value="completed">已推送完成</option>
-          <option value="pushing">推送中</option>
-          <option value="failed">推送失败</option>
-        </select>
-      </label>
-      <label>源
-        <select id="bt-source-filter" onchange="btResetAndRender()">
-          <option value="">全部源</option>
-        </select>
-      </label>
-      <label>表名
-        <input type="text" id="bt-name-filter" placeholder="模糊搜索"
-               oninput="btResetAndRender()">
-      </label>
-      <label>每页
-        <select id="bt-limit" onchange="btResetAndRender()">
-          <option value="10" selected>10 张</option>
-          <option value="20">20 张</option>
-          <option value="50">50 张</option>
-        </select>
-      </label>
-      <span class="meta" id="bt-page-info" style="margin-left:auto"></span>
-      <button type="button" id="bt-prev-page" onclick="btGotoPage(-1)">‹ 上一页</button>
-      <button type="button" id="bt-next-page" onclick="btGotoPage(1)">下一页 ›</button>
+      <label for="summary-status">状态</label><select id="summary-status"><option value="">全部</option><option value="completed">已完成</option><option value="pushing">推送中</option><option value="failed">失败</option></select>
+      <label for="summary-source">数据源</label><select id="summary-source"><option value="">全部源</option></select>
+      <label for="summary-name">表名</label><input type="search" id="summary-name" placeholder="模糊搜索">
+      <label for="summary-limit">每页</label><select id="summary-limit"><option>10</option><option selected>20</option><option>50</option></select>
+      <button type="button" id="summary-refresh">刷新</button><span class="meta" id="summary-refreshed" aria-live="polite"></span><span class="meta" id="summary-page-info"></span>
+      <button type="button" id="summary-prev" class="btn-ghost">‹ 上一页</button><button type="button" id="summary-next" class="btn-ghost">下一页 ›</button>
     </div>
-    <div id="by-table-list"><p class="meta">加载中…</p></div>
-  </div>
-
-  <!-- Tab:推送明细 -->
-  <div id="tab-detail" hidden>
+    <div id="summary-list" aria-live="polite"></div>
+  </section>
+  <section id="push-detail" role="tabpanel" aria-labelledby="push-tab-detail" hidden>
     <div class="toolbar">
-      <select id="table-filter" onchange="resetAndLoadDetail()" style="display:none">
-        <option value="">全部表</option>
-      </select>
-      <select id="source-filter" onchange="resetAndLoadDetail()">
-        <option value="">全部源</option>
-      </select>
-      <select id="limit-select" onchange="resetAndLoadDetail()">
-        <option value="20">20 条</option>
-        <option value="50" selected>50 条</option>
-        <option value="100">100 条</option>
-      </select>
-      <button type="button" onclick="loadPushLogs()" style="padding:4px 12px;border:1px solid #e8edf2;border-radius:6px;background:#fff;cursor:pointer;font-size:13px">刷新</button>
-      <span class="meta" id="page-info" style="margin-left:auto"></span>
-      <button type="button" id="prev-page" onclick="gotoPage(-1)">‹ 上一页</button>
-      <button type="button" id="next-page" onclick="gotoPage(1)">下一页 ›</button>
+      <label for="detail-source">数据源</label><select id="detail-source"><option value="">全部源</option></select>
+      <label for="detail-table">表</label><select id="detail-table"><option value="">全部表/事件</option></select>
+      <label for="detail-limit">每页</label><select id="detail-limit"><option>20</option><option selected>50</option><option>100</option></select>
+      <button type="button" id="detail-refresh">刷新</button><span class="meta" id="detail-refreshed" aria-live="polite"></span><span class="meta" id="detail-page-info"></span>
+      <button type="button" id="detail-prev" class="btn-ghost">‹ 上一页</button><button type="button" id="detail-next" class="btn-ghost">下一页 ›</button>
     </div>
-    <div id="push-logs-list"><p class="meta">加载中…</p></div>
-  </div>
+    <div id="detail-list" aria-live="polite"></div>
+  </section>
+</section>
+<div id="push-detail-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="push-detail-title" hidden>
+  <div class="modal-card"><div class="modal-header"><h2 id="push-detail-title">批次详情</h2><button type="button" id="push-detail-close" class="modal-close" aria-label="关闭">&times;</button></div><div id="push-detail-body" aria-live="polite"></div></div>
 </div>
-
-<!-- 批次详情弹窗 -->
-<div id="push-detail-overlay" class="modal-overlay" style="display:none" onclick="if(event.target===this)closePushDetail()">
-  <div class="modal-card" id="push-detail-card">
-    <div class="modal-header">
-      <h2 id="push-detail-title">批次详情</h2>
-      <button class="modal-close" onclick="closePushDetail()">&times;</button>
-    </div>
-    <div id="push-detail-body"><p class="meta">加载中…</p></div>
-  </div>
-</div>
-
-<script>
-function switchTab(name) {
-  var isTable = name === 'by-table';
-  document.getElementById('tab-by-table').hidden = !isTable;
-  document.getElementById('tab-detail').hidden = isTable;
-  document.getElementById('tab-btn-by-table').classList.toggle('active', isTable);
-  document.getElementById('tab-btn-detail').classList.toggle('active', !isTable);
-}
-
-var _byTableData = [];
-var _btPage = 1;
-
-function btResetAndRender() {
-  _btPage = 1;
-  renderByTableFiltered();
-}
-
-function btGotoPage(delta) {
-  _btPage = Math.max(1, _btPage + delta);
-  renderByTableFiltered();
-}
-
-function renderByTableFiltered() {
-  var status = document.getElementById('bt-status-filter').value;
-  var source = document.getElementById('bt-source-filter').value;
-  var kw = document.getElementById('bt-name-filter').value.trim().toLowerCase();
-  var list = _byTableData.filter(function (t) {
-    if (status && t.status !== status) return false;
-    if (source && t.source !== source) return false;
-    if (kw && t.table_name.toLowerCase().indexOf(kw) < 0) return false;
-    return true;
-  });
-  // 客户端分页(概览数据每表一行,已全量在前端)
-  var limit = parseInt(document.getElementById('bt-limit').value, 10);
-  var pages = Math.max(1, Math.ceil(list.length / limit));
-  if (_btPage > pages) _btPage = pages;
-  var pageRows = list.slice((_btPage - 1) * limit, _btPage * limit);
-  document.getElementById('bt-page-info').textContent =
-    '第 ' + _btPage + ' / ' + pages + ' 页 · 共 ' + list.length + ' 张表';
-  document.getElementById('bt-prev-page').disabled = _btPage <= 1;
-  document.getElementById('bt-next-page').disabled = _btPage >= pages;
-  document.getElementById('by-table-list').innerHTML = pageRows.length
-    ? renderByTable({ tables: pageRows })
-    : '<p class="meta">无匹配的表,请调整筛选条件</p>';
-}
-
-function tableStatusBadge(t) {
-  if (t.status === 'completed') return '<span class="badge badge-ok">已推送完成</span>';
-  if (t.status === 'failed') return '<span class="badge badge-off">推送失败</span>';
-  return '<span class="badge badge-running">推送中</span>';
-}
-
-function renderByTable(data) {
-  var list = data.tables || [];
-  if (!list.length) return '<p class="meta">暂无推送记录</p>';
-  var html = '<table class="data"><thead><tr><th>源</th><th>表</th><th>模式</th><th>推送状态</th>' +
-    '<th>已推送行数</th><th>步骤(成功/失败)</th><th>耗时</th><th>最近推送</th></tr></thead><tbody>';
-  list.forEach(function (t) {
-    var dur = t.duration_ms != null ? (t.duration_ms / 1000).toFixed(1) + 's' : '—';
-    html += '<tr class="run-row" onclick="filterTable(\'' + esc(t.source) + '\',\'' + esc(t.table_name) + '\')">';
-    html += '<td>' + esc(t.source) + '</td>';
-    html += '<td><b>' + esc(t.table_name) + '</b></td>';
-    html += '<td>' + esc(t.mode || '—') + '</td>';
-    html += '<td>' + tableStatusBadge(t) + '</td>';
-    html += '<td>' + (t.rows || 0) + '</td>';
-    html += '<td>' + t.steps_ok + ' / ' + (t.steps_failed ? '<span style="color:#b42318">' + t.steps_failed + '</span>' : '0') + '</td>';
-    html += '<td>' + dur + '</td>';
-    html += '<td>' + fmtTime(t.last_at) + '</td></tr>';
-  });
-  html += '</tbody></table>';
-  return html;
-}
-
-function filterTable(source, table) {
-  var sel = document.getElementById('table-filter');
-  sel.style.display = '';
-  // 确保选项存在并选中
-  var found = false;
-  for (var i = 0; i < sel.options.length; i++) {
-    if (sel.options[i].value === table) { found = true; break; }
-  }
-  if (!found) sel.innerHTML += '<option value="' + esc(table) + '">' + esc(table) + '</option>';
-  sel.value = table;
-  _page = 1;
-  loadPushLogs();
-  switchTab('detail');
-  document.getElementById('tab-detail').scrollIntoView({ behavior: 'smooth' });
-}
-
-function loadByTable() {
-  fetch('/api/push-logs/by-table', { headers: authHeaders() })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      _byTableData = data.tables || [];
-      // 源过滤器选项
-      var sel = document.getElementById('bt-source-filter');
-      var current = sel.value;
-      var sources = {};
-      _byTableData.forEach(function (t) { sources[t.source] = true; });
-      sel.innerHTML = '<option value="">全部源</option>';
-      Object.keys(sources).sort().forEach(function (s) {
-        sel.innerHTML += '<option value="' + esc(s) + '"' + (s === current ? ' selected' : '') + '>' + esc(s) + '</option>';
-      });
-      renderByTableFiltered();
-      // 明细 Tab 的表过滤器选项
-      var tsel = document.getElementById('table-filter');
-      var tcurrent = tsel.value;
-      var tables = {};
-      _byTableData.forEach(function (t) { tables[t.table_name] = true; });
-      var keys = Object.keys(tables).sort();
-      if (keys.length) {
-        tsel.style.display = '';
-        tsel.innerHTML = '<option value="">全部表</option>';
-        keys.forEach(function (t) {
-          tsel.innerHTML += '<option value="' + esc(t) + '"' + (t === tcurrent ? ' selected' : '') + '>' + esc(t) + '</option>';
-        });
-      }
-    })
-    .catch(function () {
-      document.getElementById('by-table-list').innerHTML = '<p class="meta">按表概览加载失败</p>';
-    });
-}
-
-var _page = 1;
-var _knownSources = {};
-
-function resetAndLoadDetail() {
-  _page = 1;
-  loadPushLogs();
-}
-
-function gotoPage(delta) {
-  _page = Math.max(1, _page + delta);
-  loadPushLogs();
-}
-
-function updatePager(total, limit) {
-  var pages = Math.max(1, Math.ceil(total / limit));
-  if (_page > pages) _page = pages;
-  document.getElementById('page-info').textContent =
-    '第 ' + _page + ' / ' + pages + ' 页 · 共 ' + total + ' 条';
-  document.getElementById('prev-page').disabled = _page <= 1;
-  document.getElementById('next-page').disabled = _page >= pages;
-}
-
-function renderPushLogs(data) {
-  var list = data.push_logs;
-  if (!list || !list.length) return '<p class="meta">暂无推送记录(仅在 sink.type=http 时有记录)</p>';
-  var html = '<table class="data"><thead><tr><th>ID</th><th>源</th><th>表</th><th>步骤</th><th>批次</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
-  list.forEach(function(p) {
-    var duration = p.duration_ms != null ? (p.duration_ms / 1000).toFixed(1) + 's' : '—';
-    var batchShort = (p.batch_id || '').slice(-20);
-    html += '<tr class="run-row" onclick="openPushBatch(\'' + esc(p.batch_id || '') + '\')">';
-    html += '<td>#' + p.id + '</td>';
-    html += '<td>' + esc(p.source) + '</td>';
-    html += '<td>' + esc(p.table_name) + '</td>';
-    html += '<td>' + esc(p.step_kind) + '</td>';
-    html += '<td style="font-family:monospace;font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis">' + esc(batchShort) + '</td>';
-    html += '<td>' + (p.rows_count != null ? p.rows_count : '—') + '</td>';
-    html += '<td>' + badge(p.status) + '</td>';
-    html += '<td>' + duration + '</td>';
-    html += '<td>' + fmtTime(p.created_at) + '</td></tr>';
-    if (p.status === 'failed' && p.error_detail) {
-      html += '<tr><td></td><td colspan="8" style="color:#b42318;font-size:12px">' + esc(p.error_detail) + '</td></tr>';
-    }
-  });
-  html += '</tbody></table>';
-  return html;
-}
-
-function loadPushLogs() {
-  var source = document.getElementById('source-filter').value;
-  var table = document.getElementById('table-filter').value;
-  var limit = parseInt(document.getElementById('limit-select').value, 10);
-  var url = '/api/push-logs?limit=' + limit + '&offset=' + ((_page - 1) * limit);
-  if (source) url += '&source=' + encodeURIComponent(source);
-  if (table) url += '&table=' + encodeURIComponent(table);
-  fetch(url, { headers: authHeaders() })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      document.getElementById('push-logs-list').innerHTML = renderPushLogs(data);
-      updatePager(data.total || 0, limit);
-      // 源过滤器选项跨页累积
-      (data.push_logs || []).forEach(function(p) { _knownSources[p.source] = true; });
-      var sel = document.getElementById('source-filter');
-      var current = sel.value;
-      sel.innerHTML = '<option value="">全部源</option>';
-      Object.keys(_knownSources).sort().forEach(function(s) {
-        sel.innerHTML += '<option value="' + esc(s) + '"' + (s === current ? ' selected' : '') + '>' + esc(s) + '</option>';
-      });
-    })
-    .catch(function() {
-      document.getElementById('push-logs-list').innerHTML = '<p class="meta">推送记录加载失败</p>';
-    });
-}
-
-function openPushBatch(batchId) {
-  if (!batchId) return;
-  document.getElementById('push-detail-overlay').style.display = 'flex';
-  document.getElementById('push-detail-title').textContent = '批次 ' + batchId;
-  document.getElementById('push-detail-body').innerHTML = '<p class="meta">加载中…</p>';
-  fetch('/api/push-logs/batch/' + encodeURIComponent(batchId), { headers: authHeaders() })
-    .then(function(r) { return r.json(); })
-    .then(function(data) {
-      var p = data.progress;
-      var completed = !!p.completed;
-      var progressText = completed
-        ? '已完成：成功推送 ' + p.write_ok_batches + ' 批 / ' + p.rows + ' 行'
-        : '进行中：已成功推送 ' + p.write_ok_batches + ' 批 / ' + p.rows + ' 行';
-      if (p.failed) progressText += '；' + p.failed + ' 个步骤失败';
-      var html = '';
-      html += '<dl class="push-stat-grid">';
-      html += '<div class="push-stat"><dt>模式</dt><dd>' + esc(data.mode) + '</dd></div>';
-      html += '<div class="push-stat"><dt>表</dt><dd>' + esc(data.table_name) + '</dd></div>';
-      html += '<div class="push-stat"><dt>总步骤</dt><dd>' + p.total + '</dd></div>';
-      html += '<div class="push-stat"><dt>成功</dt><dd style="color:#1e7e34">' + p.ok + '</dd></div>';
-      html += '<div class="push-stat"><dt>失败</dt><dd style="color:#b42318">' + p.failed + '</dd></div>';
-      html += '<div class="push-stat"><dt>推送行数</dt><dd>' + (p.rows || 0) + '</dd></div>';
-      html += '<div class="push-stat"><dt>耗时</dt><dd>' + (p.duration_ms / 1000).toFixed(1) + 's</dd></div>';
-      html += '</dl>';
-      html += '<div style="margin-bottom:16px">';
-      html += '<span class="push-rows">' + progressText + '</span>';
-      // 未收到 complete_table 前无法知道总批数；不能伪造百分比。
-      html += '<div class="progress-bar"><div class="progress-bar-fill" style="width:' +
-              (completed ? '100' : '0') + '%"></div></div>';
-      html += '</div>';
-      html += '<table class="data" style="margin-top:8px"><thead><tr><th>步骤</th><th>行数</th><th>状态</th><th>耗时</th><th>时间</th></tr></thead><tbody>';
-      data.steps.forEach(function(s) {
-        var dur = s.duration_ms != null ? (s.duration_ms / 1000).toFixed(2) + 's' : '—';
-        html += '<tr><td>' + esc(s.step_kind) + '</td>';
-        html += '<td>' + (s.rows_count != null ? s.rows_count : '—') + '</td>';
-        html += '<td>' + badge(s.status) + '</td>';
-        html += '<td>' + dur + '</td>';
-        html += '<td>' + fmtTime(s.created_at) + '</td></tr>';
-        if (s.error_detail) {
-          html += '<tr><td></td><td colspan="4" style="color:#b42318;font-size:12px">' + esc(s.error_detail) + '</td></tr>';
-        }
-      });
-      html += '</tbody></table>';
-      document.getElementById('push-detail-body').innerHTML = html;
-    })
-    .catch(function(err) {
-      document.getElementById('push-detail-body').innerHTML = '<p class="meta">加载失败: ' + err.message + '</p>';
-    });
-}
-
-function closePushDetail() {
-  document.getElementById('push-detail-overlay').style.display = 'none';
-  document.getElementById('push-detail-body').innerHTML = '';
-}
-
-loadByTable();
-loadPushLogs();
-</script>
+<script src="{{ static_url }}/middle-push-logs.js" defer></script>
 {% endblock %}

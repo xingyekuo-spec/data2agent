@@ -70,12 +70,16 @@ def test_middle_admin_pages_and_nav_present():
     assert 'href="/tables"' in layout
     meta = (TEMPLATES / "metadata.html").read_text(encoding="utf-8")
     tables = (TEMPLATES / "tables.html").read_text(encoding="utf-8")
-    assert "d2a_extraction_draft:" in meta  # 元数据页清理历史草稿键
-    assert "saveTablesPlan" in tables
+    static = ROOT / "data2agent" / "shared" / "admin_templates" / "static"
+    metadata_js = (static / "middle-metadata.js").read_text(encoding="utf-8")
+    tables_js = (static / "middle-tables.js").read_text(encoding="utf-8")
+    assert "d2a_extraction_draft:" in metadata_js  # 元数据页清理历史草稿键
+    assert "saveTablesPlan" in tables_js
     assert "btn-batch-edit" in tables
     assert "btn-draft-only" not in tables
-    assert "/api/extraction-tables" in meta
-    assert "/api/extraction-tables" in tables
+    assert "/api/extraction-tables" in metadata_js
+    assert "/api/extraction-tables" in tables_js
+    assert "<script>" not in meta and "<script>" not in tables
 
 
 def test_connect_example_defaults_to_empty_tables():
