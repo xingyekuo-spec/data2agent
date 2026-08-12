@@ -110,3 +110,7 @@ def test_middle_maintenance_publishes_success_and_failure_status(tmp_path):
     failed = json.loads(status.read_text(encoding="utf-8"))
     assert failed["status"] == "failed"
     assert "RuntimeError" in failed["error"]
+    assert failed["last_attempt"]["status"] == "failed"
+    assert failed["last_success"]["backup_file"] == payload["last_success"]["backup_file"]
+    assert failed["last_success"]["integrity"] == "ok"
+    assert failed["result"]["min_free_gb"] == 10**9
