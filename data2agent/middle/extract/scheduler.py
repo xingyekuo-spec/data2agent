@@ -13,9 +13,14 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from ...shared.config import ConnectConfig, SourceConfig, in_window
+from ...shared.config import (
+    ConnectConfig,
+    SourceConfig,
+    assert_production_ready,
+    in_window,
+)
 from ...shared.store.dataset_publish import build_dataset
-from .increment import incremental_sync
+from .increment import cleanup_orphan_spools, incremental_sync
 from ...shared.store.landing import LandingStore
 from .reconcile import reconcile, reconcile_remote
 
@@ -168,6 +173,16 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
         if own_run:
             run_id = landing.start_run(name, "sync")
 
+        if (
+            scfg.spool.policy == "encrypted_temp_volume"
+            and scfg.spool.directory
+        ):
+            removed = cleanup_orphan_spools(scfg.spool.directory, name)
+            if removed:
+                log.warning(
+                    "removed orphan encrypted spool source=%s count=%s",
+                    name, removed)
+
         try:
             adapter = build_adapter(name, scfg, landing)
             sink = build_sink(scfg, landing, source=name, run_id=run_id)
@@ -189,7 +204,9 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
             run_id=run_id,
             only_tables=set(tables) if tables else None,
             start_dates=scfg.table_start_dates(),
-            estimate_rows=scfg.estimate_rows)
+            estimate_rows=scfg.estimate_rows,
+            full_refresh_spool_policy=scfg.spool.policy,
+            spool_directory=scfg.spool.directory)
         log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
                  name, report.run_id, report.total_rows, len(report.tables),
                  report.paused, scfg.sink.type)
@@ -233,20 +250,27 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
 
 def run_reconcile_cycle(name: str, scfg: SourceConfig,
                         landing_path: str, deep: bool = False,
-                        wait_for_lock_seconds: float = 0.0) -> bool:
+                        wait_for_lock_seconds: float = 0.0,
+                        run_id: int | None = None,
+                        acquired_lock=None) -> bool:
     if not in_window(datetime.now().time(), scfg.windows):
         log.info("skip reconcile source=%s reason=窗口外", name)
         return False
     from .sync_lock import SourceSyncLock
 
     deadline = time.monotonic() + max(0.0, wait_for_lock_seconds)
-    lock = SourceSyncLock.try_acquire(landing_path, name)
+    own_lock = None
+    lock = acquired_lock
+    if lock is None:
+        own_lock = SourceSyncLock.try_acquire(landing_path, name)
+        lock = own_lock
     while lock is None and time.monotonic() < deadline:
         time.sleep(min(30.0, max(0.1, deadline - time.monotonic())))
         if not in_window(datetime.now().time(), scfg.windows):
             log.info("skip reconcile source=%s reason=window_closed_while_waiting", name)
             return False
-        lock = SourceSyncLock.try_acquire(landing_path, name)
+        own_lock = SourceSyncLock.try_acquire(landing_path, name)
+        lock = own_lock
     if lock is None:
         log.info("skip reconcile source=%s reason=sync_or_reconcile_running", name)
         return False
@@ -258,12 +282,12 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig,
             report = reconcile_remote(
                 adapter, landing, sink, name, scfg.table_watermarks(),
                 deep=deep, key_columns=scfg.table_key_columns(),
-                start_dates=scfg.table_start_dates())
+                start_dates=scfg.table_start_dates(), run_id=run_id)
         else:
             report = reconcile(
                 adapter, landing, name, scfg.table_watermarks(), deep=deep,
                 key_columns=scfg.table_key_columns(),
-                start_dates=scfg.table_start_dates())
+                start_dates=scfg.table_start_dates(), run_id=run_id)
         log.info(
             "reconcile source=%s run=%s deep=%s segments=%s "
             "mismatched=%s soft_deleted=%s",
@@ -272,7 +296,8 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig,
         return True
     finally:
         landing.con.close()
-        lock.release()
+        if own_lock is not None:
+            own_lock.release()
 
 
 def _reload_source(
@@ -319,6 +344,9 @@ def serve(
 ) -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    # 管理页必须能加载并解释不合规配置，但实际 connector 在生产模式
+    # 必须 fail closed，禁止 local sink 或未受控磁盘 spool。
+    assert_production_ready(cfg)
 
     # connector 被断电/强制结束时 SQLite 会留下 running。只有成功获得
     # source 锁的新实例才能回收，避免误伤另一个正常 connector。
@@ -334,6 +362,17 @@ def serve(
                 )
                 continue
             try:
+                scfg = cfg.sources[source]
+                if (
+                    scfg.spool.policy == "encrypted_temp_volume"
+                    and scfg.spool.directory
+                ):
+                    removed = cleanup_orphan_spools(
+                        scfg.spool.directory, source)
+                    if removed:
+                        log.warning(
+                            "removed startup orphan spools source=%s count=%s",
+                            source, removed)
                 recovered = recovery_store.recover_abandoned_runs(source)
                 if recovered:
                     log.warning(

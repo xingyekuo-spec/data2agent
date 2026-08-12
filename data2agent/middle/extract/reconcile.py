@@ -107,11 +107,15 @@ def _repair_local_stream(
 def reconcile(adapter: SourceAdapter, landing: LandingStore, source: str,
               watermarks: dict[str, str] | None = None, deep: bool = False,
               key_columns: dict[str, list[str]] | None = None,
-              start_dates: dict[str, str] | None = None) -> ReconcileReport:
+              start_dates: dict[str, str] | None = None,
+              run_id: int | None = None) -> ReconcileReport:
     watermarks = watermarks or {}
     key_columns = key_columns or {}
     start_dates = start_dates or {}
-    report = ReconcileReport(source=source, run_id=landing.start_run(source, "reconcile"), deep=deep)
+    report = ReconcileReport(
+        source=source,
+        run_id=run_id or landing.start_run(source, "reconcile"),
+        deep=deep)
     try:
         for raw_info in adapter.tables():
             info = resolve_runtime_keys(
@@ -256,16 +260,21 @@ def reconcile_remote(
     deep: bool = False,
     key_columns: dict[str, list[str]] | None = None,
     start_dates: dict[str, str] | None = None,
+    run_id: int | None = None,
 ) -> ReconcileReport:
     """E6b：中间机读 ERP，平台算落地统计并执行软删，全程仅出站 HTTP。"""
     watermarks = watermarks or {}
     key_columns = key_columns or {}
     start_dates = start_dates or {}
     report = ReconcileReport(
-        source=source, run_id=landing.start_run(source, "reconcile"), deep=deep)
+        source=source,
+        run_id=run_id or landing.start_run(source, "reconcile"),
+        deep=deep)
+    sink.bind_run(report.run_id)
     ordinal = 0
     # 不使用本地自增 run_id，避免 middle.sqlite 回滚/重装后与平台历史冲突。
     generation_id = f"reconcile-{uuid.uuid4().hex}"
+    landing.set_run_generation(report.run_id, generation_id)
     generation_open = False
     repaired_any = False
     try:

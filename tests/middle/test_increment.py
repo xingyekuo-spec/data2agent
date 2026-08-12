@@ -1,5 +1,6 @@
 """抽取框架 E2 测试:水位增量、回看、keyset 分页、水位状态机。"""
 
+import hashlib
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -8,6 +9,7 @@ import pytest
 
 from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.middle.extract.increment import (
+    cleanup_orphan_spools,
     incremental_sync,
     subtract_lookback,
 )
@@ -291,3 +293,112 @@ def test_nullable_watermark_fails_before_silently_skipping_rows(tmp_path):
             SqliteReadOnlyAdapter(str(src), {"T"}), landing, "demo",
             watermarks={"T": "WM"})
     assert not landing.raw_table_exists("demo", "T")
+
+
+class _RecordingRemoteSink:
+    def __init__(self, spool_dir: Path | None = None, *, fail_write: bool = False):
+        self.spool_dir = spool_dir
+        self.fail_write = fail_write
+        self.rows = 0
+        self.observed_modes: list[int] = []
+
+    def begin_sync(self, _source, _tables, _run_id):
+        return None
+
+    def complete_sync(self, _source):
+        return None
+
+    def abort_sync(self, _source):
+        return None
+
+    def begin_table(self, _source, _info, **_kwargs):
+        return None
+
+    def write(self, _source, _info, rows, _batch_id, **_kwargs):
+        if self.spool_dir:
+            files = list(self.spool_dir.glob("*.spool"))
+            assert len(files) == 1
+            self.observed_modes.append(files[0].stat().st_mode & 0o777)
+        if self.fail_write:
+            raise RuntimeError("simulated push failure")
+        self.rows += len(rows)
+        return len(rows)
+
+    def complete_table(self, *_args, **_kwargs):
+        return None
+
+    def abort_table(self, *_args, **_kwargs):
+        return None
+
+
+def _full_refresh_source(tmp_path: Path) -> Path:
+    source = tmp_path / "full.sqlite"
+    con = sqlite3.connect(source)
+    con.execute("CREATE TABLE T (ID INTEGER PRIMARY KEY, VALUE TEXT)")
+    con.executemany("INSERT INTO T VALUES (?, ?)", [(1, "a"), (2, "b")])
+    con.commit()
+    con.close()
+    return source
+
+
+def test_strict_stream_full_refresh_never_creates_spool(tmp_path, monkeypatch):
+    source = _full_refresh_source(tmp_path)
+    state = LandingStore(tmp_path / "middle-state.sqlite")
+    sink = _RecordingRemoteSink()
+
+    def forbidden_tempfile(*_args, **_kwargs):
+        raise AssertionError("strict_stream 不得创建磁盘 spool")
+
+    monkeypatch.setattr(
+        "data2agent.middle.extract.increment.tempfile.NamedTemporaryFile",
+        forbidden_tempfile,
+    )
+    report = incremental_sync(
+        SqliteReadOnlyAdapter(str(source), {"T"}), state, "demo",
+        watermarks={}, sink=sink, full_refresh_spool_policy="strict_stream",
+    )
+    assert report.total_rows == 2 and sink.rows == 2
+    assert not state.raw_table_exists("demo", "T")
+
+
+@pytest.mark.parametrize("fail_write", [False, True])
+def test_encrypted_volume_spool_has_minimum_permissions_and_is_cleaned(
+    tmp_path, fail_write,
+):
+    source = _full_refresh_source(tmp_path)
+    state = LandingStore(tmp_path / "middle-state.sqlite")
+    spool_dir = tmp_path / "encrypted-volume"
+    sink = _RecordingRemoteSink(spool_dir, fail_write=fail_write)
+    if fail_write:
+        with pytest.raises(RuntimeError, match="simulated push failure"):
+            incremental_sync(
+                SqliteReadOnlyAdapter(str(source), {"T"}), state, "demo",
+                watermarks={}, sink=sink,
+                full_refresh_spool_policy="encrypted_temp_volume",
+                spool_directory=str(spool_dir),
+            )
+    else:
+        incremental_sync(
+            SqliteReadOnlyAdapter(str(source), {"T"}), state, "demo",
+            watermarks={}, sink=sink,
+            full_refresh_spool_policy="encrypted_temp_volume",
+            spool_directory=str(spool_dir),
+        )
+    assert spool_dir.stat().st_mode & 0o777 == 0o700
+    assert sink.observed_modes == [0o600]
+    assert list(spool_dir.glob("*.spool")) == []
+    assert not state.raw_table_exists("demo", "T")
+
+
+def test_orphan_spool_cleanup_is_scoped_to_source(tmp_path):
+    spool_dir = tmp_path / "spool"
+    spool_dir.mkdir()
+    demo_prefix = hashlib.sha256(b"demo").hexdigest()[:12]
+    other_prefix = hashlib.sha256(b"other").hexdigest()[:12]
+    demo = spool_dir / f"d2a-full-{demo_prefix}-orphan.spool"
+    other = spool_dir / f"d2a-full-{other_prefix}-live.spool"
+    demo.write_bytes(b"raw")
+    other.write_bytes(b"raw")
+    assert cleanup_orphan_spools(spool_dir, "demo") == 1
+    assert not demo.exists()
+    assert other.exists()

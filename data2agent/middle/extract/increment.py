@@ -13,11 +13,13 @@ from __future__ import annotations
 
 import json
 import hashlib
+import os
 import pickle
 import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Callable, Optional
 
 from .adapters.base import (
@@ -47,6 +49,35 @@ _CREDENTIAL_PATTERN = __import__("re").compile(
     r"DECLARE|CALL|EXPLAIN|BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b"
     r")"
 )
+
+
+def _spool_prefix(source: str) -> str:
+    digest = hashlib.sha256(source.encode("utf-8")).hexdigest()[:12]
+    return f"d2a-full-{digest}-"
+
+
+def cleanup_orphan_spools(directory: str | Path, source: str) -> int:
+    """在持有 source 同步锁时清理该源崩溃遗留的加密卷 spool。"""
+    root = Path(directory)
+    if not root.exists():
+        return 0
+    removed = 0
+    for path in root.glob(_spool_prefix(source) + "*.spool"):
+        try:
+            path.unlink()
+            removed += 1
+        except FileNotFoundError:
+            continue
+    return removed
+
+
+def _close_spool(spool, spool_path: Path | None) -> None:
+    try:
+        if spool is not None:
+            spool.close()
+    finally:
+        if spool_path is not None:
+            spool_path.unlink(missing_ok=True)
 
 
 def _safe_error(exc: BaseException) -> str:
@@ -89,7 +120,9 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                      run_id: int | None = None,
                      only_tables: set[str] | None = None,
                      start_dates: dict[str, str] | None = None,
-                     estimate_rows: bool = True) -> SyncReport:
+                     estimate_rows: bool = True,
+                     full_refresh_spool_policy: str = "temporary_file",
+                     spool_directory: str | None = None) -> SyncReport:
     """sink:raw 落地出口。默认 LocalSink(landing)。
     key_columns:表名 → 配置运行键,覆盖数据库主键。
     无水位的表按 full_refresh 快照协议落地。
@@ -222,15 +255,39 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                 except Exception:
                     pass
             try:
+                last_heartbeat = time.monotonic()
                 batch_iterator = adapter.read_increment(
                     info, since=since, watermark_col=wm_col,
                     resume_after=resume_after)
                 spool = None
-                if is_full:
+                spool_path: Path | None = None
+                if is_full and full_refresh_spool_policy != "strict_stream":
                     # 先快速读完源库单语句快照并落到本机临时文件，
                     # 再做 HTTP 推送；避免网络重试/限流期间长时持有 ERP 游标和锁。
-                    spool = tempfile.TemporaryFile(prefix="d2a-full-", suffix=".spool")
-                    last_heartbeat = time.monotonic()
+                    if full_refresh_spool_policy not in (
+                        "temporary_file", "encrypted_temp_volume",
+                    ):
+                        raise ValueError(
+                            f"未知 full_refresh spool 策略:{full_refresh_spool_policy}")
+                    spool_dir = None
+                    if full_refresh_spool_policy == "encrypted_temp_volume":
+                        if not spool_directory:
+                            raise ValueError(
+                                "encrypted_temp_volume 缺少 spool_directory")
+                        spool_dir = Path(spool_directory)
+                        spool_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        try:
+                            spool_dir.chmod(0o700)
+                        except OSError:
+                            pass
+                    spool = tempfile.NamedTemporaryFile(
+                        prefix=_spool_prefix(source), suffix=".spool",
+                        dir=spool_dir, delete=False)
+                    spool_path = Path(spool.name)
+                    try:
+                        os.chmod(spool_path, 0o600)
+                    except OSError:
+                        pass
                     for source_batch in batch_iterator:
                         if should_continue and not should_continue():
                             interrupted = True
@@ -256,11 +313,18 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     if should_continue and not should_continue():
                         interrupted = True
                         break
+                    if time.monotonic() - last_heartbeat >= 60:
+                        heartbeat = getattr(sink, "heartbeat_sync", None)
+                        if callable(heartbeat):
+                            heartbeat(source)
+                        last_heartbeat = time.monotonic()
                     batch_id = f"{table_batch_id}-{batches}"
                     rows += sink.write(
                         source, info, batch, batch_id,
                         mode=mode, snapshot_id=snapshot_id,
                         table_run_id=table_batch_id)
+                    # 成功 batch 本身也会在平台刷新 generation 活动时间。
+                    last_heartbeat = time.monotonic()
                     batches += 1
                     if wm_col:
                         last = batch[-1]
@@ -284,8 +348,9 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                             watermark_col=None,
                             rows_in=rows, rows_out=rows, batches=batches,
                             batch_id=table_batch_id)
-                if spool is not None:
-                    spool.close()
+                _close_spool(spool, spool_path)
+                spool = None
+                spool_path = None
                 if interrupted:
                     if is_full:
                         sink.abort_table(
@@ -299,8 +364,8 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     source, info, table_batch_id, rows, batches,
                     mode=mode, snapshot_id=snapshot_id)
             except Exception:
-                if "spool" in locals() and spool is not None:
-                    spool.close()
+                if "spool" in locals():
+                    _close_spool(spool, spool_path)
                 if is_full:
                     try:
                         sink.abort_table(

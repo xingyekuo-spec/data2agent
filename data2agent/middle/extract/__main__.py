@@ -198,7 +198,9 @@ def main() -> int:
     # 一次性 CLI 与 serve 调度必须使用同一 schema 屏障；否则运维人员手工
     # 执行 sync/reconcile 会绕过管理页已确认的结构指纹。
     if args.cmd in ("sync", "reconcile"):
+        from ...shared.config import assert_production_ready
         from .scheduler import validate_configured_schemas
+        assert_production_ready(cfg)
         validate_configured_schemas(args.source, scfg, landing)
 
     if args.cmd == "reset-cursor":
@@ -212,11 +214,16 @@ def main() -> int:
         removed = landing.reset_sync_cursor(args.source, args.table)
         state = "已清理" if removed else "原本不存在"
         print(
-            f"游标{state}:{args.source}.{args.table}；raw 数据未删除，"
+            f"游标{state}:{args.source}.{args.table}；平台业务数据未删除，"
             "下一轮 sync 将从配置下界重新同步")
         return 0
 
     if args.cmd == "backfill":
+        if scfg.sink.type != "local":
+            landing.con.close()
+            ap.error(
+                "backfill 的旧实现只支持开发环境 local sink；HTTP 推送模式请通过"
+                " reset-cursor 后执行受 generation 保护的同步，禁止在中间机创建 Raw 表")
         wm_col = watermarks.get(args.table)
         if wm_col is None:
             ap.error(f"表 {args.table} 不在配置的增量表中,无法按区间回补。"
@@ -246,6 +253,8 @@ def main() -> int:
             # 与 serve 调度路径一致:start_date 下界在一次性命令同样生效
             start_dates=scfg.table_start_dates(),
             estimate_rows=scfg.estimate_rows,
+            full_refresh_spool_policy=scfg.spool.policy,
+            spool_directory=scfg.spool.directory,
             sink=sink,
         )
         print(f"同步完成:run #{report.run_id},{len(report.tables)} 表,"
