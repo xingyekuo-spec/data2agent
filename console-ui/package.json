@@ -1,7 +1,7 @@
 {
   "name": "data2agent-console-ui",
   "private": true,
-  "version": "0.5.16",
+  "version": "0.6.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0",
