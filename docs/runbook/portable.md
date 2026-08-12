@@ -161,9 +161,30 @@ Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` �
    - 卸载用 `卸载开机自启.ps1`，不会删数据或配置。
 10. 确认中间机 `/api/status` 中 `process_status.connector_running=true`，并确认两台机器运行状态正常。
 
-中间机 launcher 另外管理每日 maintenance：对 `middle.sqlite` 做 SQLite
+中间机 launcher 另外管理每日 maintenance：对 `data\middle-state.sqlite` 做 SQLite
 Online Backup + integrity check，默认保留 14 份，清理 90 天运行历史、
 365 天回执和超过 24 小时的孤儿 staging。可用空间低于 2 GiB 时任务失败并进入进程监控告警状态。
+
+### 中间机状态库备份与恢复
+
+`middle-state.sqlite` 是中间机的**控制状态库**，保存水位、运行步骤、推送回执、审计和管理状态，
+不保存 ERP Raw，也不是平台业务数据备份。受监管便携部署的备份默认位于
+`data\backups\middle-state-<时间>.sqlite`。配置、`config\secrets.env`、程序文件和平台 Raw
+必须分别备份；状态库备份不能替代完整节点灾备。备份中仍可能包含水位或运行键等业务标识，
+应按敏感运维数据保护。
+
+恢复前先在便携包根目录做只读完整性检查：
+
+```powershell
+.\runtime\python.exe -c "import sqlite3,sys; from pathlib import Path; u=Path(sys.argv[1]).resolve().as_uri()+'?mode=ro'; c=sqlite3.connect(u,uri=True); print(c.execute('PRAGMA integrity_check').fetchone()[0]); c.close()" .\data\backups\middle-state-<时间>.sqlite
+```
+
+只有输出 `ok` 才能继续。实际恢复必须离线执行：停止计划任务并确认 launcher、connector、
+maintenance 全部退出；把当前数据库及 `-wal`/`-shm` 复制到新的故障留存目录；再把已校验备份
+复制为 `data\middle-state.sqlite`，不要把旧 WAL/SHM 带回。重启后先核对配置 revision、进程、
+水位和推送记录。控制状态回退可能造成重复推送，平台端依靠 batch/generation 幂等屏障处理。
+
+相同说明可在中间机管理页 `/recovery` 查看；页面故意不提供在线覆盖按钮。
 
 ## 4. 验收
 
