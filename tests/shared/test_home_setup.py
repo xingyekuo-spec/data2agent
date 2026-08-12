@@ -60,7 +60,10 @@ def test_build_middle_yaml_validates(tmp_path):
     path = home.connect_yaml
     write_yaml(path, data)
     cfg = load_config(path)
+    assert cfg.deployment_mode == "production"
+    assert cfg.state_db.endswith("middle-state.sqlite")
     assert cfg.sources["digiwin_e10"].sink.type == "http"
+    assert cfg.sources["digiwin_e10"].spool.policy == "strict_stream"
     assert cfg.sources["digiwin_e10"].sink.url == "http://10.0.0.1:8850"
     assert cfg.sources["digiwin_e10"].tables == {}
     assert cfg.sources["digiwin_e10"].reconcile_at == "05:30"
@@ -73,6 +76,8 @@ def test_new_install_has_empty_tables(tmp_path):
     home.ensure_dirs()
     data = build_middle_connect_yaml(home, platform_url="http://10.0.0.1:8850")
     assert data["sources"]["digiwin_e10"]["tables"] == {}
+    assert "landing" not in data
+    assert data["deployment_mode"] == "production"
 
 
 def test_build_middle_yaml_can_set_sync_start_at(tmp_path):

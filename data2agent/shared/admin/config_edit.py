@@ -16,7 +16,7 @@ from .suggestions import field_error
 
 MIDDLE_EDITABLE = {
     "templates",
-    "landing",
+    "state_db",
     "sources.*.windows",
     "sources.*.rate.batch_size",
     "sources.*.rate.rows_per_second",
@@ -28,6 +28,13 @@ MIDDLE_EDITABLE = {
     "sources.*.reconcile_deep_at",
     "sources.*.reconcile_deep_day_of_week",
     "sources.*.sink.url",
+    "sources.*.sink.timeout_seconds",
+    "sources.*.sink.retries",
+    "sources.*.sink.ca_bundle",
+    "sources.*.sink.allow_insecure_http",
+    "sources.*.spool.policy",
+    "sources.*.spool.directory",
+    "sources.*.spool.encrypted_at_rest",
 }
 
 PLATFORM_EDITABLE = {"templates", "landing"}
@@ -94,6 +101,11 @@ def merge_whitelist_and_save(
     for dotted, value in _flatten(patch):
         if _is_editable(dotted, editable):
             _set_path(merged, dotted, value)
+
+    # 中间机状态库字段迁移：一旦新字段进入保存结果，就移除旧 landing，
+    # 避免两个路径在后续人工编辑中分叉。平台白名单不含 state_db，不受影响。
+    if "state_db" in merged and "state_db" in editable:
+        merged.pop("landing", None)
 
     # 写入临时文件,验证后原子替换(源文件已备份,可用于灾难恢复)
     yaml_text = yaml.dump(merged, default_flow_style=False,

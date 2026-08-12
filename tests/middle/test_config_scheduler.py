@@ -12,6 +12,7 @@ from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.shared.config import (
     ConnectConfig,
     SourceConfig,
+    assert_production_ready,
     in_window,
     load_config,
     parse_duration_seconds,
@@ -63,8 +64,56 @@ def test_load_config(tmp_path):
         "    sync_every: 15m\n",
         encoding="utf-8")
     cfg = load_config(cfg_file)
+    assert cfg.state_db == "l.sqlite"  # 旧 landing 只读兼容
     s = cfg.sources["digiwin_e10"]
     assert s.lookback_days() == 2 and s.sync_every_seconds() == 900
+
+
+def test_production_rejects_local_sink_and_uncontrolled_spool():
+    cfg = ConnectConfig(
+        deployment_mode="production",
+        sources={"e10": SourceConfig(
+            adapter="sqlite_readonly", path="source.sqlite", tables={},
+        )},
+    )
+    violations = cfg.production_violations()
+    assert any("sink.type=http" in item for item in violations)
+    assert any("temporary_file" in item for item in violations)
+    with pytest.raises(ValueError, match="生产配置未就绪"):
+        assert_production_ready(cfg)
+
+
+def test_strict_stream_rejects_file_spool_only_options():
+    base = {
+        "adapter": "sqlite_readonly",
+        "path": "source.sqlite",
+        "tables": {},
+        "spool": {"policy": "strict_stream"},
+    }
+    assert SourceConfig.model_validate(base).spool.policy == "strict_stream"
+
+    with pytest.raises(ValueError, match="directory"):
+        SourceConfig.model_validate({
+            **base,
+            "spool": {"policy": "strict_stream", "directory": "spool"},
+        })
+    with pytest.raises(ValueError, match="encrypted_at_rest"):
+        SourceConfig.model_validate({
+            **base,
+            "spool": {"policy": "strict_stream", "encrypted_at_rest": True},
+        })
+
+
+def test_state_db_and_legacy_landing_must_not_diverge(tmp_path):
+    cfg_file = tmp_path / "connect.yaml"
+    cfg_file.write_text(
+        "state_db: new.sqlite\nlanding: old.sqlite\n"
+        "sources:\n  e10:\n    adapter: sqlite_readonly\n"
+        "    path: x\n    tables: {}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="值不一致"):
+        load_config(cfg_file)
 
 
 def test_load_config_sync_start_at(tmp_path):

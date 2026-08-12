@@ -23,7 +23,7 @@ def build_middle_connect_yaml(
     rows_per_second: int = 2000,
 ) -> dict:
     templates = str(resolve_templates(home))
-    landing = str(home.data_dir / "middle.sqlite")
+    state_db = str(home.data_dir / "middle-state.sqlite")
     source = {
         "adapter": "mssql_readonly",
         "dsn_env": "D2A_E10_DSN",
@@ -41,6 +41,9 @@ def build_middle_connect_yaml(
             "url": platform_url.rstrip("/"),
             "token_env": "D2A_INGEST_TOKEN",
         },
+        # 默认采用严格不写盘模式。若现场决定使用加密临时卷，必须在
+        # 配置页显式选择并提供已验证的专用目录。
+        "spool": {"policy": "strict_stream"},
     }
     parsed = urlparse(platform_url)
     if parsed.scheme == "http" and parsed.hostname not in (
@@ -55,7 +58,8 @@ def build_middle_connect_yaml(
         source["start_date"] = start_date
     return {
         "templates": templates,
-        "landing": landing,
+        "deployment_mode": "production",
+        "state_db": state_db,
         "sources": {"digiwin_e10": source},
     }
 

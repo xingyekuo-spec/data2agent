@@ -74,6 +74,40 @@ class SinkConfig(BaseModel):
     ca_bundle: str | None = None            # 私有 CA PEM 路径；不禁用主机名校验
 
 
+class SpoolConfig(BaseModel):
+    """全量快照在中间机上的临时数据驻留策略。
+
+    strict_stream 不写临时文件，但网络推送期间会继续持有源侧读取游标；
+    encrypted_temp_volume 只允许写入已由现场确认具备静态加密的专用目录；
+    temporary_file 保留旧行为，仅用于开发/测试。
+    """
+
+    model_config = {"extra": "forbid"}
+    policy: Literal[
+        "strict_stream", "encrypted_temp_volume", "temporary_file"
+    ] = "temporary_file"
+    directory: str | None = None
+    encrypted_at_rest: bool = False
+
+    @model_validator(mode="after")
+    def policy_consistent(self):
+        if self.policy == "encrypted_temp_volume":
+            if not self.directory:
+                raise ValueError(
+                    "encrypted_temp_volume 必须配置 spool.directory")
+            if not self.encrypted_at_rest:
+                raise ValueError(
+                    "encrypted_temp_volume 必须显式确认 encrypted_at_rest=true")
+        if self.policy == "strict_stream":
+            if self.directory:
+                raise ValueError("strict_stream 不允许配置 spool.directory")
+            if self.encrypted_at_rest:
+                raise ValueError(
+                    "strict_stream 不创建磁盘 spool，不允许配置 "
+                    "spool.encrypted_at_rest")
+        return self
+
+
 class TableExtractConfig(BaseModel):
     model_config = {"extra": "forbid", "populate_by_name": True}
     mode: Literal["incremental", "full_refresh"]
@@ -152,6 +186,7 @@ class SourceConfig(BaseModel):
     apply_after_sync: bool = True         # sink=http 时忽略(映射在平台侧)
     estimate_rows: bool = False           # COUNT 仅用于进度；生产默认关闭以减轻 ERP
     sink: SinkConfig = SinkConfig()
+    spool: SpoolConfig = SpoolConfig()
 
     @field_validator("adapter")
     @classmethod
@@ -326,7 +361,7 @@ class SourceConfig(BaseModel):
         if self.sync_start_at is None:
             return now
         target_time = dtime.fromisoformat(self.sync_start_at)
-        target = datetime.combine(now.date(), target_time)
+        target = datetime.combine(now.date(), target_time, tzinfo=now.tzinfo)
         if target < now:
             target += timedelta(days=1)
         return target
@@ -335,8 +370,49 @@ class SourceConfig(BaseModel):
 class ConnectConfig(BaseModel):
     model_config = {"extra": "forbid"}
     templates: str = "templates"
-    landing: str = "landing/factory.sqlite"
+    deployment_mode: Literal["production", "development", "test"] = "development"
+    state_db: str = "state/middle-state.sqlite"
     sources: dict[str, SourceConfig]
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_landing_key(cls, value):
+        """只读兼容旧 connect.yaml 的 landing；新写入统一使用 state_db。"""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        legacy = data.pop("landing", None)
+        current = data.get("state_db")
+        if current is not None and legacy is not None and str(current) != str(legacy):
+            raise ValueError("state_db 与旧 landing 同时存在且值不一致")
+        if current is None and legacy is not None:
+            data["state_db"] = legacy
+        return data
+
+    @property
+    def landing(self) -> str:
+        """迁移期内部兼容属性；新代码和配置应使用 state_db。"""
+        return self.state_db
+
+    def production_violations(self) -> list[str]:
+        """返回生产数据驻留边界违规项；不在解析阶段抛错以便管理页展示。"""
+        if self.deployment_mode != "production":
+            return []
+        violations: list[str] = []
+        for name, source in self.sources.items():
+            if source.sink.type != "http":
+                violations.append(f"源 {name}:生产模式必须使用 sink.type=http")
+            if source.spool.policy == "temporary_file":
+                violations.append(
+                    f"源 {name}:生产模式不得使用未受控 temporary_file spool")
+        return violations
+
+
+def assert_production_ready(cfg: ConnectConfig) -> None:
+    """生产 connector 启动前 fail closed；管理 API 可先加载配置并展示违规项。"""
+    violations = cfg.production_violations()
+    if violations:
+        raise ValueError("生产配置未就绪:" + ";".join(violations))
 
 
 def config_revision(path: str | Path) -> str:
