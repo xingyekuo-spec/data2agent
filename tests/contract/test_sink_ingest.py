@@ -525,6 +525,41 @@ def test_protocol_version_mismatch_fail_fast(tmp_path):
         incremental_sync(TinyAdapter(), middle, SOURCE, watermarks={}, sink=sink)
 
 
+def test_push_error_details_are_sanitized_before_state_persistence(tmp_path):
+    middle = LandingStore(tmp_path / "middle.sqlite")
+    run_id = middle.start_run(SOURCE, "sync")
+
+    def fail_with_secret(*_args, **_kwargs):
+        raise RuntimeError(
+            "Authorization: Bearer push-super-secret; "
+            "DSN=erp; password=db-super-secret; SELECT * FROM payroll"
+        )
+
+    sink = HttpPushSink(
+        "http://platform",
+        retries=1,
+        post=fail_with_secret,
+        get_json=lambda *_args, **_kwargs: {
+            "supported_ingest_protocol_versions": [INGEST_PROTOCOL_VERSION],
+        },
+        landing=middle,
+        source=SOURCE,
+        run_id=run_id,
+    )
+    with pytest.raises(RuntimeError):
+        sink.begin_sync(SOURCE, ["T"], run_id)
+
+    detail = middle.con.execute(
+        "SELECT error_detail FROM d2a_http_push_log "
+        "WHERE run_id = ? AND status = 'failed'",
+        (run_id,),
+    ).fetchone()["error_detail"]
+    assert "push-super-secret" not in detail
+    assert "db-super-secret" not in detail
+    assert "payroll" not in detail
+    assert "已脱敏" in detail
+
+
 def test_http_abort_cleans_remote_staging_after_begin(tmp_path):
     """begin 后 abort:平台不得残留 open snapshot / staging 表。"""
     platform = LandingStore(tmp_path / "platform.sqlite")
@@ -582,6 +617,99 @@ def test_http_push_log_counts_write_rows_once_and_records_abort(tmp_path):
         (snapshot_id,),
     ).fetchone()
     assert abort_log["status"] == "ok"
+
+
+def test_push_summary_recovers_from_retrying_and_exposes_receipt(tmp_path):
+    """退避证据不能在后续成功后把批次永久显示为 retrying。"""
+    middle = LandingStore(tmp_path / "middle-state.sqlite")
+    batch_id = "table-run-1"
+    middle.record_push_log(
+        SOURCE, "write", "CURRENCY", "incremental", batch_id=batch_id,
+        rows_count=1, status="retrying", retry_count=1,
+        error_category="network", retryable=True,
+    )
+    assert middle.push_log_table_summaries()[0]["status"] == "retrying"
+
+    middle.record_push_log(
+        SOURCE, "write", "CURRENCY", "incremental", batch_id=batch_id,
+        rows_count=1, status="ok", retry_count=1,
+        receipt_received=True, idempotent_replay=True,
+        receipt_digest="sha256:test",
+    )
+    after_retry = middle.push_log_table_summaries()[0]
+    assert after_retry["status"] == "pushing"
+    assert after_retry["retry_count"] == 1
+    assert after_retry["receipt_received"] is True
+    assert after_retry["idempotent_replay"] is True
+
+    middle.record_push_log(
+        SOURCE, "complete_table", "CURRENCY", "incremental",
+        batch_id=batch_id, rows_count=1, status="ok",
+        receipt_received=True,
+    )
+    completed = middle.push_log_table_summaries()[0]
+    assert completed["status"] == "completed"
+    assert completed["rows"] == 1
+
+
+def test_generation_heartbeat_success_and_rejection_are_audited(tmp_path):
+    """generation 心跳须携带 generation，并给 409 独立稳定分类。"""
+    import io
+    import json
+    import urllib.error
+
+    from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION
+
+    middle = LandingStore(tmp_path / "middle-state.sqlite")
+    posted: list[tuple[str, dict]] = []
+
+    def post_ok(url, payload, *_args):
+        posted.append((url, payload))
+        return {"ok": True}
+
+    health = lambda *_args: {  # noqa: E731
+        "supported_ingest_protocol_versions": [INGEST_PROTOCOL_VERSION],
+        "generation_heartbeat": True,
+    }
+    sink = HttpPushSink(
+        "http://platform", post=post_ok, get_json=health,
+        landing=middle, source=SOURCE, retries=1,
+    )
+    run_id = middle.start_run(SOURCE, "sync")
+    sink.begin_sync(SOURCE, ["T"], run_id)
+    sink.heartbeat_sync(SOURCE)
+    heartbeat_url, heartbeat_payload = posted[-1]
+    assert heartbeat_url.endswith("/ingest/run-heartbeat")
+    assert heartbeat_payload["generation_id"] == sink._generation_id
+    ok_log = middle.con.execute(
+        "SELECT status, generation_id FROM d2a_http_push_log "
+        "WHERE step_kind = 'heartbeat_generation' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert ok_log["status"] == "ok"
+    assert ok_log["generation_id"] == sink._generation_id
+
+    def reject_heartbeat(url, payload, *_args):
+        if url.endswith("/ingest/run-heartbeat"):
+            body = io.BytesIO(json.dumps({
+                "detail": "旧 generation 已关闭",
+            }).encode("utf-8"))
+            raise urllib.error.HTTPError(url, 409, "Conflict", {}, body)
+        return {"ok": True}
+
+    rejected = HttpPushSink(
+        "http://platform", post=reject_heartbeat, get_json=health,
+        landing=middle, source=SOURCE, retries=1,
+    )
+    rejected.begin_sync(SOURCE, ["T"], run_id)
+    with pytest.raises(RuntimeError, match="HTTP 409"):
+        rejected.heartbeat_sync(SOURCE)
+    failed_log = middle.con.execute(
+        "SELECT status, error_category, retryable FROM d2a_http_push_log "
+        "WHERE step_kind = 'heartbeat_generation' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert failed_log["status"] == "failed"
+    assert failed_log["error_category"] == "generation_heartbeat_rejected"
+    assert failed_log["retryable"] == 0
 
 
 def test_http_abort_cleans_after_batch_and_failed_complete(tmp_path):

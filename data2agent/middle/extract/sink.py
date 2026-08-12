@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import ssl
 import time
 import urllib.error
@@ -33,11 +34,24 @@ from ...shared.store.landing import LandingStore, normalize_value
 
 SyncMode = Literal["incremental", "full_refresh"]
 
+_SENSITIVE_ERROR_PATTERN = re.compile(
+    r"(?i)(password\s*[=:]|pwd\s*[=:]|token\s*[=:]|bearer\s+|"
+    r"authorization\s*[:=]|driver\s*=|server\s*=|database\s*=|"
+    r"uid\s*=|user\s+id\s*=|dsn\s*=|connection\s+string|"
+    r"connect\s+string|\b(select|insert|update|delete|create|alter|"
+    r"drop|truncate|exec|execute|merge|grant|revoke)\b)"
+)
+
 
 def _brief_error_str() -> str:
     import sys
     exc = sys.exc_info()[1]
-    return f"{type(exc).__name__}: {str(exc)[:200]}" if exc else ""
+    if exc is None:
+        return ""
+    detail = f"{type(exc).__name__}: {exc}"
+    if _SENSITIVE_ERROR_PATTERN.search(detail):
+        return "请求失败(详情已脱敏,含凭据/连接串/Token/SQL 关键字)"
+    return detail[:200]
 
 
 class Sink(Protocol):
@@ -186,11 +200,21 @@ class HttpPushSink:
         self._run_id = run_id
         self._generation_id: str | None = None
         self._reconcile_generation_id: str | None = None
+        self._last_retry_count = 0
+        self._last_error_category: str | None = None
+        self._last_retryable: bool | None = None
+
+    def bind_run(self, run_id: int) -> None:
+        """对账在创建本地 run 后绑定，确保 generation 与推送记录可追踪。"""
+        self._run_id = run_id
 
     def _log_push(self, step_kind: str, table: str, mode: SyncMode,
                   batch_id: str | None = None, rows_count: int | None = None,
                   status: str = "ok", error_detail: str | None = None,
-                  retry_count: int = 0, duration_ms: float | None = None) -> None:
+                  retry_count: int = 0, duration_ms: float | None = None,
+                  receipt_received: bool | None = None,
+                  idempotent_replay: bool | None = None,
+                  receipt_digest: str | None = None) -> None:
         if self._landing is None:
             return
         try:
@@ -198,8 +222,16 @@ class HttpPushSink:
                 source=self._source, step_kind=step_kind, table=table,
                 mode=mode, run_id=self._run_id, batch_id=batch_id,
                 rows_count=rows_count, status=status,
-                error_detail=error_detail, retry_count=retry_count,
-                duration_ms=duration_ms)
+                error_detail=error_detail,
+                retry_count=max(retry_count, self._last_retry_count),
+                duration_ms=duration_ms,
+                generation_id=(
+                    self._reconcile_generation_id or self._generation_id),
+                error_category=self._last_error_category,
+                retryable=self._last_retryable,
+                receipt_received=receipt_received,
+                idempotent_replay=idempotent_replay,
+                receipt_digest=receipt_digest)
         except Exception:
             pass  # push log 写入失败不应中断同步
 
@@ -264,25 +296,77 @@ class HttpPushSink:
                 "平台未声明 E6b reconcile_protocol_version=1；"
                 "请先升级平台 ingest 服务再启用推送模式对账")
 
-    def _post_with_retry(self, path: str, payload: dict) -> dict | None:
+    def _post_with_retry(
+        self, path: str, payload: dict,
+        on_retry: Callable[[int, float, str | None], None] | None = None,
+    ) -> dict | None:
         last: Exception | None = None
         t0 = time.time()
+        self._last_retry_count = 0
+        self._last_error_category = None
+        self._last_retryable = None
         for attempt in range(self.retries):
             try:
-                return self._post(
+                result = self._post(
                     f"{self.url}{path}", payload, self.token, self.timeout)
+                self._last_retry_count = attempt
+                self._last_error_category = None
+                self._last_retryable = None
+                return result
             except urllib.error.HTTPError as e:
                 # 鉴权/校验/冲突是确定性错误，重试只会延迟报错并增加负载。
                 if e.code not in (408, 425, 429) and e.code < 500:
+                    remote_detail = ""
+                    try:
+                        response_body = json.loads(e.read().decode("utf-8"))
+                        remote_detail = response_body.get("detail", "")
+                        if isinstance(remote_detail, dict):
+                            remote_detail = remote_detail.get("detail", "")
+                        remote_detail = str(remote_detail)[:240]
+                    except Exception:
+                        remote_detail = ""
+                    self._last_retry_count = attempt
+                    self._last_retryable = False
+                    if e.code in (401, 403):
+                        self._last_error_category = "auth"
+                    elif e.code == 409 and path == "/ingest/run-heartbeat":
+                        self._last_error_category = "generation_heartbeat_rejected"
+                    elif e.code == 409 and any(
+                        marker in remote_detail
+                        for marker in ("未开启", "已关闭", "旧 generation")
+                    ):
+                        self._last_error_category = "stale_generation_rejected"
+                    elif e.code == 409 and any(
+                        marker in remote_detail
+                        for marker in ("未完成", "屏障", "缺少")
+                    ):
+                        self._last_error_category = "generation_barrier_incomplete"
+                    elif e.code == 409:
+                        self._last_error_category = "generation_conflict"
+                    else:
+                        self._last_error_category = "request_validation"
                     raise RuntimeError(
-                        f"推送 {path} 被平台拒绝(HTTP {e.code})") from e
+                        f"推送 {path} 被平台拒绝(HTTP {e.code})"
+                        + (f":{remote_detail}" if remote_detail else "")) from e
                 last = e
+                self._last_error_category = (
+                    "rate_limit" if e.code == 429 else "platform_unavailable")
+                self._last_retryable = True
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 last = e
+                self._last_error_category = "network"
+                self._last_retryable = True
+            self._last_retry_count = attempt
             if attempt + 1 < self.retries:
                 delay = min(2 ** attempt, 10)
+                if on_retry is not None:
+                    try:
+                        on_retry(attempt + 1, delay, self._last_error_category)
+                    except Exception:
+                        pass
                 time.sleep(delay + random.uniform(0, delay * 0.2))
         elapsed = (time.time() - t0) * 1000
+        self._last_retry_count = max(0, self.retries - 1)
         raise RuntimeError(
             f"推送 {path} 失败(重试 {self.retries} 次):{last}。"
             f"建议：检查平台接收端点、网络与 ingest Token 后重试"
@@ -307,39 +391,84 @@ class HttpPushSink:
         # generation ID 必须跨状态库恢复、重装和多中间机全局唯一。
         # 本地自增 run_id 只用于观测，不能承担跨机幂等身份。
         self._generation_id = f"sync-{uuid.uuid4().hex}"
-        self._post_with_retry("/ingest/run-begin", {
-            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
-            "source": source,
-            "generation_id": self._generation_id,
-            "tables": tables,
-        })
+        if self._landing is not None:
+            self._landing.set_run_generation(run_id, self._generation_id)
+        t0 = time.time()
+        try:
+            self._post_with_retry("/ingest/run-begin", {
+                "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+                "source": source,
+                "generation_id": self._generation_id,
+                "tables": tables,
+            })
+        except Exception:
+            self._log_push(
+                "begin_generation", "*", "generation", status="failed",
+                error_detail=_brief_error_str(), duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push(
+            "begin_generation", "*", "generation", status="ok",
+            duration_ms=(time.time() - t0) * 1000)
 
     def complete_sync(self, source: str) -> None:
         if self._generation_id is None:
             return
-        self._post_with_retry("/ingest/run-complete", {
-            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
-            "source": source,
-            "generation_id": self._generation_id,
-        })
+        t0 = time.time()
+        try:
+            self._post_with_retry("/ingest/run-complete", {
+                "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+                "source": source,
+                "generation_id": self._generation_id,
+            })
+        except Exception:
+            self._log_push(
+                "complete_generation", "*", "generation", status="failed",
+                error_detail=_brief_error_str(), duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push(
+            "complete_generation", "*", "generation", status="ok",
+            duration_ms=(time.time() - t0) * 1000)
 
     def abort_sync(self, source: str) -> None:
         if self._generation_id is None:
             return
-        self._post_with_retry("/ingest/run-abort", {
-            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
-            "source": source,
-            "generation_id": self._generation_id,
-        })
+        t0 = time.time()
+        try:
+            self._post_with_retry("/ingest/run-abort", {
+                "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+                "source": source,
+                "generation_id": self._generation_id,
+            })
+        except Exception:
+            self._log_push(
+                "abort_generation", "*", "generation", status="failed",
+                error_detail=_brief_error_str(), duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push(
+            "abort_generation", "*", "generation", status="ok",
+            duration_ms=(time.time() - t0) * 1000)
 
     def heartbeat_sync(self, source: str) -> None:
         if self._generation_id is None or not self._generation_heartbeat:
             return
-        self._post_with_retry("/ingest/run-heartbeat", {
-            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
-            "source": source,
-            "generation_id": self._generation_id,
-        })
+        t0 = time.time()
+        try:
+            self._post_with_retry("/ingest/run-heartbeat", {
+                "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+                "source": source,
+                "generation_id": self._generation_id,
+            })
+        except Exception:
+            if self._last_error_category != "generation_heartbeat_rejected":
+                self._last_error_category = "generation_heartbeat_failed"
+            self._log_push(
+                "heartbeat_generation", "*", "generation", status="failed",
+                error_detail=_brief_error_str(),
+                duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push(
+            "heartbeat_generation", "*", "generation", status="ok",
+            duration_ms=(time.time() - t0) * 1000)
 
     def begin_table(self, source: str, info: TableInfo, *, mode: SyncMode,
                     snapshot_id: str | None = None) -> None:
@@ -377,7 +506,15 @@ class HttpPushSink:
                 "rows": encode_transport_rows(info.columns, normalized),
             }
             expected_digest = batch_payload_digest(payload)
-            receipt = self._post_with_retry("/ingest/batch", payload)
+            receipt = self._post_with_retry(
+                "/ingest/batch", payload,
+                on_retry=lambda retry_count, delay, _category: self._log_push(
+                    "write", info.name, mode, batch_id=log_batch_id,
+                    rows_count=len(rows), status="retrying",
+                    error_detail=f"请求失败，正在退避约 {delay:g} 秒后重试",
+                    retry_count=retry_count,
+                    duration_ms=(time.time() - t0) * 1000),
+            )
             if isinstance(receipt, dict):
                 if receipt.get("batch_id") != batch_id:
                     raise RuntimeError(
@@ -395,6 +532,13 @@ class HttpPushSink:
             raise
         self._log_push("write", info.name, mode, batch_id=log_batch_id,
                        rows_count=len(rows), status="ok",
+                       receipt_received=isinstance(receipt, dict),
+                       idempotent_replay=(
+                           bool(receipt.get("duplicate"))
+                           if isinstance(receipt, dict) else None),
+                       receipt_digest=(
+                           receipt.get("payload_sha256")
+                           if isinstance(receipt, dict) else None),
                        duration_ms=(time.time() - t0) * 1000)
         return len(rows)
 
@@ -410,7 +554,16 @@ class HttpPushSink:
                 "rows": rows,
                 "batches": batches,
             }
-            self._post_with_retry("/ingest/table-complete", payload)
+            receipt = self._post_with_retry(
+                "/ingest/table-complete", payload,
+                on_retry=lambda retry_count, delay, _category: self._log_push(
+                    "complete_table", info.name, mode,
+                    batch_id=completion_id, rows_count=rows,
+                    status="retrying",
+                    error_detail=f"完成确认失败，正在退避约 {delay:g} 秒后重试",
+                    retry_count=retry_count,
+                    duration_ms=(time.time() - t0) * 1000),
+            )
         except Exception:
             self._log_push("complete_table", info.name, mode,
                            batch_id=completion_id, rows_count=rows,
@@ -419,6 +572,10 @@ class HttpPushSink:
             raise
         self._log_push("complete_table", info.name, mode,
                        batch_id=completion_id, rows_count=rows, status="ok",
+                       receipt_received=isinstance(receipt, dict),
+                       idempotent_replay=(
+                           bool(receipt.get("duplicate"))
+                           if isinstance(receipt, dict) else None),
                        duration_ms=(time.time() - t0) * 1000)
 
     def abort_table(self, source: str, info: TableInfo, *, mode: SyncMode,
@@ -467,30 +624,63 @@ class HttpPushSink:
         self, source: str, generation_id: str, tables: list[str],
     ) -> None:
         self.ensure_reconcile_protocol()
-        self._post_with_retry("/ingest/run-begin", {
-            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
-            "source": source, "generation_id": generation_id,
-            "tables": tables,
-        })
         self._reconcile_generation_id = generation_id
+        t0 = time.time()
+        try:
+            self._post_with_retry("/ingest/run-begin", {
+                "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+                "source": source, "generation_id": generation_id,
+                "tables": tables,
+            })
+        except Exception:
+            self._log_push(
+                "begin_generation", "*", "generation", status="failed",
+                error_detail=_brief_error_str(), duration_ms=(time.time() - t0) * 1000)
+            self._reconcile_generation_id = None
+            raise
+        self._log_push(
+            "begin_generation", "*", "generation", status="ok",
+            duration_ms=(time.time() - t0) * 1000)
 
     def complete_reconcile_generation(
         self, source: str, generation_id: str, tables: list[str],
     ) -> None:
-        self._post_with_retry("/ingest/reconcile-run-complete", {
-            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
-            "source": source, "generation_id": generation_id,
-            "tables": tables,
-        })
+        t0 = time.time()
+        try:
+            self._post_with_retry("/ingest/reconcile-run-complete", {
+                "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+                "source": source, "generation_id": generation_id,
+                "tables": tables,
+            })
+        except Exception:
+            self._log_push(
+                "complete_generation", "*", "generation", status="failed",
+                error_detail=_brief_error_str(), duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push(
+            "complete_generation", "*", "generation", status="ok",
+            duration_ms=(time.time() - t0) * 1000)
         self._reconcile_generation_id = None
 
     def abort_reconcile_generation(
         self, source: str, generation_id: str,
     ) -> None:
-        self._post_with_retry("/ingest/run-abort", {
-            "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
-            "source": source, "generation_id": generation_id,
-        })
+        if self._reconcile_generation_id is None:
+            self._reconcile_generation_id = generation_id
+        t0 = time.time()
+        try:
+            self._post_with_retry("/ingest/run-abort", {
+                "ingest_protocol_version": INGEST_PROTOCOL_VERSION,
+                "source": source, "generation_id": generation_id,
+            })
+        except Exception:
+            self._log_push(
+                "abort_generation", "*", "generation", status="failed",
+                error_detail=_brief_error_str(), duration_ms=(time.time() - t0) * 1000)
+            raise
+        self._log_push(
+            "abort_generation", "*", "generation", status="ok",
+            duration_ms=(time.time() - t0) * 1000)
         if self._reconcile_generation_id == generation_id:
             self._reconcile_generation_id = None
 

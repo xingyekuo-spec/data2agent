@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS d2a_sync_run (
     source TEXT NOT NULL, started_at TEXT NOT NULL, finished_at TEXT,
     tables INTEGER, rows INTEGER, status TEXT, detail TEXT,
     run_type TEXT, steps_recorded INTEGER,
-    dataset_version TEXT
+    dataset_version TEXT,
+    generation_id TEXT
 );
 CREATE TABLE IF NOT EXISTS d2a_sync_state (
     source TEXT NOT NULL, table_name TEXT NOT NULL,
@@ -633,12 +634,27 @@ CREATE TABLE IF NOT EXISTS d2a_http_push_log (
     error_detail TEXT,
     retry_count INTEGER NOT NULL DEFAULT 0,
     duration_ms REAL,
+    generation_id TEXT,
+    error_category TEXT,
+    retryable INTEGER,
+    receipt_received INTEGER,
+    idempotent_replay INTEGER,
+    receipt_digest TEXT,
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_d2a_push_log_source
     ON d2a_http_push_log (source, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_d2a_push_log_batch
     ON d2a_http_push_log (batch_id);
+CREATE TABLE IF NOT EXISTS d2a_alert_event (
+    alert_key TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    recovered_at TEXT,
+    occurrences INTEGER NOT NULL DEFAULT 1,
+    payload_json TEXT NOT NULL
+);
 """
 
 
@@ -1014,6 +1030,9 @@ class LandingStore:
         if "dataset_version" not in cols:
             self.con.execute(
                 "ALTER TABLE d2a_sync_run ADD COLUMN dataset_version TEXT")
+        if "generation_id" not in cols:
+            self.con.execute(
+                "ALTER TABLE d2a_sync_run ADD COLUMN generation_id TEXT")
         try:
             self.con.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_d2a_run_step_ingest_batch "
@@ -1090,6 +1109,21 @@ class LandingStore:
             self.con.execute(
                 "ALTER TABLE d2a_reconcile_repair "
                 "ADD COLUMN last_activity_at TEXT")
+        push_cols = {
+            r[1] for r in self.con.execute(
+                "PRAGMA table_info(d2a_http_push_log)")
+        }
+        for column, sql_type in (
+            ("generation_id", "TEXT"),
+            ("error_category", "TEXT"),
+            ("retryable", "INTEGER"),
+            ("receipt_received", "INTEGER"),
+            ("idempotent_replay", "INTEGER"),
+            ("receipt_digest", "TEXT"),
+        ):
+            if column not in push_cols:
+                self.con.execute(
+                    f"ALTER TABLE d2a_http_push_log ADD COLUMN {column} {sql_type}")
         # 告警静默(错误处理页):alert_key=source|table|category
         self.con.execute(
             "CREATE TABLE IF NOT EXISTS d2a_alert_silence ("
@@ -2834,17 +2868,36 @@ class LandingStore:
         rows_count: int | None = None, status: str = "ok",
         error_detail: str | None = None, retry_count: int = 0,
         duration_ms: float | None = None,
+        generation_id: str | None = None,
+        error_category: str | None = None,
+        retryable: bool | None = None,
+        receipt_received: bool | None = None,
+        idempotent_replay: bool | None = None,
+        receipt_digest: str | None = None,
     ) -> int:
         """记录一次 HTTP 推送;供 HttpPushSink 调用。"""
         cur = self.con.execute(
             "INSERT INTO d2a_http_push_log "
             "(source, run_id, step_kind, table_name, mode, batch_id, rows_count, "
-            "status, error_detail, retry_count, duration_ms, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "status, error_detail, retry_count, duration_ms, generation_id, "
+            "error_category, retryable, receipt_received, idempotent_replay, "
+            "receipt_digest, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (source, run_id, step_kind, table, mode, batch_id, rows_count,
-             status, error_detail, retry_count, duration_ms, _now()))
+             status, error_detail, retry_count, duration_ms, generation_id,
+             error_category, None if retryable is None else int(retryable),
+             None if receipt_received is None else int(receipt_received),
+             None if idempotent_replay is None else int(idempotent_replay),
+             receipt_digest, _now()))
         self.con.commit()
         return cur.lastrowid
+
+    def set_run_generation(self, run_id: int, generation_id: str) -> None:
+        """把中间机运行与跨机 generation 关联，供状态与排障页面追踪。"""
+        self.con.execute(
+            "UPDATE d2a_sync_run SET generation_id = ? WHERE id = ?",
+            (generation_id, run_id))
+        self.con.commit()
 
     def list_push_logs(
         self, source: str | None = None, limit: int = 50, offset: int = 0,
@@ -2892,20 +2945,53 @@ class LandingStore:
         summaries: list[dict] = []
         for (src, table), r in by_table.items():
             progress = self.push_log_batch_progress(src, table, r["batch_id"])
-            mode_row = self.con.execute(
-                "SELECT mode FROM d2a_http_push_log WHERE batch_id = ? "
-                "ORDER BY id LIMIT 1", (r["batch_id"],)).fetchone()
+            meta_row = self.con.execute(
+                "SELECT mode, MAX(generation_id) AS generation_id, "
+                "MAX(retry_count) AS retry_count, "
+                "MAX(receipt_received) AS receipt_received, "
+                "MAX(idempotent_replay) AS idempotent_replay "
+                "FROM d2a_http_push_log WHERE source = ? AND table_name = ? "
+                "AND batch_id = ?",
+                (src, table, r["batch_id"])).fetchone()
+            error_row = self.con.execute(
+                "SELECT status, error_category, retryable FROM d2a_http_push_log "
+                "WHERE source = ? AND table_name = ? AND batch_id = ? "
+                "AND status IN ('failed', 'retrying') ORDER BY id DESC LIMIT 1",
+                (src, table, r["batch_id"])).fetchone()
+            latest_row = self.con.execute(
+                "SELECT status FROM d2a_http_push_log "
+                "WHERE source = ? AND table_name = ? AND batch_id = ? "
+                "ORDER BY created_at DESC, id DESC LIMIT 1",
+                (src, table, r["batch_id"])).fetchone()
             if progress["completed"]:
                 status = "completed"
-            elif progress["failed"]:
+            elif latest_row and latest_row["status"] == "failed":
                 status = "failed"
+            elif latest_row and latest_row["status"] == "retrying":
+                status = "retrying"
             else:
                 status = "pushing"
             summaries.append({
                 "source": src,
                 "table_name": table,
                 "batch_id": r["batch_id"],
-                "mode": mode_row["mode"] if mode_row else None,
+                "mode": meta_row["mode"] if meta_row else None,
+                "generation_id": meta_row["generation_id"] if meta_row else None,
+                "retry_count": meta_row["retry_count"] if meta_row else 0,
+                "receipt_received": (
+                    bool(meta_row["receipt_received"])
+                    if meta_row and meta_row["receipt_received"] is not None
+                    else None),
+                "idempotent_replay": (
+                    bool(meta_row["idempotent_replay"])
+                    if meta_row and meta_row["idempotent_replay"] is not None
+                    else None),
+                "error_category": (
+                    error_row["error_category"] if error_row else None),
+                "retryable": (
+                    bool(error_row["retryable"])
+                    if error_row and error_row["retryable"] is not None
+                    else None),
                 "status": status,
                 "completed": progress["completed"],
                 "steps_ok": progress["ok"],
@@ -2943,8 +3029,13 @@ class LandingStore:
             "write_ok_batches": 0, "completed": False,
         }
         for r in rows:
-            status_key = "ok" if r["status"] == "ok" else "failed"
-            result[status_key] = r["cnt"]
+            if r["status"] == "ok":
+                result["ok"] += r["cnt"]
+            elif r["status"] == "failed":
+                result["failed"] += r["cnt"]
+            else:
+                # retrying 是过程证据，不应让最终批次被误判失败。
+                continue
             if r["step_kind"] == "write" and r["status"] == "ok":
                 result["rows"] += r["total_rows"] or 0
                 result["write_ok_batches"] += r["cnt"]
