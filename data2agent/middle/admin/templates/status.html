@@ -12,6 +12,16 @@
   .status-item:last-child{border-bottom:0}.critical-card{border-left:4px solid #b42318}
   .warning-card{border-left:4px solid #d48b00}.healthy-card{border-left:4px solid #1e7e34}
   details.wm{margin-top:8px}details.wm summary{cursor:pointer;font-size:13px;color:#0b6bcb}
+  details.card-details{margin-top:8px}
+  details.card-details>summary{cursor:pointer;font-size:13px;color:#0b6bcb}
+  .overview-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .overview-title{font-size:17px;margin:0}
+  .src-mini{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:13px;
+            padding:7px 0;border-top:1px dashed #e8edf2}
+  .src-mini:first-of-type{border-top:0}
+  .src-mini .name{font-weight:600;color:#12314f;min-width:9em}
+  .src-mini .cell{color:#51606f}.src-mini .cell b{color:#1c2733;font-weight:600}
+  .issue-list{margin:8px 0 0;padding-left:20px;font-size:13px;color:#8b1a13}
   .diagnostic{white-space:pre-wrap;overflow-wrap:anywhere}
 </style>
 
@@ -27,6 +37,10 @@
     <button type="button" id="btn-diagnostic" class="btn-ghost">复制诊断摘要</button>
     <span id="action-result" class="meta" aria-live="polite"></span>
   </div>
+</section>
+
+<section aria-labelledby="overview-title">
+  <div id="overview-panel" class="card"><h2 id="overview-title" class="sr-only">运行总览</h2><p class="meta">加载中…</p></div>
 </section>
 
 <section aria-labelledby="readiness-title">
