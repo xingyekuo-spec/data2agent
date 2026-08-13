@@ -126,6 +126,16 @@ def test_production_readiness_and_security_headers(tmp_path):
     assert "script-src 'self' 'unsafe-inline'" not in csp
     assert response.headers["x-content-type-options"] == "nosniff"
 
+    # 静态脚本必须带版本指纹且禁止启发式缓存:升级后不允许出现
+    # 新页面脚本 + 旧缓存共享 admin.js 的错配(runAction is not defined 回归)
+    assert '/static/admin.js?v=' in response.text
+    script = client.get("/static/admin.js", headers=AUTH)
+    assert script.status_code == 200
+    assert script.headers["cache-control"] == "no-cache"
+    versioned = client.get("/static/admin.js?v=0.6.0", headers=AUTH)
+    assert versioned.status_code == 200
+    assert versioned.text == script.text
+
     status = client.get("/api/status", headers=AUTH).json()
     assert status["readiness"]["ready"] is True
     assert status["data_residency"]["raw_table_count"] == 0

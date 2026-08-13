@@ -37,7 +37,7 @@
 | --- | --- | --- | --- |
 | P0（MUI-P0-01～25） | 已实现 | 可信进程/维护/readiness、统一请求认证、配置 revision、生产 HTTP sink、Raw 不变量、严格流式/加密卷 spool 策略均已落地，并有 Python 契约与 smoke 回归 | Windows 便携包真实终止进程、自启动、恢复演练 |
 | P1（MUI-P1-01～31） | 已实现 | 源健康、新鲜度、generation/回执/重试、手工对账、水位停滞、配置预览、服务端告警生命周期、上下文日志和智能轮询已落地 | 真实网络抖动与长时间打开页面的 soak 证据 |
-| P2（MUI-P2-01～22） | 已实现 | 共享四态/通知/格式化、键盘标签页、弹窗焦点、响应式、外置脚本、严格脚本 CSP、固定 HTMX 清单与浏览器基线已落地 | 目标 Edge/Chrome 的键盘、对比度和 360/768/900px 截图验收 |
+| P2（MUI-P2-01～22） | 已实现 | 共享四态/通知/格式化、键盘标签页、弹窗焦点、响应式、外置脚本、严格脚本 CSP、固定 HTMX 清单与浏览器基线已落地；静态脚本 URL 带 `?v=` 版本指纹且 `/static` 响应 `Cache-Control: no-cache`，防止升级后新旧脚本错配 | 目标 Edge/Chrome 的键盘、对比度和 360/768/900px 截图验收 |
 
 核心自动化证据位于 [`test_middle_admin_production.py`](../../tests/middle/test_middle_admin_production.py)、
 [`test_middle_admin.py`](../../tests/middle/test_middle_admin.py)、

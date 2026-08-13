@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"includeIndicatorStyles":false}'>
 <title>{% block title %}data2agent{% endblock %}</title>
-<script src="{{ static_url }}/admin.js"></script>
+<script src="{{ static_url }}/admin.js?v={{ static_ver }}"></script>
 <style>
   body{font-family:system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
        margin:0;background:#f2f4f7;color:#1c2733}
@@ -133,6 +133,6 @@
 {% block content %}{% endblock %}
 </div>
 </main>
-<script src="{{ static_url }}/htmx.min.js"></script>
+<script src="{{ static_url }}/htmx.min.js?v={{ static_ver }}"></script>
 </body>
 </html>

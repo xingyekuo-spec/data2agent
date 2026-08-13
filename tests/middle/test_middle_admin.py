@@ -278,7 +278,7 @@ def test_html_pages(middle_env):
 def test_config_page_keeps_and_submits_revision(middle_env):
     client, _ = middle_env
     page = client.get("/config", headers={"Authorization": "Bearer secret"}).text
-    assert 'src="/static/middle-config.js"' in page
+    assert 'src="/static/middle-config.js?v=' in page
     script = client.get("/static/middle-config.js").text
     assert "currentRevision" in script
     assert "revision: currentRevision" in script

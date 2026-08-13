@@ -25,6 +25,7 @@ from jinja2 import ChoiceLoader, Environment, FileSystemLoader, PrefixLoader, se
 from pydantic import BaseModel, Field, ValidationError
 import yaml
 
+from ... import __version__
 from ...shared.admin.config_edit import MIDDLE_EDITABLE, merge_whitelist_and_save
 from ...shared.admin.home_layout import HomeLayout
 from ...shared.admin.logs import tail_lines
@@ -577,6 +578,12 @@ def create_app(
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Permissions-Policy"] = (
             "camera=(), microphone=(), geolocation=()")
+        if request.url.path.startswith("/static/"):
+            # 无 Cache-Control 时浏览器启发式缓存会让旧 JS 长期"新鲜",
+            # 升级后出现 新页面脚本 + 旧缓存 admin.js 的错配(如 runAction
+            # is not defined)。no-cache 配合 ETag/Last-Modified 每次再验证,
+            # 未变化时仅 304 开销;跨版本再由模板 ?v= 指纹强制失效。
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
@@ -585,6 +592,8 @@ def create_app(
     def page_ctx(request: Request) -> dict[str, Any]:
         return {
             "static_url": "/static",
+            # 静态脚本 URL 指纹:版本升级后 ?v= 变化,浏览器缓存自动失效
+            "static_ver": __version__,
             "needs_token": bool(state["token"]) and not needs_setup(),
             "needs_setup": needs_setup(),
         }
