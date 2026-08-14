@@ -103,6 +103,9 @@ docker compose -f tests/integration/mssql/docker-compose.yml up \
 ```yaml
 sources:
   digiwin_e10:
+    # 本机参考链专用:回环地址仅在 deployment_mode 非 production 时合法。
+    # 现场两台机器部署必须填平台机地址,例如 http://192.168.1.20:8850;
+    # 生产模式下回环 sink 会被 readiness 判为违规并拒绝启动 connector。
     sink: { type: http, url: "http://127.0.0.1:8850", token_env: D2A_INGEST_TOKEN }
     apply_after_sync: false
 ```

@@ -7,11 +7,13 @@ sqlite 源(开发 / 参考链)例外地允许直接写路径(无凭据可泄露)
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import re
 from datetime import datetime, timedelta, timezone
 from datetime import time as dtime
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -367,6 +369,15 @@ class SourceConfig(BaseModel):
         return target
 
 
+def is_loopback_url(url: str) -> bool:
+    """sink.url 是否指向本机回环(127.0.0.0/8、::1、localhost)。"""
+    host = urlparse(url or "").hostname or ""
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host.lower() == "localhost"
+
+
 class ConnectConfig(BaseModel):
     model_config = {"extra": "forbid"}
     templates: str = "templates"
@@ -402,6 +413,11 @@ class ConnectConfig(BaseModel):
         for name, source in self.sources.items():
             if source.sink.type != "http":
                 violations.append(f"源 {name}:生产模式必须使用 sink.type=http")
+            elif is_loopback_url(source.sink.url or ""):
+                violations.append(
+                    f"源 {name}:生产模式 sink.url 不得为本机回环地址——"
+                    "中间机与平台应分机部署;单机调试请用 "
+                    "deployment_mode: development")
             if source.spool.policy == "temporary_file":
                 violations.append(
                     f"源 {name}:生产模式不得使用未受控 temporary_file spool")
@@ -422,9 +438,6 @@ def config_revision(path: str | Path) -> str:
 
 
 def load_config(path: str | Path) -> ConnectConfig:
-    import ipaddress
-    from urllib.parse import urlparse
-
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
 
     cfg = ConnectConfig(**data)
@@ -441,10 +454,7 @@ def load_config(path: str | Path) -> ConnectConfig:
             parsed = urlparse(s.sink.url or "")
             if parsed.scheme not in ("http", "https") or not parsed.hostname:
                 raise ValueError(f"源 {name}: sink.url 必须是有效 http(s) URL")
-            try:
-                loopback = ipaddress.ip_address(parsed.hostname).is_loopback
-            except ValueError:
-                loopback = parsed.hostname.lower() == "localhost"
+            loopback = is_loopback_url(s.sink.url or "")
             if (
                 parsed.scheme != "https"
                 and not loopback

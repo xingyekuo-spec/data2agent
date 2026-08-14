@@ -59,7 +59,9 @@ def _write_production_node(
         "        key_columns: [ID]\n"
         "    sink:\n"
         "      type: http\n"
-        "      url: http://localhost:8850\n"
+        # RFC 5737 TEST-NET-1:生产模式禁止回环 sink,fixture 用文档保留段
+        "      url: http://192.0.2.1:8850\n"
+        "      allow_insecure_http: true\n"
         "      token_env: D2A_TEST_INGEST_TOKEN\n"
         "    spool:\n"
         "      policy: strict_stream\n",
@@ -274,7 +276,7 @@ def test_connection_checks_persist_only_sanitized_readiness_evidence(
         encoding="utf-8")
     assert "very-secret" not in evidence
     assert "ingest-super-secret" not in evidence
-    assert "localhost:8850" not in evidence
+    assert "192.0.2.1:8850" not in evidence
     parsed = json.loads(evidence)
     assert parsed["sources"][SOURCE]["erp"]["ok"] is True
     assert parsed["sources"][SOURCE]["platform"]["compatible"] is True

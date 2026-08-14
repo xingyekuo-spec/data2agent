@@ -11,7 +11,9 @@ import pytest
 from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.shared.config import (
     ConnectConfig,
+    SinkConfig,
     SourceConfig,
+    SpoolConfig,
     assert_production_ready,
     in_window,
     load_config,
@@ -81,6 +83,34 @@ def test_production_rejects_local_sink_and_uncontrolled_spool():
     assert any("temporary_file" in item for item in violations)
     with pytest.raises(ValueError, match="生产配置未就绪"):
         assert_production_ready(cfg)
+
+
+def test_production_rejects_loopback_sink_url():
+    """生产拓扑为两台机器:回环 sink 意味着中间机推自己,必须 fail closed。"""
+    for url in ("http://127.0.0.1:8850", "http://localhost:8850"):
+        cfg = ConnectConfig(
+            deployment_mode="production",
+            sources={"e10": SourceConfig(
+                adapter="sqlite_readonly", path="source.sqlite", tables={},
+                sink=SinkConfig(
+                    type="http", url=url, token_env="T",
+                    allow_insecure_http=True),
+                spool=SpoolConfig(policy="strict_stream"),
+            )},
+        )
+        violations = cfg.production_violations()
+        assert any("回环" in item for item in violations), url
+        with pytest.raises(ValueError, match="生产配置未就绪"):
+            assert_production_ready(cfg)
+    # 同配置在开发模式不视为违规(本机参考链合法)
+    dev_cfg = ConnectConfig(
+        sources={"e10": SourceConfig(
+            adapter="sqlite_readonly", path="source.sqlite", tables={},
+            sink=SinkConfig(
+                type="http", url="http://127.0.0.1:8850", token_env="T"),
+        )},
+    )
+    assert dev_cfg.production_violations() == []
 
 
 def test_strict_stream_rejects_file_spool_only_options():
