@@ -41,7 +41,7 @@ from ...shared.admin.suggestions import (
     suggestion_for_check,
     suggestion_for_connection,
 )
-from ...shared.config import ConnectConfig, SourceConfig, config_revision, load_config
+from ...shared.config import ConnectConfig, SourceConfig, config_revision, is_loopback_url, load_config
 from ..extract import discoverers as _discoverers  # noqa: F401  — 注册 MetadataDiscoverer
 from ..extract.metadata import (
     DEFAULT_SCAN_TABLE_LIMIT,
@@ -263,6 +263,22 @@ def _env_set(name: str | None) -> bool | None:
     if not name:
         return None
     return os.environ.get(name) is not None
+
+
+def _static_fingerprint() -> str:
+    """静态资源指纹:包版本 + 静态文件最新 mtime(秒)。
+
+    仅用包版本时,开发期同版本迭代 JS 指纹不变,浏览器仍可能拿旧缓存;
+    mtime 变化即时反映文件更新。stat 开销对管理页可忽略。
+    """
+    latest = 0
+    try:
+        for entry in _ADMIN_STATIC.iterdir():
+            if entry.is_file():
+                latest = max(latest, int(entry.stat().st_mtime))
+    except OSError:
+        pass
+    return f"{__version__}.{latest}"
 
 
 def _client_host(request: Request) -> str:
@@ -584,6 +600,12 @@ def create_app(
             # is not defined)。no-cache 配合 ETag/Last-Modified 每次再验证,
             # 未变化时仅 304 开销;跨版本再由模板 ?v= 指纹强制失效。
             response.headers["Cache-Control"] = "no-cache"
+        elif request.url.path.endswith((".js", ".css", ".map")):
+            response.headers["Cache-Control"] = "no-cache"
+        elif "text/html" in str(response.headers.get("content-type", "")):
+            # HTML 页面同样禁止启发式缓存:页面结构更新(如新分区容器)
+            # 必须即时可见,否则用户看到旧 HTML + 新 JS 的错配。
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     api = APIRouter(prefix="/api", dependencies=[Depends(auth)])
@@ -592,8 +614,9 @@ def create_app(
     def page_ctx(request: Request) -> dict[str, Any]:
         return {
             "static_url": "/static",
-            # 静态脚本 URL 指纹:版本升级后 ?v= 变化,浏览器缓存自动失效
-            "static_ver": __version__,
+            # 静态脚本 URL 指纹:包版本 + 静态目录最新修改时间。版本升级或
+            # 开发期改动 JS 都会改变指纹,浏览器缓存自动失效。
+            "static_ver": _static_fingerprint(),
             "needs_token": bool(state["token"]) and not needs_setup(),
             "needs_setup": needs_setup(),
         }
@@ -670,6 +693,12 @@ def create_app(
             return {"ok": False, "errors": [field_error(
                 "platform_url", "须为 http(s) URL",
                 "填写平台 ingest 根地址，例如 https://platform.example.com",
+            )]}
+        if is_loopback_url(body.platform_url):
+            return {"ok": False, "errors": [field_error(
+                "platform_url", "平台地址不得为本机回环(127.0.0.1/localhost)",
+                "中间机与平台是两台机器,请填写平台机的实际 IP 或域名;"
+                "单机调试请用源码方式(见 docs/runbook/source-dev.md)",
             )]}
         if not body.admin_token.strip() or not body.ingest_token.strip():
             return {"ok": False, "errors": [field_error(
@@ -827,6 +856,12 @@ def create_app(
                     return {"ok": False, "errors": [field_error(
                         "platform_url", "须为 http(s) URL",
                         "填写平台 ingest 根地址,例如 https://platform.example.com",
+                    )], "restart_required": False, "revision": current}
+                if is_loopback_url(url):
+                    return {"ok": False, "errors": [field_error(
+                        "platform_url",
+                        "平台地址不得为本机回环(127.0.0.1/localhost)",
+                        "中间机与平台是两台机器,请填写平台机的实际 IP 或域名",
                     )], "restart_required": False, "revision": current}
                 ok, errors = merge_whitelist_and_save(
                     cfg_path, MIDDLE_EDITABLE,
