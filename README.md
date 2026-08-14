@@ -17,9 +17,13 @@
 - **MCP Server(lite)**:`query_objects` / `query_metrics` 只读工具 + `propose_action` 建议卡(「说」档:依据必须引用已记录查询 ID 和结果摘要,默认脱敏、口径警示内建;主体/会话/结果摘要级证据已持久化),任何支持 MCP 的 Agent 五分钟接入;HTTP 部署默认强制 Token + 每工具限流 + 查询审计;
 - **运维 / 管理界面**:平台 `console`(`:8849`)已统一为 Vue Console(`/`),覆盖首次配置、配置编辑、日志、日常监控、数据验证、字段血缘、MCP 证据和一键验收;
   中间机 `middle_admin`(`:8851`)按任务分组:**运维**(状态总览 / 运行历史 / 推送记录 / 日志)与**配置**三步流程(1 连接 → 2 元数据选表 → 3 抽取计划)。
-  新安装默认空 `tables`，未选表不会访问 ERP 业务表。现场推荐[便携包](docs/runbook/portable.md)
+  v0.6 起管理端生产化:真实进程监管(launcher 拉起/崩溃重启/熔断)、生产就绪度检查、统一请求认证与严格 CSP、
+  推送记录携带 generation/回执/重试元数据、状态页按「总览 → 摘要 → 折叠详情」分层、状态库只读恢复指引页(`/recovery`)。
+  新安装默认空 `tables`,未选表不会访问 ERP 业务表。现场推荐[便携包](docs/runbook/portable.md)
   双击 `data2agent.exe`,链路验收见 [push-validation](docs/runbook/push-validation.md);
   管理 API 契约快照见 `console-ui/openapi.json`(用 `python scripts/export_console_openapi.py` 重新生成);
+- **数据驻留边界(v0.6)**:中间机只持久化控制状态(水位/运行/推送/对账),**不持久化业务 Raw**;
+  生产默认 `strict_stream` 严格流式不落盘 spool(可选受控加密卷),Raw 表不变量检查、状态库备份与节点灾备的边界写入设计文档;
 - **测试 fixture**:E10-like schema/seed 位于 `tests/fixtures/e10/`，仅服务自动测试与本地验收，不进入产品 wheel。
 
 **安全承诺**:装进你内网、碰你数据库的每一行代码都在这个仓库里 —— 只读账号、白名单表、限时限流、错峰窗口,全部可审计,可逐行核对。
@@ -27,8 +31,11 @@
 ## 现场部署
 
 现场部署使用[便携包](docs/runbook/portable.md):两台机器分别解压对应 zip,双击 `data2agent.exe`,
-平台机在 `/setup` 完成首次配置。中间机在 `/config` 配连接后，经 `/metadata` 扫描选表、
-`/tables` 确认保存抽取计划（默认空清单）。推送链路验收见 [push-validation](docs/runbook/push-validation.md)。
+平台机在 `/setup` 完成首次配置。中间机在 `/config` 配连接后,经 `/metadata` 扫描选表、
+`/tables` 确认保存抽取计划(默认空清单)。推送链路验收见 [push-validation](docs/runbook/push-validation.md)。
+
+升级顺序:v0.6 起中间机发送 ingest 协议 v3,v0.6 平台同时接受 v2/v3 —— **先升级平台,后升级中间机**,
+旧中间机在新平台上可继续推送,链路不中断;反向顺序会被平台按协议版本拒绝。
 
 ## 代码结构
 
@@ -72,10 +79,16 @@ python -m data2agent.platform.console --landing landing/factory.sqlite --templat
 
 ## 边界(诚实声明)
 
-data2agent 当前基线为 **`v0.5.1`**:在 `v0.3.0` 可观察/可验证能力之上,已完成 ERP 元数据发现、
-抽取表显式管理、配置业务键、复合键增量、`full_refresh` 快照、中间机 `/metadata` `/tables`,
-以及产品包展厅/Mock 清理;**v0.4 跨机可靠性**(批次回执、generation 屏障、E6b 对账、
-传输 fail-closed、SQLite 备份基线)代码已落地,并随**首个工厂生产试点**完成现场验证。
+data2agent 当前基线为 **`v0.6.1`**:
+
+- **v0.3–v0.5**:可观察/可验证能力、ERP 元数据发现、抽取表显式管理、配置业务键、复合键增量、
+  `full_refresh` 快照、中间机 `/metadata` `/tables`,以及跨机可靠性(批次回执、generation 屏障、
+  E6b 对账、传输 fail-closed、SQLite 备份基线),随首个工厂生产试点完成现场验证;
+- **v0.6**:ingest 协议 v3 与跨机一致性加固(generation 心跳/租约恢复/对账屏障);
+  数据源平台签发制(登记分配 source + 按源 Token);平台便携包自更新(latest.json);
+  中间机管理端生产化(进程监管、就绪度检查、统一认证与严格 CSP、推送元数据、状态页分层);
+  数据驻留边界显式化(控制状态库语义、strict_stream/加密卷 spool 策略、Raw 不变量检查)。
+
 传输层加固(HTTPS 证书/反代、mTLS、凭据轮换)仍是生产扩大部署前的待办;
 口径校准、主数据对齐、“做”档审批治理和行业知识包仍属后续能力。
 详见[路线图](docs/roadmap.md)。
