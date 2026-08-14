@@ -88,13 +88,23 @@ class UpdateManager:
 
     def status(self) -> dict:
         state = self._read_state()
+        # 换包由 ps1 在 console 进程外完成,状态文件不会自动复位。
+        # 当前运行版本已达目标版本说明升级已应用,自愈为 applied,
+        # 避免「更新包已就绪」提示在升级完成后永久残留。
+        if state.get("phase") == "ready" and state.get("target_version"):
+            current = self.current_version()
+            if current and current == str(state["target_version"]):
+                state = self._write_state(phase="applied")
         bat = self.home / "升级.bat"
         return {
             "available": self.available(),
             "phase": state.get("phase", "idle"),
             "current_version": self.current_version() or None,
             "target_version": state.get("target_version"),
-            "update_available": state.get("update_available"),
+            "update_available": (
+                state.get("update_available")
+                if state.get("phase") != "applied" else False
+            ),
             "protocol_ok": state.get("protocol_ok"),
             "blocked_reason": state.get("blocked_reason"),
             "notes": state.get("notes"),

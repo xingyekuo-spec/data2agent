@@ -187,6 +187,9 @@ def test_download_and_stage_end_to_end(tmp_path):
     pkg_root = home / "data" / "updates" / "staging" / "d2a-portable-platform-v0.6.0"
     assert (pkg_root / "runtime" / "python.exe").is_file()
     assert (home / "升级.bat").is_file()
+    # bat 必须纯 ASCII:cmd 按控制台代码页解析,UTF-8 中文 + chcp 65001
+    # 存在解析缺陷,现场出现过窗口闪退(未能执行到 pause)
+    assert (home / "升级.bat").read_bytes().isascii()
     ps1 = home / "data" / "updates" / "apply-update.ps1"
     assert ps1.is_file()
     # Windows PowerShell 5.1 需要 BOM 才能正确按 UTF-8 解析
@@ -319,6 +322,25 @@ def test_concurrent_download_conflict(tmp_path, monkeypatch):
     manager._worker.join(timeout=30)
     status = manager.status()
     assert status["phase"] == "ready" and status["target_version"] == "v0.6.0"
+
+
+def test_ready_state_self_heals_to_applied_after_swap(tmp_path):
+    """换包由 ps1 进程外完成:当前版本已达 target 时状态自愈为 applied。"""
+    home = _make_home(tmp_path, version="v0.6.2")  # 换包后的新版本
+    manager = UpdateManager(home)
+    manager._write_state(
+        phase="ready", target_version="v0.6.2", update_available=True)
+    status = manager.status()
+    assert status["phase"] == "applied"
+    assert status["update_available"] is False
+    # 版本未达 target 时保持 ready(升级尚未执行)
+    old_root = tmp_path / "old"
+    old_root.mkdir()
+    home2 = _make_home(old_root, version="v0.6.0")
+    manager2 = UpdateManager(home2)
+    manager2._write_state(
+        phase="ready", target_version="v0.6.2", update_available=True)
+    assert manager2.status()["phase"] == "ready"
 
 
 def test_unavailable_without_build_info(tmp_path):

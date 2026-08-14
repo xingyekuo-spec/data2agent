@@ -180,13 +180,17 @@ Write-Host '(旧版本已保留为 .old,确认运行正常后可手动删除)'
 """
 
 UPDATE_BAT = """@echo off
+rem NOTE: keep this file pure ASCII. cmd.exe parses .bat in the console
+rem codepage; UTF-8 Chinese text + chcp 65001 has known parse bugs that
+rem can kill the window before pause runs (seen in field: flash-exit).
 chcp 65001 >nul
 setlocal
 set "SCRIPT=%~dp0data\\updates\\apply-update.ps1"
 if not exist "%SCRIPT%" (
   echo.
-  echo   没有待安装的更新。
-  echo   请先在管理界面(http://127.0.0.1:8849/ ,设置页)点击「检查更新」并完成下载。
+  echo   No staged update found.
+  echo   Open the console (http://127.0.0.1:8849/ , Settings page),
+  echo   run "Check update" and finish the download first.
   echo.
   pause
   exit /b 1

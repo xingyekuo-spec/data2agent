@@ -266,7 +266,7 @@ onUnmounted(stopPolling)
         data-testid="update-ready"
       >
         <template #title>
-          更新包 v{{ update?.target_version }} 已就绪
+          更新包 {{ update?.target_version }} 已就绪
         </template>
         <p>
           请从托盘退出程序(右键托盘图标 →「退出」),然后双击便携包目录中的「升级.bat」完成安装。
@@ -279,6 +279,21 @@ onUnmounted(stopPolling)
         </p>
       </el-alert>
 
+      <el-alert
+        v-else-if="updatePhase === 'applied'"
+        type="success"
+        :closable="false"
+        data-testid="update-applied"
+      >
+        <template #title>
+          已升级到 {{ update?.current_version }}
+        </template>
+        <p>
+          更新已应用并生效。确认运行正常后,可手动删除便携包目录中的
+          runtime.old / app.old / data2agent.exe.old。
+        </p>
+      </el-alert>
+
       <template v-else>
         <div
           v-if="updateDownloading || updatePhase === 'downloading'"
@@ -287,7 +302,7 @@ onUnmounted(stopPolling)
         >
           <el-progress :percentage="downloadPercent" />
           <p class="update-progress-text">
-            正在下载更新包 v{{ update?.target_version }}…下载完成后会提示下一步。
+            正在下载更新包 {{ update?.target_version }}…下载完成后会提示下一步。
           </p>
         </div>
 
