@@ -18,7 +18,7 @@ from typing import Callable, Iterator, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .landing import LandingStore, _now
+from .landing import LandingStore, _now, raw_table_name
 from .field_lineage import (
     LINEAGE_SCHEMA_VERSION,
     ApplyVersionContext,
@@ -45,12 +45,12 @@ from ..metamodel.versioning import (
     object_layer_fully_published,
     parse_object_manifest,
 )
-from ..scenarios.materializers import materialize_bindings
+from ..scenarios.materializers import materialize_bindings, materializer_specs
 
 logger = logging.getLogger(__name__)
 
 SnapshotReason = Literal["not_published", "snapshot_corrupt"]
-BuildOutcome = Literal["ok", "conflict", "failed"]
+BuildOutcome = Literal["ok", "conflict", "failed", "not_ready"]
 ActionOutcome = Literal["ok", "idempotent", "not_found", "conflict", "error"]
 
 
@@ -134,6 +134,9 @@ class BuildDatasetResult:
     ready: bool
     published: bool
     results: list[ObjectApplyResult] = field(default_factory=list)
+    # 输入未就绪而跳过的对象:[{object, reason, missing_tables}]。
+    # 跳过不是失败:缺表是选表计划未覆盖的暂时状态,下轮 apply 自动补齐。
+    skipped: list[dict] = field(default_factory=list)
     outcome: BuildOutcome = "failed"
     reason_code: str | None = None
     error: str | None = None
@@ -861,6 +864,71 @@ def rollback_dataset(store: LandingStore, version: str) -> DatasetMutationResult
     )
 
 
+def _raw_table_exists(store: LandingStore, source: str, logical_table: str) -> bool:
+    physical = raw_table_name(source, logical_table)
+    return store.con.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (physical,),
+    ).fetchone() is not None
+
+
+def _partition_by_readiness(
+    store: LandingStore,
+    source: str,
+    members: list,
+) -> tuple[list, list[dict]]:
+    """按输入就绪拆分绑定为 (ready, skipped)。
+
+    缺输入表是选表计划未覆盖/尚未推送的暂时状态——跳过该对象而不是
+    让整个数据集构建失败卡死 generation 屏障。D2A_* 内部表由
+    materializer 本轮产出:生产者将运行视为就绪;生产者缺输入被跳过
+    则下游级联跳过。未知 materializer 不跳过,保留原有报错路径。
+    """
+    specs = materializer_specs()
+    will_produce: set[str] = set()
+    materializer_runnable: dict[str, bool] = {}
+    for name, spec in specs.items():
+        runnable = all(
+            req in will_produce or _raw_table_exists(store, source, req)
+            for req in spec.requires
+        )
+        materializer_runnable[name] = runnable
+        if runnable:
+            will_produce.update(spec.produces)
+
+    ready: list = []
+    skipped: list[dict] = []
+    for tpl, binding in members:
+        if binding.materializer and binding.materializer not in specs:
+            ready.append((tpl, binding))  # 保留“未知 materializer”构建错误
+            continue
+        missing = [
+            table for table in binding.source_tables
+            if not _raw_table_exists(store, source, table)
+        ]
+        pending_internal = [
+            table for table in binding.tables
+            if table.startswith("D2A_")
+            and table not in will_produce
+            and not _raw_table_exists(store, source, table)
+        ]
+        if not missing and not pending_internal:
+            ready.append((tpl, binding))
+            continue
+        parts = []
+        if missing:
+            parts.append("缺少已同步原始表: " + ", ".join(missing))
+        if pending_internal:
+            parts.append("依赖的内部结果表未生成: " + ", ".join(pending_internal))
+        skipped.append({
+            "object": tpl.object,
+            "reason": "inputs_not_ready",
+            "missing_tables": missing + pending_internal,
+            "detail": ";".join(parts),
+        })
+    return ready, skipped
+
+
 def build_dataset(
     store: LandingStore,
     pack: TemplatePack,
@@ -897,6 +965,30 @@ def build_dataset(
                 error=f"{tpl.object}: 启用 binding 缺少 field_map",
             )
 
+    members, skipped = _partition_by_readiness(store, source, members)
+    if not members:
+        logger.info(
+            "build_dataset source=%s 全部对象输入未就绪,本轮跳过(%s)",
+            source, ";".join(s["object"] for s in skipped),
+        )
+        return BuildDatasetResult(
+            source=source,
+            dataset_version=None,
+            previous_dataset_version=None,
+            status=None,
+            ready=False,
+            published=False,
+            skipped=skipped,
+            outcome="not_ready",
+            reason_code="inputs_not_ready",
+            error=None,
+        )
+    if skipped:
+        logger.info(
+            "build_dataset source=%s 跳过 %d 个输入未就绪对象:%s",
+            source, len(skipped), ";".join(s["object"] for s in skipped),
+        )
+
     try:
         materialize_bindings(store, source, (binding for _, binding in members))
     except Exception as e:
@@ -908,6 +1000,7 @@ def build_dataset(
             status=None,
             ready=False,
             published=False,
+            skipped=skipped,
             outcome="failed",
             reason_code="materializer_failed",
             error=summary,
@@ -923,6 +1016,7 @@ def build_dataset(
             status=None,
             ready=False,
             published=False,
+            skipped=skipped,
             outcome="conflict",
             reason_code=conflict,
             error="已有运行中的数据集构建",
@@ -954,6 +1048,7 @@ def build_dataset(
             outcome="conflict",
             reason_code=e.reason_code or "active_build",
             error="已有运行中的数据集构建",
+            skipped=skipped,
         )
 
     results: list[ObjectApplyResult] = []
@@ -1107,6 +1202,7 @@ def build_dataset(
             error_id=error_id,
             run_id=run_id,
             step_ids=step_ids,
+            skipped=skipped,
         )
 
     for object_name, result, table in pending_ok:
@@ -1143,6 +1239,7 @@ def build_dataset(
                 outcome="ok",
                 run_id=run_id,
                 step_ids=step_ids,
+                skipped=skipped,
             )
         return BuildDatasetResult(
             source=source,
@@ -1158,6 +1255,7 @@ def build_dataset(
             error_id=pub.error_id,
             run_id=run_id,
             step_ids=step_ids,
+            skipped=skipped,
         )
     return BuildDatasetResult(
         source=source,
@@ -1170,4 +1268,5 @@ def build_dataset(
         outcome="ok",
         run_id=run_id,
         step_ids=step_ids,
+        skipped=skipped,
     )

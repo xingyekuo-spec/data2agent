@@ -309,10 +309,16 @@ def _run_apply_once(args, *, source: str | None = None) -> bool:
             auto_publish=not getattr(args, "stage_only", False),
             threshold=args.threshold,
         )
+        # not_ready(全部对象输入未就绪)不是失败:raw 已落地,
+        # 对象随后续选表补齐自动构建;generation 应正常办结解除屏障。
         success = (
-            result.outcome == "ok"
-            and (result.published or getattr(args, "stage_only", False))
-            and not any(r.status in ("aborted", "failed") for r in result.results)
+            result.outcome == "not_ready"
+            or (
+                result.outcome == "ok"
+                and (result.published or getattr(args, "stage_only", False))
+                and not any(
+                    r.status in ("aborted", "failed") for r in result.results)
+            )
         )
         if lease is not None:
             lease.finish(store, success=success)
@@ -327,10 +333,19 @@ def _run_apply_once(args, *, source: str | None = None) -> bool:
     for r in result.results:
         mark = "⚠ 熔断" if r.status == "aborted" else "ok"
         print(f"  - {r.object:<16} 映射 {r.mapped:>5} 行, 隔离 {r.quarantined} 行  [{mark}]")
+    for s in result.skipped:
+        print(f"  - 跳过 {s['object']}: {s['detail']}")
+    if result.outcome == "not_ready":
+        print("全部对象输入未就绪,本轮未构建;已推送 raw 保留,"
+              "补齐抽取表后的下一轮自动构建")
+        store.con.close()
+        return False
     aborted = [r.object for r in result.results if r.status in ("aborted", "failed")]
     if aborted or result.outcome != "ok":
         print(f"映射中止对象:{aborted or ['(数据集构建失败)']}(候选未发布,"
               "明细见 d2a_quarantine)")
+        if result.error:
+            print(f"  失败原因: {result.error}")
         if result.dataset_version:
             print(f"  dataset_version={result.dataset_version} published={result.published}")
         store.con.close()
