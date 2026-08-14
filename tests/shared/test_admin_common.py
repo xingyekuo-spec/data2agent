@@ -96,3 +96,13 @@ def test_tail_lines_missing_file(tmp_path):
     ok, text = tail_lines(tmp_path / "missing.log")
     assert not ok
     assert text
+
+
+def test_tail_lines_strips_utf8_bom(tmp_path):
+    """便携包日志带 UTF-8 BOM(Windows 现场可读);API 读取必须剥掉。"""
+    log = tmp_path / "bom.log"
+    log.write_bytes(b"\xef\xbb\xbf" + "INFO 中文日志\nERROR 报错\n".encode("utf-8"))
+    ok, text = tail_lines(log, lines=10)
+    assert ok
+    assert not text.startswith("\ufeff")
+    assert "INFO 中文日志" in text

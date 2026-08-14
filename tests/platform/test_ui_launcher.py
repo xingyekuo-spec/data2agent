@@ -452,3 +452,22 @@ def test_portable_vue_dist_env_preserves_explicit_override(tmp_path):
     assert mod.portable_vue_dist_env(
         tmp_path, {"D2A_VUE_DIST": explicit},
     ) == {}
+
+
+def test_open_log_append_writes_bom_only_for_new_file(tmp_path):
+    """新建日志写 UTF-8 BOM;追加已有文件不重复写;轮转后新文件重新带 BOM。"""
+    mod = _load_launcher()
+    log = tmp_path / "worker.log"
+    handle, size = mod._open_log_append(log)
+    handle.write("中文行\n".encode("utf-8"))
+    handle.close()
+    assert size == 3
+    assert log.read_bytes().startswith(b"\xef\xbb\xbf")
+
+    # 追加已有文件:不再写 BOM
+    before = log.read_bytes()
+    handle, size = mod._open_log_append(log)
+    handle.write(b"second\n")
+    handle.close()
+    assert log.read_bytes().count(b"\xef\xbb\xbf") == 1
+    assert log.read_bytes().startswith(before)

@@ -333,12 +333,29 @@ def _rotate_log(path: Path) -> None:
         path.replace(path.with_name(f"{path.name}.1"))
 
 
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+
+def _open_log_append(path: Path):
+    """以追加模式打开日志;新建文件先写 UTF-8 BOM。
+
+    BOM 让 Windows 记事本 / PowerShell 5.1 Get-Content 正确识别中文
+    (无 BOM 的 UTF-8 会被按 GBK 猜解,现场日志全部显示为乱码)。
+    返回 (handle, 初始大小)。
+    """
+    is_new = not path.exists() or path.stat().st_size == 0
+    handle = path.open("ab", buffering=0)
+    if is_new:
+        handle.write(_UTF8_BOM)
+        return handle, len(_UTF8_BOM)
+    return handle, path.stat().st_size
+
+
 def _pump_process_log(stream, path: Path) -> None:
     """由 launcher 消费子进程 pipe，使 Windows 上也能在运行期轮转日志。"""
     handle = None
     try:
-        handle = path.open("ab", buffering=0)
-        size = path.stat().st_size if path.exists() else 0
+        handle, size = _open_log_append(path)
         while True:
             reader = getattr(stream, "read1", stream.read)
             chunk = reader(64 * 1024)
@@ -348,8 +365,7 @@ def _pump_process_log(stream, path: Path) -> None:
                 handle.close()
                 handle = None
                 _rotate_log(path)
-                handle = path.open("ab", buffering=0)
-                size = 0
+                handle, size = _open_log_append(path)
             handle.write(chunk)
             size += len(chunk)
     except Exception:
@@ -401,6 +417,8 @@ def _supervisor_log(home: Path, msg: str) -> None:
         path = logs / "d2a-launcher.log"
         if path.exists() and path.stat().st_size + len(line.encode("utf-8")) > LOG_MAX_BYTES:
             _rotate_log(path)
+        if not path.exists() or path.stat().st_size == 0:
+            path.write_bytes(_UTF8_BOM)  # 见 _open_log_append
         with path.open("a", encoding="utf-8") as handle:
             handle.write(line)
     except Exception:

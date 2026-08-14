@@ -18,7 +18,8 @@ def tail_lines(path: Path, lines: int = 200, level: str | None = None) -> tuple[
         return False, f"Log file not found: {path}"
 
     try:
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        # utf-8-sig:便携包日志带 BOM(Windows 现场可读),源码运行不带 BOM,两者兼容
+        raw = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError as e:
         return False, f"Cannot read log file {path}: {e}"
 
