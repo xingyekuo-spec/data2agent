@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from data2agent.shared.metamodel.loader import load_pack
+from data2agent.shared.metamodel.loader import TemplateLoadError, load_pack
 from data2agent.shared.metamodel.schema import ObjectTemplate
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +42,34 @@ def test_bindings_start_as_draft():
     pack = load_pack(ROOT / "templates")
     order = next(o for o in pack.objects if o.object == "SalesOrder")
     assert order.bindings and order.bindings[0].status == "draft"
+
+
+def test_gbk_encoded_template_reports_filename(tmp_path):
+    """GBK/ANSI 保存的模板必须点名文件并给出 UTF-8 修复指引。"""
+    objects = tmp_path / "objects"
+    objects.mkdir()
+    (objects / "bad.yaml").write_bytes("object: 销售订单\n".encode("gbk"))
+    with pytest.raises(TemplateLoadError, match=r"bad\.yaml.*UTF-8"):
+        load_pack(tmp_path)
+
+
+def test_yaml_syntax_error_reports_filename(tmp_path):
+    objects = tmp_path / "objects"
+    objects.mkdir()
+    (objects / "broken.yaml").write_text("object: [未闭合\n", encoding="utf-8")
+    with pytest.raises(TemplateLoadError, match=r"broken\.yaml.*语法"):
+        load_pack(tmp_path)
+
+
+def test_appledouble_files_are_ignored(tmp_path):
+    """macOS 拷 U 盘产生的 ._ 伴随文件不得被当作模板读取。"""
+    objects = tmp_path / "objects"
+    objects.mkdir()
+    (objects / "._order.yaml").write_bytes(b"\x00\x05\x16\x07\xb0binary")
+    (objects / ".hidden.yaml").write_bytes(b"\x00\xb0binary")
+    # 目录里没有合法模板;只要 ._ / 隐藏文件被跳过,就不会报解码错误
+    pack = load_pack(tmp_path)
+    assert pack.objects == []
 
 
 def test_binding_status_disabled_accepted():
