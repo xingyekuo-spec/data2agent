@@ -18,21 +18,15 @@
       (hint ? '<span class="field-hint">' + hint + '</span>' : '') + '</label>';
   }
 
+  /* 点击/键盘切换由共享 initTabs 接管;本页只需在切换后做附加动作。 */
   function activateTab(group, panelId) {
-    document.querySelectorAll('[role="tab"][data-tabs="' + group + '"]').forEach(function (tab) {
-      var active = tab.dataset.tab === panelId;
-      tab.classList.toggle('active', active);
-      tab.setAttribute('aria-selected', active ? 'true' : 'false');
-      tab.tabIndex = active ? 0 : -1;
-    });
-    document.querySelectorAll('[role="tabpanel"][data-tabs="' + group + '"]').forEach(function (panel) {
-      var active = panel.id === panelId;
-      panel.classList.toggle('active', active);
-      panel.hidden = !active;
-    });
-    if (group === 'setup') syncSetupNavigation();
-    if (group === 'daily') syncSaveActions(panelId);
+    activateTabGroup(group, panelId);
   }
+  document.addEventListener('d2a:tab-activated', function (event) {
+    var detail = event.detail || {};
+    if (detail.group === 'setup') syncSetupNavigation();
+    if (detail.group === 'daily') syncSaveActions(detail.panelId);
+  });
 
   function setupPanels() { return ['setup-push', 'setup-erp', 'setup-local']; }
   function syncSetupNavigation() {
@@ -47,7 +41,16 @@
 
   function syncSaveActions(panelId) {
     var actions = byId('daily-save-actions');
-    if (actions) actions.hidden = panelId !== 'daily-paths' && panelId !== 'daily-source';
+    if (!actions) return;
+    var hide = panelId !== 'daily-paths' && panelId !== 'daily-source';
+    // 数据源页签下:ERP 连接/敏感配置子页签的字段不进 YAML 表单,
+    // 全局保存按钮此时无效(点了收不到这些字段),隐藏避免歧义。
+    // 注意初始加载也要判定:ERP 连接是默认激活子页签。
+    if (!hide && panelId === 'daily-source') {
+      var activeSub = sourcesEl.querySelector('[role="tabpanel"].active');
+      if (activeSub && /-(erp|cred)$/.test(activeSub.id || '')) hide = true;
+    }
+    actions.hidden = hide;
   }
 
   function activateSubtab(block, panelId) {
@@ -62,6 +65,9 @@
       panel.classList.toggle('active', active);
       panel.hidden = !active;
     });
+    // 子页签切换后重算全局保存按钮显隐(ERP/敏感配置子页签下隐藏)。
+    var activeDaily = document.querySelector('[role="tabpanel"][data-tabs="daily"].active');
+    syncSaveActions(activeDaily ? activeDaily.id : 'daily-link');
   }
 
   function renderSource(name, source) {
@@ -78,13 +84,33 @@
       '<h3 class="source-title">数据源：' + esc(name) + '</h3>' + sinkState +
       '<p class="source-lead">抽取、推送、对账和告警均绑定此 source，不会隐式操作其他数据源。</p>' +
       '<div class="subtabs" role="tablist" aria-label="' + esc(name) + ' 配置分组">' +
-        '<button type="button" class="subtab active" id="' + id + '-tab-pace" role="tab" aria-selected="true" aria-controls="' + id + '-pace" tabindex="0" data-sub="' + id + '-pace">抽取与对账</button>' +
+        '<button type="button" class="subtab active" id="' + id + '-tab-erp" role="tab" aria-selected="true" aria-controls="' + id + '-erp" tabindex="0" data-sub="' + id + '-erp">ERP 连接</button>' +
+        '<button type="button" class="subtab" id="' + id + '-tab-pace" role="tab" aria-selected="false" aria-controls="' + id + '-pace" tabindex="-1" data-sub="' + id + '-pace">抽取与对账</button>' +
         '<button type="button" class="subtab" id="' + id + '-tab-rate" role="tab" aria-selected="false" aria-controls="' + id + '-rate" tabindex="-1" data-sub="' + id + '-rate">资源保护</button>' +
         '<button type="button" class="subtab" id="' + id + '-tab-sink" role="tab" aria-selected="false" aria-controls="' + id + '-sink" tabindex="-1" data-sub="' + id + '-sink">推送/TLS</button>' +
         '<button type="button" class="subtab" id="' + id + '-tab-spool" role="tab" aria-selected="false" aria-controls="' + id + '-spool" tabindex="-1" data-sub="' + id + '-spool">临时数据策略</button>' +
         '<button type="button" class="subtab" id="' + id + '-tab-cred" role="tab" aria-selected="false" aria-controls="' + id + '-cred" tabindex="-1" data-sub="' + id + '-cred">敏感配置状态</button>' +
       '</div>' +
-      '<section id="' + id + '-pace" class="subpanel active" role="tabpanel" aria-labelledby="' + id + '-tab-pace" data-sub="' + id + '-pace"><div class="group-grid">' +
+      '<section id="' + id + '-erp" class="subpanel active" role="tabpanel" aria-labelledby="' + id + '-tab-erp" data-sub="' + id + '-erp">' +
+        '<p class="panel-lead">ERP DSN 环境变量 <strong>' + esc(source.dsn_env || '未命名') + '</strong> · ' +
+          (source.dsn_env_set ? '已配置' : '<strong>未配置</strong>') +
+          '；凭据只写 secrets.env，页面不回显。</p>' +
+        (source.adapter === 'mssql_readonly'
+          ? '<div class="group-grid">' +
+              field('服务器', '', '<input type="text" class="erp-server" autocomplete="off">') +
+              field('端口', '命名实例填 0(或在服务器中写 主机\\实例)。', '<input type="number" class="erp-port" value="1433" min="0" max="65535">') +
+              field('数据库', '', '<input type="text" class="erp-database" autocomplete="off">') +
+              field('账号', '', '<input type="text" class="erp-user" autocomplete="off">') +
+              field('密码(可空)', '留空则保留当前密码。', '<input type="password" class="erp-password" autocomplete="new-password">') +
+            '</div>' +
+            '<div class="actions"><button type="button" class="erp-save-btn">保存 ERP 连接</button>' +
+              '<button type="button" class="erp-test-btn btn-ghost">测试 ERP 连接</button></div>' +
+            '<p class="meta-line erp-save-result" aria-live="polite"></p>' +
+            '<p class="meta-line erp-test-result" aria-live="polite"></p>' +
+            '<p class="hint">特殊场景（命名实例、非默认驱动、Windows 集成认证等）请直接编辑中间机 config/secrets.env 中的 DSN。</p>'
+          : '<p class="meta">该源使用 ' + esc(source.adapter || '?') + ' 适配器，连接参数在 connect.yaml 中管理。</p>') +
+      '</section>' +
+      '<section id="' + id + '-pace" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-pace" data-sub="' + id + '-pace" hidden><div class="group-grid">' +
         field('抽取间隔', '支持 30s / 30m / 1h / 1d，至少 1 秒。', '<input type="text" data-key="sync_every" value="' + esc(source.sync_every || '') + '" required>') +
         field('首轮启动时间（可空）', 'HH:MM；留空表示服务启动后立即进入调度判断。', '<input type="time" data-key="sync_start_at" value="' + esc(source.sync_start_at || '') + '">') +
         field('全局抽取开始日期（可空）', '表级日期优先；不会抽取更早历史。', '<input type="date" data-key="start_date" value="' + esc(source.start_date || '') + '">') +
@@ -117,7 +143,8 @@
           '<div class="cred-item"><strong>推送 Token 环境变量</strong>' + esc(sink.token_env || '未命名') + ' · ' + (sink.token_env_set ? '已配置' : '未配置') + '</div>' +
           '<div class="cred-item"><strong>私有 CA</strong>' + (sink.ca_bundle_configured ? '已配置路径' : '未配置（使用系统信任库）') + '</div>' +
           '<div class="cred-item"><strong>secrets 最近修改</strong>' + fmtTime(currentConfig.sensitive_config && currentConfig.sensitive_config.updated_at) + '</div>' +
-        '</div></section>' +
+        '</div>' +
+        '</section>' +
       '</article>';
   }
 
@@ -126,9 +153,17 @@
       block.querySelectorAll('[role="tab"]').forEach(function (tab) {
         tab.addEventListener('click', function () { activateSubtab(block, tab.dataset.sub); });
       });
-      block.querySelectorAll('input,select').forEach(function (input) {
-        input.addEventListener('input', updateDiff);
-        input.addEventListener('change', updateDiff);
+      var erpBtn = block.querySelector('.erp-save-btn');
+      if (erpBtn) erpBtn.addEventListener('click', function () {
+        saveErpConnection(this, block).catch(function (error) {
+          block.querySelector('.erp-save-result').textContent = error.message;
+        });
+      });
+      var erpTestBtn = block.querySelector('.erp-test-btn');
+      if (erpTestBtn) erpTestBtn.addEventListener('click', function () {
+        testErpConnection(this, block).catch(function (error) {
+          block.querySelector('.erp-test-result').textContent = error.message;
+        });
       });
       initTabs(block);
     });
@@ -163,37 +198,6 @@
     return { templates: byId('cfg-templates').value.trim(), state_db: byId('cfg-state-db').value.trim(), sources: sources };
   }
 
-  function getPath(root, path) {
-    return path.split('.').reduce(function (value, part) { return value && value[part]; }, root);
-  }
-  function flatten(root, prefix, output) {
-    output = output || {};
-    Object.keys(root || {}).forEach(function (key) {
-      var path = prefix ? prefix + '.' + key : key;
-      var value = root[key];
-      if (value && typeof value === 'object' && !Array.isArray(value)) flatten(value, path, output);
-      else output[path] = value;
-    });
-    return output;
-  }
-  function printable(value) {
-    if (value == null || value === '') return '（空）';
-    return Array.isArray(value) ? value.join(', ') || '（空）' : String(value);
-  }
-
-  function updateDiff() {
-    if (!currentConfig || needsSetup) return;
-    var flat = flatten(collectPatch());
-    var rows = Object.keys(flat).filter(function (path) {
-      return JSON.stringify(flat[path]) !== JSON.stringify(getPath(currentConfig, path));
-    }).map(function (path) {
-      return '<tr><td><code>' + esc(path) + '</code></td><td><code>' + esc(printable(getPath(currentConfig, path))) + '</code></td><td><code>' + esc(printable(flat[path])) + '</code></td></tr>';
-    });
-    byId('config-diff-body').innerHTML = rows.length
-      ? '<div class="table-scroll"><table class="data diff-table"><thead><tr><th>字段</th><th>当前服务器值</th><th>将保存</th></tr></thead><tbody>' + rows.join('') + '</tbody></table></div>'
-      : '<p>当前没有待保存改动。</p>';
-  }
-
   function validatePatch(patch) {
     var errors = [];
     var duration = /^\d+(?:\.\d+)?[smhd]$/;
@@ -222,8 +226,6 @@
   function populateSourceSelectors() {
     var options = Object.keys(currentConfig.sources || {}).map(function (name) { return '<option value="' + esc(name) + '">' + esc(name) + '</option>'; }).join('');
     byId('link-source').innerHTML = options;
-    var connectionSource = byId('conn-source');
-    if (connectionSource) connectionSource.innerHTML = options;
     updateLinkFields();
   }
 
@@ -235,16 +237,29 @@
   }
 
   async function checkRevisionStatus() {
+    var state = byId('config-revision-state');
+    var note = byId('config-revision-note');
     try {
       var status = await apiJson('/api/status', { timeoutMs: 10000 });
       var process = status.process_status && status.process_status.connector;
       var running = process && process.loaded_config_revision;
-      byId('config-revision-running').textContent = running || '未知';
-      if (!running) byId('config-revision-state').innerHTML = badge('unknown', '无法确认 connector 已加载版本');
-      else if (running === currentRevision) byId('config-revision-state').innerHTML = badge('pass', '已生效');
-      else byId('config-revision-state').innerHTML = badge('warning', '等待 connector 重启加载');
+      if (!running) {
+        state.innerHTML = badge('unknown', '无法确认 connector 已加载版本');
+        note.textContent = '';
+      } else if (running === currentRevision) {
+        state.innerHTML = badge('pass', '配置已生效');
+        note.textContent = 'connector 正在运行当前配置';
+      } else {
+        state.innerHTML = badge('warning', '等待重启加载');
+        note.textContent = '保存后 worker 自动重启,通常 1 分钟内生效';
+      }
+      // 哈希对运维无意义,收到悬浮提示供排障核对
+      note.title = '页面 revision: ' + (currentRevision || '未知') +
+        '\nconnector 已加载: ' + (running || '未知');
     } catch (error) {
-      byId('config-revision-state').innerHTML = badge('unknown', '状态检查失败：' + error.message);
+      state.innerHTML = badge('unknown', '状态检查失败');
+      note.textContent = error.message;
+      note.title = '';
     }
   }
 
@@ -258,14 +273,14 @@
       conflictRevision = null;
       byId('config-conflict').hidden = true;
       byId('deployment-mode').textContent = config.deployment_mode === 'production' ? '生产' : config.deployment_mode;
-      byId('config-revision-loaded').textContent = currentRevision || '未知';
       byId('legacy-state-warning').hidden = !config.legacy_landing_key;
       byId('cfg-templates').value = config.templates || '';
       byId('cfg-state-db').value = config.state_db || '';
       sourcesEl.innerHTML = Object.keys(config.sources || {}).map(function (name) { return renderSource(name, config.sources[name]); }).join('') || '<p class="state state-empty">当前配置没有数据源。</p>';
       bindSourceControls();
       populateSourceSelectors();
-      updateDiff();
+      var activeDaily = document.querySelector('[role="tabpanel"][data-tabs="daily"].active');
+      syncSaveActions(activeDaily ? activeDaily.id : 'daily-link');
       await checkRevisionStatus();
       if (options.announce) announce('success', '已读取服务器最新配置');
     } catch (error) {
@@ -297,7 +312,6 @@
         var response = await apiJson('/api/config', { method: 'POST', body: JSON.stringify(patch) });
         if (!response.ok) throw new ApiError(formatApiError(response, '保存失败'), 422, response, 'validation');
         currentRevision = response.revision || currentRevision;
-        byId('config-revision-loaded').textContent = currentRevision;
         byId('restart-banner').hidden = false;
         byId('restart-banner').textContent = restartMessage(response, '配置');
         announce('success', restartMessage(response, '配置'));
@@ -333,27 +347,59 @@
     }, { busyLabel: '保存中…' });
   }
 
-  async function checkPlatform(button) {
-    var source = byId('link-source').value;
-    byId('link-check-result').textContent = '正在检查…';
+  async function checkPlatform(button, source, resultEl) {
+    resultEl.textContent = '正在检查…';
     await runAction(button, async function () {
       var result = await apiJson('/api/config/connection-check?source=' + encodeURIComponent(source));
-      byId('link-check-result').textContent = result.ok
+      resultEl.textContent = result.ok
         ? source + '：平台可达；本机协议 v' + (result.local_protocol || '?') + '；平台支持 ' + (result.platform_supported || []).join(', ') + '；' + (result.compatible ? '兼容' : '不兼容')
         : source + '：' + (result.detail || '检查失败');
-      announce(result.ok && result.compatible ? 'success' : 'warning', byId('link-check-result').textContent);
+      announce(result.ok && result.compatible ? 'success' : 'warning', resultEl.textContent);
     }, { busyLabel: '检查中…' });
   }
 
-  async function testErp(button) {
-    var selector = byId('conn-source');
-    var source = selector ? selector.value : null;
-    byId('conn-result').textContent = '正在测试…';
+  async function saveErpConnection(button, block) {
+    var result = block.querySelector('.erp-save-result');
+    var payload = {
+      source: block.dataset.source,
+      server: block.querySelector('.erp-server').value.trim(),
+      port: (function () {
+        var raw = block.querySelector('.erp-port').value.trim();
+        var parsed = parseInt(raw, 10);
+        // 0 表示 SQL Server 命名实例(不带端口的 SERVER)，不能按假值回退为 1433
+        return raw === '' || isNaN(parsed) || parsed < 0 ? 1433 : parsed;
+      })(),
+      database: block.querySelector('.erp-database').value.trim(),
+      user: block.querySelector('.erp-user').value.trim(),
+      password: block.querySelector('.erp-password').value,
+    };
     await runAction(button, async function () {
-      var result = await apiJson('/api/connection/test', { method: 'POST', body: JSON.stringify({ source: source }) });
-      if (result.status === 'failed' || result.error) throw new ApiError(formatApiError(result, 'ERP 连接失败'), 503, result, result.error);
-      byId('conn-result').textContent = source + '：' + (result.detail || result.status || '连接成功');
-      byId('link-metadata').hidden = false;
+      var body = await apiJson('/api/config/erp-connection', {
+        method: 'POST', body: JSON.stringify(payload),
+      });
+      if (!body.ok) {
+        result.textContent = (body.errors || []).map(function (e) { return e.message; }).join('；');
+        announce('error', result.textContent);
+        return;
+      }
+      block.querySelector('.erp-password').value = '';
+      result.textContent = '已保存：凭据已写入 secrets.env' +
+        (body.restart_automatic ? '，worker 将自动重启生效' : '，重启后生效');
+      announce('success', 'ERP 连接已保存');
+    }, { busyLabel: '保存中…' });
+  }
+
+  async function testErpConnection(button, block) {
+    var result = block.querySelector('.erp-test-result');
+    result.textContent = '正在测试…';
+    await runAction(button, async function () {
+      var body = await apiJson('/api/connection/test', {
+        method: 'POST', body: JSON.stringify({ source: block.dataset.source }),
+      });
+      if (body.status === 'failed' || body.error) {
+        throw new ApiError(formatApiError(body, 'ERP 连接失败'), 503, body, body.error);
+      }
+      result.textContent = block.dataset.source + '：' + (body.detail || body.status || '连接成功');
       announce('success', 'ERP 连接测试通过');
     }, { busyLabel: '测试中…' });
   }
@@ -388,9 +434,6 @@
   }
 
   function bindEvents() {
-    document.querySelectorAll('[role="tab"][data-tabs]').forEach(function (tab) {
-      tab.addEventListener('click', function () { activateTab(tab.dataset.tabs, tab.dataset.tab); });
-    });
     document.querySelectorAll('.tab-nav').forEach(function (button) {
       button.addEventListener('click', function () {
         var ids = setupPanels();
@@ -404,11 +447,8 @@
     var configForm = byId('config-form');
     if (configForm) configForm.addEventListener('submit', function (event) { event.preventDefault(); saveConfig(byId('btn-config-save')).catch(function (error) { byId('config-errors').textContent = error.message; }); });
     byId('btn-link-save') && byId('btn-link-save').addEventListener('click', function () { saveConnection(this).catch(function (error) { byId('link-save-result').textContent = error.message; }); });
-    byId('btn-link-check') && byId('btn-link-check').addEventListener('click', function () { checkPlatform(this).catch(function (error) { byId('link-check-result').textContent = error.message; }); });
-    byId('btn-conn-test') && byId('btn-conn-test').addEventListener('click', function () { testErp(this).catch(function (error) { byId('conn-result').textContent = error.message; }); });
+    byId('btn-link-check') && byId('btn-link-check').addEventListener('click', function () { checkPlatform(this, byId('link-source').value, byId('link-check-result')).catch(function (error) { byId('link-check-result').textContent = error.message; }); });
     byId('link-source') && byId('link-source').addEventListener('change', updateLinkFields);
-    byId('cfg-templates') && byId('cfg-templates').addEventListener('input', updateDiff);
-    byId('cfg-state-db') && byId('cfg-state-db').addEventListener('input', updateDiff);
     byId('btn-conflict-reload') && byId('btn-conflict-reload').addEventListener('click', function () { loadDaily({ announce: true }); });
     byId('btn-conflict-reapply') && byId('btn-conflict-reapply').addEventListener('click', function () {
       if (!conflictRevision) { byId('config-errors').textContent = '服务器 revision 未知，请先读取服务器新配置。'; return; }
@@ -420,7 +460,7 @@
     bindEvents();
     initTabs(document);
     if (needsSetup) syncSetupNavigation();
-    else { syncSaveActions('daily-conn'); loadDaily(); }
+    else { syncSaveActions('daily-link'); loadDaily(); }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

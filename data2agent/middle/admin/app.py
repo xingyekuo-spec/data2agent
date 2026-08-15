@@ -29,7 +29,7 @@ from ... import __version__
 from ...shared.admin.config_edit import MIDDLE_EDITABLE, merge_whitelist_and_save
 from ...shared.admin.home_layout import HomeLayout
 from ...shared.admin.logs import tail_lines
-from ...shared.admin.secrets_file import apply_secrets_to_environ, save_secrets
+from ...shared.admin.secrets_file import apply_secrets_to_environ, load_secrets, save_secrets
 from ...shared.admin.setup_yaml import (
     build_middle_connect_yaml,
     build_odbc_dsn,
@@ -224,6 +224,33 @@ class ConnectionInfoBody(BaseModel):
     revision: str | None = None
 
 
+class ErpConnectionBody(BaseModel):
+    """日常更新 ERP 连接:重组 DSN 只写 secrets.env(不回显),不动 connect.yaml。
+
+    密码留空表示保留当前 DSN 中的密码(便于只改服务器/库名等)。
+    port=0 或 server 含反斜杠表示命名实例(SERVER 不带端口)。
+    其他特殊场景(非默认驱动/Windows 认证)不走接口,直接编辑 secrets.env。
+    """
+    source: str | None = None
+    server: str
+    database: str
+    user: str
+    password: str | None = None
+    port: int = Field(1433, ge=0, le=65535)
+
+
+def _read_current_dsn_password(secrets_path: Path, env_name: str) -> str | None:
+    """从现有 DSN 中提取 PWD 供密码保留;缺失或解析失败返回 None。"""
+    try:
+        dsn = load_secrets(secrets_path).get(env_name, "")
+    except Exception:
+        return None
+    match = re.search(r"PWD=\{((?:[^{}]|\}\})*)\}", dsn)
+    if not match:
+        return None
+    return match.group(1).replace("}}", "}")
+
+
 def _request_worker_restart(home_layout) -> None:
     """通知便携启动器重载凭据。
 
@@ -297,6 +324,7 @@ def _config_subset(cfg: ConnectConfig) -> dict:
     }
     for name, scfg in cfg.sources.items():
         src: dict[str, Any] = {
+            "adapter": scfg.adapter,
             "windows": scfg.windows,
             "rate": {"batch_size": scfg.rate.batch_size,
                      "rows_per_second": scfg.rate.rows_per_second},
@@ -617,6 +645,8 @@ def create_app(
             # 静态脚本 URL 指纹:包版本 + 静态目录最新修改时间。版本升级或
             # 开发期改动 JS 都会改变指纹,浏览器缓存自动失效。
             "static_ver": _static_fingerprint(),
+            # 页面标识:供共享层按页调整行为(如状态页抑制全局告警横幅)
+            "page_id": request.url.path.strip("/") or "status",
             "needs_token": bool(state["token"]) and not needs_setup(),
             "needs_setup": needs_setup(),
         }
@@ -634,6 +664,10 @@ def create_app(
     @app.get("/runs", response_class=HTMLResponse)
     def runs_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "runs.html", page_ctx(request))
+
+    @app.get("/reconcile", response_class=HTMLResponse)
+    def reconcile_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "reconcile.html", page_ctx(request))
 
     @app.get("/errors", response_class=HTMLResponse)
     def errors_page(request: Request) -> HTMLResponse:
@@ -889,6 +923,55 @@ def create_app(
                 "restart_automatic": home_layout is not None,
                 "revision": revision, "token_updated": token_updated}
 
+    @api.post("/config/erp-connection")
+    def post_erp_connection(body: ErpConnectionBody) -> dict:
+        """日常更新 ERP 连接:重组 DSN 只写 secrets.env,不回显、不动 YAML。"""
+        with config_write_lock:
+            if needs_setup():
+                raise http_error(
+                    409, "尚未完成首次配置",
+                    "打开 /config 完成首次配置后再更新 ERP 连接",
+                )
+            if home_layout is None:
+                raise http_error(
+                    409, "未启用 --home,无法写 secrets.env",
+                    "以 --home <目录> 启动中间机管理进程后再更新 ERP 连接",
+                )
+            cfg = reload_config()
+            name, scfg = _resolve_source(cfg, body.source)
+            if scfg.adapter != "mssql_readonly":
+                return {"ok": False, "errors": [field_error(
+                    "source", f"源 {name} 不是 SQL Server 适配器({scfg.adapter})",
+                    "ERP 连接更新仅适用于 mssql_readonly 源",
+                )]}
+            env_name = scfg.dsn_env or "D2A_E10_DSN"
+            errors: list[dict] = []
+            for field_name, value, label in (
+                ("server", body.server, "服务器"),
+                ("database", body.database, "数据库"),
+                ("user", body.user, "账号"),
+            ):
+                if not value.strip():
+                    errors.append(field_error(field_name, f"{label}不能为空", f"填写 ERP {label}"))
+            if errors:
+                return {"ok": False, "errors": errors}
+            password = (body.password or "").strip()
+            if not password:
+                password = _read_current_dsn_password(
+                    home_layout.secrets_env, env_name) or ""
+                if not password:
+                    return {"ok": False, "errors": [field_error(
+                        "password", "无法从现有 DSN 保留密码",
+                        "填写一次完整密码;后续更新可留空保留",
+                    )]}
+            dsn = build_odbc_dsn(
+                server=body.server.strip(), database=body.database.strip(),
+                user=body.user.strip(), password=password, port=body.port)
+            save_secrets(home_layout.secrets_env, {env_name: dsn})
+            apply_secrets_to_environ(home_layout.secrets_env)
+            _request_worker_restart(home_layout)
+        return {"ok": True, "errors": [], "restart_required": True,
+                "restart_automatic": True} 
     @api.get("/config/connection-check")
     def connection_check(source: str | None = None) -> dict:
         """平台连通 + 协议兼容检查:GET {sink.url}/ingest/health(不回显 Token)。"""

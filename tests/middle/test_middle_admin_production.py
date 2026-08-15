@@ -350,3 +350,64 @@ def test_run_and_push_apis_never_return_persisted_secret_details(tmp_path):
         assert "push-super-secret" not in body
         assert "SELECT * FROM payroll" not in body
         assert "已省略" in body
+
+
+def test_erp_connection_update_writes_secrets_only(tmp_path):
+    """ERP 连接更新:mssql 源重组 DSN 只写 secrets.env;sqlite 源拒绝。"""
+    client, _, _ = _write_production_node(tmp_path, adapter="mssql_readonly")
+    # 首配后 secrets.env 还没有 DSN:密码留空必须报错
+    r = client.post("/api/config/erp-connection", headers=AUTH, json={
+        "source": SOURCE, "server": "192.168.33.10", "database": "E10",
+        "user": "reader", "password": "", "port": 1433})
+    assert r.json()["ok"] is False
+
+    r = client.post("/api/config/erp-connection", headers=AUTH, json={
+        "source": SOURCE, "server": "192.168.33.10", "database": "E10",
+        "user": "reader", "password": "p@ss;1", "port": 1433})
+    assert r.json()["ok"] is True, r.text
+    secrets = (tmp_path / "config" / "secrets.env").read_text(encoding="utf-8")
+    assert "SERVER={192.168.33.10,1433}" in secrets
+    assert "PWD={p@ss;1}" in secrets
+    # connect.yaml 不被修改
+    assert "192.168.33.10" not in (tmp_path / "connect.yaml").read_text(encoding="utf-8")
+
+    # 密码留空保留现有 DSN 中的密码
+    r = client.post("/api/config/erp-connection", headers=AUTH, json={
+        "source": SOURCE, "server": "192.168.33.20", "database": "E10",
+        "user": "reader", "password": ""})
+    assert r.json()["ok"] is True
+    secrets = (tmp_path / "config" / "secrets.env").read_text(encoding="utf-8")
+    assert "SERVER={192.168.33.20,1433}" in secrets
+    assert "PWD={p@ss;1}" in secrets
+
+
+def test_erp_connection_update_named_instance_port_zero(tmp_path):
+    """port=0 表示命名实例:DSN 的 SERVER 不带端口,不被改写成 1433。"""
+    client, _, _ = _write_production_node(tmp_path, adapter="mssql_readonly")
+    r = client.post("/api/config/erp-connection", headers=AUTH, json={
+        "source": SOURCE, "server": "192.168.33.30", "database": "E10",
+        "user": "reader", "password": "p@ss;1", "port": 0})
+    assert r.json()["ok"] is True, r.text
+    secrets = (tmp_path / "config" / "secrets.env").read_text(encoding="utf-8")
+    assert "SERVER={192.168.33.30}" in secrets
+    assert "1433" not in secrets
+
+    # server 含反斜杠时即使给了端口也按命名实例处理
+    r = client.post("/api/config/erp-connection", headers=AUTH, json={
+        "source": SOURCE, "server": "ERP01\\E10PROD", "database": "E10",
+        "user": "reader", "password": "", "port": 0})
+    assert r.json()["ok"] is True, r.text
+    secrets = (tmp_path / "config" / "secrets.env").read_text(encoding="utf-8")
+    assert "SERVER={ERP01\\\\E10PROD}" in secrets
+    assert "PWD={p@ss;1}" in secrets
+
+
+def test_erp_connection_update_rejects_non_mssql_source(tmp_path):
+    client, _, _ = _write_production_node(tmp_path)  # sqlite_readonly
+    r = client.post("/api/config/erp-connection", headers=AUTH, json={
+        "source": SOURCE, "server": "x", "database": "y",
+        "user": "z", "password": "w"})
+    body = r.json()
+    assert body["ok"] is False
+    assert "mssql_readonly" in json.dumps(body, ensure_ascii=False)
+

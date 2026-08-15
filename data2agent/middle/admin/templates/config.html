@@ -17,8 +17,7 @@
   .source-title{font-size:14px;color:#12314f;margin:0 0 4px}.source-lead{font-size:12px;color:#647180;margin:0 0 13px}
   .cred-box{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.cred-item{border:1px solid #e1e7ed;border-radius:6px;background:#fff;padding:10px;font-size:12px;color:#51606f}
   .cred-item strong{display:block;color:#12314f;margin-bottom:4px}.errors{white-space:pre-wrap;color:#b42318;font-size:13px;margin-top:10px}
-  .revision-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;font-size:13px}.revision-grid code{overflow-wrap:anywhere}
-  .diff-table code{white-space:pre-wrap;overflow-wrap:anywhere}.conflict-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
+  .conflict-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
 </style>
 
 <div id="setup-banner" class="banner warn" {% if not needs_setup %}hidden{% endif %}>
@@ -69,31 +68,21 @@
 <div id="daily-card" {% if needs_setup %}hidden{% endif %}>
   <section class="card" aria-labelledby="revision-title">
     <h2 id="revision-title">配置生效状态</h2>
-    <div class="revision-grid">
-      <div>部署模式：<strong id="deployment-mode">—</strong></div>
-      <div>页面 revision：<code id="config-revision-loaded">—</code></div>
-      <div>connector 已加载：<code id="config-revision-running">—</code></div>
-      <div>结论：<span id="config-revision-state">正在检查…</span></div>
-    </div>
+    <p class="meta-line">部署模式：<strong id="deployment-mode">—</strong> ·
+      <span id="config-revision-state">正在检查…</span>
+      <span class="meta" id="config-revision-note"></span></p>
     <p id="legacy-state-warning" class="warn" hidden>检测到旧配置键 <code>landing</code>；下次保存会安全迁移为 <code>state_db</code>。</p>
   </section>
 
   <section class="card">
     <h2>日常配置</h2>
     <div class="tabs" role="tablist" aria-label="日常配置分组">
-      <button type="button" class="tab active" id="daily-tab-conn" role="tab" aria-selected="true" aria-controls="daily-conn" tabindex="0" data-tabs="daily" data-tab="daily-conn">连接测试</button>
-      <button type="button" class="tab" id="daily-tab-link" role="tab" aria-selected="false" aria-controls="daily-link" tabindex="-1" data-tabs="daily" data-tab="daily-link">平台对接</button>
+      <button type="button" class="tab active" id="daily-tab-link" role="tab" aria-selected="true" aria-controls="daily-link" tabindex="0" data-tabs="daily" data-tab="daily-link">平台对接</button>
       <button type="button" class="tab" id="daily-tab-paths" role="tab" aria-selected="false" aria-controls="daily-paths" tabindex="-1" data-tabs="daily" data-tab="daily-paths">控制状态库</button>
       <button type="button" class="tab" id="daily-tab-source" role="tab" aria-selected="false" aria-controls="daily-source" tabindex="-1" data-tabs="daily" data-tab="daily-source">数据源</button>
     </div>
 
-    <section id="daily-conn" class="tab-panel active" role="tabpanel" aria-labelledby="daily-tab-conn" data-tabs="daily">
-      <p class="panel-lead">验证 ERP 连通与元数据权限；凭据不会回显。</p>
-      <label class="field"><span class="field-label">数据源</span><select id="conn-source"></select></label>
-      <div class="actions"><button type="button" id="btn-conn-test">测试 ERP 连接</button><a href="/metadata?from=config" id="link-metadata" hidden>前往元数据扫描选表 →</a></div>
-      <p id="conn-result" class="meta-line" aria-live="polite"></p>
-    </section>
-    <section id="daily-link" class="tab-panel" role="tabpanel" aria-labelledby="daily-tab-link" data-tabs="daily" hidden>
+    <section id="daily-link" class="tab-panel active" role="tabpanel" aria-labelledby="daily-tab-link" data-tabs="daily">
       <p class="panel-lead">按数据源更新平台地址或 Token。Token 留空时不会修改，也不会回显。</p>
       <label class="field"><span class="field-label">数据源</span><select id="link-source"></select></label>
       <label class="field"><span class="field-label">平台接收地址</span><input type="url" id="link-url"></label>
@@ -119,7 +108,6 @@
         <strong>配置 revision 冲突。</strong><div id="config-conflict-detail"></div>
         <div class="conflict-actions"><button type="button" id="btn-conflict-reload" class="btn-ghost">读取服务器新配置</button><button type="button" id="btn-conflict-reapply">在新 revision 上重新应用当前改动</button></div>
       </div>
-      <details id="config-diff" open><summary>保存前改动预览（敏感值不显示）</summary><div id="config-diff-body" class="meta-line"></div></details>
       <div class="actions" id="daily-save-actions" hidden><button type="submit" id="btn-config-save">校验并保存配置</button></div>
     </form>
   </section>
