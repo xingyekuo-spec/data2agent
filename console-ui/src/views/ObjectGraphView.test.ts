@@ -10,7 +10,7 @@ import ObjectGraphView from './ObjectGraphView.vue'
 async function mountView(): Promise<ReturnType<typeof mount>> {
   const pinia: Pinia = createPinia()
   const router = createAppRouter(createMemoryHistory())
-  await router.push('/object-graph')
+  await router.push('/ontology/object-graph')
   await router.isReady()
   const wrapper = mount(ObjectGraphView, { global: { plugins: [pinia, ElementPlus, router] } })
   await flushPromises()

@@ -1,6 +1,7 @@
 (function () {
   'use strict';
   var latestStatus = null;
+  var autoSwitchedToSystem = false;
   var lastStatusSuccessAt = null;
   var pollTimer = null;
   var pollFailures = 0;
@@ -331,12 +332,6 @@
     var openDetails = captureOpenDetails();
     renderOverview(data);
     renderReadiness(data);
-    var sourceSelect = document.getElementById('status-source');
-    var selected = sourceSelect.value;
-    sourceSelect.innerHTML = (data.sources || []).map(function (source) {
-      return '<option value="' + esc(source.source) + '">' + esc(source.source) + '</option>';
-    }).join('');
-    if (selected && (data.sources || []).some(function (source) { return source.source === selected; })) sourceSelect.value = selected;
     document.getElementById('system-panel').innerHTML =
       renderProcesses(data) + renderMaintenance(data) + renderResidency(data);
     var sourcesHtml = '';
@@ -344,6 +339,14 @@
     document.getElementById('sources-panel').innerHTML =
       sourcesHtml || '<div class="card"><p class="meta">尚未配置数据源,请先到「配置」页完成首次配置。</p></div>';
     restoreOpenDetails(openDetails);
+    // 不就绪时把"系统与维护"顶到前台,让阻断项直接可见;用户手动切回后不再强制
+    var ready = (data.readiness || {}).ready !== false;
+    if (!ready && !autoSwitchedToSystem) {
+      autoSwitchedToSystem = true;
+      if (typeof activateTabGroup === 'function') activateTabGroup('status', 'status-tab-system');
+    } else if (ready) {
+      autoSwitchedToSystem = false;
+    }
   }
 
   async function loadStatus() {
@@ -396,23 +399,7 @@
     } catch (error) { renderState(panel, 'error', { message: error.message + (panel.dataset.lastSuccessAt ? ';最近成功:' + fmtTime(panel.dataset.lastSuccessAt) : ''), retry: loadPushSummary }); return false; }
   }
 
-  async function trigger(action, button) {
-    var source = document.getElementById('status-source').value || null;
-    if (action === 'sync' && !await confirmDialog('立即同步会访问所选源 ' + (source || '(未选择)') + ' 的配置表并推送到平台,确认启动?', { okLabel: '启动同步' })) return;
-    if (action === 'reconcile_deep' && !confirm('深度对账会重读所选源 ' + (source || '(未选择)') + ' 并执行修复,确认现在启动?')) return;
-    var result = document.getElementById('action-result');
-    try {
-      var body = await runAction(button, function () {
-        return apiJson('/api/actions/trigger', {
-          method: 'POST', body: JSON.stringify({ action: action, source: source }), timeoutMs: 15000
-        });
-      }, { busyLabel: '提交中…' });
-      if (body && body.run_id) result.innerHTML = '已提交 — <a href="/runs?watch=' + body.run_id + '">运行 #' + body.run_id + '</a>';
-      else result.textContent = body.note || body.message || '请求已完成';
-      announce('success', result.textContent || '动作已提交');
-      loadStatus(); loadRunsSummary();
-    } catch (error) { result.textContent = error.message; }
-  }
+  /* 手动触发动作已迁移至「操作」页(middle-actions.js),本页只读观测。 */
 
   /* 页签切换由共享 initTabs 接管(点击 + 键盘),见 admin.js。 */
 
@@ -434,7 +421,6 @@
     }
   });
 
-  document.getElementById('btn-trigger').addEventListener('click', function () { trigger('sync', this); });
   document.getElementById('btn-diagnostic').addEventListener('click', function () {
     if (!latestStatus) return announce('error', '状态尚未加载');
     copyText(JSON.stringify({ observed_at: latestStatus.observed_at, version: latestStatus.version,

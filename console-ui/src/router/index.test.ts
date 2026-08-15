@@ -39,7 +39,7 @@ describe('router', () => {
       '/ontology/topology',
       '/ontology/classes',
       '/ontology/properties',
-      '/object-graph',
+      '/ontology/object-graph',
       '/templates',
       '/dead-stock',
       '/mcp',

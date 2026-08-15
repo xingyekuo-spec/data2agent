@@ -55,13 +55,13 @@
 </style>
 
 <div id="from-config-banner" class="warn" style="display:none;margin-bottom:16px">
-  连接已配置。请先<strong>刷新元数据</strong>扫描 ERP 表，勾选后在确认框中保存到抽取计划。
+  连接已配置。请先<strong>刷新元数据</strong>扫描 ERP 表，勾选后在确认框中加入计划。
   新安装默认 <code>tables: {}</code>，未选表时同步不会访问任何业务表。
 </div>
 
 <div class="card">
   <h2>ERP 元数据</h2>
-  <p class="meta">只读发现表结构。批量加入时在确认框核对模式/键/水位，确认后写入 connect.yaml（状态变为「已加入」）。可稍后在「抽取表」页细调。</p>
+  <p class="meta">只读发现表结构。批量加入时在确认框核对模式/键/水位，确认后写入 connect.yaml（状态变为「已加入」）。可稍后在「抽取计划」页细调。</p>
   <div class="row">
     <button type="button" id="btn-scan">刷新元数据</button>
     <span id="scan-spin" class="spinner" hidden></span><span id="scan-meta" class="meta">尚未扫描</span>
@@ -82,12 +82,12 @@
   </div>
   <div id="batch-bar" class="batch-bar" hidden>
     <label><input type="checkbox" id="chk-page"> 全选本页</label>
-    <button type="button" id="btn-batch-add" disabled>批量加入抽取计划</button>
+    <button type="button" id="btn-batch-add" disabled>批量加入计划</button>
     <button type="button" class="text" id="btn-clear-sel">清除选择</button>
     <span id="batch-meta" class="meta">已选 0 张表</span>
   </div>
   <div id="table-list">
-    <p class="meta">请先点击上方「刷新元数据」。扫描完成后勾选表，在确认框中保存到抽取计划。</p>
+    <p class="meta">请先点击上方「刷新元数据」。扫描完成后勾选表，在确认框中加入计划。</p>
   </div>
   <div class="row" id="list-pager" hidden>
     <button type="button" id="btn-prev-page" class="ghost">‹ 上一页</button>
@@ -101,7 +101,7 @@
   <h2 id="drawer-title" style="margin-top:8px">详情</h2>
   <div id="drawer-body" class="meta"></div>
   <div style="margin-top:14px">
-    <button type="button" id="btn-add">加入抽取计划</button>
+    <button type="button" id="btn-add">加入计划</button>
     <p class="warn" style="margin-top:10px">将打开确认框；确认后写入 connect.yaml，状态变为「已加入」。</p>
   </div>
 </div>
@@ -109,7 +109,7 @@
 <div id="confirm-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-title" hidden>
   <div class="modal-card modal-wide">
     <div class="m-head">
-      <div class="modal-header"><h2 id="confirm-title">确认加入抽取计划</h2><button type="button" id="btn-confirm-x" class="modal-close" aria-label="关闭">&times;</button></div>
+      <div class="modal-header"><h2 id="confirm-title">确认加入计划</h2><button type="button" id="btn-confirm-x" class="modal-close" aria-label="关闭">&times;</button></div>
       <p class="meta" id="confirm-summary" style="margin:8px 0 0">—</p>
     </div>
     <div class="m-body">

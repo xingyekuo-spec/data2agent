@@ -665,9 +665,14 @@ def create_app(
     def runs_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(request, "runs.html", page_ctx(request))
 
+    @app.get("/actions", response_class=HTMLResponse)
+    def actions_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request, "actions.html", page_ctx(request))
+
     @app.get("/reconcile", response_class=HTMLResponse)
-    def reconcile_page(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(request, "reconcile.html", page_ctx(request))
+    def reconcile_page() -> RedirectResponse:
+        # 旧路径兼容:对账页已并入「操作」页
+        return RedirectResponse(url="/actions", status_code=302)
 
     @app.get("/errors", response_class=HTMLResponse)
     def errors_page(request: Request) -> HTMLResponse:

@@ -38,7 +38,7 @@ function syncBatchBar(){
   bar.hidden=false;
   meta.textContent='已选 '+n+' 张表';
   btn.disabled=n===0;
-  btn.textContent=n?('批量加入抽取计划 ('+n+')'):'批量加入抽取计划';
+  btn.textContent=n?('批量加入计划 ('+n+')'):'批量加入计划';
   var visibleKeys=visibleRows.map(rowKey);
   var allOn=visibleKeys.length>0 && visibleKeys.every(function(k){ return !!selectedKeys[k]; });
   var someOn=!allOn && visibleKeys.some(function(k){ return !!selectedKeys[k]; });

@@ -81,7 +81,7 @@ export const NAV_GROUPS: readonly NavGroup[] = [
       { name: 'topology', path: '/ontology/topology', title: '拓扑' },
       { name: 'ontology-classes', path: '/ontology/classes', title: '类' },
       { name: 'ontology-properties', path: '/ontology/properties', title: '属性' },
-      { name: 'object-graph', path: '/object-graph', title: '对象关系' },
+      { name: 'object-graph', path: '/ontology/object-graph', title: '对象关系' },
       { name: 'templates', path: '/templates', title: '模板' },
     ],
   },
@@ -133,6 +133,11 @@ export const routes: RouteRecordRaw[] = [
     name: 'setup',
     component: viewComponents.setup,
     meta: { title: '首次配置' },
+  },
+  {
+    // 旧路径兼容:/object-graph 迁入 /ontology 前缀
+    path: '/object-graph',
+    redirect: (to) => ({ path: '/ontology/object-graph', query: to.query }),
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
 ]

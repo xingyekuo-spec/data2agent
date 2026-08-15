@@ -35,13 +35,13 @@
 </style>
 
 <section class="card" aria-labelledby="status-actions-title">
-  <h2 id="status-actions-title" class="sr-only">运维操作</h2>
+  <div class="src-head">
+    <h2 id="status-actions-title">手动操作</h2>
+    <a class="more-link" href="/actions">前往「操作」页 →</a>
+  </div>
+  <p class="meta" style="margin:0 0 10px">同步与对账等写操作在「操作」页执行；此页用于观测运行状态。</p>
   <div class="actions">
-    <label class="meta" for="status-source">数据源</label>
-    <select id="status-source" aria-label="运维操作数据源"></select>
-    <button type="button" id="btn-trigger">立即同步</button>
     <button type="button" id="btn-diagnostic" class="btn-ghost">复制诊断摘要</button>
-    <span id="action-result" class="meta" aria-live="polite"></span>
   </div>
 </section>
 

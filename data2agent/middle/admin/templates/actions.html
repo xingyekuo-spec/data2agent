@@ -1,0 +1,28 @@
+{% extends "layout.html" %}
+{% block title %}操作 — 中间机管理{% endblock %}
+{% block content %}
+<style>
+  .actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+</style>
+
+<section class="card" aria-labelledby="actions-title">
+  <p class="layer">手动操作</p><h2 id="actions-title">手动操作</h2>
+  <p class="hint">对所选数据源执行同步或对账，动作会真实访问 ERP 并推送/修复平台数据。深度对账重读全表并修复（软删平台多余行），耗时长，建议低峰执行。</p>
+  <div class="actions">
+    <label class="meta" for="reconcile-source">数据源</label>
+    <select id="reconcile-source" aria-label="手动操作数据源"></select>
+    <button type="button" id="btn-sync">立即同步</button>
+    <button type="button" id="btn-reconcile" class="btn-ghost">L1 对账</button>
+    <button type="button" id="btn-reconcile-deep" class="btn-ghost">深度对账</button>
+    <span id="action-result" class="meta" aria-live="polite"></span>
+  </div>
+</section>
+
+<section class="card" aria-labelledby="reconcile-history-title">
+  <h2 id="reconcile-history-title">运行记录</h2>
+  <p class="hint">同步与对账运行统一收录在「运行」页，可按类型筛选、查看逐表步骤。</p>
+  <p><a class="more-link" href="/runs?type=reconcile">对账运行记录 →</a>&nbsp;&nbsp;<a class="more-link" href="/runs?type=sync">同步运行记录 →</a></p>
+</section>
+
+<script src="{{ static_url }}/middle-actions.js?v={{ static_ver }}" defer></script>
+{% endblock %}
