@@ -9,56 +9,109 @@
     return ok ? 'healthy-card' : warning ? 'warning-card' : 'critical-card';
   }
 
+  function kv(key, value) {
+    return '<dt>' + esc(key) + '</dt><dd>' + esc(value) + '</dd>';
+  }
+
+  var COUNT_LABELS = {
+    runs: '同步运行', run_steps: '运行步骤', audit: '审计日志',
+    push_logs: '推送记录', receipts: '回执', reconcile: '对账记录',
+    staging: '暂存快照'
+  };
+
+  function fmtCountDict(dict) {
+    if (!dict || !Object.keys(dict).length) return '无';
+    return Object.keys(dict).map(function (key) {
+      return (COUNT_LABELS[key] || key) + ' ' + fmtNumber(dict[key]);
+    }).join(' · ');
+  }
+
   function isBad(status) { return status === 'failed' || status === 'critical'; }
   function isWarn(status) { return status === 'warning' || status === 'unknown'; }
+
+  /* 统一状态词汇:正常/警告/异常/未知(领域 badge 如窗口内外、选表状态不变) */
+  function healthBadge(status) {
+    var map = {
+      ok: ['ok', '正常'], pass: ['ok', '正常'], fresh: ['ok', '正常'],
+      warning: ['warning', '警告'], partial: ['warning', '警告'], stale: ['warning', '警告'],
+      failed: ['failed', '异常'], critical: ['failed', '异常']
+    };
+    var entry = map[status] || ['unknown', '未知'];
+    return badge(entry[0], entry[1]);
+  }
+
+  /* ---- 关注项忽略:localStorage 持久化,可恢复 ---- */
+  var DISMISS_KEY = 'd2a_dismissed_issues';
+  function loadDismissed() {
+    try {
+      var value = JSON.parse(localStorage.getItem(DISMISS_KEY) || '[]');
+      return Array.isArray(value) ? value : [];
+    } catch (_error) { return []; }
+  }
+  function saveDismissed(list) {
+    localStorage.setItem(DISMISS_KEY, JSON.stringify(list));
+  }
 
   /* ---- 聚合判定:把四个分区 + 源健康折算成一句话结论 ---- */
   function collectIssues(data) {
     var issues = [];
+    function add(key, text) { issues.push({ key: key, text: text }); }
     var readiness = data.readiness || { ready: false };
     if (!readiness.ready) {
       var failedChecks = (readiness.checks || []).filter(function (c) { return c.status === 'fail'; });
-      issues.push('生产就绪度存在 ' + (failedChecks.length || '若') + ' 干阻断项');
+      add('readiness', '生产就绪度存在 ' + (failedChecks.length || '若') + ' 干阻断项');
     }
     var ps = data.process_status || {};
     if (!(ps.supervised && ps.connector_running && ps.maintenance_running)) {
-      issues.push(ps.stale ? '进程监管状态过期' : 'connector / maintenance 进程未全部运行');
+      add('processes', ps.stale ? '进程监管状态过期' : 'connector / maintenance 进程未全部运行');
     }
     var m = data.maintenance || {};
-    if (m.status === 'failed') issues.push('最近状态库维护失败');
-    else if (m.overdue) issues.push('状态库备份超期未成功');
+    if (m.status === 'failed') add('maintenance', '最近状态库维护失败');
+    else if (m.overdue) add('backup-overdue', '状态库备份超期未成功');
     var residency = data.data_residency || {};
-    if (residency.compliant === false) issues.push('数据驻留边界违规(本机不得持久化业务 Raw)');
+    if (residency.compliant === false) add('residency', '数据驻留边界违规(本机不得持久化业务 Raw)');
     (data.sources || []).forEach(function (source) {
       var status = ((source.health || {}).status) || 'unknown';
-      if (isBad(status)) issues.push('源 ' + source.source + ' 健康检查失败');
-      else if (status === 'warning') issues.push('源 ' + source.source + ' 存在警告');
-      if (!source.tables_configured) issues.push('源 ' + source.source + ' 尚未选表');
+      if (isBad(status)) add('source-health-' + source.source, '源 ' + source.source + ' 健康检查失败');
+      else if (status === 'warning') add('source-warn-' + source.source, '源 ' + source.source + ' 存在警告');
+      if (!source.tables_configured) add('tables-' + source.source, '源 ' + source.source + ' 尚未选表');
+      var stalled = (source.watermarks || []).filter(function (w) { return w.stalled; }).length;
+      if (stalled) add('stall-' + source.source, '源 ' + source.source + ':' + stalled + ' 张表水位连续未推进');
     });
     return issues;
   }
 
   /* ---- L1:总览横幅 —— 一眼结论 + 每源一行 ---- */
   function renderOverview(data) {
-    var issues = collectIssues(data);
+    var all = collectIssues(data);
+    var dismissed = loadDismissed();
+    var issues = all.filter(function (i) { return dismissed.indexOf(i.key) < 0; });
+    var dismissedCount = all.length - issues.length;
     var level = issues.length === 0 ? 'ok'
-      : issues.some(function (i) { return /阻断|违规|失败|未全部/.test(i); }) ? 'critical' : 'warning';
+      : issues.some(function (i) { return /阻断|违规|失败|未全部/.test(i.text); }) ? 'critical' : 'warning';
     var panel = document.getElementById('overview-panel');
     panel.className = 'card ' + (level === 'ok' ? 'healthy-card' : level === 'warning' ? 'warning-card' : 'critical-card');
+    var headBadge = level === 'ok'
+      ? badge('pass', dismissedCount ? '已忽略 ' + dismissedCount + ' 项' : '全部检查通过')
+      : badge(level === 'warning' ? 'warning' : 'failed', issues.length + ' 项需处理');
     var html = '<div class="overview-head"><h2 class="overview-title">' +
       (level === 'ok' ? '✅ 运行正常' : level === 'warning' ? '⚠️ 存在需关注项' : '❌ 存在异常') +
-      '</h2>' + badge(level === 'ok' ? 'pass' : level === 'warning' ? 'warning' : 'failed',
-        level === 'ok' ? '全部检查通过' : issues.length + ' 项需处理') + '</div>';
+      '</h2>' + headBadge + '</div>';
     html += '<p class="meta">状态时间:' + esc(fmtTime(data.observed_at)) +
-      ' · 本页每 10 秒自动刷新,详情分区异常时会自动展开</p>';
+      ' · 本页每 10 秒自动刷新,详情分区异常时会自动展开' +
+      (dismissedCount ? ' · <a href="#" class="issue-restore">恢复 ' + dismissedCount + ' 项已忽略关注</a>' : '') + '</p>';
     if (issues.length) {
-      html += '<ul class="issue-list">' + issues.map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul>';
+      html += '<ul class="issue-list">' + issues.map(function (i) {
+        return '<li>' + esc(i.text) +
+          ' <button type="button" class="issue-dismiss" data-key="' + esc(i.key) +
+          '" title="不再显示此项(可恢复)" aria-label="忽略此项">×</button></li>';
+      }).join('') + '</ul>';
     }
     (data.sources || []).forEach(function (source) {
       var freshness = source.freshness || {};
       var schedule = source.schedule || {};
       html += '<div class="src-mini"><span class="name">' + esc(source.source) + '</span>' +
-        badge(((source.health || {}).status) || 'unknown') +
+        healthBadge(((source.health || {}).status) || 'unknown') +
         '<span class="cell">上次成功 <b>' + esc(fmtTime(source.latest_success && source.latest_success.finished_at)) + '</b></span>' +
         '<span class="cell">新鲜度 <b>' + esc(freshness.status || 'unknown') + ' / ' + esc(fmtDuration(freshness.age_seconds)) + '</b></span>' +
         '<span class="cell">下次同步 <b>' + esc(fmtTime(schedule.next_sync_at)) + '</b></span>' +
@@ -74,7 +127,8 @@
     var checks = readiness.checks || [];
     var problems = checks.filter(function (c) { return c.status !== 'pass'; });
     var html = '<div class="src-head"><h2>生产就绪度</h2>' +
-      badge(readiness.ready ? 'pass' : 'failed', readiness.ready ? '可以部署' : problems.length + ' 项未通过') + '</div>';
+      healthBadge(readiness.ready ? 'ok' : 'failed') +
+      (readiness.ready ? '' : '<span class="meta">' + problems.length + ' 项未通过</span>') + '</div>';
     function item(check) {
       return '<div class="status-item"><div><strong>' + esc(check.id) + '</strong><div class="meta">' +
         esc(check.detail) + (check.suggestion ? '<br>建议:' + esc(check.suggestion) : '') +
@@ -82,13 +136,13 @@
     }
     if (!problems.length) {
       html += '<p class="oknote">全部 ' + checks.length + ' 项检查通过。' +
-        '<details class="card-details"><summary>查看完整清单</summary><div class="status-list">' +
+        '<details class="card-details" data-k="ready-all"><summary>查看完整清单</summary><div class="status-list">' +
         checks.map(item).join('') + '</div></details></p>';
     } else {
       html += '<div class="status-list">' + problems.map(item).join('') + '</div>';
       var passed = checks.filter(function (c) { return c.status === 'pass'; });
       if (passed.length) {
-        html += '<details class="card-details"><summary>已通过 ' + passed.length + ' 项</summary><div class="status-list">' +
+        html += '<details class="card-details" data-k="ready-passed"><summary>已通过 ' + passed.length + ' 项</summary><div class="status-list">' +
           passed.map(item).join('') + '</div></details>';
       }
     }
@@ -106,11 +160,12 @@
     var restarts = processes.reduce(function (sum, p) { return sum + (p.restarts || 0); }, 0);
     var html = '<section class="card ' + statusCardClass(ok, ps.stale) + '">';
     html += '<div class="src-head"><h2>进程监管</h2>' +
-      badge(ok ? 'ok' : ps.stale ? 'warning' : 'failed', ok ? '监管正常' : ps.stale ? '状态过期' : '进程异常') + '</div>';
+      healthBadge(ok ? 'ok' : ps.stale ? 'stale' : 'failed') + '</div>';
     if (!processes.length) {
       html += '<p class="warn">没有 launcher 进程记录,请检查启动方式和 <a href="/logs?service=launcher">d2a-launcher.log</a>。</p>';
       return html + '</section>';
     }
+    if (ps.stale) html += '<p class="warn">监管状态过期,进程可能已脱离监管。</p>';
     html += '<p class="meta">' + processes.length + ' 个进程在监管中 · 累计重启 ' + fmtNumber(restarts) +
       ' 次 · 启动方式 ' + esc(ps.startup_mode || 'unknown') +
       ' · 中间机 v' + esc(version.middle_version || '未知') +
@@ -127,7 +182,7 @@
         esc(process.loaded_config_revision || '—') + '</code></td></tr>';
     });
     table += '</tbody></table></div>';
-    html += '<details class="card-details"' + (ok ? '' : ' open') + '><summary>进程明细</summary>' + table + '</details>';
+    html += '<details class="card-details" data-k="proc"' + (ok ? '' : ' open') + '><summary>进程明细</summary>' + table + '</details>';
     return html + '</section>';
   }
 
@@ -138,7 +193,7 @@
     var partial = maintenance.status === 'partial';
     var html = '<section class="card ' + statusCardClass(ok, partial) + '">';
     html += '<div class="src-head"><h2>状态库备份</h2>' +
-      badge(ok ? 'ok' : maintenance.status || 'unknown') + '</div>';
+      healthBadge(ok ? 'ok' : maintenance.status === 'partial' ? 'partial' : maintenance.status === 'failed' ? 'failed' : 'unknown') + '</div>';
     html += '<div class="src-kv"><span>最近成功 <b>' + esc(fmtTime(maintenance.last_success_at)) +
       '</b></span><span>大小 <b>' + esc(fmtBytes(maintenance.backup_size_bytes)) +
       '</b></span><span>可用空间 <b>' + esc(maintenance.free_gb == null ? '—' : maintenance.free_gb + ' GiB') +
@@ -146,10 +201,18 @@
     html += '<p class="meta">仅中间机控制状态(水位/运行/推送),不含业务 Raw · <a href="/recovery">离线恢复指引</a></p>';
     if (maintenance.overdue) html += '<p class="warn">近期没有成功状态库备份,请检查维护进程、目录权限和磁盘空间。</p>';
     if (maintenance.error) html += '<p class="warn">最近错误:' + esc(maintenance.error) + '</p>';
-    html += '<details class="card-details"' + (ok ? '' : ' open') + '><summary>清理与保留明细</summary><pre class="diagnostic">' +
-      esc(JSON.stringify({ last_attempt_at: maintenance.last_attempt_at, integrity: maintenance.integrity,
-        backup_file: maintenance.backup_file, pruned: maintenance.pruned, abandoned: maintenance.abandoned,
-        removed_backups: maintenance.removed_backups, errors: maintenance.errors }, null, 2)) + '</pre></details>';
+    var maintErrors = maintenance.errors || [];
+    html += '<details class="card-details" data-k="maint"' + (ok ? '' : ' open') + '><summary>清理与保留明细</summary><dl class="kv-list">' +
+      kv('最近尝试', fmtTime(maintenance.last_attempt_at)) +
+      kv('备份文件', maintenance.backup_file || '—') +
+      kv('完整性', maintenance.integrity || '未知') +
+      kv('历史记录清理', fmtCountDict(maintenance.pruned)) +
+      kv('孤儿暂存清理', fmtCountDict(maintenance.abandoned)) +
+      kv('备份轮换删除', fmtNumber(maintenance.removed_backups || 0) + ' 份') +
+      kv('清理错误', maintErrors.length ? maintErrors.map(function (e) {
+        return (e.step || '?') + ': ' + (e.error || '?');
+      }).join(';') : '无') +
+      '</dl></details>';
     return html + '</section>';
   }
 
@@ -160,7 +223,7 @@
     var ok = residency.compliant !== false;
     var html = '<section class="card ' + statusCardClass(ok, false) + '">';
     html += '<div class="src-head"><h2>数据驻留边界</h2>' +
-      badge(ok ? 'pass' : 'failed', ok ? '符合' : '违规') + '</div>';
+      healthBadge(ok ? 'ok' : 'failed') + '</div>';
     html += '<p class="meta">部署模式 ' + esc(residency.deployment_mode || '—') +
       ' · 推送出口 ' + esc(residency.sink_type || '—') +
       ' · 本机 Raw 表 <b>' + fmtNumber(residency.raw_table_count) + '</b>' +
@@ -169,9 +232,33 @@
     if (!ok) {
       html += '<div class="warn" role="alert">' + esc((residency.violations || []).join(';')) + '</div>';
     }
-    html += '<details class="card-details"' + (ok ? '' : ' open') + '><summary>驻留明细</summary><pre class="diagnostic">' +
-      esc(JSON.stringify({ state_db_file: residency.state_db_file, spool_policies: residency.spool_policies,
-        raw_table_names_digest: residency.raw_table_names_digest, autostart: autostart }, null, 2)) + '</pre></details>';
+    var spoolSources = residency.spool_sources || {};
+    var spoolRows = Object.keys(spoolSources).map(function (name) {
+      var s = spoolSources[name] || {};
+      var text = s.policy || '—';
+      if (s.directory_configured) {
+        text += ' · 目录保护' + (s.directory_protected === true ? '✓' : s.directory_protected === false ? '✗' : '未知');
+      }
+      if (s.encrypted_at_rest) text += ' · 静态加密已确认';
+      if (s.active_count) text += ' · 活跃 ' + fmtNumber(s.active_count);
+      if (s.orphan_count) text += ' · 遗留 ' + fmtNumber(s.orphan_count);
+      return kv('spool · ' + name, text);
+    }).join('');
+    if (!spoolRows) {
+      var policies = residency.spool_policies || {};
+      spoolRows = Object.keys(policies).map(function (name) {
+        return kv('spool · ' + name, policies[name]);
+      }).join('') || kv('spool 策略', '—');
+    }
+    var autostartText = autostart.status === 'installed'
+      ? '已安装(' + (autostart.task_name || '?') + ',校验于 ' + fmtTime(autostart.checked_at) + ')'
+      : autostart.status === 'not_installed' ? '未安装' : '未知';
+    html += '<details class="card-details" data-k="res"' + (ok ? '' : ' open') + '><summary>驻留明细</summary><dl class="kv-list">' +
+      kv('状态库文件', residency.state_db_file || '—') +
+      kv('Raw 表指纹', (residency.raw_table_name_digests || []).join(', ') || '无') +
+      spoolRows +
+      kv('开机任务', autostartText) +
+      '</dl></details>';
     return html + '</section>';
   }
 
@@ -182,7 +269,7 @@
     var schedule = source.schedule || {};
     var healthy = health.status === 'ok' && configured;
     var html = '<section class="card ' + statusCardClass(healthy, health.status === 'warning' || !configured) + '">';
-    html += '<div class="src-head"><h2>源 ' + esc(source.source) + '</h2>' + badge(health.status) +
+    html += '<div class="src-head"><h2>源 ' + esc(source.source) + '</h2>' + healthBadge(health.status) +
       badge(source.in_window ? 'ok' : 'paused', source.in_window ? '窗口内' : '窗口外') +
       badge(configured ? 'configured' : 'failed', configured ? '已选表' : '未选表') + '</div>';
     if (!configured) {
@@ -206,7 +293,11 @@
       detailsHtml += '<div class="table-scroll"><table class="data"><thead><tr><th>表</th><th>列</th><th>高水位</th><th>类型</th><th>最近推进</th><th>连续未推进</th><th>上次同步</th></tr></thead><tbody>';
       source.watermarks.forEach(function (watermark) {
         var advance = watermark.recent_advance || {};
-        var advanceText = advance.value == null ? '—' : advance.kind === 'duration_seconds' ? fmtDuration(advance.value) : advance.kind === 'numeric' ? String(advance.value) : advance.value ? '已变化' : '未变化';
+        var advanceText;
+        if (advance.value == null) advanceText = '—';
+        else if (advance.kind === 'duration_seconds') advanceText = advance.value > 0 ? fmtDuration(advance.value) : '未推进';
+        else if (advance.kind === 'numeric') advanceText = advance.value ? String(advance.value) : '未变化';
+        else advanceText = advance.value ? '已变化' : '未变化';
         detailsHtml += '<tr><td>' + esc(watermark.table_name) + '</td><td>' + esc(watermark.watermark_col) +
           '</td><td class="long-cell">' + esc(watermark.high_water) + '</td><td>' + esc(watermark.value_type || '—') +
           '</td><td>' + esc(advanceText) + '</td><td>' + (watermark.stalled ? badge('warning', fmtNumber(watermark.unchanged_successive_runs) + ' 轮,需关注') : fmtNumber(watermark.unchanged_successive_runs || 0)) +
@@ -215,14 +306,29 @@
       detailsHtml += '</tbody></table></div>';
     }
     if (detailsHtml) {
-      html += '<details class="card-details wm"' + (detailOpen ? ' open' : '') + '><summary>水位与健康分项(' +
+      html += '<details class="card-details wm" data-k="src-' + esc(source.source) + '"' + (detailOpen ? ' open' : '') + '><summary>水位与健康分项(' +
         (source.watermarks || []).length + ' 张表' + (stalledCount ? ',' + stalledCount + ' 张停滞' : '') +
         ')</summary>' + detailsHtml + '</details>';
     }
     return html + '</section>';
   }
 
+  /* 轮询重渲时保留用户手动展开的 details(按 data-k 标识) */
+  function captureOpenDetails() {
+    var open = {};
+    document.querySelectorAll('details[data-k]').forEach(function (d) {
+      if (d.open) open[d.dataset.k] = true;
+    });
+    return open;
+  }
+  function restoreOpenDetails(open) {
+    document.querySelectorAll('details[data-k]').forEach(function (d) {
+      if (open[d.dataset.k]) d.open = true;
+    });
+  }
+
   function renderStatus(data) {
+    var openDetails = captureOpenDetails();
     renderOverview(data);
     renderReadiness(data);
     var sourceSelect = document.getElementById('status-source');
@@ -231,22 +337,28 @@
       return '<option value="' + esc(source.source) + '">' + esc(source.source) + '</option>';
     }).join('');
     if (selected && (data.sources || []).some(function (source) { return source.source === selected; })) sourceSelect.value = selected;
-    var html = renderProcesses(data) + renderMaintenance(data) + renderResidency(data);
-    (data.sources || []).forEach(function (source) { html += renderSource(source); });
-    document.getElementById('status-panel').innerHTML = html;
+    document.getElementById('system-panel').innerHTML =
+      renderProcesses(data) + renderMaintenance(data) + renderResidency(data);
+    var sourcesHtml = '';
+    (data.sources || []).forEach(function (source) { sourcesHtml += renderSource(source); });
+    document.getElementById('sources-panel').innerHTML =
+      sourcesHtml || '<div class="card"><p class="meta">尚未配置数据源,请先到「配置」页完成首次配置。</p></div>';
+    restoreOpenDetails(openDetails);
   }
 
   async function loadStatus() {
-    var panel = document.getElementById('status-panel');
     try {
       var data = await apiJson('/api/status', { timeoutMs: 10000 });
       latestStatus = data; lastStatusSuccessAt = new Date().toISOString();
       renderStatus(data);
       return true;
     } catch (error) {
-      renderState(panel, 'error', {
-        message: error.message + (lastStatusSuccessAt ? ';最近成功刷新:' + fmtTime(lastStatusSuccessAt) : ''),
-        retry: loadStatus
+      var staleNote = lastStatusSuccessAt ? ';最近成功刷新:' + fmtTime(lastStatusSuccessAt) : '';
+      renderState(document.getElementById('sources-panel'), 'error', {
+        message: error.message + staleNote, retry: loadStatus
+      });
+      renderState(document.getElementById('system-panel'), 'error', {
+        message: error.message + staleNote, retry: loadStatus
       });
       return false;
     }
@@ -286,7 +398,7 @@
 
   async function trigger(action, button) {
     var source = document.getElementById('status-source').value || null;
-    if (action === 'sync' && !confirm('立即同步会访问所选源 ' + (source || '(未选择)') + ' 的配置表并推送到平台,确认启动?')) return;
+    if (action === 'sync' && !await confirmDialog('立即同步会访问所选源 ' + (source || '(未选择)') + ' 的配置表并推送到平台,确认启动?', { okLabel: '启动同步' })) return;
     if (action === 'reconcile_deep' && !confirm('深度对账会重读所选源 ' + (source || '(未选择)') + ' 并执行修复,确认现在启动?')) return;
     var result = document.getElementById('action-result');
     try {
@@ -302,20 +414,27 @@
     } catch (error) { result.textContent = error.message; }
   }
 
-  document.getElementById('btn-trigger').addEventListener('click', function () { trigger('sync', this); });
-  document.getElementById('btn-reconcile').addEventListener('click', function () { trigger('reconcile', this); });
-  document.getElementById('btn-reconcile-deep').addEventListener('click', function () { trigger('reconcile_deep', this); });
-  document.getElementById('btn-test').addEventListener('click', async function () {
-    var button = this, result = document.getElementById('action-result');
-    var source = document.getElementById('status-source').value || null;
-    try {
-      var body = await runAction(button, function () {
-        return apiJson('/api/connection/test', { method: 'POST', body: JSON.stringify({ source: source }) });
-      }, { busyLabel: '测试中…' });
-      sessionStorage.setItem('d2a_last_connection_test', JSON.stringify({ at: Date.now(), body: body }));
-      result.textContent = body.status === 'failed' || body.error ? formatApiError(body, '连接失败') : 'ERP 连接正常';
-    } catch (error) { result.textContent = error.message; }
+  /* 页签切换由共享 initTabs 接管(点击 + 键盘),见 admin.js。 */
+
+  /* 关注项忽略/恢复(事件委托,渲染后持续有效) */
+  document.getElementById('overview-panel').addEventListener('click', function (event) {
+    var btn = event.target.closest('.issue-dismiss');
+    if (btn) {
+      var list = loadDismissed();
+      if (list.indexOf(btn.dataset.key) < 0) list.push(btn.dataset.key);
+      saveDismissed(list);
+      if (latestStatus) renderOverview(latestStatus);
+      return;
+    }
+    var restore = event.target.closest('.issue-restore');
+    if (restore) {
+      event.preventDefault();
+      saveDismissed([]);
+      if (latestStatus) renderOverview(latestStatus);
+    }
   });
+
+  document.getElementById('btn-trigger').addEventListener('click', function () { trigger('sync', this); });
   document.getElementById('btn-diagnostic').addEventListener('click', function () {
     if (!latestStatus) return announce('error', '状态尚未加载');
     copyText(JSON.stringify({ observed_at: latestStatus.observed_at, version: latestStatus.version,

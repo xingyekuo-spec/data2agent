@@ -19,7 +19,7 @@
   nav .nav-group{display:flex;gap:12px;align-items:center}
   nav .nav-group-label{font-size:11px;letter-spacing:.06em;opacity:.65;margin-right:-6px}
   nav .nav-divider{width:1px;height:16px;background:rgba(255,255,255,.35)}
-  main{padding:16px 22px;max-width:1200px;margin:0 auto}
+  main{padding:16px 22px;max-width:1680px;margin:0 auto}  /* 自适应窗口,超宽屏限 1680px 防文字行过长 */
   /* ---- 各管理页共享的卡片/徽章/表格/弹窗样式(页面模板不再各自复制) ---- */
   .card{background:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px;
         box-shadow:0 1px 3px rgba(16,34,54,.08)}
@@ -61,7 +61,7 @@
   :focus-visible{outline:3px solid #f4b740;outline-offset:2px}
   [hidden]{display:none!important}
   button:disabled{opacity:.55;cursor:not-allowed}
-  .global-alert{max-width:1200px;margin:12px auto 0;padding:12px 16px;background:#fdecea;
+  .global-alert{max-width:calc(1680px - 44px);margin:12px auto 0;padding:12px 16px;background:#fdecea;
                 border:1px solid #e8a5a0;border-radius:8px;color:#8b1a13;font-size:13px}
   .global-alert ul{margin:6px 0;padding-left:20px}.global-alert a{color:#6e1610}
   .header-actions{display:flex;align-items:center;gap:10px}
@@ -107,7 +107,8 @@
 </style>
 </head>
 <body data-needs-token="{{ 'true' if needs_token else 'false' }}"
-      data-needs-setup="{{ 'true' if needs_setup else 'false' }}">
+      data-needs-setup="{{ 'true' if needs_setup else 'false' }}"
+      data-page="{{ page_id | default('') }}">
 <header>
   <b>data2agent</b>
   <nav>{% block nav %}{% endblock %}</nav>

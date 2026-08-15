@@ -252,10 +252,39 @@
     announce('success', '已复制到剪贴板');
   }
 
+  /* 页签组的统一点击切换:各页面只需标准 data-tabs 标记即可获得完整
+     交互(点击 + 键盘),不再需要每页重复接线。切换后派发
+     d2a:tab-activated 事件供页面附加逻辑(如配置页的保存按钮显隐)。 */
+  function activateTabGroup(group, panelId) {
+    document.querySelectorAll('[role="tab"][data-tabs="' + group + '"]').forEach(function (tab) {
+      var active = tab.dataset.tab === panelId;
+      tab.classList.toggle('active', active);
+      tab.setAttribute('aria-selected', active ? 'true' : 'false');
+      tab.tabIndex = active ? 0 : -1;
+    });
+    document.querySelectorAll('[role="tabpanel"][data-tabs="' + group + '"]').forEach(function (panel) {
+      var active = panel.id === panelId;
+      panel.classList.toggle('active', active);
+      panel.hidden = !active;
+    });
+    document.dispatchEvent(new CustomEvent('d2a:tab-activated', {
+      detail: { group: group, panelId: panelId }
+    }));
+  }
+
   function initTabs(root) {
     (root || document).querySelectorAll('[role="tablist"]').forEach(function (list) {
       var tabs = Array.prototype.slice.call(list.querySelectorAll('[role="tab"]'));
       tabs.forEach(function (tab, index) {
+        // data-tabs 组由共享层接管点击;data-sub 等页面自有机制不受影响
+        if (tab.dataset.tabs && !tab.dataset.sharedBound) {
+          tab.dataset.sharedBound = '1';
+          tab.addEventListener('click', function () {
+            activateTabGroup(tab.dataset.tabs, tab.dataset.tab);
+          });
+        }
+        if (tab.dataset.kbBound) return;
+        tab.dataset.kbBound = '1';
         tab.addEventListener('keydown', function (event) {
           var next = null;
           if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
@@ -273,6 +302,9 @@
     if (document.body.dataset.needsToken === 'true' && !sessionStorage.getItem('d2a_token')) return true;
     var banner = document.getElementById('global-alert-banner');
     if (!banner) return true;
+    // 状态页的总览横幅已聚合相同内容(就绪度/进程/源健康),
+    // 全局横幅在此页抑制,避免同一异常两处重复展示。
+    if (document.body.dataset.page === 'status') { banner.hidden = true; return true; }
     try {
       var status = await apiJson('/api/alerts', { timeoutMs: 10000 });
       var alerts = (status.alerts || []).filter(function (alert) {
@@ -373,6 +405,41 @@
     document.addEventListener('visibilitychange', scheduleGlobalAlerts);
   }
 
+  /* 共享确认弹窗:替代原生 confirm(风格统一、可访问性内建)。
+     返回 Promise<boolean>;调用方: if (await confirmDialog('…')) { … } */
+  function confirmDialog(message, options) {
+    options = options || {};
+    return new Promise(function (resolve) {
+      var overlay = document.createElement('div');
+      overlay.className = 'modal-overlay';
+      overlay.innerHTML =
+        '<div class="modal-card" role="dialog" aria-modal="true" aria-label="确认操作" style="max-width:26rem">' +
+        '<div class="modal-header"><h2>' + esc(options.title || '确认操作') + '</h2></div>' +
+        '<p class="meta" style="margin:0 0 16px">' + esc(message) + '</p>' +
+        '<div class="actions"><button type="button" data-act="ok">' + esc(options.okLabel || '确认') + '</button>' +
+        '<button type="button" data-act="cancel" class="btn-ghost">取消</button></div></div>';
+      function done(value) {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+        resolve(value);
+      }
+      function onKey(event) {
+        if (event.key === 'Escape') { event.preventDefault(); done(false); }
+        if (event.key === 'Enter') { event.preventDefault(); done(true); }
+      }
+      overlay.addEventListener('click', function (event) {
+        if (event.target === overlay) return done(false);
+        var act = event.target.closest('[data-act]');
+        if (act) done(act.dataset.act === 'ok');
+      });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(overlay);
+      overlay.hidden = false;
+      var okBtn = overlay.querySelector('[data-act="ok"]');
+      if (okBtn) okBtn.focus();
+    });
+  }
+
   Object.assign(global, {
     esc: esc, authHeaders: authHeaders, ApiError: ApiError,
     apiFetch: apiFetch, apiJson: apiJson, formatApiError: formatApiError,
@@ -380,7 +447,8 @@
     fmtBytes: fmtBytes, fmtNumber: fmtNumber, badge: badge,
     announce: announce, renderState: renderState, runAction: runAction,
     openModal: openModal, closeModal: closeModal, copyText: copyText,
-    initTabs: initTabs, refreshGlobalAlerts: refreshGlobalAlerts,
+    initTabs: initTabs, activateTabGroup: activateTabGroup, refreshGlobalAlerts: refreshGlobalAlerts,
+    confirmDialog: confirmDialog,
     handleUnauthorized: handleUnauthorized
   });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initShell);
