@@ -1,6 +1,32 @@
 {% extends "layout.html" %}
 {% block title %}运行 — 中间机管理{% endblock %}
 {% block content %}
+<style>
+  .run-detail-card{width:96vw;max-width:1500px;max-height:94vh;display:flex;flex-direction:column;padding:0}
+  .run-detail-card .rd-head{padding:16px 18px 10px;border-bottom:1px solid #e8edf2}
+  .run-detail-card .rd-head h2{margin:0;font-size:16px;color:#12314f}
+  .run-detail-card .rd-body{padding:14px 18px;overflow:auto;flex:1}
+  .rd-sub{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;font-size:13px;color:#51606f}
+  .rd-fail-summary{display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:#fdecea;
+    border:1px solid #e8a5a0;border-radius:8px;padding:10px 12px;margin:0 0 12px;font-size:13px;color:#8b1a13}
+  .rd-fail-summary.ok{background:#e6f4ea;border-color:#b7dfc3;color:#1e7e34}
+  .rd-fail-summary button{background:none;border:none;color:inherit;text-decoration:underline;
+    cursor:pointer;font-size:13px;padding:0}
+  .rd-overall{margin:0 0 14px}
+  .rd-overall .meta{font-size:12px;margin-top:3px}
+  tr.step-failed td{background:#fdecea}
+  tr.step-row{cursor:pointer}
+  tr.step-row:hover td{background:#f5f7fa}
+  tr.step-failed:hover td{background:#fad4d0}
+  .step-toggle{display:inline-block;width:1em;color:#6a7682;user-select:none}
+  tr.step-detail td{background:#fafbfc;border-bottom:1px solid #e8edf2;padding:8px 12px 12px 34px}
+  .step-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px 18px;font-size:13px}
+  .step-detail-grid dt{color:#51606f;font-size:12px}
+  .step-detail-grid dd{margin:2px 0 0;color:#1c2733;overflow-wrap:anywhere}
+  .step-err{color:#b42318;white-space:pre-wrap;overflow-wrap:anywhere}
+  details.gen>summary{cursor:pointer;font-size:14px;font-weight:600;color:#12314f;padding:4px 0}
+  .poll-note{font-size:12px;color:#51606f}
+</style>
 <section class="card">
   <p class="layer">运行与对账</p><h2>运行历史</h2>
   <p class="hint">同步和对账记录均保留 source、generation、逐表进度与失败上下文；详情打开时智能刷新。</p>
@@ -17,9 +43,12 @@
 </section>
 
 <div id="run-detail-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="run-detail-title" hidden>
-  <div class="modal-card">
-    <div class="modal-header"><h2 id="run-detail-title">运行详情</h2><button type="button" id="run-detail-close" class="modal-close" aria-label="关闭">&times;</button></div>
-    <div id="run-detail-body" aria-live="polite"></div>
+  <div class="modal-card run-detail-card">
+    <div class="rd-head">
+      <div class="modal-header" style="margin-bottom:0"><h2 id="run-detail-title">运行详情</h2><button type="button" id="run-detail-close" class="modal-close" aria-label="关闭">&times;</button></div>
+      <div class="rd-sub"><span id="run-detail-status"></span><span id="run-detail-poll" class="poll-note"></span></div>
+    </div>
+    <div class="rd-body" id="run-detail-body" aria-live="polite"></div>
   </div>
 </div>
 <script src="{{ static_url }}/middle-runs.js?v={{ static_ver }}" defer></script>

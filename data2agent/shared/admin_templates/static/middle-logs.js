@@ -25,6 +25,7 @@
   function init() {
     var query = new URLSearchParams(location.search);
     if (query.get('service') && byId('log-service').querySelector('option[value="' + CSS.escape(query.get('service')) + '"]')) byId('log-service').value = query.get('service');
+    if (query.get('level')) byId('log-level').value = query.get('level');
     byId('log-refresh').addEventListener('click', loadLogs); byId('log-service').addEventListener('change', loadLogs);
     byId('log-auto').addEventListener('change', function () { syncAuto(); if (byId('log-auto').checked) loadLogs(); });
     document.addEventListener('visibilitychange', function () { if (!document.hidden && byId('log-auto').checked) loadLogs(); });

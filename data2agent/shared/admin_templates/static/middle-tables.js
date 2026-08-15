@@ -95,6 +95,36 @@ function wmSelectHtml(meta, selected){
   return html+'</select>';
 }
 
+var ST_BAD=['error','failed','table_missing','missing_watermark','missing_key','invalid','not_found','unreachable'];
+var ST_WARN=['warning','unknown','partial','skipped'];
+function stClass(status){
+  if(!status) return '';
+  if(status==='ready'||status==='ok') return 'st-ok';
+  if(ST_BAD.indexOf(status)>=0) return 'st-bad';
+  return 'st-warnrow';
+}
+function statusBadge(st){
+  if(!st) return '<span class="meta">—</span>';
+  var cls=stClass(st.status);
+  var css=cls==='st-ok'?'badge-ok':cls==='st-bad'?'badge-off':'badge-warn';
+  var html='<span class="badge '+css+'">'+esc(st.status)+'</span>';
+  if(st.detail) html+='<div class="meta">'+esc(st.detail)+'</div>';
+  if(st.suggestion) html+='<div class="meta">'+esc(st.suggestion)+'</div>';
+  return html;
+}
+
+function filterText(){ return (document.getElementById('filter').value||'').trim().toLowerCase(); }
+function filteredNames(){
+  var q=filterText();
+  var names=Object.keys(tables).sort();
+  if(!q) return names;
+  return names.filter(function(n){
+    var s=tables[n]||{};
+    var full=((s.schema||'')+'.'+n).toLowerCase();
+    return full.indexOf(q)>=0;
+  });
+}
+
 function selectedCount(){ return Object.keys(selectedKeys).length; }
 function syncBatchBar(){
   var names=Object.keys(tables);
@@ -107,21 +137,29 @@ function syncBatchBar(){
   document.getElementById('btn-batch-remove').disabled=n===0;
   document.getElementById('btn-batch-edit').textContent=n?('批量编辑 ('+n+')'):'批量编辑';
   var page=document.getElementById('chk-page');
-  var allOn=names.length>0 && names.every(function(k){ return !!selectedKeys[k]; });
-  var someOn=!allOn && names.some(function(k){ return !!selectedKeys[k]; });
+  var visible=filteredNames();
+  var allOn=visible.length>0 && visible.every(function(k){ return !!selectedKeys[k]; });
+  var someOn=!allOn && visible.some(function(k){ return !!selectedKeys[k]; });
   page.checked=allOn;
   page.indeterminate=someOn;
 }
 
 function render(){
   document.getElementById('rev').textContent=revision?('revision '+revision.slice(0,18)+'…'):'';
-  var names=Object.keys(tables).sort();
+  var allNames=Object.keys(tables);
+  var names=filteredNames();
   var guide=document.getElementById('empty-guide');
-  if(guide) guide.style.display=!names.length?'block':'none';
+  if(guide) guide.style.display=!allNames.length?'block':'none';
+  if(!allNames.length){
+    document.getElementById('tbody').innerHTML=
+      '<tr><td colspan="7" class="meta">抽取计划为空 — 请先到「选表」页加入表</td></tr>';
+    selectedKeys={};
+    syncBatchBar();
+    return;
+  }
   if(!names.length){
     document.getElementById('tbody').innerHTML=
-      '<tr><td colspan="7" class="meta">暂无抽取表 — 请先到元数据页选表</td></tr>';
-    selectedKeys={};
+      '<tr><td colspan="7" class="meta">无匹配「'+esc(filterText())+'」的表</td></tr>';
     syncBatchBar();
     return;
   }
@@ -130,13 +168,14 @@ function render(){
     var s=tables[name]||{};
     var st=results[name];
     var checked=!!selectedKeys[name];
-    html+='<tr class="'+(checked?'selected':'')+'">'+
+    var rowCls=(checked?'selected':'')+(st?' '+stClass(st.status).replace('st-ok',''):'');
+    html+='<tr class="'+rowCls.trim()+'">'+
       '<td class="check"><input type="checkbox" class="row-check" data-name="'+esc(name)+'"'+
-        (checked?' checked':'')+'></td>'+
+        ' aria-label="选择 '+esc(name)+'"'+(checked?' checked':'')+'></td>'+
       '<td>'+esc((s.schema||'')+'.'+name)+'</td><td>'+esc(s.mode)+'</td><td>'+
       esc((s.key_columns||[]).join(', ')||'—')+'</td><td>'+esc(s.watermark||'—')+'</td><td>'+
-      esc(s.start_date||'—')+'</td><td>'+
-      esc(st?(st.status+(st.suggestion?(' · '+st.suggestion):'')):'—')+
+      esc(s.start_date||'—')+'</td><td class="st-cell">'+
+      statusBadge(st)+
       '</td><td class="actions">'+
       '<button type="button" class="text" data-edit="'+esc(name)+'">编辑</button>'+
       '<button type="button" class="text danger-text" data-remove="'+esc(name)+'">移除</button>'+
@@ -225,18 +264,27 @@ async function openEdit(names){
   renderEditTable(names);
   openModal('edit-modal');
 
+  var failed=[];
   await Promise.all(names.map(async function(name){
     var s=tables[name]||{};
     var meta=await fetchTableMeta(s.schema||'dbo', name);
     if(meta) editMeta[name]=meta;
-    else editMeta[name]={
-      primary_key: s.key_columns||[],
-      unique_keys: [],
-      watermark_candidates: s.watermark?[s.watermark]:[]
-    };
+    else {
+      failed.push(name);
+      editMeta[name]={
+        primary_key: s.key_columns||[],
+        unique_keys: [],
+        watermark_candidates: s.watermark?[s.watermark]:[]
+      };
+    }
   }));
   renderEditTable(names);
-  document.getElementById('ed-msg').textContent='';
+  if(failed.length){
+    document.getElementById('ed-msg').textContent=
+      '未能加载 '+failed.length+' 张表的元数据（'+failed.join(', ')+'），键/水位选项基于当前配置，可能不全。';
+  } else {
+    document.getElementById('ed-msg').textContent='';
+  }
   document.getElementById('btn-apply').disabled=false;
 }
 function closeEdit(){
@@ -263,7 +311,47 @@ function planDiff(before, after){
   return {added:added.sort(), removed:removed.sort(), changed:changed.sort()};
 }
 
-async function saveTablesPlan(nextTables){
+/* 差异确认弹窗:替代原生 confirm,可滚动、可复制、可访问。 */
+function confirmDiffModal(diff, options){
+  options=options||{};
+  return new Promise(function(resolve){
+    var overlay=document.getElementById('diff-modal');
+    var summaryEl=document.getElementById('df-summary');
+    var bodyEl=document.getElementById('df-body');
+    function group(label, items, css){
+      if(!items||!items.length) return '';
+      return '<div style="margin-bottom:12px">'+
+        '<div class="meta" style="font-weight:600;margin-bottom:4px">'+label+'（'+items.length+'）</div>'+
+        '<div style="max-height:180px;overflow:auto;border:1px solid #e8edf2;border-radius:6px;padding:8px 10px">'+
+        items.map(function(t){ return '<div class="meta" style="color:'+css+'">'+esc(t)+'</div>'; }).join('')+
+        '</div></div>';
+    }
+    var total=(diff.added||[]).length+(diff.changed||[]).length+(diff.removed||[]).length;
+    summaryEl.textContent=options.summary||('共 '+total+' 项变更');
+    bodyEl.innerHTML=
+      group('新增', diff.added, '#1e7e34')+
+      group('修改', diff.changed, '#8a4b00')+
+      group('删除', diff.removed, '#b42318')||
+      '<p class="meta">（无差异）</p>';
+    if(!bodyEl.innerHTML.trim()) bodyEl.innerHTML='<p class="meta">（无差异）</p>';
+    function done(val){
+      document.getElementById('btn-diff-ok').onclick=null;
+      document.getElementById('btn-diff-cancel').onclick=null;
+      document.getElementById('btn-diff-x').onclick=null;
+      overlay.onclick=null;
+      closeModal('diff-modal');
+      resolve(val);
+    }
+    document.getElementById('btn-diff-ok').onclick=function(){ done(true); };
+    document.getElementById('btn-diff-cancel').onclick=function(){ done(false); };
+    document.getElementById('btn-diff-x').onclick=function(){ done(false); };
+    overlay.onclick=function(e){ if(e.target===overlay) done(false); };
+    openModal('diff-modal');
+  });
+}
+
+async function saveTablesPlan(nextTables, opts){
+  opts=opts||{};
   if(!revision){ setMsg('缺少 revision，请重新加载', false); return false; }
   document.getElementById('ed-err').textContent='';
   setMsg('正在校验…', null);
@@ -283,13 +371,12 @@ async function saveTablesPlan(nextTables){
     return false;
   }
   var diff=vbody.diff||planDiff(tables, nextTables);
-  var summary='即将写入磁盘并使计划生效：\n'+
-    '新增: '+(diff.added.join(', ')||'（无）')+'\n'+
-    '修改: '+(diff.changed.join(', ')||'（无）')+'\n'+
-    '删除: '+(diff.removed.join(', ')||'（无）')+'\n\n确认后替换 connect.yaml 中的 tables。';
-  if(!confirm(summary)){
-    setMsg('已取消，未写入磁盘', false);
-    return false;
+  if(!opts.skipConfirm){
+    var confirmed=await confirmDiffModal(diff);
+    if(!confirmed){
+      setMsg('已取消，未写入磁盘', false);
+      return false;
+    }
   }
   setMsg('正在写入磁盘…', null);
   var r=await apiFetch('/api/extraction-tables',{method:'PUT',headers:authHeaders(),
@@ -356,12 +443,16 @@ async function validatePlan(){
 async function removeNames(names){
   names=(names||[]).filter(function(n){ return !!tables[n]; });
   if(!names.length) return;
-  if(!confirm('确认移除 '+names.length+' 张表并立即写入磁盘？\n'+names.join(', '))) return;
   var next={};
   Object.keys(tables).forEach(function(k){
     if(names.indexOf(k)<0) next[k]=tables[k];
   });
-  await saveTablesPlan(next);
+  var diff=planDiff(tables, next);
+  var confirmed=await confirmDiffModal(diff, {
+    summary:'确认移除 '+names.length+' 张表并立即写入磁盘？',
+  });
+  if(!confirmed) return;
+  await saveTablesPlan(next, {skipConfirm:true});
 }
 
 document.getElementById('btn-reload').onclick=function(){ reload(); };
@@ -400,10 +491,12 @@ document.getElementById('btn-clear-sel').onclick=function(){
 };
 document.getElementById('chk-page').onchange=function(){
   var on=this.checked;
-  selectedKeys={};
-  if(on) Object.keys(tables).forEach(function(n){ selectedKeys[n]=true; });
+  var visible=filteredNames();
+  if(on){ visible.forEach(function(n){ selectedKeys[n]=true; }); }
+  else { visible.forEach(function(n){ delete selectedKeys[n]; }); }
   render();
 };
+document.getElementById('filter').addEventListener('input', function(){ render(); });
 document.getElementById('tbody').addEventListener('click', function(e){
   var edit=e.target.closest('button[data-edit]');
   if(edit){ openEdit([edit.getAttribute('data-edit')]); return; }

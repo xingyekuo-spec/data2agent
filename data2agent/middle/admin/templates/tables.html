@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}抽取表 — 中间机管理{% endblock %}
+{% block title %}抽取计划 — 中间机管理{% endblock %}
 {% block content %}
 <style>
   .card h2{font-size:15px;margin:0 0 10px;color:#12314f}
@@ -29,6 +29,11 @@
              padding:10px 12px;background:#f6f8fa;border-radius:8px}
   .batch-bar[hidden]{display:none!important}
   tr.selected td{background:#eef6fc}
+  tr.st-bad td{background:#fdecea}
+  tr.st-warnrow td{background:#fff8e6}
+  .st-cell{white-space:normal}
+  .filter-input{padding:7px 9px;border:1px solid #d0d7de;border-radius:6px;font-size:13px;
+                min-width:220px;background:#fff}
   .actions{white-space:nowrap}
   .modal{background:#fff;border-radius:12px;width:min(1100px,98vw);max-height:92vh;
          display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(16,34,54,.22)}
@@ -45,18 +50,19 @@
 </style>
 
 <div class="card">
-  <h2>抽取表计划</h2>
+  <h2>抽取计划</h2>
   <p class="meta">勾选后可批量编辑。单表或批量编辑均通过「保存并生效」校验并写入 connect.yaml；connector 从下一轮开始使用新计划。</p>
   <div class="row">
     <button type="button" id="btn-reload">重新加载</button>
-    <button type="button" id="btn-validate">校验</button>
+    <button type="button" id="btn-validate" title="对已保存的抽取计划做现场校验（不改任何配置）">校验当前计划</button>
+    <input type="search" id="filter" class="filter-input" placeholder="按表名过滤…" aria-label="按表名过滤">
     <a href="/metadata">前往元数据选表</a>
     <span id="rev" class="meta"></span>
   </div>
   <div id="msg" class="meta"></div>
   <div id="empty-guide" class="warn" style="display:none;margin-top:10px">
     当前抽取计划为空（新安装默认不访问任何 ERP 业务表）。请先到
-    <a href="/metadata">元数据</a> 扫描并「加入抽取计划」。
+    <a href="/metadata">选表</a> 页扫描并「加入计划」。
   </div>
   <div id="diff" class="warn" style="display:none;margin-top:10px"></div>
 </div>
@@ -69,15 +75,17 @@
     <button type="button" class="text" id="btn-clear-sel">清除选择</button>
     <span id="batch-meta" class="meta">已选 0 张表</span>
   </div>
+  <div class="table-scroll">
   <table>
     <thead>
       <tr>
-        <th class="check"><span class="meta">选</span></th>
+        <th class="check"><span class="sr-only">选择</span><span class="meta" aria-hidden="true">选</span></th>
         <th>表</th><th>模式</th><th>键</th><th>水位</th><th>开始日期</th><th>校验</th><th></th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
   </table>
+  </div>
 </div>
 
 <div id="edit-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="ed-title" hidden>
@@ -88,12 +96,29 @@
     </header>
     <div class="body">
       <div id="ed-err" class="err" style="margin-bottom:10px"></div>
-      <div id="edit-table"></div>
+      <div id="edit-table" class="table-scroll"></div>
     </div>
     <footer>
       <span id="ed-msg" class="meta"></span>
       <button type="button" class="ghost" id="btn-edit-cancel">取消</button>
       <button type="button" class="primary" id="btn-apply">保存并生效</button>
+    </footer>
+  </div>
+</div>
+
+<div id="diff-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="df-title" hidden>
+  <div class="modal" style="width:min(640px,96vw)">
+    <header>
+      <div class="modal-header"><h2 id="df-title">确认写入抽取计划</h2><button type="button" id="btn-diff-x" class="modal-close" aria-label="关闭">&times;</button></div>
+      <p class="meta" style="margin:8px 0 0">以下内容将写入 connect.yaml 并生效，connector 从下一轮开始使用。</p>
+    </header>
+    <div class="body">
+      <div id="df-summary" class="meta" style="margin-bottom:12px"></div>
+      <div id="df-body"></div>
+    </div>
+    <footer>
+      <button type="button" class="ghost" id="btn-diff-cancel">取消</button>
+      <button type="button" class="primary" id="btn-diff-ok">确认写入</button>
     </footer>
   </div>
 </div>
