@@ -1,6 +1,7 @@
 var escAttr=esc;
 var currentScan=null, selected=null, planSource=null, planRevision=null;
 var visibleRows=[], selectedKeys={};
+var listOffset=0, listTotal=0; var LIST_LIMIT=50;
 var pendingConfirm=null; // {src, revision, existing, incoming, hints, validated}
 var LEGACY_DRAFT_KEY='d2a_extraction_draft';
 (function(){
@@ -419,11 +420,32 @@ async function addSelectedToPlan(){
 }
 
 document.getElementById('btn-scan').onclick=startScan;
-document.getElementById('btn-filter').onclick=loadTables;
-document.getElementById('btn-close').onclick=function(){ document.getElementById('drawer').classList.remove('open'); };
+document.getElementById('btn-filter').onclick=function(){ listOffset=0; loadTables(); };
+var filterTimer=null;
+function debouncedFilter(){ listOffset=0; clearTimeout(filterTimer); filterTimer=setTimeout(loadTables,300); }
+document.getElementById('f-q').addEventListener('input', debouncedFilter);
+document.getElementById('f-q').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); clearTimeout(filterTimer); listOffset=0; loadTables(); } });
+document.getElementById('f-schema').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); listOffset=0; loadTables(); } });
+['f-type','f-pk','f-planned'].forEach(function(id){ document.getElementById(id).addEventListener('change', function(){ listOffset=0; loadTables(); }); });
+document.getElementById('btn-prev-page').onclick=function(){ listOffset=Math.max(0,listOffset-LIST_LIMIT); loadTables(); };
+document.getElementById('btn-next-page').onclick=function(){ listOffset+=LIST_LIMIT; loadTables(); };
+function closeDrawer(){ document.getElementById('drawer').classList.remove('open'); }
+document.getElementById('btn-close').onclick=closeDrawer;
+document.addEventListener('keydown', function(e){
+  if(e.key==='Escape'){
+    closeDrawer();
+    var modal=document.getElementById('confirm-modal');
+    if(modal && !modal.hidden) closeConfirmModal();
+  }
+});
+document.addEventListener('click', function(e){
+  var drawer=document.getElementById('drawer');
+  if(drawer.classList.contains('open') && !drawer.contains(e.target) && !e.target.closest('#table-list')) closeDrawer();
+});
 document.getElementById('btn-add').onclick=addToPlan;
 document.getElementById('btn-batch-add').onclick=addSelectedToPlan;
 document.getElementById('btn-confirm-cancel').onclick=closeConfirmModal;
+document.getElementById('btn-confirm-x').onclick=closeConfirmModal;
 document.getElementById('btn-confirm-revalidate').onclick=function(){ validatePendingConfirm(); };
 document.getElementById('btn-confirm-save').onclick=confirmAndSave;
 document.getElementById('confirm-modal').addEventListener('click', function(e){
@@ -480,6 +502,10 @@ async function startScan(){
   document.getElementById('scan-meta').textContent='扫描中 '+esc(currentScan)+'…';
   pollScan();
 }
+function syncScanSpin(running){
+  var s=document.getElementById('scan-spin'); if(s) s.hidden=!running;
+  var btn=document.getElementById('btn-scan'); if(btn) btn.disabled=!!running;
+}
 async function pollScan(){
   if(!currentScan) return;
   var r=await apiFetch('/api/metadata/scans/'+encodeURIComponent(currentScan),{headers:authHeaders()});
@@ -488,6 +514,7 @@ async function pollScan(){
   document.getElementById('scan-meta').textContent=
     '状态 '+esc(body.status)+' · 表 '+esc(body.table_count||0)+
     (body.finished_at?(' · 完成于 '+esc(body.finished_at)):'');
+  syncScanSpin(body.status==='running');
   if(body.status==='running'){ setTimeout(pollScan,800); return; }
   if(body.status==='failed'||body.status==='timeout'){
     var scanErrText=(typeof formatApiError==='function'
@@ -512,7 +539,7 @@ async function loadTables(){
   if(q) qs.set('q',q);
   if(ot) qs.set('object_type',ot);
   if(document.getElementById('f-pk').checked) qs.set('has_pk','true');
-  qs.set('limit','100');
+  qs.set('limit', String(LIST_LIMIT)); qs.set('offset', String(listOffset));
   var r=await apiFetch('/api/metadata/tables?'+qs.toString(),{headers:authHeaders()});
   var body=await r.json();
   if(!r.ok){
@@ -521,6 +548,7 @@ async function loadTables(){
       // 从未扫描(或服务重启后内存缓存已清):自动发起扫描,而非红字报错;
       // 但本次会话刚扫描过且未成功(currentScan 仍在),不再自动重扫
       if(currentScan){
+        document.getElementById('list-pager').hidden=true;
         document.getElementById('table-list').innerHTML=
           '<p class="err">最近一次扫描未成功,请查看上方扫描错误后重试。</p>';
       } else {
@@ -532,12 +560,14 @@ async function loadTables(){
       return;
     }
     visibleRows=[];
+    document.getElementById('list-pager').hidden=true;
     document.getElementById('table-list').innerHTML='<p class="err">'+
       esc(typeof formatApiError==='function'?formatApiError(body,'加载失败'):
         (body.detail&&body.detail.detail?body.detail.detail:JSON.stringify(body)))+'</p>';
     syncBatchBar();
     return;
   }
+  listTotal=body.total||0;
   rememberSource(body.source);
   var onlyPlanned=document.getElementById('f-planned').checked;
   var rows=(body.tables||[]).filter(function(t){
@@ -546,10 +576,11 @@ async function loadTables(){
   visibleRows=rows;
   if(!rows.length){
     document.getElementById('table-list').innerHTML='<p class="meta">无匹配表</p>';
+    syncPager();
     syncBatchBar();
     return;
   }
-  var html='<table><thead><tr><th class="check"><span class="meta">选</span></th><th>表</th><th>类型</th><th>行数≈</th><th>PK</th><th>抽取</th><th></th></tr></thead><tbody>';
+  var html='<table><thead><tr><th class="check"><span class="meta">选</span></th><th>表</th><th>类型</th><th title="来自数据库元数据估算,非精确行数,仅供选表参考量级">行数≈</th><th>PK</th><th>抽取</th><th></th></tr></thead><tbody>';
   rows.forEach(function(t){
     var k=rowKey(t);
     var disabled=!!t.error_code;
@@ -567,7 +598,18 @@ async function loadTables(){
   });
   html+='</tbody></table>';
   document.getElementById('table-list').innerHTML=html;
+  syncPager();
   syncBatchBar();
+}
+function syncPager(){
+  var pager=document.getElementById('list-pager');
+  if(!pager) return;
+  // 单页也显示:分页信息本身就是状态(总数一目了然),按钮自动禁用
+  pager.hidden = false;
+  var from=listTotal===0?0:listOffset+1, to=Math.min(listTotal,listOffset+LIST_LIMIT);
+  document.getElementById('page-info').textContent='共 '+fmtNumber(listTotal)+' 张 · 第 '+from+'-'+to+' 张';
+  document.getElementById('btn-prev-page').disabled = listOffset===0;
+  document.getElementById('btn-next-page').disabled = listOffset+LIST_LIMIT>=listTotal;
 }
 async function openDetail(schema, table){
   var r=await apiFetch('/api/metadata/tables/'+encodeURIComponent(schema)+'/'+encodeURIComponent(table),{headers:authHeaders()});

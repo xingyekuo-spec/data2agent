@@ -40,14 +40,6 @@
       return '<option value="' + esc(value) + '"' + (value === current ? ' selected' : '') + '>' + esc(value) + '</option>';
     }).join('');
   }
-  function switchPanel(panelId) {
-    document.querySelectorAll('[role="tab"][data-panel]').forEach(function (tab) {
-      var active = tab.dataset.panel === panelId;
-      tab.classList.toggle('active', active); tab.setAttribute('aria-selected', active ? 'true' : 'false'); tab.tabIndex = active ? 0 : -1;
-    });
-    ['push-summary','push-detail'].forEach(function (id) { byId(id).hidden = id !== panelId; });
-  }
-
   async function loadSummaries() {
     renderState('summary-list', 'loading');
     try {
@@ -126,10 +118,10 @@
   }
 
   function filterTable(source, table) {
-    byId('detail-source').value = source; byId('detail-table').value = table; detailPage = 1; switchPanel('push-detail'); loadDetails();
+    byId('detail-source').value = source; byId('detail-table').value = table; detailPage = 1; activateTabGroup('push', 'push-detail'); loadDetails();
   }
   function init() {
-    document.querySelectorAll('[role="tab"][data-panel]').forEach(function (tab) { tab.addEventListener('click', function () { switchPanel(tab.dataset.panel); }); }); initTabs(document);
+    initTabs(document);  // 页签点击/键盘由共享层接管(data-tabs="push")
     ['summary-status','summary-source','summary-limit'].forEach(function (id) { byId(id).addEventListener('change', function () { summaryPage = 1; renderSummaryPage(); }); });
     byId('summary-name').addEventListener('input', function () { summaryPage = 1; renderSummaryPage(); }); byId('summary-refresh').addEventListener('click', loadSummaries);
     byId('summary-prev').addEventListener('click', function () { summaryPage = Math.max(1, summaryPage - 1); renderSummaryPage(); }); byId('summary-next').addEventListener('click', function () { summaryPage += 1; renderSummaryPage(); });

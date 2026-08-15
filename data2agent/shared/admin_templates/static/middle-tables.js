@@ -367,6 +367,7 @@ async function removeNames(names){
 document.getElementById('btn-reload').onclick=function(){ reload(); };
 document.getElementById('btn-validate').onclick=validatePlan;
 document.getElementById('btn-edit-cancel').onclick=closeEdit;
+document.getElementById('btn-edit-x').onclick=closeEdit;
 document.getElementById('edit-modal').addEventListener('click', function(e){
   if(e.target===this) closeEdit();
 });

@@ -116,7 +116,7 @@ def _check_middle_admin(portable: Path) -> None:
     static = shared / "static"
     required = (
         "metadata.html", "tables.html", "config.html", "status.html",
-        "recovery.html", "layout.html",
+        "recovery.html", "reconcile.html", "layout.html",
     )
     for name in required:
         path = tpl / name
@@ -131,7 +131,7 @@ def _check_middle_admin(portable: Path) -> None:
     required_scripts = (
         "admin.js", "htmx.min.js", "middle-config.js", "middle-errors.js",
         "middle-logs.js", "middle-metadata.js", "middle-push-logs.js",
-        "middle-runs.js", "middle-status.js", "middle-tables.js",
+        "middle-reconcile.js", "middle-runs.js", "middle-status.js", "middle-tables.js",
     )
     for name in required_scripts:
         if not (static / name).is_file():

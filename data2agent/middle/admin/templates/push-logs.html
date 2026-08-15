@@ -9,10 +9,10 @@
   <p class="layer">平台推送</p><h2>推送、回执与重试</h2>
   <p class="hint">仅 HTTP sink 产生记录。attempt、generation、平台回执、幂等命中和稳定错误分类都可追踪。</p>
   <div class="tabs" role="tablist" aria-label="推送记录视图">
-    <button type="button" class="tab active" id="push-tab-summary" role="tab" aria-selected="true" aria-controls="push-summary" tabindex="0" data-panel="push-summary">按表概览</button>
-    <button type="button" class="tab" id="push-tab-detail" role="tab" aria-selected="false" aria-controls="push-detail" tabindex="-1" data-panel="push-detail">推送明细</button>
+    <button type="button" class="tab active" id="push-tab-summary" role="tab" aria-selected="true" aria-controls="push-summary" tabindex="0" data-tabs="push" data-tab="push-summary">按表概览</button>
+    <button type="button" class="tab" id="push-tab-detail" role="tab" aria-selected="false" aria-controls="push-detail" tabindex="-1" data-tabs="push" data-tab="push-detail">推送明细</button>
   </div>
-  <section id="push-summary" role="tabpanel" aria-labelledby="push-tab-summary">
+  <section id="push-summary" class="tab-panel active" role="tabpanel" aria-labelledby="push-tab-summary" data-tabs="push">
     <div class="toolbar">
       <label for="summary-status">状态</label><select id="summary-status"><option value="">全部</option><option value="completed">已完成</option><option value="pushing">推送中</option><option value="failed">失败</option></select>
       <label for="summary-source">数据源</label><select id="summary-source"><option value="">全部源</option></select>
@@ -23,7 +23,7 @@
     </div>
     <div id="summary-list" aria-live="polite"></div>
   </section>
-  <section id="push-detail" role="tabpanel" aria-labelledby="push-tab-detail" hidden>
+  <section id="push-detail" class="tab-panel" role="tabpanel" aria-labelledby="push-tab-detail" data-tabs="push" hidden>
     <div class="toolbar">
       <label for="detail-source">数据源</label><select id="detail-source"><option value="">全部源</option></select>
       <label for="detail-table">表</label><select id="detail-table"><option value="">全部表/事件</option></select>
