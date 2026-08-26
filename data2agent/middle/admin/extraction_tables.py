@@ -60,6 +60,34 @@ def table_spec_to_dict(spec: TableExtractConfig) -> dict[str, Any]:
     }
 
 
+def _spec_content_equal(
+    a: TableExtractConfig,
+    b: TableExtractConfig,
+) -> bool:
+    """比较抽取配置内容(不含 validated_at)。"""
+    da = table_spec_to_dict(a)
+    db = table_spec_to_dict(b)
+    da.pop("validated_at", None)
+    db.pop("validated_at", None)
+    return da == db
+
+
+def _can_reuse_validated(
+    name: str,
+    spec: TableExtractConfig,
+    before: dict[str, TableExtractConfig] | None,
+    *,
+    force: bool,
+) -> bool:
+    """已保存且未改动的表可跳过重复 live 校验。"""
+    if force or not before:
+        return False
+    prev = before.get(name)
+    if prev is None or not prev.validated_at:
+        return False
+    return _spec_content_equal(spec, prev)
+
+
 def parse_tables_payload(raw: dict[str, Any] | None) -> dict[str, TableExtractConfig]:
     """将请求体 tables 解析为模型;非法项抛 ValidationError。"""
     if raw is None:
@@ -88,8 +116,15 @@ def validate_table_plan(
     tables: dict[str, TableExtractConfig],
     *,
     live: bool = True,
+    before: dict[str, TableExtractConfig] | None = None,
+    force: bool = False,
 ) -> list[dict[str, Any]]:
-    """逐表返回校验结果。live=True 时尝试元数据发现与键/水位检查。"""
+    """逐表返回校验结果。live=True 时尝试元数据发现与键/水位检查。
+
+    before 为磁盘上已保存的计划;配置未变且已有 validated_at 的表可跳过
+    重复 live 校验(连续加表时避免全量重扫)。
+    force=True 时始终做 live 校验(「校验当前计划」按钮)。
+    """
     results: list[dict[str, Any]] = []
     discoverer = None
     discoverer_error: str | None = None
@@ -107,6 +142,14 @@ def validate_table_plan(
             discoverer_error = "connection_failed"
 
     default_schema = "main" if scfg.adapter == "sqlite_readonly" else "dbo"
+    table_detail_cache: dict[tuple[str, str], Any] = {}
+
+    def _get_table(schema: str, table: str):
+        key = (schema, table)
+        if key not in table_detail_cache:
+            table_detail_cache[key] = discoverer.get_table(schema, table)
+        return table_detail_cache[key]
+
     for name, spec in sorted(tables.items()):
         schema = spec.schema or default_schema
         entry: dict[str, Any] = {
@@ -127,6 +170,11 @@ def validate_table_plan(
                     entry, "watermark_missing", "incremental 必须配置 watermark"))
                 continue
 
+        if _can_reuse_validated(name, spec, before, force=force):
+            entry["detail"] = "沿用已保存的现场校验结果"
+            results.append(entry)
+            continue
+
         if discoverer is None:
             if not live:
                 results.append(entry)
@@ -141,7 +189,7 @@ def validate_table_plan(
             continue
 
         try:
-            detail = discoverer.get_table(schema, name)
+            detail = _get_table(schema, name)
         except MetadataError as e:
             if e.code in ("table_not_found", "not_found"):
                 status = "table_missing"
@@ -166,7 +214,8 @@ def validate_table_plan(
                 continue
             try:
                 check = discoverer.check_key(
-                    schema, name, list(spec.key_columns), timeout_seconds=15)
+                    schema, name, list(spec.key_columns),
+                    timeout_seconds=15, detail=detail)
                 if not check.ok:
                     code = "key_not_unique"
                     if check.code == "key_missing":
@@ -185,7 +234,8 @@ def validate_table_plan(
                     f"水位列不存在: {spec.watermark}"))
                 continue
             try:
-                wm = discoverer.check_watermark(schema, name, spec.watermark)
+                wm = discoverer.check_watermark(
+                    schema, name, spec.watermark, detail=detail)
                 if not wm.ok:
                     results.append(_mark(
                         entry, "watermark_invalid", wm.detail or wm.code))

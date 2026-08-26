@@ -313,16 +313,18 @@ class MssqlMetadataDiscoverer:
         return int(rows[0]["row_count"])
 
     def check_key(self, schema: str, table: str, columns: list[str],
-                  *, timeout_seconds: float = 30) -> KeyCheckResult:
+                  *, timeout_seconds: float = 30,
+                  detail: TableDetail | None = None) -> KeyCheckResult:
         schema = schema or "dbo"
         if not columns:
             return KeyCheckResult(False, "key_missing", "未提供候选键列")
         for col in columns:
             validate_identifier(col, kind="键列名")
-        try:
-            detail = self.get_table(schema, table)
-        except MetadataError as e:
-            return KeyCheckResult(False, e.code, e.message)
+        if detail is None:
+            try:
+                detail = self.get_table(schema, table)
+            except MetadataError as e:
+                return KeyCheckResult(False, e.code, e.message)
         known = {c.name for c in detail.columns}
         missing = [c for c in columns if c not in known]
         if missing:
@@ -370,12 +372,14 @@ class MssqlMetadataDiscoverer:
         finally:
             self._con.timeout = old_timeout
 
-    def check_watermark(self, schema: str, table: str, column: str) -> WatermarkCheckResult:
+    def check_watermark(self, schema: str, table: str, column: str,
+                        *, detail: TableDetail | None = None) -> WatermarkCheckResult:
         schema = schema or "dbo"
-        try:
-            detail = self.get_table(schema, table)
-        except MetadataError as e:
-            return WatermarkCheckResult(False, e.code, e.message)
+        if detail is None:
+            try:
+                detail = self.get_table(schema, table)
+            except MetadataError as e:
+                return WatermarkCheckResult(False, e.code, e.message)
         validate_identifier(column, kind="水位列名")
         col = next((c for c in detail.columns if c.name == column), None)
         if col is None:

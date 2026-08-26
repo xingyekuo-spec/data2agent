@@ -293,10 +293,12 @@ class MetadataDiscoverer(Protocol):
         ...
 
     def check_key(self, schema: str, table: str, columns: list[str],
-                  *, timeout_seconds: float = 30) -> KeyCheckResult:
+                  *, timeout_seconds: float = 30,
+                  detail: TableDetail | None = None) -> KeyCheckResult:
         ...
 
-    def check_watermark(self, schema: str, table: str, column: str) -> WatermarkCheckResult:
+    def check_watermark(self, schema: str, table: str, column: str,
+                        *, detail: TableDetail | None = None) -> WatermarkCheckResult:
         ...
 
     def close(self) -> None:

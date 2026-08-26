@@ -186,14 +186,16 @@ class SqliteMetadataDiscoverer:
         return out
 
     def check_key(self, schema: str, table: str, columns: list[str],
-                  *, timeout_seconds: float = 30) -> KeyCheckResult:
+                  *, timeout_seconds: float = 30,
+                  detail: TableDetail | None = None) -> KeyCheckResult:
         _ = timeout_seconds  # sqlite 无语句级超时钩子;调用方控制外层超时
         validate_identifier(table, kind="表名")
         if not columns:
             return KeyCheckResult(False, "key_missing", "未提供候选键列")
         for col in columns:
             validate_identifier(col, kind="键列名")
-        detail = self.get_table(schema or "main", table)
+        if detail is None:
+            detail = self.get_table(schema or "main", table)
         known = {c.name for c in detail.columns}
         missing = [c for c in columns if c not in known]
         if missing:
@@ -224,10 +226,12 @@ class SqliteMetadataDiscoverer:
         return KeyCheckResult(True, "ready", "候选键唯一且无 NULL",
                               null_count=0, duplicate_groups=0)
 
-    def check_watermark(self, schema: str, table: str, column: str) -> WatermarkCheckResult:
+    def check_watermark(self, schema: str, table: str, column: str,
+                        *, detail: TableDetail | None = None) -> WatermarkCheckResult:
         validate_identifier(table, kind="表名")
         validate_identifier(column, kind="水位列名")
-        detail = self.get_table(schema or "main", table)
+        if detail is None:
+            detail = self.get_table(schema or "main", table)
         col = next((c for c in detail.columns if c.name == column), None)
         if col is None:
             return WatermarkCheckResult(False, "watermark_missing", "字段不存在")
