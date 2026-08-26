@@ -201,6 +201,120 @@ def test_successful_live_put_stamps_validated_at(env):
     assert data["sources"][SOURCE]["tables"]["CURRENCY"]["validated_at"]
 
 
+def _spy_discoverer_factory(source_path: Path, calls: list[str]):
+    from data2agent.middle.extract.discoverers.sqlite import create_sqlite_discoverer
+    from data2agent.middle.extract.metadata import KeyCheckResult, WatermarkCheckResult
+    from data2agent.shared.config import SourceConfig
+
+    class SpyDiscoverer:
+        def get_table(self, schema, table):
+            calls.append(f"get:{table}")
+            real = create_sqlite_discoverer(SourceConfig(
+                adapter="sqlite_readonly", path=str(source_path)))
+            return real.get_table(schema, table)
+
+        def check_key(self, schema, table, columns, *, timeout_seconds=30,
+                      detail=None):
+            calls.append(f"key:{table}")
+            return KeyCheckResult(True, "ready", "ok")
+
+        def check_watermark(self, schema, table, column, *, detail=None):
+            calls.append(f"wm:{table}")
+            return WatermarkCheckResult(True, "ready", "ok")
+
+        def close(self):
+            pass
+
+    return SpyDiscoverer
+
+
+def test_validate_skips_unchanged_validated_tables(env, monkeypatch):
+    """连续加表时,已保存且未改动的表不应重复触发 live 校验。"""
+    import data2agent.middle.admin.extraction_tables as et
+
+    client, cfg = env
+    src = cfg.parent / "source.sqlite"
+    calls: list[str] = []
+    monkeypatch.setattr(
+        et, "build_discoverer",
+        lambda _scfg: _spy_discoverer_factory(src, calls)())
+
+    rev = client.get("/api/extraction-tables", headers=_h()).json()["revision"]
+    put = client.put("/api/extraction-tables", headers=_h(), json={
+        "revision": rev,
+        "tables": {
+            "CUSTOMER": {
+                "mode": "incremental", "schema": "main",
+                "key_columns": ["Id"], "watermark": "LAST_MODIFIED_DATE",
+            },
+            "CURRENCY": {"mode": "full_refresh", "schema": "main"},
+        },
+        "live": True,
+    })
+    assert put.status_code == 200 and put.json()["ok"] is True
+    calls.clear()
+
+    v = client.post("/api/extraction-tables/validate", headers=_h(), json={
+        "tables": {
+            "CUSTOMER": {
+                "mode": "incremental", "schema": "main",
+                "key_columns": ["Id"], "watermark": "LAST_MODIFIED_DATE",
+            },
+            "CURRENCY": {"mode": "full_refresh", "schema": "main"},
+            "ITEM": {
+                "mode": "incremental", "schema": "main",
+                "key_columns": ["Id"], "watermark": "LAST_MODIFIED_DATE",
+            },
+        },
+        "live": True,
+    })
+    assert v.status_code == 200 and v.json()["ok"] is True
+    assert "get:CUSTOMER" not in calls
+    assert "get:CURRENCY" not in calls
+    assert "get:ITEM" in calls
+    by_table = {r["table"]: r for r in v.json()["results"]}
+    assert by_table["CUSTOMER"]["detail"] == "沿用已保存的现场校验结果"
+    assert by_table["ITEM"]["status"] == "ready"
+
+
+def test_validate_force_rechecks_all_tables(env, monkeypatch):
+    import data2agent.middle.admin.extraction_tables as et
+
+    client, cfg = env
+    src = cfg.parent / "source.sqlite"
+    calls: list[str] = []
+    monkeypatch.setattr(
+        et, "build_discoverer",
+        lambda _scfg: _spy_discoverer_factory(src, calls)())
+
+    rev = client.get("/api/extraction-tables", headers=_h()).json()["revision"]
+    put = client.put("/api/extraction-tables", headers=_h(), json={
+        "revision": rev,
+        "tables": {
+            "CUSTOMER": {
+                "mode": "incremental", "schema": "main",
+                "key_columns": ["Id"], "watermark": "LAST_MODIFIED_DATE",
+            },
+        },
+        "live": True,
+    })
+    assert put.status_code == 200 and put.json()["ok"] is True
+    calls.clear()
+
+    v = client.post("/api/extraction-tables/validate", headers=_h(), json={
+        "tables": {
+            "CUSTOMER": {
+                "mode": "incremental", "schema": "main",
+                "key_columns": ["Id"], "watermark": "LAST_MODIFIED_DATE",
+            },
+        },
+        "live": True,
+        "force": True,
+    })
+    assert v.status_code == 200 and v.json()["ok"] is True
+    assert "get:CUSTOMER" in calls
+
+
 def test_put_persists_start_date(env):
     """incremental 表的 start_date 必须随保存写入 connect.yaml 并在 GET 中可见。"""
     client, cfg = env

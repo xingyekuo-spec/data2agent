@@ -187,6 +187,7 @@ class ExtractionTablesValidateBody(BaseModel):
     source: str | None = None
     tables: dict[str, Any]
     live: bool = True
+    force: bool = False  # True=全量 live 重校验(「校验当前计划」)
 
     model_config = {"populate_by_name": True}
 
@@ -1094,7 +1095,8 @@ def create_app(
                 "results": [], "diff": None,
             }
         before = dict(scfg.tables or {})
-        results = validate_table_plan(scfg, parsed, live=body.live)
+        results = validate_table_plan(
+            scfg, parsed, live=body.live, before=before, force=body.force)
         ok = all(r["status"] == "ready" for r in results)
         return {
             "ok": ok,
@@ -1123,7 +1125,9 @@ def create_app(
                 "revision": config_revision(cfg_path), "restart_required": False,
             }
         # 保存必须现场校验；忽略客户端任何 live 开关意图
-        results = validate_table_plan(scfg, parsed, live=True)
+        before = dict(scfg.tables or {})
+        results = validate_table_plan(
+            scfg, parsed, live=True, before=before, force=False)
         not_ready = [r for r in results if r["status"] != "ready"]
         if not_ready:
             return {

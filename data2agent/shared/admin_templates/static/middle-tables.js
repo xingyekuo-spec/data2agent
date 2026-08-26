@@ -427,7 +427,7 @@ async function reload(){
 }
 async function validatePlan(){
   var r=await apiFetch('/api/extraction-tables/validate',{method:'POST',headers:authHeaders(),
-    body:JSON.stringify({tables:tables, live:true})});
+    body:JSON.stringify({tables:tables, live:true, force:true})});
   var body=await r.json();
   results={}; (body.results||[]).forEach(function(x){ results[x.table]=x; });
   render();
