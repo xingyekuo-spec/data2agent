@@ -16,20 +16,27 @@ data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及�
 - M6 文档、便携包/smoke 与 Release MSSQL 门禁。
 - E10 测试资产位于 `tests/fixtures/e10/`（不进产品包）。
 - 产品包无展厅 / 无 Console Mock 运行模式。
-
-进行中：C1-B — AI Hub 对象级推送适配器(`sink.type: ai_hub` / `AiHubObjectPushSink`),
-与本仓平台表级 `HttpPushSink` 并存,不得改 URL 混用。适配器与 mock 契约在本仓;
-跨仓联调与生产启用属 C1-C,不与 v0.6 工厂试点混为一谈。
+- **C1-B** — AI Hub 对象级推送适配器(`sink.type: ai_hub` / `AiHubObjectPushSink`),
+  与本仓平台表级 `HttpPushSink` 并存,不得改 URL 混用。加密 spool、pending 排空、
+  崩溃恢复去重与 mock 契约已在本仓落地;见 [push-validation](runbook/push-validation.md) §2
+  与 [source-dev](runbook/source-dev.md) §6.1。
 
 已完成（补充）:
 
 - **正式生产试点**:首个工厂试点已完成验证(跨机 receipt / generation 屏障 /
   E6b 与 SQLite 备份基线随试点通过现场演练)。
 
+进行中 / 下一里程碑:
+
+- **C1-C** — 与 AI Hub 跨仓联调、按来源打开 Push、再评估生产
+  `deployment_mode` 放行 `ai_hub`。C1-B **不得**打开 AI Hub
+  `DATA_INGEST_PUSH_ENABLED`,也不与 v0.6 工厂试点混为一谈。
+
 仍未宣称:
 
 - 生产 HTTPS 证书/反代验收、mTLS 与凭据轮换。
 - ERP 写回、审批流、SaaS 多租户或完整 RBAC。
+- AI Hub 推送的生产启用(属 C1-C)。
 
 ## 下一版本: v0.4（跨机可靠性）
 

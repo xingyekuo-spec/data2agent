@@ -1,6 +1,6 @@
 # 02 · 抽取框架(详设)
 
-> 状态:设计修订 r0.10(2026-08-31)· 当前:E1–E6b、ingest v3 批次回执与 generation 屏障、全量单游标流式快照、跨机对账修复、HTTPS/Token fail-closed 默认及 SQLite 在线备份/保留任务已实现；C1-B 新增 AI Hub 对象级 `AiHubObjectPushSink`（与表级 `HttpPushSink` 并存，不得改 URL 混用）；正式试点仍需证书、恢复演练与容量压测。对接 AI Hub 的生产启用属跨仓 C1-C，不在本文件宣称。
+> 状态:设计修订 r0.11(2026-08-31)· 当前:E1–E6b、ingest v3 批次回执与 generation 屏障、全量单游标流式快照、跨机对账修复、HTTPS/Token fail-closed 默认及 SQLite 在线备份/保留任务已实现；**C1-B 已落地** AI Hub 对象级 `AiHubObjectPushSink`（与表级 `HttpPushSink` 并存，不得改 URL 混用；加密 spool / pending 排空 / 崩溃去重与 mock 契约在本仓）。正式试点仍需证书、恢复演练与容量压测。对接 AI Hub 的生产启用属跨仓 **C1-C**，不在本文件宣称。
 > 上层基线:[路线图](../roadmap.md)
 
 ## 1. 目标与非目标
@@ -299,12 +299,15 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
   「推送与直连逐行一致」验证的对照实现)、
   `HttpPushSink`(表级 ingest v3,POST 给 **data2agent 平台** `/ingest/*`;
   对接本仓平台时的生产形态)、
-  `AiHubObjectPushSink`(对象级 PUSH_AGENT v1,POST 给 **AI Hub**
+  `AiHubObjectPushSink`(对象级 PUSH_AGENT v1,**C1-B 已落地**,POST 给 **AI Hub**
   `/platform-api/v1/ingest/push/*`;物理表映射为
   `object_type/object_id/version/payload`)。
   **禁止**把 `HttpPushSink.url` 改成 AI Hub 地址;两种协议不是同一信封。
   生产 `deployment_mode: production` 只允许 `sink.type=http`;`ai_hub` 仅开发/测试,
   C1-C 前 `production_violations` 拒绝以免 `serve` 对真实 AI Hub 推送。
+  in-flight 批次写入配置的 `encrypted_temp_volume` spool(按来源摘要分子目录、
+  可移植文件名、目录 containment);pending 先独立排空再发送变更 chunk;
+  已确认源批次按 `external_batch_id` / 内容摘要在恢复时跳过,避免游标未推进时重复发送。
   `incremental_sync` 默认 `LocalSink(landing)`,行为向后兼容;
 - 平台接收端 `data2agent.platform.ingest`(FastAPI):`POST /ingest/batch` 只负责幂等落地;
   中间机在一张表的全部批次成功后再 `POST /ingest/table-complete`。完成事件包含表结构、

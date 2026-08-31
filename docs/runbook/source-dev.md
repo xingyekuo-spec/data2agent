@@ -115,9 +115,10 @@ sources:
 同步前中间机确认自身发送协议落在平台 `supported_ingest_protocol_versions` 中
 （当前发送 ingest v3,平台同时接受 v2/v3）；不在列表则立即失败。现场升级策略见 [portable.md](portable.md)。
 
-## 6.1 AI Hub PUSH_AGENT(C1-B)
+## 6.1 AI Hub PUSH_AGENT(C1-B,本仓已落地)
 
-对接 AI Hub 不得使用 §6 的 `HttpPushSink`。最小配置形状:
+对接 AI Hub 不得使用 §6 的 `HttpPushSink`。C1-B 适配器、加密 spool 与 mock 契约已在本仓;
+跨仓联调与生产启用属 C1-C。最小配置形状:
 
 ```yaml
 sources:
@@ -144,8 +145,12 @@ sources:
 ```
 
 开发可用 mock server 契约测试(`tests/contract/test_ai_hub_object_push_sink.py`),
-不连接真实 AI Hub。AI Hub 侧 `DATA_INGEST_PUSH_ENABLED` 默认关闭,且变更日志
-purpose 唯一约束未切 contract 前写入 API 仍关闭;跨仓联调与按来源启用属 C1-C。
+不连接真实 AI Hub。`ai_hub` **必须** `spool.policy=encrypted_temp_volume`(禁止
+`strict_stream` / `temporary_file`);spool 按 `source_application_id` 摘要分子目录,
+批次文件名为可移植摘要,读写删除均校验路径落在配置根内。崩溃恢复时先排空 pending,
+再比较内容摘要:未变则跳过,已变则作为下一序号发送。
+AI Hub 侧 `DATA_INGEST_PUSH_ENABLED` 默认关闭,且变更日志 purpose 唯一约束未切
+contract 前写入 API 仍关闭;跨仓联调与按来源启用属 C1-C。
 `ai_hub` **禁止**配置 `reconcile_at` / `reconcile_deep_at`,定时与手工对账都会被拒绝
 (无远端对账协议,且不得对中间机 state_db 做本地 raw 对账)。
 `deployment_mode: production` 在 C1-C 前拒绝 `ai_hub`;对象版本写入中间机 `state_db`
