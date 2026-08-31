@@ -25,6 +25,15 @@ function showDiff(diff){
     ' · 删除: '+(diff.removed||[]).join(', ');
   return diff;
 }
+function copyAiHubFields(spec, fromSpec){
+  if(!fromSpec) return spec;
+  if(fromSpec.object_type) spec.object_type=fromSpec.object_type;
+  if(fromSpec.payload_contract_version) spec.payload_contract_version=fromSpec.payload_contract_version;
+  if(fromSpec.payload_schema_fingerprint) spec.payload_schema_fingerprint=fromSpec.payload_schema_fingerprint;
+  if(fromSpec.payload_columns&&fromSpec.payload_columns.length) spec.payload_columns=fromSpec.payload_columns;
+  if(fromSpec.delete_flag_column) spec.delete_flag_column=fromSpec.delete_flag_column;
+  return spec;
+}
 function cleanSpec(spec){
   var out={mode:spec.mode};
   if(spec.schema) out.schema=spec.schema;
@@ -33,6 +42,7 @@ function cleanSpec(spec){
   if(spec.start_date) out.start_date=spec.start_date;
   if(spec.schema_fingerprint) out.schema_fingerprint=spec.schema_fingerprint;
   if(spec.validated_at) out.validated_at=spec.validated_at;
+  copyAiHubFields(out, spec);
   return out;
 }
 function parseKeyOptionValue(v){
@@ -240,6 +250,7 @@ function collectEditsFromForm(){
     if(mode==='incremental' && wm) spec.watermark=wm;
     if(mode==='incremental' && startDate) spec.start_date=startDate;
     if(prev.schema_fingerprint) spec.schema_fingerprint=prev.schema_fingerprint;
+    copyAiHubFields(spec, prev);
     out[name]=cleanSpec(spec);
   });
   return out;

@@ -52,6 +52,15 @@ function setRowSelected(t, on){
   else delete selectedKeys[k];
 }
 
+function copyAiHubFields(spec, fromSpec){
+  if(!fromSpec) return spec;
+  if(fromSpec.object_type) spec.object_type=fromSpec.object_type;
+  if(fromSpec.payload_contract_version) spec.payload_contract_version=fromSpec.payload_contract_version;
+  if(fromSpec.payload_schema_fingerprint) spec.payload_schema_fingerprint=fromSpec.payload_schema_fingerprint;
+  if(fromSpec.payload_columns&&fromSpec.payload_columns.length) spec.payload_columns=fromSpec.payload_columns;
+  if(fromSpec.delete_flag_column) spec.delete_flag_column=fromSpec.delete_flag_column;
+  return spec;
+}
 function cleanSpec(spec){
   var out={mode:spec.mode};
   if(spec.schema) out.schema=spec.schema;
@@ -59,6 +68,7 @@ function cleanSpec(spec){
   if(spec.watermark) out.watermark=spec.watermark;
   if(spec.schema_fingerprint) out.schema_fingerprint=spec.schema_fingerprint;
   if(spec.validated_at) out.validated_at=spec.validated_at;
+  copyAiHubFields(out, spec);
   return out;
 }
 function specFromTable(t){
@@ -173,6 +183,9 @@ function collectIncomingFromForm(){
     if(keys.length) spec.key_columns=keys;
     if(mode==='incremental' && wm) spec.watermark=wm;
     if(fp) spec.schema_fingerprint=fp;
+    var prev=(typeof pendingConfirm==='object' && pendingConfirm && pendingConfirm.existing)
+      ? pendingConfirm.existing[name] : null;
+    copyAiHubFields(spec, prev);
     incoming[name]=cleanSpec(spec);
   });
   return incoming;

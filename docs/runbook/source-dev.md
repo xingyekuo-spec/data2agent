@@ -3,9 +3,11 @@
 适用场景:开发者在本地搭建 E10-like 参考链,或开发新的 ERP 适配器。
 
 > **部署形态说明**:本指南的 `sink: local`(不写 `sink` 即默认)是**内部开发/参考链/
-> 测试专用**,不是交付形态。生产部署只有跨机推送一种拓扑 —— 中间机必须
-> `sink: { type: http, ... }` 推给平台(见本文 §6),现场安装一律走
-> [便携包](portable.md)。
+> 测试专用**,不是交付形态。生产部署是跨机推送:
+> 对接 **data2agent 平台** 用 `sink: { type: http, ... }`(本文 §6);
+> 对接 **AI Hub** 必须用 `sink: { type: ai_hub, ... }`(本文 §6.1),
+> 禁止把 http URL 改成 AI Hub。现场本仓平台安装走
+> [便携包](portable.md);AI Hub 路径见 [push-validation](push-validation.md)。
 
 ## 1. 前置条件
 
@@ -111,7 +113,43 @@ sources:
 ```
 
 同步前中间机确认自身发送协议落在平台 `supported_ingest_protocol_versions` 中
-（当前为 `["2"]`）；不在列表则立即失败。现场升级策略见 [portable.md](portable.md)。
+（当前发送 ingest v3,平台同时接受 v2/v3）；不在列表则立即失败。现场升级策略见 [portable.md](portable.md)。
+
+## 6.1 AI Hub PUSH_AGENT(C1-B)
+
+对接 AI Hub 不得使用 §6 的 `HttpPushSink`。最小配置形状:
+
+```yaml
+sources:
+  digiwin_e10:
+    apply_after_sync: false
+    spool:
+      policy: encrypted_temp_volume
+      directory: /secure/aihub-spool   # 须为现场确认静态加密的专用目录
+      encrypted_at_rest: true
+    sink:
+      type: ai_hub
+      url: "https://ai-hub.example"
+      source_application_id: e10-adapter
+      oidc_token_url: "https://identity.example/application/o/token/"
+      oidc_client_id: e10-adapter
+      oidc_client_secret_env: D2A_AI_HUB_CLIENT_SECRET
+    tables:
+      ITEM:
+        mode: full_refresh
+        object_type: erp.item
+        payload_contract_version: item.v1
+        payload_schema_fingerprint: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        payload_columns: [ITEM_CODE, ITEM_NAME]
+```
+
+开发可用 mock server 契约测试(`tests/contract/test_ai_hub_object_push_sink.py`),
+不连接真实 AI Hub。AI Hub 侧 `DATA_INGEST_PUSH_ENABLED` 默认关闭,且变更日志
+purpose 唯一约束未切 contract 前写入 API 仍关闭;跨仓联调与按来源启用属 C1-C。
+`ai_hub` **禁止**配置 `reconcile_at` / `reconcile_deep_at`,定时与手工对账都会被拒绝
+(无远端对账协议,且不得对中间机 state_db 做本地 raw 对账)。
+`deployment_mode: production` 在 C1-C 前拒绝 `ai_hub`;对象版本写入中间机 `state_db`
+表 `d2a_aihub_object_version`,随状态库备份/恢复。
 
 ## 7. 常见问题
 

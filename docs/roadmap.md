@@ -1,7 +1,7 @@
 # data2agent 路线图
 
 > 状态: **`v0.5.1`** — ERP 元数据 M0–M7 已完成（产品包无 showroom，Console 仅真实 API）;
-> v0.4 跨机可靠性随首个工厂生产试点通过现场验证;更新于 2026-08-03。
+> v0.4 跨机可靠性随首个工厂生产试点通过现场验证;更新于 2026-08-31。
 
 data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及中间机元数据发现与抽取表管理
 （见 [ERP 元数据实施计划](superpowers/plans/2026-07-23-erp-metadata-extraction-management.md)，已收尾）。
@@ -17,7 +17,9 @@ data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及�
 - E10 测试资产位于 `tests/fixtures/e10/`（不进产品包）。
 - 产品包无展厅 / 无 Console Mock 运行模式。
 
-进行中：无。
+进行中：C1-B — AI Hub 对象级推送适配器(`sink.type: ai_hub` / `AiHubObjectPushSink`),
+与本仓平台表级 `HttpPushSink` 并存,不得改 URL 混用。适配器与 mock 契约在本仓;
+跨仓联调与生产启用属 C1-C,不与 v0.6 工厂试点混为一谈。
 
 已完成（补充）:
 

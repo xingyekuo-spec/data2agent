@@ -65,9 +65,19 @@ def build_adapter(name: str, scfg: SourceConfig,
     return MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
 
 
+def unsupported_ai_hub_reconcile(scfg: SourceConfig) -> str | None:
+    """AI Hub has no remote reconcile protocol; local raw reconcile is forbidden."""
+    if scfg.sink.type == "ai_hub":
+        return (
+            "AI Hub 对象推送不支持对账:没有远端对账协议,"
+            "且禁止对中间机 state_db 做本地 raw 对账"
+        )
+    return None
+
+
 def build_sink(scfg: SourceConfig, landing: LandingStore, *,
                source: str = "", run_id: int | None = None):
-    """按 sink 配置构建落地出口:local=本地库;http=推给平台(§12.3)。"""
+    """按 sink 配置构建落地出口:local=本地库;http=data2agent 平台;ai_hub=AI Hub。"""
     if scfg.sink.type == "http":
         import os
 
@@ -79,6 +89,58 @@ def build_sink(scfg: SourceConfig, landing: LandingStore, *,
             retries=scfg.sink.retries,
             ca_bundle=scfg.sink.ca_bundle,
             landing=landing, source=source, run_id=run_id)
+    if scfg.sink.type == "ai_hub":
+        import os
+
+        from .ai_hub_object_map import ObjectBinding
+        from .ai_hub_object_push_sink import AiHubObjectPushSink
+
+        token = os.environ.get(scfg.sink.token_env or "", "") or None
+        token_provider = None
+        if (
+            scfg.sink.oidc_token_url
+            and scfg.sink.oidc_client_id
+            and scfg.sink.oidc_client_secret_env
+        ):
+            from .ai_hub_object_push_sink import oidc_client_credentials_provider
+
+            secret = os.environ.get(scfg.sink.oidc_client_secret_env, "")
+            if not secret:
+                raise RuntimeError(
+                    f"环境变量 {scfg.sink.oidc_client_secret_env} 为空"
+                )
+            token_provider = oidc_client_credentials_provider(
+                scfg.sink.oidc_token_url,
+                scfg.sink.oidc_client_id,
+                secret,
+                audience=scfg.sink.oidc_audience,
+                scope=scfg.sink.oidc_scope,
+                timeout=scfg.sink.timeout_seconds,
+                allow_insecure_http=scfg.sink.allow_insecure_http,
+                ca_bundle=scfg.sink.ca_bundle,
+            )
+        bindings = {
+            table: ObjectBinding(
+                object_type=spec.object_type or "",
+                payload_contract_version=spec.payload_contract_version or "",
+                schema_fingerprint=spec.payload_schema_fingerprint or "",
+                payload_columns=tuple(spec.payload_columns or ()),
+                delete_flag_column=spec.delete_flag_column,
+            )
+            for table, spec in (scfg.tables or {}).items()
+        }
+        return AiHubObjectPushSink(
+            scfg.sink.url or "",
+            source_application_id=scfg.sink.source_application_id or source,
+            bindings=bindings,
+            token=token,
+            token_provider=token_provider,
+            timeout=scfg.sink.timeout_seconds,
+            retries=scfg.sink.retries,
+            ca_bundle=scfg.sink.ca_bundle,
+            state_path=landing.db_path,
+            spool_directory=scfg.spool.directory,
+        )
     from .sink import LocalSink
     return LocalSink(landing)
 
@@ -276,6 +338,10 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig,
         return False
     landing = LandingStore(landing_path)
     try:
+        blocked = unsupported_ai_hub_reconcile(scfg)
+        if blocked:
+            log.info("skip reconcile source=%s reason=ai_hub_unsupported", name)
+            return False
         adapter = build_adapter(name, scfg, landing)
         if scfg.sink.type == "http":
             sink = build_sink(scfg, landing, source=name)
@@ -283,11 +349,17 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig,
                 adapter, landing, sink, name, scfg.table_watermarks(),
                 deep=deep, key_columns=scfg.table_key_columns(),
                 start_dates=scfg.table_start_dates(), run_id=run_id)
-        else:
+        elif scfg.sink.type == "local":
             report = reconcile(
                 adapter, landing, name, scfg.table_watermarks(), deep=deep,
                 key_columns=scfg.table_key_columns(),
                 start_dates=scfg.table_start_dates(), run_id=run_id)
+        else:
+            log.info(
+                "skip reconcile source=%s reason=unsupported_sink_%s",
+                name, scfg.sink.type,
+            )
+            return False
         log.info(
             "reconcile source=%s run=%s deep=%s segments=%s "
             "mismatched=%s soft_deleted=%s",
@@ -419,7 +491,7 @@ def serve(
             (False, scfg.reconcile_at),
             (True, scfg.reconcile_deep_at),
         ):
-            if not at:
+            if not at or unsupported_ai_hub_reconcile(scfg):
                 continue
             hh, mm = at.split(":")
             reconcile_func = run_reconcile_cycle

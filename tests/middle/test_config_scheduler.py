@@ -14,6 +14,7 @@ from data2agent.shared.config import (
     SinkConfig,
     SourceConfig,
     SpoolConfig,
+    TableExtractConfig,
     assert_production_ready,
     in_window,
     load_config,
@@ -80,9 +81,41 @@ def test_production_rejects_local_sink_and_uncontrolled_spool():
     )
     violations = cfg.production_violations()
     assert any("sink.type=http" in item for item in violations)
+    assert not any("ai_hub" in item for item in violations)
     assert any("temporary_file" in item for item in violations)
     with pytest.raises(ValueError, match="生产配置未就绪"):
         assert_production_ready(cfg)
+
+
+def test_production_rejects_ai_hub_until_c1c():
+    cfg = ConnectConfig(
+        deployment_mode="production",
+        sources={"e10": SourceConfig(
+            adapter="sqlite_readonly",
+            path="source.sqlite",
+            tables={
+                "ITEM": TableExtractConfig(
+                    mode="full_refresh",
+                    object_type="erp.item",
+                    payload_contract_version="item.v1",
+                    payload_schema_fingerprint="a" * 64,
+                    payload_columns=["ITEM_CODE"],
+                )
+            },
+            sink=SinkConfig(
+                type="ai_hub",
+                url="https://ai-hub.example",
+                source_application_id="e10-adapter",
+                token_env="T",
+            ),
+            spool=SpoolConfig(
+                policy="encrypted_temp_volume",
+                directory="/tmp/aihub-spool",
+                encrypted_at_rest=True,
+            ),
+        )},
+    )
+    assert any("C1-B 未生产启用" in item for item in cfg.production_violations())
 
 
 def test_production_rejects_loopback_sink_url():
@@ -111,6 +144,27 @@ def test_production_rejects_loopback_sink_url():
         )},
     )
     assert dev_cfg.production_violations() == []
+
+
+def test_http_sink_rejects_oidc_in_load_config(tmp_path):
+    cfg_file = tmp_path / "connect.yaml"
+    cfg_file.write_text(
+        "landing: l.sqlite\n"
+        "sources:\n"
+        "  e10:\n"
+        "    adapter: sqlite_readonly\n"
+        "    path: s.sqlite\n"
+        "    tables: {}\n"
+        "    sink:\n"
+        "      type: http\n"
+        "      url: https://platform.example\n"
+        "      oidc_token_url: https://idp.example/token\n"
+        "      oidc_client_id: client\n"
+        "      oidc_client_secret_env: SECRET\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="OIDC 仅用于"):
+        load_config(cfg_file)
 
 
 def test_strict_stream_rejects_file_spool_only_options():

@@ -56,8 +56,9 @@ data2agent/
 ## 开发者本地快速开始
 
 完整源码开发运行步骤见 [docs/runbook/source-dev.md](docs/runbook/source-dev.md)。
-本地 `sink: local` 落地仅为开发/参考链路径;生产部署只有跨机推送一种形态
-(见[现场部署](#现场部署))。
+本地 `sink: local` 落地仅为开发/参考链路径;生产 connector 只允许 `http`(本仓平台 ingest v3)。
+`ai_hub`(AI Hub PUSH_AGENT v1)仅开发/测试,C1-C 前不得用于 `deployment_mode: production`,
+且不得靠改 URL 与 `http` 混用(见[现场部署](#现场部署))。
 
 ```bash
 pip install -e ".[dev,mcp,console,ingest,connect,middle_admin,excel]"

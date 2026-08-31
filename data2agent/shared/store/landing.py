@@ -646,6 +646,58 @@ CREATE INDEX IF NOT EXISTS idx_d2a_push_log_source
     ON d2a_http_push_log (source, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_d2a_push_log_batch
     ON d2a_http_push_log (batch_id);
+CREATE TABLE IF NOT EXISTS d2a_aihub_object_version (
+    source_application_id TEXT NOT NULL,
+    object_type TEXT NOT NULL,
+    object_id TEXT NOT NULL,
+    version INTEGER NOT NULL,
+    change_key TEXT NOT NULL,
+    PRIMARY KEY (source_application_id, object_type, object_id)
+);
+CREATE TABLE IF NOT EXISTS d2a_aihub_type_watermark (
+    source_application_id TEXT NOT NULL,
+    object_type TEXT NOT NULL,
+    next_version INTEGER NOT NULL,
+    high_watermark INTEGER NOT NULL,
+    PRIMARY KEY (source_application_id, object_type)
+);
+CREATE TABLE IF NOT EXISTS d2a_aihub_generation (
+    source_application_id TEXT NOT NULL,
+    object_type TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    generation_id TEXT NOT NULL,
+    external_generation_id TEXT NOT NULL,
+    sync_mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    next_sequence_no INTEGER NOT NULL,
+    high_watermark INTEGER NOT NULL,
+    total_rows INTEGER NOT NULL,
+    total_bytes INTEGER NOT NULL,
+    started_at REAL NOT NULL DEFAULT 0,
+    create_request_json TEXT NOT NULL,
+    complete_request_json TEXT,
+    PRIMARY KEY (source_application_id, object_type)
+);
+CREATE TABLE IF NOT EXISTS d2a_aihub_batch_receipt (
+    source_application_id TEXT NOT NULL,
+    object_type TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    external_batch_id TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    record_count INTEGER NOT NULL,
+    high_watermark INTEGER NOT NULL,
+    PRIMARY KEY (source_application_id, object_type, sequence_no)
+);
+CREATE TABLE IF NOT EXISTS d2a_aihub_pending_batch (
+    source_application_id TEXT NOT NULL,
+    object_type TEXT NOT NULL,
+    sequence_no INTEGER NOT NULL,
+    external_batch_id TEXT NOT NULL,
+    content_sha256 TEXT NOT NULL,
+    record_count INTEGER NOT NULL,
+    spool_path TEXT NOT NULL,
+    PRIMARY KEY (source_application_id, object_type, sequence_no)
+);
 CREATE TABLE IF NOT EXISTS d2a_alert_event (
     alert_key TEXT PRIMARY KEY,
     status TEXT NOT NULL,

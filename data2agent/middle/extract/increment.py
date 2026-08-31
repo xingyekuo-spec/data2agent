@@ -56,6 +56,15 @@ def _spool_prefix(source: str) -> str:
     return f"d2a-full-{digest}-"
 
 
+def _sink_heartbeat_interval(sink) -> float:
+    value = getattr(sink, "heartbeat_interval_seconds", 60)
+    try:
+        interval = float(value)
+    except (TypeError, ValueError):
+        interval = 60.0
+    return interval if interval > 0 else 60.0
+
+
 def cleanup_orphan_spools(directory: str | Path, source: str) -> int:
     """在持有 source 同步锁时清理该源崩溃遗留的加密卷 spool。"""
     root = Path(directory)
@@ -256,6 +265,7 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     pass
             try:
                 last_heartbeat = time.monotonic()
+                heartbeat_interval = _sink_heartbeat_interval(sink)
                 batch_iterator = adapter.read_increment(
                     info, since=since, watermark_col=wm_col,
                     resume_after=resume_after)
@@ -293,7 +303,7 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                             interrupted = True
                             break
                         pickle.dump(source_batch, spool, protocol=pickle.HIGHEST_PROTOCOL)
-                        if time.monotonic() - last_heartbeat >= 60:
+                        if time.monotonic() - last_heartbeat >= heartbeat_interval:
                             heartbeat = getattr(sink, "heartbeat_sync", None)
                             if callable(heartbeat):
                                 heartbeat(source)
@@ -313,7 +323,7 @@ def incremental_sync(adapter: SourceAdapter, landing: LandingStore, source: str,
                     if should_continue and not should_continue():
                         interrupted = True
                         break
-                    if time.monotonic() - last_heartbeat >= 60:
+                    if time.monotonic() - last_heartbeat >= heartbeat_interval:
                         heartbeat = getattr(sink, "heartbeat_sync", None)
                         if callable(heartbeat):
                             heartbeat(source)

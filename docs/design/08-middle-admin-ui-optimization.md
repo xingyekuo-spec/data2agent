@@ -1,6 +1,7 @@
 # 08 · 中间机管理界面优化清单
 
 > 状态：**功能已实现，待 Windows 便携包现场验收** · 审核/实现基线：2026-08-08
+> · 2026-08-31：C1-B `ai_hub` 仅开发/测试;生产 `production_violations` 拒绝,与管理界面「非 http 即失败」一致。C1-C 前不得视为生产就绪。
 >
 > 适用范围：中间机本地管理界面 `middle_admin`（默认 `:8851`），不包含平台 Vue Console。
 > 本文同时作为优化清单、实现记录和生产验收清单；P0 代码门禁已完成，未取得真实环境
@@ -130,7 +131,7 @@
 | ID | 优化项目 | 前端工作 | 后端/运行时配套 | 验收标准 |
 | --- | --- | --- | --- | --- |
 | MUI-P0-22 | 状态库语义与命名迁移 | 状态、维护、配置和恢复页面统一使用“中间机状态库”，显示“仅控制状态、不含业务 Raw”说明 | 中间机配置由 `landing` 迁移为 `state_db`，数据库默认名改为 `middle-state.sqlite`；迁移期只读兼容旧字段并给出弃用提示 | 新安装不再出现含义模糊的 `landing/factory.sqlite`；旧配置可安全迁移；API 和页面不把状态库称为业务落地库 |
-| MUI-P0-23 | 生产 HTTP sink 强制 | 配置页在生产模式只展示平台推送配置；若读到 `sink: local`，显示阻断告警且不得显示部署就绪 | 便携包构建、首次配置、readiness 和 connector 启动共同拒绝生产 `sink.type != http`；`local` 仅允许显式开发/测试模式 | 修改生产配置为 `local` 后 connector 拒绝启动、readiness 失败且页面出现严重告警；不得在中间机创建 Raw 表 |
+| MUI-P0-23 | 生产 HTTP sink 强制 | 配置页在生产模式只展示平台推送配置；若读到 `sink: local` 或 `ai_hub`，显示阻断告警且不得显示部署就绪 | connector / `production_violations` 拒绝生产 `sink.type != http`；`local` 与 C1-B `ai_hub` 仅允许显式开发/测试。AI Hub 生产启用属 C1-C | 修改生产配置为 `local` 或 `ai_hub` 后 connector 拒绝启动、readiness 失败且页面出现严重告警；不得在中间机创建 Raw 表 |
 | MUI-P0-24 | Raw 表不变量检查 | 首页和首次部署检查显示“本机 Raw 表：0”；发现 Raw 表时显示不可静默的严重数据驻留告警，只展示表数量和脱敏名称摘要 | 状态 API 只读检查状态库 `sqlite_master`，输出稳定错误码 `middle_raw_persistence_detected`；不得查询或回传 Raw 行内容 | HTTP 模式正常运行后 `raw_*` 表数量始终为 0；注入测试 Raw 表后 15 秒内告警且 readiness 失败 |
 | MUI-P0-25 | 全量 spool 数据驻留策略 | 配置/状态页显示当前策略、临时目录是否受保护、是否存在活跃或遗留 spool；严格无落盘场景明确显示“磁盘 spool 已禁用” | 提供明确策略：受控加密临时卷 spool，或严格模式下取消磁盘 spool 并采用经评估的流式方案；设置最小目录权限、启动时遗留清理、异常退出清理和磁盘阈值 | 未配置策略时生产 readiness 失败；严格模式测试不得产生业务数据临时文件；加密 spool 模式须验证目录权限、加密前提、崩溃恢复与遗留清理 |
 
@@ -298,7 +299,7 @@
 - maintenance 状态文件采用临时文件 + 原子替换，读取失败保留明确错误而非空对象。
 - `data_residency` 只返回模式、计数、合规结论和脱敏摘要，不读取或返回任何 Raw 行内容。
 - `raw_table_count > 0`、生产 `sink_type != http` 或 spool 策略未验收时，`readiness.ready`
-  必须为 `false`，不能由前端自行降级成警告。
+  必须为 `false`，不能由前端自行降级成警告。C1-B `ai_hub` 在生产同样未就绪。
 
 ## 7. 测试项目
 
