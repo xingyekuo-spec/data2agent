@@ -8,7 +8,8 @@
 | B · AI Hub | `ai_hub` | `AiHubObjectPushSink` | AI Hub `/platform-api/v1/ingest/push/*` | 对象级 PUSH_AGENT v1 |
 
 路径 A 是现行工厂试点与便携包验收主路径(下文 §1–§4)。
-路径 B 是 C1-B 适配器:代码与 mock 契约已落地, **不得当作生产启用**;跨仓联调与按来源打开 AI Hub 推送属 C1-C。
+路径 B 是 **C1-B(本仓已落地)**:适配器、加密 spool 与 mock 契约可用,
+**不得当作生产启用**;跨仓联调与按来源打开 AI Hub 推送属 **C1-C**。
 
 ## 1. 路径 A:对接 data2agent 平台
 
@@ -83,7 +84,7 @@ ERP → 中间服务器 → data2agent 数据平台
 4. 确认对象层仍可正常浏览。
 5. 对 `full_refresh` 表：在 ERP 删除一行后再次同步,确认平台 raw 中该行消失。
 
-## 2. 路径 B:对接 AI Hub(C1-B,非生产)
+## 2. 路径 B:对接 AI Hub(C1-B 已落地,非生产)
 
 适用链路:
 
@@ -91,18 +92,19 @@ ERP → 中间服务器 → data2agent 数据平台
 ERP → 中间服务器 → AI Hub DATA_INGEST (PUSH_AGENT)
 ```
 
-当前范围是适配器与 mock 契约,不是现场开通清单。
+本仓范围是适配器、加密 spool 与 mock 契约验收,不是现场开通清单。
 
 | # | 确认项 | 说明 |
 | --- | --- | --- |
 | 1 | `sink.type: ai_hub` | 必须用 `AiHubObjectPushSink`;禁止把路径 A 的 `http` URL 改成 AI Hub |
 | 2 | 对象信封 | 每张表登记 `object_type`、`payload_contract_version`、`payload_schema_fingerprint`(64 hex)、`payload_columns`;可选 `delete_flag_column` |
 | 3 | 认证 | OIDC client credentials(`oidc_token_url` / `oidc_client_id` / `oidc_client_secret_env`),不是 ingest Token |
-| 4 | AI Hub 推送开关 | `DATA_INGEST_PUSH_ENABLED` 默认关闭;本仓 C1-B **不得**要求打开 |
-| 5 | 写入门 | AI Hub 变更日志 purpose 唯一约束未切 contract 前,Push 写入 API 仍关闭 |
-| 6 | 验证方式 | `tests/contract/test_ai_hub_object_push_sink.py` 走进程内 mock,不连真实 AI Hub / Authentik / MSSQL |
-| 7 | 管理界面 | 中间机 `middle_admin` 生产就绪度按「非 http 即失败」;`ai_hub` 在 `deployment_mode=production` 时 connector 同样拒绝(C1-C 前) |
-| 8 | 对账 | 禁止 `reconcile_at` / 手工对账;没有远端对账协议,也不得把 ERP 对账写进中间机 state_db |
+| 4 | 加密 spool | 必须 `spool.policy=encrypted_temp_volume` + `directory` + `encrypted_at_rest: true`;禁止 `strict_stream` / `temporary_file`。目录按来源摘要隔离,批次文件名为可移植摘要,读写删除做根目录 containment |
+| 5 | AI Hub 推送开关 | `DATA_INGEST_PUSH_ENABLED` 默认关闭;本仓 C1-B **不得**要求打开 |
+| 6 | 写入门 | AI Hub 变更日志 purpose 唯一约束未切 contract 前,Push 写入 API 仍关闭 |
+| 7 | 验证方式 | `tests/contract/test_ai_hub_object_push_sink.py` 走进程内 mock,不连真实 AI Hub / Authentik / MSSQL;覆盖 pending 排空、变更 chunk 续发、崩溃去重与 Windows 可移植写入 |
+| 8 | 管理界面 | 中间机 `middle_admin` 生产就绪度按「非 http 即失败」;`ai_hub` 在 `deployment_mode=production` 时 connector 同样拒绝(C1-C 前) |
+| 9 | 对账 | 禁止 `reconcile_at` / 手工对账;没有远端对账协议,也不得把 ERP 对账写进中间机 state_db |
 
 跨仓联调、按来源打开 Push、以及把 `ai_hub` 纳入中间机管理界面就绪度,一律放到 C1-C,不在本 runbook 勾验收。
 
