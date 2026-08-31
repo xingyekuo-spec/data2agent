@@ -30,5 +30,20 @@ sources:
     reconcile_at: "05:30"           # 每日 L1 对账;删除本行则不排
     apply_after_sync: true          # 同步后自动物化对象层(sink=http 时忽略)
     # 落地出口:默认 local=写本地库 —— 仅限内部开发/参考链/测试,非交付形态;
-    # 生产部署中间机必须推给平台(HttpPushSink),不允许在生产 ERP 机器上本地落地:
+    # 生产对接 data2agent 平台用 HttpPushSink:
     # sink: { type: http, url: "https://平台域名", token_env: D2A_INGEST_TOKEN }
+    # 对接 AI Hub PUSH_AGENT 必须使用独立适配器,禁止只改 http URL;
+    # 启用 ai_hub 时必须删除 reconcile_at / reconcile_deep_at(无远端对账,禁止本地 raw 对账):
+    # sink:
+    #   type: ai_hub
+    #   url: "https://ai-hub.example"
+    #   source_application_id: e10-adapter
+    #   oidc_token_url: "https://identity.example/application/o/token/"
+    #   oidc_client_id: e10-adapter
+    #   oidc_client_secret_env: D2A_AI_HUB_CLIENT_SECRET
+    # spool:                          # ai_hub 必填:受控加密批次恢复目录
+    #   policy: encrypted_temp_volume
+    #   directory: /secure/aihub-spool  # 须为现场确认静态加密的专用目录
+    #   encrypted_at_rest: true
+    # tables.ITEM 还需 object_type / payload_contract_version /
+    # payload_schema_fingerprint / payload_columns.

@@ -1,6 +1,6 @@
 # 02 · 抽取框架(详设)
 
-> 状态:设计修订 r0.9(2026-07-30)· 当前:E1–E6b、ingest v3 批次回执与 generation 屏障、全量单游标流式快照、跨机对账修复、HTTPS/Token fail-closed 默认及 SQLite 在线备份/保留任务已实现；正式试点仍需证书、恢复演练与容量压测
+> 状态:设计修订 r0.10(2026-08-31)· 当前:E1–E6b、ingest v3 批次回执与 generation 屏障、全量单游标流式快照、跨机对账修复、HTTPS/Token fail-closed 默认及 SQLite 在线备份/保留任务已实现；C1-B 新增 AI Hub 对象级 `AiHubObjectPushSink`（与表级 `HttpPushSink` 并存，不得改 URL 混用）；正式试点仍需证书、恢复演练与容量压测。对接 AI Hub 的生产启用属跨仓 C1-C，不在本文件宣称。
 > 上层基线:[路线图](../roadmap.md)
 
 ## 1. 目标与非目标
@@ -294,22 +294,32 @@ raw 只在平台持久存一份,中间仅瞬态过境(无状态,不落盘)。
 其余抽取、映射与隔离逻辑继续复用。
 
 **E6a · 推送 sink(✅ 已实现,仅表示传输与幂等落地可运行)**
-- 落地出口抽象为 Sink(`connect/sink.py`):`LocalSink`(写本地库 —— 仅限内部开发/
-  参考链/测试,非交付形态;同时是本节「推送与直连逐行一致」验证的对照实现)、
-  `HttpPushSink`(POST 给平台;生产中间机唯一允许的形态,stdlib urllib 零额外依赖、
-  值推送前归一化、BLOB 用 `base64-v1` 标记无损传输、可配私有 CA、
-  仅对网络/429/5xx 做带 jitter 的指数退避);`incremental_sync` 默认 `LocalSink(landing)`,
-  行为向后兼容;
+- 落地出口抽象为 Sink(`middle/extract/sink.py` 与调度 `build_sink`):
+  `LocalSink`(写本地库 —— 仅限内部开发/参考链/测试,非交付形态;同时是本节
+  「推送与直连逐行一致」验证的对照实现)、
+  `HttpPushSink`(表级 ingest v3,POST 给 **data2agent 平台** `/ingest/*`;
+  对接本仓平台时的生产形态)、
+  `AiHubObjectPushSink`(对象级 PUSH_AGENT v1,POST 给 **AI Hub**
+  `/platform-api/v1/ingest/push/*`;物理表映射为
+  `object_type/object_id/version/payload`)。
+  **禁止**把 `HttpPushSink.url` 改成 AI Hub 地址;两种协议不是同一信封。
+  生产 `deployment_mode: production` 只允许 `sink.type=http`;`ai_hub` 仅开发/测试,
+  C1-C 前 `production_violations` 拒绝以免 `serve` 对真实 AI Hub 推送。
+  `incremental_sync` 默认 `LocalSink(landing)`,行为向后兼容;
 - 平台接收端 `data2agent.platform.ingest`(FastAPI):`POST /ingest/batch` 只负责幂等落地;
   中间机在一张表的全部批次成功后再 `POST /ingest/table-complete`。完成事件包含表结构、
   行数与批次数，零行表也必须发送，平台据此创建空 Raw 表并保存表级新鲜度证据;
-- connect.yaml 加 `sink: {type: http, url, token_env}`;**中间用 http sink 时本地只留
-  水位/审计/运行状态、不落 raw**(水位是元数据非业务数据),且不在中间 apply(映射在平台侧);
-- 验证:中间/平台双进程集成测试 —— 推送落地与直连 sync 逐表逐行一致、中间零 raw 表、
-  表级完成事件与零行表完成证据
-  (`tests/test_sink_ingest.py`);现场验证见 [runbook/push-validation](../runbook/push-validation.md)
-  (主路径为便携包 + 平台 Vue Console);安装见 [portable](../runbook/portable.md),
-  链路验收见 [push-validation](../runbook/push-validation.md);
+- connect.yaml:`sink: {type: http, url, token_env}` 对接本仓平台;
+  `sink: {type: ai_hub, url, source_application_id, ...}` 对接 AI Hub,
+  且每张表须登记 `object_type` / `payload_contract_version` /
+  `payload_schema_fingerprint` / `payload_columns`。
+  **中间用 http 或 ai_hub 时本地只留水位/审计/运行状态、不落 raw**
+  (水位是元数据非业务数据),且不在中间 apply(映射在对端平台侧);
+- 验证:本仓平台路径见 `tests/contract/test_sink_ingest.py`;
+  AI Hub 适配器 mock 契约见 `tests/contract/test_ai_hub_object_push_sink.py`
+  (不连接真实 AI Hub)。现场本仓平台验收见
+  [runbook/push-validation](../runbook/push-validation.md);
+  AI Hub 生产启用须待跨仓 C1-C,不得据此打开 AI Hub `DATA_INGEST_PUSH_ENABLED`;
 - 推送模式的 `reconcile_at` / `reconcile_deep_at` 由中间机驱动 E6b；中间只保存
   水位、审计和运行证据，落地统计、staging 键 diff 与软删均在平台执行。
 

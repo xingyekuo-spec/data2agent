@@ -59,6 +59,7 @@ from ..extract.scheduler import (
     check_sync_preflight,
     run_reconcile_cycle,
     run_sync_cycle,
+    unsupported_ai_hub_reconcile,
 )
 from ..extract.sync_lock import SourceSyncLock
 from ...shared.store.landing import LandingStore
@@ -1579,6 +1580,13 @@ def create_app(
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
         if body.action in ("reconcile", "reconcile_deep"):
+            blocked = unsupported_ai_hub_reconcile(scfg)
+            if blocked:
+                raise http_error(
+                    422, blocked,
+                    "AI Hub 路径只做对象 Push,不对账;请删除 reconcile_at 或改用本仓 http sink",
+                    code="ai_hub_reconcile_unsupported",
+                )
             if body.tables:
                 raise http_error(
                     422, "对账动作不支持限定 tables",

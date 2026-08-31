@@ -63,17 +63,40 @@ class RateConfig(BaseModel):
 
 class SinkConfig(BaseModel):
     """raw 落地出口(§12.3):local=写本地库(仅限内部开发/参考链/测试,非交付形态);
-    http=推给平台(生产中间机唯一允许的形态)。"""
+    http=推给 data2agent 平台 ingest v3;ai_hub=推给 AI Hub PUSH_AGENT v1。"""
 
     model_config = {"extra": "forbid"}
-    type: Literal["local", "http"] = "local"
-    url: str | None = None                # http:平台接收端点(如 https://平台:8850)
-    token_env: str | None = None          # http:Token 所在环境变量(凭据不落配置)
-    allow_insecure_http: bool = False      # 仅显式开发/受控内网例外
-    allow_unauthenticated: bool = False    # 仅显式开发例外
+    type: Literal["local", "http", "ai_hub"] = "local"
+    url: str | None = None                # http/ai_hub:平台根 URL
+    token_env: str | None = None          # 静态 Bearer(开发)或 http Token
+    allow_insecure_http: bool = False
+    allow_unauthenticated: bool = False
     timeout_seconds: float = Field(default=30.0, ge=1.0, le=600.0)
     retries: int = Field(default=3, ge=1, le=10)
-    ca_bundle: str | None = None            # 私有 CA PEM 路径；不禁用主机名校验
+    ca_bundle: str | None = None
+    source_application_id: str | None = None  # ai_hub:已登记来源
+    oidc_token_url: str | None = None
+    oidc_client_id: str | None = None
+    oidc_client_secret_env: str | None = None
+    oidc_audience: str = "ai-hub-platform"
+    oidc_scope: str = "ai_hub.identity ai_hub.ingest.push"
+
+    @model_validator(mode="after")
+    def oidc_only_for_ai_hub(self):
+        oidc_fields = (
+            self.oidc_token_url,
+            self.oidc_client_id,
+            self.oidc_client_secret_env,
+        )
+        oidc_set = any(oidc_fields)
+        if self.type != "ai_hub" and oidc_set:
+            raise ValueError(
+                "OIDC 仅用于 sink.type=ai_hub;HTTP sink 请配置 token_env")
+        if self.type == "ai_hub" and oidc_set and not all(oidc_fields):
+            raise ValueError(
+                "OIDC 必须同时配置 oidc_token_url / oidc_client_id / "
+                "oidc_client_secret_env")
+        return self
 
 
 class SpoolConfig(BaseModel):
@@ -123,6 +146,11 @@ class TableExtractConfig(BaseModel):
     start_date: str | None = None          # 抽取起始日期(仅 incremental;首轮从此日期起扫)
     schema_fingerprint: str | None = None  # 已确认字段结构摘要(sha256:...)
     validated_at: str | None = None        # 最近一次现场校验时间
+    object_type: str | None = None         # ai_hub:已登记 object_type
+    payload_contract_version: str | None = None
+    payload_schema_fingerprint: str | None = None  # AI Hub 契约 64 hex
+    payload_columns: list[str] | None = None
+    delete_flag_column: str | None = None
 
     @property
     def schema(self) -> str | None:
@@ -167,6 +195,22 @@ class TableExtractConfig(BaseModel):
                     raise ValueError(f"非法键列名 '{col}'(须为 SQL 标识符)")
             if len(self.key_columns) != len(set(self.key_columns)):
                 raise ValueError("key_columns 不得包含重复列")
+        if self.payload_columns is not None:
+            if not self.payload_columns:
+                raise ValueError("payload_columns 不能为空")
+            for col in self.payload_columns:
+                if not ident.match(col):
+                    raise ValueError(f"非法 payload 列名 '{col}'(须为 SQL 标识符)")
+            if len(self.payload_columns) != len(set(self.payload_columns)):
+                raise ValueError("payload_columns 不得包含重复列")
+        if self.payload_schema_fingerprint is not None:
+            fingerprint = self.payload_schema_fingerprint.strip().lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+                raise ValueError("payload_schema_fingerprint 必须是 64 位 hex")
+            self.payload_schema_fingerprint = fingerprint
+        if self.delete_flag_column is not None and not ident.match(self.delete_flag_column):
+            raise ValueError(
+                f"非法 delete_flag_column '{self.delete_flag_column}'")
         return self
 
 
@@ -304,6 +348,43 @@ class SourceConfig(BaseModel):
         if self.reconcile_deep_day_of_week and not self.reconcile_deep_at:
             raise ValueError(
                 "reconcile_deep_day_of_week 需要同时配置 reconcile_deep_at")
+        if self.sink.type == "ai_hub":
+            if self.reconcile_at is not None or self.reconcile_deep_at is not None:
+                raise ValueError(
+                    "sink.type=ai_hub 不支持对账:无远端对账协议,且禁止对 "
+                    "中间机 state_db 做本地 raw 对账;请删除 reconcile_at / "
+                    "reconcile_deep_at")
+            if not self.sink.source_application_id:
+                raise ValueError("sink.type=ai_hub 必须配置 source_application_id")
+            if not self.sink.url:
+                raise ValueError("sink.type=ai_hub 必须配置 url")
+            if self.spool.policy != "encrypted_temp_volume":
+                raise ValueError(
+                    "sink.type=ai_hub 必须使用 spool.policy=encrypted_temp_volume;"
+                    "当前协议批次恢复需要受控加密 spool,strict_stream 与 "
+                    "temporary_file 均不支持"
+                )
+            for table, spec in (self.tables or {}).items():
+                if not spec.object_type:
+                    raise ValueError(f"{table}: ai_hub 必须配置 object_type")
+                if not spec.payload_contract_version:
+                    raise ValueError(
+                        f"{table}: ai_hub 必须配置 payload_contract_version")
+                if not spec.payload_schema_fingerprint:
+                    raise ValueError(
+                        f"{table}: ai_hub 必须配置 payload_schema_fingerprint")
+                if not spec.payload_columns:
+                    raise ValueError(f"{table}: ai_hub 必须配置 payload_columns")
+            seen_types: dict[str, str] = {}
+            for table, spec in (self.tables or {}).items():
+                object_type = spec.object_type or ""
+                if object_type in seen_types:
+                    raise ValueError(
+                        f"{table}: object_type '{object_type}' 已由 "
+                        f"{seen_types[object_type]} 使用;同一 source 内 "
+                        "object_type 必须唯一,禁止多表各自 full generation 互覆盖"
+                    )
+                seen_types[object_type] = table
         return self
 
     def table_whitelist(self) -> set[str]:
@@ -378,6 +459,32 @@ def is_loopback_url(url: str) -> bool:
         return host.lower() == "localhost"
 
 
+def validate_https_endpoint(
+    url: str,
+    *,
+    label: str,
+    allow_insecure_http: bool = False,
+    require_https: bool = False,
+) -> None:
+    """解析远程端点;默认要求 HTTPS,仅回环或显式 allow_insecure_http 可走明文。
+
+    require_https=True 时(生产 OIDC)连回环 HTTP 也不允许,避免把 client_secret
+    POST 到明文地址。
+    """
+    parsed = urlparse(url or "")
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError(f"{label} 必须是有效 http(s) URL")
+    if parsed.scheme == "https":
+        return
+    if require_https:
+        raise ValueError(f"{label} 必须使用 HTTPS")
+    if is_loopback_url(url) or allow_insecure_http:
+        return
+    raise ValueError(
+        f"{label} 必须使用 HTTPS;受控开发环境可显式设 "
+        "allow_insecure_http: true")
+
+
 class ConnectConfig(BaseModel):
     model_config = {"extra": "forbid"}
     templates: str = "templates"
@@ -400,6 +507,23 @@ class ConnectConfig(BaseModel):
             data["state_db"] = legacy
         return data
 
+    @model_validator(mode="after")
+    def unique_ai_hub_source_applications(self):
+        seen: dict[str, str] = {}
+        for name, source in self.sources.items():
+            if source.sink.type != "ai_hub":
+                continue
+            app_id = (source.sink.source_application_id or "").strip()
+            if not app_id:
+                continue
+            if app_id in seen:
+                raise ValueError(
+                    f"源 {name}: source_application_id '{app_id}' 已被源 "
+                    f"{seen[app_id]} 使用,远端来源身份不得重复"
+                )
+            seen[app_id] = name
+        return self
+
     @property
     def landing(self) -> str:
         """迁移期内部兼容属性；新代码和配置应使用 state_db。"""
@@ -411,8 +535,14 @@ class ConnectConfig(BaseModel):
             return []
         violations: list[str] = []
         for name, source in self.sources.items():
-            if source.sink.type != "http":
-                violations.append(f"源 {name}:生产模式必须使用 sink.type=http")
+            if source.sink.type == "ai_hub":
+                violations.append(
+                    f"源 {name}:C1-B 未生产启用,deployment_mode=production 不得使用 "
+                    "sink.type=ai_hub(生产启用属 C1-C)"
+                )
+            elif source.sink.type != "http":
+                violations.append(
+                    f"源 {name}:生产模式必须使用 sink.type=http")
             elif is_loopback_url(source.sink.url or ""):
                 violations.append(
                     f"源 {name}:生产模式 sink.url 不得为本机回环地址——"
@@ -448,28 +578,44 @@ def load_config(path: str | Path) -> ConnectConfig:
             raise ValueError(f"源 {name}: sqlite_readonly 须配 path 或 dsn_env")
         if s.tables is None:
             raise ValueError(f"源 {name}: 缺少 tables 配置。")
-        if s.sink.type == "http" and not s.sink.url:
-            raise ValueError(f"源 {name}: sink.type=http 必须配 sink.url(平台接收端点)")
-        if s.sink.type == "http":
-            parsed = urlparse(s.sink.url or "")
-            if parsed.scheme not in ("http", "https") or not parsed.hostname:
-                raise ValueError(f"源 {name}: sink.url 必须是有效 http(s) URL")
+        if s.sink.type in {"http", "ai_hub"} and not s.sink.url:
+            raise ValueError(f"源 {name}: sink.type={s.sink.type} 必须配 sink.url(平台接收端点)")
+        if s.sink.type in {"http", "ai_hub"}:
+            validate_https_endpoint(
+                s.sink.url or "",
+                label=f"源 {name}: sink.url",
+                allow_insecure_http=s.sink.allow_insecure_http,
+            )
             loopback = is_loopback_url(s.sink.url or "")
-            if (
-                parsed.scheme != "https"
-                and not loopback
-                and not s.sink.allow_insecure_http
-            ):
-                raise ValueError(
-                    f"源 {name}: 非本机 sink.url 必须使用 HTTPS；"
-                    "受控开发环境可显式设 allow_insecure_http: true")
-            if (
+            if s.sink.oidc_token_url:
+                validate_https_endpoint(
+                    s.sink.oidc_token_url,
+                    label=f"源 {name}: oidc_token_url",
+                    allow_insecure_http=s.sink.allow_insecure_http,
+                    require_https=cfg.deployment_mode == "production",
+                )
+            has_oidc = s.sink.type == "ai_hub" and bool(
+                s.sink.oidc_token_url
+                and s.sink.oidc_client_id
+                and s.sink.oidc_client_secret_env
+            )
+            if s.sink.type == "http":
+                if (
+                    not s.sink.token_env
+                    and not loopback
+                    and not s.sink.allow_unauthenticated
+                ):
+                    raise ValueError(
+                        f"源 {name}: 非本机 HTTP sink 必须配置 token_env；"
+                        "开发环境可显式设 allow_unauthenticated: true")
+            elif (
                 not s.sink.token_env
+                and not has_oidc
                 and not loopback
                 and not s.sink.allow_unauthenticated
             ):
                 raise ValueError(
-                    f"源 {name}: 非本机 HTTP sink 必须配置 token_env；"
+                    f"源 {name}: 非本机 AI Hub sink 必须配置 token_env 或 OIDC；"
                     "开发环境可显式设 allow_unauthenticated: true")
     return cfg
 

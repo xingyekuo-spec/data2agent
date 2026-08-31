@@ -264,6 +264,12 @@ def main() -> int:
             print(f"  - {t.table:<16} {t.rows:>6} 行 / {t.batches} 批  [{t.strategy}]{wm}")
         return 0
 
+    from .scheduler import unsupported_ai_hub_reconcile
+    blocked = unsupported_ai_hub_reconcile(scfg)
+    if blocked:
+        landing.con.close()
+        ap.error(blocked)
+
     if scfg.sink.type == "http":
         from .scheduler import build_sink
         sink = build_sink(scfg, landing, source=args.source)

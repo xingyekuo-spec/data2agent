@@ -49,7 +49,7 @@ def _utc_now() -> str:
 
 
 def table_spec_to_dict(spec: TableExtractConfig) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "mode": spec.mode,
         "schema": spec.schema,
         "key_columns": list(spec.key_columns) if spec.key_columns else None,
@@ -57,7 +57,15 @@ def table_spec_to_dict(spec: TableExtractConfig) -> dict[str, Any]:
         "start_date": spec.start_date,
         "schema_fingerprint": spec.schema_fingerprint,
         "validated_at": spec.validated_at,
+        "object_type": spec.object_type,
+        "payload_contract_version": spec.payload_contract_version,
+        "payload_schema_fingerprint": spec.payload_schema_fingerprint,
+        "payload_columns": (
+            list(spec.payload_columns) if spec.payload_columns else None
+        ),
+        "delete_flag_column": spec.delete_flag_column,
     }
+    return row
 
 
 def _spec_content_equal(
@@ -300,6 +308,13 @@ def replace_source_tables(
             "start_date": spec.start_date,
             "schema_fingerprint": spec.schema_fingerprint,
             "validated_at": now if stamp_validated_at else spec.validated_at,
+            "object_type": spec.object_type,
+            "payload_contract_version": spec.payload_contract_version,
+            "payload_schema_fingerprint": spec.payload_schema_fingerprint,
+            "payload_columns": (
+                list(spec.payload_columns) if spec.payload_columns else None
+            ),
+            "delete_flag_column": spec.delete_flag_column,
         }
         merged["sources"][source]["tables"][name] = {
             k: v for k, v in row.items() if v is not None

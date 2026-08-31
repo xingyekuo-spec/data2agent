@@ -78,8 +78,8 @@
     var windows = (source.windows || []).join(', ');
     var production = currentConfig && currentConfig.deployment_mode === 'production';
     var sinkState = production && sink.type !== 'http'
-      ? '<p class="banner danger"><strong>生产阻断：</strong>该数据源不是 HTTP sink，connector 将拒绝启动。</p>'
-      : '<p class="oknote">' + (sink.type === 'http' ? 'HTTP 推送已配置' : '开发/测试本地模式') + '</p>';
+      ? '<p class="banner danger"><strong>生产阻断：</strong>该数据源不是 HTTP sink，connector 将拒绝启动。AI Hub 适配器在 C1-C 前不得用于 production。</p>'
+      : '<p class="oknote">' + (sink.type === 'http' ? 'HTTP 推送已配置' : (sink.type === 'ai_hub' ? 'AI Hub 适配器（仅开发/测试，C1-C 前生产拒绝）' : '开发/测试本地模式')) + '</p>';
     return '<article class="source-block" data-source="' + esc(name) + '">' +
       '<h3 class="source-title">数据源：' + esc(name) + '</h3>' + sinkState +
       '<p class="source-lead">抽取、推送、对账和告警均绑定此 source，不会隐式操作其他数据源。</p>' +

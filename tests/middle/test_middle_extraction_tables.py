@@ -422,3 +422,35 @@ def test_html_metadata_and_tables_pages(env):
         assert r.status_code == 200, path
     nav = client.get("/status", headers=_h()).text
     assert 'href="/metadata"' in nav and 'href="/tables"' in nav
+
+
+def test_put_preserves_ai_hub_table_fields(env):
+    client, cfg = env
+    fingerprint = "a" * 64
+    tables = {
+        "CUSTOMER": {
+            "mode": "incremental", "schema": "main",
+            "key_columns": ["Id"], "watermark": "LAST_MODIFIED_DATE",
+            "object_type": "erp.customer",
+            "payload_contract_version": "customer.v1",
+            "payload_schema_fingerprint": fingerprint,
+            "payload_columns": ["Id"],
+            "delete_flag_column": "Id",
+        },
+        "CURRENCY": {"mode": "full_refresh", "schema": "main"},
+    }
+    rev = client.get("/api/extraction-tables", headers=_h()).json()["revision"]
+    r = client.put("/api/extraction-tables", headers=_h(), json={
+        "revision": rev, "tables": tables, "live": True,
+    })
+    assert r.status_code == 200 and r.json()["ok"] is True, r.text
+    data = yaml.safe_load(cfg.read_text(encoding="utf-8"))
+    saved = data["sources"][SOURCE]["tables"]["CUSTOMER"]
+    assert saved["object_type"] == "erp.customer"
+    assert saved["payload_contract_version"] == "customer.v1"
+    assert saved["payload_schema_fingerprint"] == fingerprint
+    assert saved["payload_columns"] == ["Id"]
+    assert saved["delete_flag_column"] == "Id"
+    got = client.get("/api/extraction-tables", headers=_h()).json()
+    assert got["tables"]["CUSTOMER"]["object_type"] == "erp.customer"
+    assert got["tables"]["CUSTOMER"]["payload_columns"] == ["Id"]
