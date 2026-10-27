@@ -13,6 +13,26 @@
   function selected(value, expected) { return value === expected ? ' selected' : ''; }
   function checked(value) { return value ? ' checked' : ''; }
 
+  var SINK_LABELS = {
+    http: 'ingest v3 推送已配置',
+    webhook: '通用 Webhook 推送已配置（d2a-push v1，无远端对账）',
+    ai_hub: 'AI Hub 适配器（仅开发/测试，C1-C 前生产拒绝）',
+    local: '开发/测试本地模式',
+  };
+  var SINK_MODES = {
+    http: {
+      hint: '平台完整实现 ingest v3（generation、批次回执、E6b 对账）。',
+      url: '平台接收地址', placeholder: 'https://platform.example.com:8850',
+      token: '推送口令', newToken: '新推送口令（可空）', tokenHint: '须与平台为本数据源签发的接收 Token 一致。',
+    },
+    webhook: {
+      hint: '接收方实现一个 HTTPS 端点即可；无远端对账，需要删除语义的表请用全量模式。',
+      url: 'Webhook 端点 URL', placeholder: 'https://data-platform.example.com/d2a/events',
+      token: 'Bearer Token', newToken: '新 Bearer Token（可空）', tokenHint: '可空；与签名密钥至少填一项。',
+    },
+  };
+  function isPushType(type) { return type === 'http' || type === 'webhook'; }
+
   function field(label, hint, input) {
     return '<label class="field"><span class="field-label">' + label + '</span>' + input +
       (hint ? '<span class="field-hint">' + hint + '</span>' : '') + '</label>';
@@ -77,9 +97,11 @@
     var spool = source.spool || {};
     var windows = (source.windows || []).join(', ');
     var production = currentConfig && currentConfig.deployment_mode === 'production';
-    var sinkState = production && sink.type !== 'http'
-      ? '<p class="banner danger"><strong>生产阻断：</strong>该数据源不是 HTTP sink，connector 将拒绝启动。AI Hub 适配器在 C1-C 前不得用于 production。</p>'
-      : '<p class="oknote">' + (sink.type === 'http' ? 'HTTP 推送已配置' : (sink.type === 'ai_hub' ? 'AI Hub 适配器（仅开发/测试，C1-C 前生产拒绝）' : '开发/测试本地模式')) + '</p>';
+    var webhook = sink.type === 'webhook';
+    var noReconcile = webhook ? ' disabled' : '';
+    var sinkState = production && !isPushType(sink.type)
+      ? '<p class="banner danger"><strong>生产阻断：</strong>该数据源不是 ingest v3 或 Webhook 推送，connector 将拒绝启动。AI Hub 适配器在 C1-C 前不得用于 production。</p>'
+      : '<p class="oknote">' + (SINK_LABELS[sink.type] || esc(sink.type)) + '</p>';
     return '<article class="source-block" data-source="' + esc(name) + '">' +
       '<h3 class="source-title">数据源：' + esc(name) + '</h3>' + sinkState +
       '<p class="source-lead">抽取、推送、对账和告警均绑定此 source，不会隐式操作其他数据源。</p>' +
@@ -110,15 +132,17 @@
             '<p class="hint">特殊场景（命名实例、非默认驱动、Windows 集成认证等）请直接编辑中间机 config/secrets.env 中的 DSN。</p>'
           : '<p class="meta">该源使用 ' + esc(source.adapter || '?') + ' 适配器，连接参数在 connect.yaml 中管理。</p>') +
       '</section>' +
-      '<section id="' + id + '-pace" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-pace" data-sub="' + id + '-pace" hidden><div class="group-grid">' +
+      '<section id="' + id + '-pace" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-pace" data-sub="' + id + '-pace" hidden>' +
+        (webhook ? '<p class="panel-lead">通用 Webhook 推送没有远端对账协议，对账计划已禁用。</p>' : '') +
+        '<div class="group-grid">' +
         field('抽取间隔', '支持 30s / 30m / 1h / 1d，至少 1 秒。', '<input type="text" data-key="sync_every" value="' + esc(source.sync_every || '') + '" required>') +
         field('首轮启动时间（可空）', 'HH:MM；留空表示服务启动后立即进入调度判断。', '<input type="time" data-key="sync_start_at" value="' + esc(source.sync_start_at || '') + '">') +
         field('全局抽取开始日期（可空）', '表级日期优先；不会抽取更早历史。', '<input type="date" data-key="start_date" value="' + esc(source.start_date || '') + '">') +
         field('错峰窗口（可空）', '多个窗口以逗号分隔，例如 22:00-06:00, 12:00-13:00。', '<input type="text" data-key="windows" value="' + esc(windows) + '">') +
         field('回看窗口', '用于覆盖迟到更新，例如 3d。', '<input type="text" data-key="lookback" value="' + esc(source.lookback || '') + '" required>') +
-        field('每日 L1 对账', 'HH:MM；留空禁用自动 L1。', '<input type="time" data-key="reconcile_at" value="' + esc(source.reconcile_at || '') + '">') +
-        field('L2 深度对账', '低峰执行；深度对账可能重抽并识别物理删除。', '<input type="time" data-key="reconcile_deep_at" value="' + esc(source.reconcile_deep_at || '') + '">') +
-        field('L2 执行星期', '未配置 L2 时间时会自动清空。', '<select data-key="reconcile_deep_day_of_week"><option value="">每天/未设置</option>' +
+        field('每日 L1 对账', 'HH:MM；留空禁用自动 L1。', '<input type="time" data-key="reconcile_at" value="' + esc(source.reconcile_at || '') + '"' + noReconcile + '>') +
+        field('L2 深度对账', '低峰执行；深度对账可能重抽并识别物理删除。', '<input type="time" data-key="reconcile_deep_at" value="' + esc(source.reconcile_deep_at || '') + '"' + noReconcile + '>') +
+        field('L2 执行星期', '未配置 L2 时间时会自动清空。', '<select data-key="reconcile_deep_day_of_week"' + noReconcile + '><option value="">每天/未设置</option>' +
           ['mon','tue','wed','thu','fri','sat','sun'].map(function (day) { return '<option value="' + day + '"' + selected(source.reconcile_deep_day_of_week, day) + '>' + day + '</option>'; }).join('') + '</select>') +
       '</div></section>' +
       '<section id="' + id + '-rate" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-rate" data-sub="' + id + '-rate" hidden><div class="group-grid">' +
@@ -126,7 +150,7 @@
         field('限速（行/秒）', '范围 1–1,000,000。', '<input type="number" min="1" max="1000000" data-key="rate.rows_per_second" value="' + esc(rate.rows_per_second) + '" required>') +
       '</div></section>' +
       '<section id="' + id + '-sink" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-sink" data-sub="' + id + '-sink" hidden><div class="group-grid">' +
-        field('平台接收地址', '生产环境必须为 HTTP sink；推荐 HTTPS。', '<input type="url" data-key="sink.url" value="' + esc(sink.url || '') + '" required>') +
+        field(webhook ? 'Webhook 端点 URL' : '平台接收地址', '推送方式在「推送目标」页签切换；推荐 HTTPS。', '<input type="url" data-key="sink.url" value="' + esc(sink.url || '') + '" required>') +
         field('请求超时（秒）', '范围 1–600，推荐 30。', '<input type="number" min="1" max="600" step="0.5" data-key="sink.timeout_seconds" value="' + esc(sink.timeout_seconds) + '" required>') +
         field('最多尝试次数', '包含首次请求，范围 1–10。', '<input type="number" min="1" max="10" data-key="sink.retries" value="' + esc(sink.retries) + '" required>') +
         field('私有 CA bundle（可空）', 'PEM 路径；主机名校验始终启用，不提供关闭证书校验选项。', '<input type="text" data-key="sink.ca_bundle" value="' + esc(sink.ca_bundle || '') + '">') +
@@ -141,6 +165,7 @@
         '<p class="panel-lead">仅展示是否配置；不返回 DSN、Token 或 CA 内容。</p><div class="cred-box">' +
           '<div class="cred-item"><strong>ERP DSN 环境变量</strong>' + esc(source.dsn_env || '未命名') + ' · ' + (source.dsn_env_set ? '已配置' : '未配置') + '</div>' +
           '<div class="cred-item"><strong>推送 Token 环境变量</strong>' + esc(sink.token_env || '未命名') + ' · ' + (sink.token_env_set ? '已配置' : '未配置') + '</div>' +
+          (webhook ? '<div class="cred-item"><strong>HMAC 签名密钥环境变量</strong>' + esc(sink.hmac_secret_env || '未命名') + ' · ' + (sink.hmac_secret_env_set ? '已配置' : '未配置') + '</div>' : '') +
           '<div class="cred-item"><strong>私有 CA</strong>' + (sink.ca_bundle_configured ? '已配置路径' : '未配置（使用系统信任库）') + '</div>' +
           '<div class="cred-item"><strong>secrets 最近修改</strong>' + fmtTime(currentConfig.sensitive_config && currentConfig.sensitive_config.updated_at) + '</div>' +
         '</div>' +
@@ -188,6 +213,11 @@
         else if (['sync_start_at','start_date','reconcile_at','reconcile_deep_at','reconcile_deep_day_of_week','sink.ca_bundle','spool.directory'].indexOf(key) >= 0) value = valueOrNull(value);
         setPath(source, key, value);
       });
+      var sinkType = currentConfig.sources[block.dataset.source].sink.type;
+      if (sinkType === 'webhook') {
+        source.reconcile_at = null;
+        source.reconcile_deep_at = null;
+      }
       if (!source.reconcile_deep_at) source.reconcile_deep_day_of_week = null;
       if (source.spool && source.spool.policy === 'strict_stream') {
         source.spool.directory = null;
@@ -231,8 +261,39 @@
   function updateLinkFields() {
     var name = byId('link-source').value;
     var source = currentConfig && currentConfig.sources[name];
-    byId('link-url').value = source && source.sink ? source.sink.url || '' : '';
+    var sink = (source && source.sink) || {};
+    var select = byId('link-sink-type');
+    select.querySelectorAll('option[data-extra]').forEach(function (option) { option.remove(); });
+    if (sink.type && !isPushType(sink.type)) {
+      // local / ai_hub 不能在页面切回，仅展示当前值；选择推送方式后才会提交 sink_type。
+      select.insertAdjacentHTML('beforeend', '<option value="' + esc(sink.type) + '" data-extra>当前：' + esc(sink.type) + '（不可在此切回）</option>');
+    }
+    select.value = sink.type || 'http';
+    byId('link-url').value = sink.url || '';
     byId('link-token').value = '';
+    byId('link-secret').value = '';
+    syncLinkMode();
+  }
+
+  function syncLinkMode() {
+    var name = byId('link-source').value;
+    var source = currentConfig && currentConfig.sources[name];
+    var sink = (source && source.sink) || {};
+    var type = byId('link-sink-type').value;
+    var mode = SINK_MODES[type] || SINK_MODES.http;
+    var switching = isPushType(type) && type !== sink.type;
+    byId('link-sink-hint').textContent = switching
+      ? mode.hint + ' 切换后需重新填写接收地址与凭据' + (type === 'webhook' ? '，并会清除对账计划。' : '。')
+      : (isPushType(type) ? mode.hint : '');
+    byId('link-url-label').textContent = mode.url;
+    byId('link-url').placeholder = mode.placeholder;
+    byId('link-token-label').textContent = mode.newToken;
+    byId('link-token-hint').textContent = type === 'webhook' ? mode.tokenHint
+      : (switching ? '切换到 ingest v3 时必须填写。' : '留空则保留当前口令。');
+    byId('link-secret-field').hidden = type !== 'webhook';
+    byId('link-secret-hint').textContent = sink.type === 'webhook' && sink.hmac_secret_env_set
+      ? '已配置（' + (sink.hmac_secret_env || '') + '）；留空则保留。'
+      : '由接收方提供；每个请求带 X-D2A-Signature 签名（推荐）。';
   }
 
   async function checkRevisionStatus() {
@@ -329,18 +390,23 @@
 
   async function saveConnection(button) {
     var source = byId('link-source').value;
+    var sinkType = byId('link-sink-type').value;
     var body = { source: source, platform_url: byId('link-url').value.trim(), revision: currentRevision };
+    if (isPushType(sinkType)) body.sink_type = sinkType;
     var token = byId('link-token').value.trim();
     if (token) body.ingest_token = token;
+    var secret = byId('link-secret').value.trim();
+    if (secret && sinkType === 'webhook') body.hmac_secret = secret;
     await runAction(button, async function () {
       var response = await apiJson('/api/config/connection', { method: 'POST', body: JSON.stringify(body) });
       if (!response.ok) throw new ApiError(formatApiError(response, '保存失败'), 422, response, 'validation');
       currentRevision = response.revision || currentRevision;
       byId('link-token').value = '';
-      byId('link-save-result').textContent = restartMessage(response, source + ' 平台对接信息');
+      byId('link-secret').value = '';
+      byId('link-save-result').textContent = restartMessage(response, source + ' 推送目标');
       byId('restart-banner').hidden = false;
-      byId('restart-banner').textContent = restartMessage(response, '平台对接信息');
-      announce('success', restartMessage(response, '平台对接信息'));
+      byId('restart-banner').textContent = restartMessage(response, '推送目标');
+      announce('success', restartMessage(response, '推送目标'));
       await loadDaily();
     }, { busyLabel: '保存中…' });
   }
@@ -349,7 +415,9 @@
     resultEl.textContent = '正在检查…';
     await runAction(button, async function () {
       var result = await apiJson('/api/config/connection-check?source=' + encodeURIComponent(source));
-      resultEl.textContent = result.ok
+      resultEl.textContent = result.ok && result.sink_type === 'webhook'
+        ? source + '：接收端可达（' + (result.local_protocol || 'd2a-push') + '）；' + (result.detail || '')
+        : result.ok
         ? source + '：平台可达；本机协议 v' + (result.local_protocol || '?') + '；平台支持 ' + (result.platform_supported || []).join(', ') + '；' + (result.compatible ? '兼容' : '不兼容')
         : source + '：' + (result.detail || '检查失败');
       announce(result.ok && result.compatible ? 'success' : 'warning', resultEl.textContent);
@@ -410,6 +478,12 @@
       invalid.focus();
       return '请检查必填项及字段格式。';
     }
+    if (form.elements.sink_type.value === 'webhook' &&
+        !form.elements.ingest_token.value.trim() && !form.elements.hmac_secret.value.trim()) {
+      activateTab('setup', 'setup-push');
+      form.elements.ingest_token.focus();
+      return 'Webhook 须至少填写 Bearer Token 或 HMAC 签名密钥。';
+    }
     var duration = form.elements.sync_every.value.trim();
     if (!/^\d+(?:\.\d+)?[smhd]$/.test(duration)) return '抽取间隔格式无效；请使用 30m、1h 等格式。';
     return '';
@@ -431,6 +505,18 @@
     }, { busyLabel: '保存并检查中…' });
   }
 
+  function syncSetupSinkMode(form) {
+    var type = form.elements.sink_type.value;
+    var mode = SINK_MODES[type];
+    byId('setup-sink-hint').textContent = mode.hint;
+    byId('setup-url-label').textContent = mode.url;
+    form.elements.platform_url.placeholder = mode.placeholder;
+    byId('setup-token-label').textContent = mode.token;
+    byId('setup-token-hint').textContent = mode.tokenHint;
+    form.elements.ingest_token.required = type !== 'webhook';
+    byId('setup-secret-field').hidden = type !== 'webhook';
+  }
+
   function bindEvents() {
     document.querySelectorAll('.tab-nav').forEach(function (button) {
       button.addEventListener('click', function () {
@@ -441,12 +527,17 @@
       });
     });
     var setupForm = byId('setup-form');
+    if (setupForm) {
+      setupForm.elements.sink_type.addEventListener('change', function () { syncSetupSinkMode(setupForm); });
+      syncSetupSinkMode(setupForm);
+    }
     if (setupForm) setupForm.addEventListener('submit', function (event) { event.preventDefault(); submitSetup(setupForm, setupForm.querySelector('[type="submit"]')).catch(function (error) { byId('setup-errors').textContent = error.message; }); });
     var configForm = byId('config-form');
     if (configForm) configForm.addEventListener('submit', function (event) { event.preventDefault(); saveConfig(byId('btn-config-save')).catch(function (error) { byId('config-errors').textContent = error.message; }); });
     byId('btn-link-save') && byId('btn-link-save').addEventListener('click', function () { saveConnection(this).catch(function (error) { byId('link-save-result').textContent = error.message; }); });
     byId('btn-link-check') && byId('btn-link-check').addEventListener('click', function () { checkPlatform(this, byId('link-source').value, byId('link-check-result')).catch(function (error) { byId('link-check-result').textContent = error.message; }); });
     byId('link-source') && byId('link-source').addEventListener('change', updateLinkFields);
+    byId('link-sink-type') && byId('link-sink-type').addEventListener('change', syncLinkMode);
     byId('btn-conflict-reload') && byId('btn-conflict-reload').addEventListener('click', function () { loadDaily({ announce: true }); });
     byId('btn-conflict-reapply') && byId('btn-conflict-reapply').addEventListener('click', function () {
       if (!conflictRevision) { byId('config-errors').textContent = '服务器 revision 未知，请先读取服务器新配置。'; return; }

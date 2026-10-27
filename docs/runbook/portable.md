@@ -89,12 +89,11 @@ Windows 端到端打包验收：构建完成后由 `deploy/build_portable.ps1` �
 5. 浏览器打开 `/config`,填写:
    - 平台 URL:ingest v3 根地址,例如 `https://<平台域名>`
    - ERP 连接信息
-   - 与平台一致的推送 Token
+   - 推送方式:ingest v3(平台根地址 + 推送 Token)或通用 Webhook(端点 URL +
+     Bearer Token / HMAC 签名密钥,至少一项)
    - 管理 Token
-6. **改用 webhook 推送时**:首配向导生成的是 `sink.type: http`。编辑 `config\connect.yaml`,
-   按 [webhook-push.md §2](webhook-push.md#2-中间机配置) 把 `sink` 改为 `type: webhook`,
-   在 `config\secrets.env` 写入 `token_env` / `hmac_secret_env` 指向的变量,并删除
-   `reconcile_at` / `reconcile_deep_at`;保存后在 `/config` 点「测试平台连通」确认 ping 成功。
+6. **切换推送方式**:在 `/config`「推送目标」页签选择 ingest v3 或通用 Webhook,填写接收地址
+   与凭据后保存(切到 Webhook 会一并清除对账计划);再点「测试接收端连通」确认可达。
 7. **首次选表（默认空清单，未选表不会访问 ERP 业务表）**:
    1. 在配置页「测试数据库连接」通过后，打开 `/metadata`（或点「下一步：元数据」）；
    2. 「刷新元数据」扫描表结构，打开详情「加入抽取计划」；

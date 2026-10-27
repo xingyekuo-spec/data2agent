@@ -67,6 +67,22 @@ def test_build_middle_yaml_validates(tmp_path):
     assert cfg.sources["digiwin_e10"].reconcile_deep_day_of_week == "sun"
 
 
+def test_build_middle_yaml_webhook(tmp_path):
+    """webhook:完整端点 URL,只引用已提供的凭据变量,不写对账计划。"""
+    home = HomeLayout(tmp_path)
+    home.ensure_dirs()
+    data = build_middle_connect_yaml(
+        home, platform_url="https://receiver.example/d2a/events",
+        sink_type="webhook", webhook_secret=True)
+    write_yaml(home.connect_yaml, data)
+    scfg = load_config(home.connect_yaml).sources["digiwin_e10"]
+    assert scfg.sink.type == "webhook"
+    assert scfg.sink.url == "https://receiver.example/d2a/events"
+    assert scfg.sink.hmac_secret_env == "D2A_WEBHOOK_SECRET"
+    assert scfg.sink.token_env is None
+    assert scfg.reconcile_at is None and scfg.reconcile_deep_at is None
+
+
 def test_new_install_has_empty_tables(tmp_path):
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
@@ -162,5 +178,49 @@ def test_middle_browser_setup(tmp_path):
         # after setup, protected APIs need token
         assert client.get("/api/status").status_code == 401
         assert client.get("/api/status", headers={"Authorization": "Bearer admin-tok"}).status_code == 200
+    finally:
+        restore_environ(prior)
+
+
+def test_middle_browser_setup_webhook(tmp_path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from data2agent.shared.admin.secrets_file import restore_environ
+    from data2agent.middle.admin.app import create_app
+
+    home = HomeLayout(tmp_path)
+    home.ensure_dirs()
+    secret_keys = (
+        "D2A_INGEST_TOKEN", "D2A_MIDDLE_ADMIN_TOKEN", "D2A_E10_DSN",
+        "D2A_WEBHOOK_TOKEN", "D2A_WEBHOOK_SECRET",
+    )
+    prior = {k: os.environ.get(k) for k in secret_keys}
+    try:
+        client = TestClient(create_app(home=home.root, token=None))
+        base = {
+            "sink_type": "webhook",
+            "platform_url": "https://receiver.example/d2a/events",
+            "erp_server": "ERPHOST",
+            "erp_database": "E10",
+            "erp_user": "ro",
+            "erp_password": "secret",
+            "admin_token": "admin-tok",
+        }
+        # 无任何推送凭据:拒绝且不落盘
+        r = client.post("/api/setup", json=base)
+        assert r.json()["ok"] is False
+        assert not home.connect_yaml.exists()
+
+        r = client.post("/api/setup", json={**base, "hmac_secret": "sig-1"})
+        assert r.status_code == 200 and r.json()["ok"] is True
+        secrets = load_secrets(home.secrets_env)
+        assert secrets["D2A_WEBHOOK_SECRET"] == "sig-1"
+        assert "D2A_INGEST_TOKEN" not in secrets and "D2A_WEBHOOK_TOKEN" not in secrets
+        assert "sig-1" not in home.connect_yaml.read_text(encoding="utf-8")
+        scfg = load_config(home.connect_yaml).sources["digiwin_e10"]
+        assert scfg.sink.type == "webhook"
+        assert scfg.sink.hmac_secret_env == "D2A_WEBHOOK_SECRET"
+        assert scfg.reconcile_at is None
     finally:
         restore_environ(prior)

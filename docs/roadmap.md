@@ -13,6 +13,8 @@
 
 - **通用 Webhook 推送**(`sink.type: webhook`,d2a-push v1):CloudEvents 信封、事件 id 幂等、
   HMAC 签名、快照原子替换语义;见 [webhook-push](runbook/webhook-push.md)。
+- **管理界面选择推送出口**:首配向导与 `/config`「推送目标」可选 ingest v3 / 通用 Webhook,
+  凭据只写 `secrets.env`,切到 Webhook 自动清除对账计划。
 - **抽取表显式配置**、**元数据发现**、**配置业务键 / 复合键增量**、**full_refresh 快照**、ingest 协议 v2。
 - M6 文档、便携包/smoke 与 Release MSSQL 门禁。
 - E10 测试资产位于 `tests/fixtures/e10/`（不进产品包）。
@@ -56,9 +58,6 @@
 
 ## 待办事项
 
-- **管理界面支持选择推送出口**:首配向导与 `/config` 当前只生成 / 编辑 `sink.type: http`;
-  webhook 需手工编辑 `connect.yaml`。后续在配置页提供 `webhook` / `http` 选择、
-  `token_env` / `hmac_secret_env` 填写与 ping 连通测试。
 - **接收侧存储代码瘦身**:`shared/store/landing.py` 仍保留 ingest v3 接收侧方法
   (generation / 回执 / 对账 staging),当前只被 `tests/support/reference_ingest.py` 使用;
   可迁入测试支持包,进一步缩小产品包。

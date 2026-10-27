@@ -41,7 +41,11 @@ sources:
 - `deployment_mode: production` 允许 `webhook` 与 `http`,但 `url` 不得指向本机回环;
 - 凭据只写在 `secrets.env` / 环境变量,配置文件只放变量名。
 
-管理页「测试平台连通」会发送一条 `ping` 事件,接收端返回 2xx 即视为可达且鉴权通过。
+也可以不手写 YAML:首配向导第 1 步或 `/config`「推送目标」页签选择「通用 Webhook」,填写端点 URL、
+Bearer Token 与 / 或 HMAC 签名密钥。凭据写入 `secrets.env` 的 `D2A_WEBHOOK_TOKEN` /
+`D2A_WEBHOOK_SECRET`,YAML 只记录变量名;切换时自动清除对账计划。
+
+管理页「测试接收端连通」会发送一条 `ping` 事件,接收端返回 2xx 即视为可达且鉴权通过。
 
 ## 3. 传输约定
 
