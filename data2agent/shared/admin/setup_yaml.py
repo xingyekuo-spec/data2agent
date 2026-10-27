@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import yaml
 
+from ..config import RECONCILE_UNSUPPORTED
 from .home_layout import HomeLayout
 
 # 浏览器配置写入 secrets.env 时使用的默认环境变量名;YAML 只记录变量名。
@@ -32,7 +33,6 @@ def build_middle_connect_yaml(
     """sink_type=webhook 时 webhook_token / webhook_secret 表示是否已提供对应凭据。"""
     state_db = str(home.data_dir / "middle-state.sqlite")
     if sink_type == "webhook":
-        # 通用推送无远端对账协议,不写对账计划(配置加载会拒绝)。
         sink: dict = {"type": "webhook", "url": platform_url.strip()}
         if webhook_token:
             sink["token_env"] = WEBHOOK_TOKEN_ENV
@@ -64,8 +64,9 @@ def build_middle_connect_yaml(
         # 浏览器表单中明确填写了非本机 HTTP 地址；把安全例外显式落盘，
         # 后续审核可见，避免隐式放宽全局默认。
         source["sink"]["allow_insecure_http"] = True
-    if sink_type != "webhook":
+    if sink_type not in RECONCILE_UNSUPPORTED:
         # 新部署默认每日做廉价 L1 对账；L2 deep 仍需按现场窗口显式开启。
+        # 不支持对账的推送方式(如 webhook)不写对账计划,否则配置加载会拒绝。
         source["reconcile_at"] = "05:30"
         source["reconcile_deep_at"] = "03:30"
         source["reconcile_deep_day_of_week"] = "sun"

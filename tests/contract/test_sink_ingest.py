@@ -16,6 +16,7 @@ from tests.helpers import e10_watermarks
 from data2agent.shared.store.landing import LandingStore, raw_table_name  # noqa: E402
 from data2agent.middle.extract.sink import HttpPushSink, LocalSink  # noqa: E402
 from tests.helpers import e10_whitelist  # noqa: E402
+from tests.support.ingest_store import IngestReceiverStore  # noqa: E402
 from tests.support.reference_ingest import create_app  # noqa: E402
 from data2agent.protocol.ingest import BINARY_ENCODING, INGEST_PROTOCOL_VERSION  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
@@ -111,7 +112,7 @@ def test_ingest_health_reports_protocol_version(tmp_path):
 def test_active_generation_rejects_duplicate_connector_and_stale_is_recoverable(
     tmp_path,
 ):
-    landing = LandingStore(tmp_path / "platform.sqlite")
+    landing = IngestReceiverStore(tmp_path / "platform.sqlite")
     landing.begin_ingest_generation(SOURCE, "g-active", ["T"])
     with pytest.raises(ValueError, match="仍在活动"):
         landing.begin_ingest_generation(SOURCE, "g-duplicate", ["T"])
@@ -204,7 +205,7 @@ def test_ingest_rejects_same_batch_id_with_different_payload(tmp_path):
 
 
 def test_generation_requires_all_tables(tmp_path):
-    landing = LandingStore(tmp_path / "platform.sqlite")
+    landing = IngestReceiverStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(landing.db_path))
     begin = _v({
         "source": SOURCE, "generation_id": "g1", "tables": ["A", "B"],

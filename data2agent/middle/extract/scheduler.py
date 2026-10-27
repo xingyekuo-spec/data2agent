@@ -65,18 +65,9 @@ def build_adapter(name: str, scfg: SourceConfig,
 
 
 def unsupported_reconcile(scfg: SourceConfig) -> str | None:
-    """webhook / ai_hub 没有远端对账协议,且禁止对中间机 state_db 做本地 raw 对账。"""
-    if scfg.sink.type == "ai_hub":
-        return (
-            "AI Hub 对象推送不支持对账:没有远端对账协议,"
-            "且禁止对中间机 state_db 做本地 raw 对账"
-        )
-    if scfg.sink.type == "webhook":
-        return (
-            "webhook 通用推送不支持对账:没有远端对账协议;"
-            "需要删除检测的表请改用 full_refresh 或 sink.type=http"
-        )
-    return None
+    """sink 不支持对账时返回原因(能力表见 shared.config.RECONCILE_UNSUPPORTED)。"""
+    blocked = scfg.sink.reconcile_unsupported
+    return blocked.reason if blocked else None
 
 
 def build_sink(scfg: SourceConfig, landing: LandingStore, *,
