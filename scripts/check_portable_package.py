@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail a portable build when shipped UI/templates or middle-admin pages are stale."""
+"""Fail a portable middle build when shipped middle-admin pages are stale."""
 
 from __future__ import annotations
 
@@ -36,26 +36,6 @@ def _fail(message: str) -> None:
     raise SystemExit(f"portable package check failed: {message}")
 
 
-def _check_templates(portable: Path, expected: Path) -> None:
-    shipped = portable / "app" / "templates"
-    for source in expected.rglob("*"):
-        if not source.is_file():
-            continue
-        relative = source.relative_to(expected)
-        target = shipped / relative
-        if not target.is_file():
-            _fail(f"template missing: {relative}")
-        if _digest(source) != _digest(target):
-            _fail(f"template differs from build source: {relative}")
-    for required in (
-        Path("metrics/dead_stock.yaml"),
-        Path("objects/dead_stock_item.yaml"),
-        Path("objects/dead_stock_attribution.yaml"),
-    ):
-        if not (shipped / required).is_file():
-            _fail(f"dead-stock template missing: {required}")
-
-
 def _site_packages(portable: Path) -> Path:
     # Windows embed: runtime/Lib/site-packages; allow Lib or lib
     for candidate in (
@@ -65,27 +45,6 @@ def _site_packages(portable: Path) -> Path:
         if candidate.is_dir():
             return candidate
     _fail("runtime site-packages missing")
-
-
-def _check_platform_entry(portable: Path) -> None:
-    if not (portable / "app" / "console-ui" / "dist" / "index.html").is_file():
-        _fail("Vue Console dist/index.html missing")
-    bat = portable / "升级.bat"
-    if not bat.is_file():
-        _fail("platform 升级入口 升级.bat missing")
-    # bat 必须与 updater 模块内模板一致(单一事实来源,防止两份脚本漂移)。
-    # 本脚本由便携包 runtime 的 python 执行,import 到的即被检 wheel 本身。
-    from data2agent.platform.updater.apply_script import UPDATE_BAT
-    if bat.read_text(encoding="utf-8") != UPDATE_BAT:
-        _fail("升级.bat 与 updater.apply_script.UPDATE_BAT 不一致")
-    app_py = _site_packages(portable) / "data2agent" / "platform" / "console" / "app.py"
-    if not app_py.is_file():
-        _fail("installed platform console module missing")
-    app_code = app_py.read_text(encoding="utf-8")
-    if 'app.mount("/assets", StaticFiles(directory=assets_dir), name="vue-assets")' not in app_code:
-        _fail("installed platform wheel does not mount root Vue assets")
-    if 'def legacy_v1_index()' not in app_code:
-        _fail("installed platform wheel does not retain /v1 compatibility redirect")
 
 
 def _check_no_legacy_erp_artifacts(portable: Path) -> None:
@@ -100,6 +59,8 @@ def _check_no_legacy_erp_artifacts(portable: Path) -> None:
     d2a = _site_packages(portable) / "data2agent"
     if not d2a.is_dir():
         return
+    if (d2a / "platform").exists():
+        _fail("platform package must not ship: data2agent/platform present")
     for py in d2a.rglob("*.py"):
         text = py.read_text(encoding="utf-8", errors="ignore")
         for needle in _FORBIDDEN_CODE_SYMBOLS:
@@ -169,12 +130,10 @@ def _check_middle_admin(portable: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--portable", type=Path, required=True)
-    parser.add_argument("--role", choices=("middle", "platform"), required=True)
-    parser.add_argument("--expected-templates", type=Path, required=True)
+    parser.add_argument("--role", choices=("middle",), default="middle")
     args = parser.parse_args()
 
     portable = args.portable.resolve()
-    _check_templates(portable, args.expected_templates.resolve())
     build_info_path = portable / "BUILD-INFO.json"
     if not build_info_path.is_file():
         _fail("portable build label missing")
@@ -187,40 +146,13 @@ def main() -> int:
             _fail(f"BUILD-INFO.json missing {key}")
     if build_info.get("role") != args.role:
         _fail(f"BUILD-INFO.json role={build_info.get('role')!r} != --role {args.role}")
-    if args.role == "platform":
-        if "send_ingest_protocol_version" in build_info:
-            _fail("platform BUILD-INFO must not declare send_ingest_protocol_version")
-        active = build_info.get("active_ingest_protocol_version")
-        legacy_health = build_info.get("legacy_health_ingest_protocol_version")
-        supported = build_info.get("supported_ingest_protocol_versions")
-        if not isinstance(active, str) or not active:
-            _fail("platform BUILD-INFO missing active_ingest_protocol_version")
-        if not isinstance(legacy_health, str) or not legacy_health:
-            _fail("platform BUILD-INFO missing legacy_health_ingest_protocol_version")
-        if (
-            not isinstance(supported, list)
-            or not supported
-            or not all(isinstance(p, str) and p for p in supported)
-        ):
-            _fail(
-                "platform BUILD-INFO supported_ingest_protocol_versions "
-                "must be a non-empty string list"
-            )
-        if active not in supported:
-            _fail("platform active_ingest_protocol_version must be in supported list")
-        if legacy_health not in supported:
-            _fail("platform legacy_health_ingest_protocol_version must be in supported list")
-    else:
-        if "supported_ingest_protocol_versions" in build_info:
-            _fail("middle BUILD-INFO must not declare supported_ingest_protocol_versions")
-        send = build_info.get("send_ingest_protocol_version")
-        if not isinstance(send, str) or not send:
-            _fail("middle BUILD-INFO missing send_ingest_protocol_version")
+    if "supported_ingest_protocol_versions" in build_info:
+        _fail("middle BUILD-INFO must not declare supported_ingest_protocol_versions")
+    send = build_info.get("send_ingest_protocol_version")
+    if not isinstance(send, str) or not send:
+        _fail("middle BUILD-INFO missing send_ingest_protocol_version")
     _check_no_legacy_erp_artifacts(portable)
-    if args.role == "platform":
-        _check_platform_entry(portable)
-    else:
-        _check_middle_admin(portable)
+    _check_middle_admin(portable)
     print("portable package check: OK")
     return 0
 

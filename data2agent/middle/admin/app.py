@@ -56,10 +56,11 @@ from ..extract.metadata import (
     is_odbc_timeout_message,
 )
 from ..extract.scheduler import (
+    build_sink,
     check_sync_preflight,
     run_reconcile_cycle,
     run_sync_cycle,
-    unsupported_ai_hub_reconcile,
+    unsupported_reconcile,
 )
 from ..extract.sync_lock import SourceSyncLock
 from ...shared.store.landing import LandingStore
@@ -137,7 +138,6 @@ def _make_templates() -> Jinja2Templates:
 
 
 class ConfigPatch(BaseModel):
-    templates: str | None = None
     state_db: str | None = None
     # 旧客户端兼容；保存时转换为 state_db，响应不再使用 landing。
     landing: str | None = None
@@ -318,7 +318,6 @@ def _client_host(request: Request) -> str:
 
 def _config_subset(cfg: ConnectConfig) -> dict:
     out: dict[str, Any] = {
-        "templates": cfg.templates,
         "deployment_mode": cfg.deployment_mode,
         "state_db": cfg.state_db,
         "state_db_kind": "middle_state",
@@ -1005,6 +1004,49 @@ def create_app(
                 "platform_supported": result.get("platform_supported") or [],
             })
             return result
+        if scfg.sink.type == "webhook" and scfg.sink.url:
+            # 通用推送无版本协商:ping 事件得到 2xx 即视为可达、鉴权通过、可接收。
+            from ..extract.webhook_sink import PUSH_SPEC_VERSION
+            base["local_protocol"] = f"d2a-push/{PUSH_SPEC_VERSION}"
+            configured = any(
+                os.environ.get(env or "")
+                for env in (scfg.sink.token_env, scfg.sink.hmac_secret_env))
+            try:
+                # 与 connector 同一装配路径:密钥环境变量为空时同样失败。
+                sink = build_sink(scfg, None, source=name)
+            except RuntimeError as e:
+                return finish({
+                    **base, "ok": False, "compatible": False,
+                    "token_configured": configured,
+                    "error_code": "config",
+                    "detail": _sanitize_detail(str(e)),
+                })
+            sink.timeout = min(30, scfg.sink.timeout_seconds)
+            sink.retries = 1
+            try:
+                sink.ping(name)
+            except Exception as e:
+                cause = e.__cause__ or e
+                code = getattr(cause, "code", None)
+                if code in (401, 403):
+                    error_code, detail = "auth", f"接收端拒绝({code}):请核对 Token / 签名密钥"
+                elif code is not None:
+                    error_code, detail = "receiver_error", f"接收端返回 HTTP {code}"
+                else:
+                    error_code = "network"
+                    detail = f"连接失败:{_sanitize_detail(str(cause))}"
+                return finish({
+                    **base, "ok": False, "compatible": False,
+                    "token_configured": configured,
+                    "error_code": error_code, "detail": detail,
+                })
+            return finish({
+                **base, "ok": True, "compatible": True,
+                "token_configured": configured,
+                "platform_supported": [base["local_protocol"]],
+                "detail": "ping 事件已被接收端确认",
+                "error_code": None,
+            })
         if scfg.sink.type != "http" or not scfg.sink.url:
             return finish({
                 **base, "ok": False, "compatible": False,
@@ -1580,12 +1622,18 @@ def create_app(
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
         if body.action in ("reconcile", "reconcile_deep"):
-            blocked = unsupported_ai_hub_reconcile(scfg)
+            blocked = unsupported_reconcile(scfg)
             if blocked:
+                if scfg.sink.type == "ai_hub":
+                    raise http_error(
+                        422, blocked,
+                        "AI Hub 路径只做对象 Push,不对账;请删除 reconcile_at 或改用 http sink",
+                        code="ai_hub_reconcile_unsupported",
+                    )
                 raise http_error(
                     422, blocked,
-                    "AI Hub 路径只做对象 Push,不对账;请删除 reconcile_at 或改用本仓 http sink",
-                    code="ai_hub_reconcile_unsupported",
+                    "webhook 通用推送不对账;需要删除检测请改用 full_refresh 或 http sink",
+                    code="webhook_reconcile_unsupported",
                 )
             if body.tables:
                 raise http_error(
@@ -1694,7 +1742,7 @@ def create_app(
 
         try:
             _TRIGGER_EXECUTOR.submit(
-                _run_sync_worker, run_id, name, scfg, cfg.landing, cfg.templates,
+                _run_sync_worker, run_id, name, scfg, cfg.landing,
                 lock, tables)
         except Exception as exc:
             # 线程池无法提交：关闭遗留 run 并释放锁，避免永久 blocking
@@ -2213,12 +2261,12 @@ def create_app(
     # ---- 内部 ----
 
     def _run_sync_worker(
-        run_id: int, name: str, scfg, landing_path: str, templates: str, lock,
+        run_id: int, name: str, scfg, landing_path: str, lock,
         tables: list[str] | None = None,
     ) -> None:
         try:
             result = run_sync_cycle(
-                name, scfg, landing_path, templates,
+                name, scfg, landing_path,
                 run_id=run_id, acquired_lock=lock, tables=tables)
             if not result.executed:
                 skipped_store = LandingStore(landing_path)

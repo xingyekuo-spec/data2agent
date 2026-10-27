@@ -13,9 +13,8 @@ from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # n
 from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
 from data2agent.shared.store.landing import LandingStore  # noqa: E402
 from data2agent.middle.admin.app import create_app  # noqa: E402
-from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
-from tests.helpers import watermarks_from_pack, whitelist_from_pack  # noqa: E402
+from tests.helpers import e10_watermarks, e10_whitelist  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = "digiwin_e10"
@@ -25,13 +24,11 @@ SOURCE = "digiwin_e10"
 def env(tmp_path):
     src = tmp_path / "source.sqlite"
     write_db(src, build(seed=42, asof=date(2026, 7, 10)))
-    pack = load_pack(ROOT / "templates")
     landing = LandingStore(tmp_path / "landing.sqlite")
-    adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE))
-    incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
+    adapter = SqliteReadOnlyAdapter(str(src), e10_whitelist())
+    incremental_sync(adapter, landing, SOURCE, e10_watermarks())
     cfg = tmp_path / "connect.yaml"
     cfg.write_text(
-        f"templates: {ROOT / 'templates'}\n"
         f"landing: {landing.db_path}\n"
         "sources:\n"
         "  digiwin_e10:\n"

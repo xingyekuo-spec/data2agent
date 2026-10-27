@@ -27,8 +27,19 @@ def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+_HTTP_SINK = (
+    "    sink:\n"
+    "      type: http\n"
+    # RFC 5737 TEST-NET-1:生产模式禁止回环 sink,fixture 用文档保留段
+    "      url: http://192.0.2.1:8850\n"
+    "      allow_insecure_http: true\n"
+    "      token_env: D2A_TEST_INGEST_TOKEN\n"
+)
+
+
 def _write_production_node(
     tmp_path: Path, *, adapter: str = "sqlite_readonly",
+    sink_lines: str = _HTTP_SINK,
 ) -> tuple[TestClient, Path, Path]:
     data_dir = tmp_path / "data"
     run_dir = data_dir / "run"
@@ -47,7 +58,6 @@ def _write_production_node(
     )
     config = tmp_path / "connect.yaml"
     config.write_text(
-        f"templates: {ROOT / 'templates'}\n"
         "deployment_mode: production\n"
         f"state_db: {state_db}\n"
         "sources:\n"
@@ -57,13 +67,8 @@ def _write_production_node(
         "      CONTROLLED_TABLE:\n"
         "        mode: full_refresh\n"
         "        key_columns: [ID]\n"
-        "    sink:\n"
-        "      type: http\n"
-        # RFC 5737 TEST-NET-1:生产模式禁止回环 sink,fixture 用文档保留段
-        "      url: http://192.0.2.1:8850\n"
-        "      allow_insecure_http: true\n"
-        "      token_env: D2A_TEST_INGEST_TOKEN\n"
-        "    spool:\n"
+        + sink_lines
+        + "    spool:\n"
         "      policy: strict_stream\n",
         encoding="utf-8",
     )
@@ -145,6 +150,30 @@ def test_production_readiness_and_security_headers(tmp_path):
         SOURCE: "strict_stream"}
     assert status["process_status"]["connector_running"] is True
     assert status["process_status"]["maintenance_running"] is True
+
+
+def test_production_readiness_passes_with_webhook_sink(tmp_path):
+    client, _, _ = _write_production_node(tmp_path, sink_lines=(
+        "    sink:\n"
+        "      type: webhook\n"
+        "      url: https://receiver.example/d2a/events\n"
+        "      hmac_secret_env: D2A_TEST_WEBHOOK_SECRET\n"
+    ))
+    status = client.get("/api/status", headers=AUTH).json()
+    failing = [c for c in status["readiness"]["checks"]
+               if c["required"] and c["status"] != "pass"]
+    assert failing == []
+    assert status["readiness"]["ready"] is True
+    assert status["data_residency"]["sink_type"] == "webhook"
+
+
+def test_production_readiness_rejects_local_sink(tmp_path):
+    client, _, _ = _write_production_node(tmp_path, sink_lines="")
+    status = client.get("/api/status", headers=AUTH).json()
+    checks = {c["id"]: c for c in status["readiness"]["checks"]}
+    assert status["readiness"]["ready"] is False
+    assert checks["data_residency"]["status"] == "fail"
+    assert "webhook" in checks["data_residency"]["detail"]
 
 
 def test_raw_table_is_redacted_and_blocks_readiness(tmp_path):

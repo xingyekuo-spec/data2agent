@@ -1,7 +1,7 @@
 [project]
 name = "data2agent"
 version = "0.6.5"
-description = "Data to Agent, for factories — 把工厂数据接给 AI Agent:抽取框架 + 国产 ERP 连接器 + 制造业本体模板 + MCP Server"
+description = "Data to Agent, for factories — 工厂 ERP 只读抽取中间机:水位增量 / 对账 / 推送到任意数据平台(通用 Webhook、ingest v3、AI Hub)"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
@@ -12,12 +12,7 @@ dependencies = [
 
 [project.optional-dependencies]
 connect = ["pyodbc>=5.1", "apscheduler>=3.10"]
-postgres = ["psycopg[binary]>=3.1"]            # 落地库改用 PostgreSQL 时(后续切片,当前 SQLite 不需要)
-mcp = ["mcp>=1.0,<2.0"]  # 2.0 起 FastMCP 拆出为独立包,mcp.server.fastmcp 已移除
-console = ["fastapi>=0.110", "uvicorn>=0.29"]
 middle_admin = ["fastapi>=0.110", "uvicorn>=0.29", "jinja2>=3.0"]
-ingest = ["fastapi>=0.110", "uvicorn>=0.29"]   # 平台侧接收端(Pattern A)
-excel = ["openpyxl>=3.1"]
 dev = ["pytest>=8.0", "pytest-xdist>=3.6", "httpx2>=2.9"]
 
 [project.urls]

@@ -13,3 +13,5 @@ dist/
 .DS_Store
 .worktrees/
 /local-test/data/
+# 平台端 Vue Console 已移除;旧检出可能残留本地构建产物与 .env.local
+/console-ui/

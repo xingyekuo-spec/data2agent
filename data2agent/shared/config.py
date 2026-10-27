@@ -62,13 +62,20 @@ class RateConfig(BaseModel):
 
 
 class SinkConfig(BaseModel):
-    """raw 落地出口(§12.3):local=写本地库(仅限内部开发/参考链/测试,非交付形态);
-    http=推给 data2agent 平台 ingest v3;ai_hub=推给 AI Hub PUSH_AGENT v1。"""
+    """raw 推送出口(§12.3):
+
+    - local:写本地库(仅限内部开发/参考链/测试,非交付形态);
+    - webhook:通用 HTTP 批量推送(d2a-push v1,CloudEvents 信封),任何平台
+      实现一个 HTTPS 端点即可接收;无远端对账;
+    - http:ingest v3 强一致推送(generation + E6b 对账),需接收方完整实现;
+    - ai_hub:AI Hub PUSH_AGENT v1 对象级推送。
+    """
 
     model_config = {"extra": "forbid"}
-    type: Literal["local", "http", "ai_hub"] = "local"
-    url: str | None = None                # http/ai_hub:平台根 URL
-    token_env: str | None = None          # 静态 Bearer(开发)或 http Token
+    type: Literal["local", "webhook", "http", "ai_hub"] = "local"
+    url: str | None = None                # webhook:完整端点 URL;http/ai_hub:平台根 URL
+    token_env: str | None = None          # 静态 Bearer Token 所在环境变量
+    hmac_secret_env: str | None = None    # webhook:HMAC-SHA256 签名密钥所在环境变量
     allow_insecure_http: bool = False
     allow_unauthenticated: bool = False
     timeout_seconds: float = Field(default=30.0, ge=1.0, le=600.0)
@@ -92,6 +99,8 @@ class SinkConfig(BaseModel):
         if self.type != "ai_hub" and oidc_set:
             raise ValueError(
                 "OIDC 仅用于 sink.type=ai_hub;HTTP sink 请配置 token_env")
+        if self.type != "webhook" and self.hmac_secret_env:
+            raise ValueError("hmac_secret_env 仅用于 sink.type=webhook")
         if self.type == "ai_hub" and oidc_set and not all(oidc_fields):
             raise ValueError(
                 "OIDC 必须同时配置 oidc_token_url / oidc_client_id / "
@@ -229,7 +238,6 @@ class SourceConfig(BaseModel):
     reconcile_at: str | None = None       # "HH:MM",每日 L1 对账;None 不排
     reconcile_deep_at: str | None = None  # "HH:MM",L2 修复
     reconcile_deep_day_of_week: str | None = None  # mon..sun;None=每日
-    apply_after_sync: bool = True         # sink=http 时忽略(映射在平台侧)
     estimate_rows: bool = False           # COUNT 仅用于进度；生产默认关闭以减轻 ERP
     sink: SinkConfig = SinkConfig()
     spool: SpoolConfig = SpoolConfig()
@@ -348,6 +356,13 @@ class SourceConfig(BaseModel):
         if self.reconcile_deep_day_of_week and not self.reconcile_deep_at:
             raise ValueError(
                 "reconcile_deep_day_of_week 需要同时配置 reconcile_deep_at")
+        if self.sink.type == "webhook" and (
+            self.reconcile_at is not None or self.reconcile_deep_at is not None
+        ):
+            raise ValueError(
+                "sink.type=webhook 不支持对账:通用推送无远端对账协议;请删除 "
+                "reconcile_at / reconcile_deep_at(需要删除检测时改用 "
+                "full_refresh 或 sink.type=http)")
         if self.sink.type == "ai_hub":
             if self.reconcile_at is not None or self.reconcile_deep_at is not None:
                 raise ValueError(
@@ -485,9 +500,14 @@ def validate_https_endpoint(
         "allow_insecure_http: true")
 
 
+# 已移除的配置键:旧 connect.yaml 仍可加载,解析时静默丢弃。
+# templates / apply_after_sync 属于已删除的本地映射层(中间机只抽取 + 推送)。
+_REMOVED_TOP_LEVEL_KEYS = ("templates",)
+_REMOVED_SOURCE_KEYS = ("apply_after_sync",)
+
+
 class ConnectConfig(BaseModel):
     model_config = {"extra": "forbid"}
-    templates: str = "templates"
     deployment_mode: Literal["production", "development", "test"] = "development"
     state_db: str = "state/middle-state.sqlite"
     sources: dict[str, SourceConfig]
@@ -499,6 +519,17 @@ class ConnectConfig(BaseModel):
         if not isinstance(value, dict):
             return value
         data = dict(value)
+        for key in _REMOVED_TOP_LEVEL_KEYS:
+            data.pop(key, None)
+        sources = data.get("sources")
+        if isinstance(sources, dict):
+            data["sources"] = {
+                name: (
+                    {k: v for k, v in src.items() if k not in _REMOVED_SOURCE_KEYS}
+                    if isinstance(src, dict) else src
+                )
+                for name, src in sources.items()
+            }
         legacy = data.pop("landing", None)
         current = data.get("state_db")
         if current is not None and legacy is not None and str(current) != str(legacy):
@@ -540,9 +571,9 @@ class ConnectConfig(BaseModel):
                     f"源 {name}:C1-B 未生产启用,deployment_mode=production 不得使用 "
                     "sink.type=ai_hub(生产启用属 C1-C)"
                 )
-            elif source.sink.type != "http":
+            elif source.sink.type not in ("http", "webhook"):
                 violations.append(
-                    f"源 {name}:生产模式必须使用 sink.type=http")
+                    f"源 {name}:生产模式必须使用 sink.type=http 或 webhook")
             elif is_loopback_url(source.sink.url or ""):
                 violations.append(
                     f"源 {name}:生产模式 sink.url 不得为本机回环地址——"
@@ -578,9 +609,9 @@ def load_config(path: str | Path) -> ConnectConfig:
             raise ValueError(f"源 {name}: sqlite_readonly 须配 path 或 dsn_env")
         if s.tables is None:
             raise ValueError(f"源 {name}: 缺少 tables 配置。")
-        if s.sink.type in {"http", "ai_hub"} and not s.sink.url:
+        if s.sink.type in {"webhook", "http", "ai_hub"} and not s.sink.url:
             raise ValueError(f"源 {name}: sink.type={s.sink.type} 必须配 sink.url(平台接收端点)")
-        if s.sink.type in {"http", "ai_hub"}:
+        if s.sink.type in {"webhook", "http", "ai_hub"}:
             validate_https_endpoint(
                 s.sink.url or "",
                 label=f"源 {name}: sink.url",
@@ -608,6 +639,16 @@ def load_config(path: str | Path) -> ConnectConfig:
                     raise ValueError(
                         f"源 {name}: 非本机 HTTP sink 必须配置 token_env；"
                         "开发环境可显式设 allow_unauthenticated: true")
+            elif s.sink.type == "webhook":
+                if (
+                    not s.sink.token_env
+                    and not s.sink.hmac_secret_env
+                    and not loopback
+                    and not s.sink.allow_unauthenticated
+                ):
+                    raise ValueError(
+                        f"源 {name}: 非本机 webhook sink 必须配置 token_env 或 "
+                        "hmac_secret_env；开发环境可显式设 allow_unauthenticated: true")
             elif (
                 not s.sink.token_env
                 and not has_oidc
@@ -619,20 +660,3 @@ def load_config(path: str | Path) -> ConnectConfig:
                     "开发环境可显式设 allow_unauthenticated: true")
     return cfg
 
-
-class PlatformConfig(BaseModel):
-    """平台配置模型:只包含平台职责字段,不含 ERP 连接或抽取计划。"""
-
-    model_config = {"extra": "forbid"}
-    templates: str = "templates"
-    landing: str = "landing/factory.sqlite"
-    # 可选:对外告知中间机的 ingest 端点(反代域名);缺省按访问主机推导
-    ingest_url: str | None = None
-
-
-def load_platform_config(path: str | Path) -> PlatformConfig:
-    data = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
-    # Reject sources block — platform must not carry ERP config
-    if "sources" in data:
-        raise ValueError("平台配置不得包含 sources 字段;抽取计划仅属于中间机 connect.yaml")
-    return PlatformConfig(**data)

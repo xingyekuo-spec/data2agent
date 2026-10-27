@@ -1,12 +1,11 @@
-"""架构分层检查:强制 middle / platform / shared / protocol 的依赖方向。
+"""架构分层检查:强制 middle / shared / protocol 的依赖方向。
 
 分层规则(见 docs/design/00-overview.md):
 
-- ``data2agent.middle`` 不得依赖 ``data2agent.platform``;
-- ``data2agent.platform`` 不得依赖 ``data2agent.middle``;
-- ``data2agent.protocol`` 与 ``data2agent.shared`` 不得依赖任何端目录
-  (``data2agent.middle`` / ``data2agent.platform``),它们是两端共享的底座;
-- 允许的方向:middle → shared → protocol,platform → shared → protocol。
+- 允许的方向:middle → shared → protocol;
+- ``data2agent.shared`` 不得依赖 ``data2agent.middle``;
+- ``data2agent.protocol`` 是推送契约层,不得依赖 shared / middle;
+- 平台端已移出本仓,任何层不得再引用 ``data2agent.platform``。
 
 用法:python scripts/check_architecture_layers.py(无输出退出码 0 表示通过)。
 CI 由 tests/contract/test_architecture_layers.py 调用同一实现。
@@ -29,7 +28,6 @@ PROTOCOL = "data2agent.protocol"
 # (源顶层目录, 禁止依赖的目标前缀)
 FORBIDDEN: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("middle", (PLATFORM,)),
-    ("platform", (MIDDLE,)),
     ("shared", (MIDDLE, PLATFORM)),
     ("protocol", (MIDDLE, PLATFORM, SHARED)),
 )
@@ -88,7 +86,7 @@ def main() -> int:
         for v in violations:
             print(f"  - {v}", file=sys.stderr)
         return 1
-    print("架构分层检查通过:middle / platform / shared / protocol 依赖方向正确")
+    print("架构分层检查通过:middle / shared / protocol 依赖方向正确")
     return 0
 
 

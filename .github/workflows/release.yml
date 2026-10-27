@@ -1,7 +1,6 @@
 name: release
-# 打 tag(v*)或手动触发 → 测试通过后,打出两台 Windows 便携包(解压即用),上传 GitHub Release。
-# 每个便携包只有一个入口:data2agent.exe
-# 平台/中间机应用版本可独立升级;仅 ingest 协议不兼容时才须升级中间机。
+# 打 tag(v*)或手动触发 → 测试通过后,打出中间机 Windows 便携包(解压即用),上传 GitHub Release。
+# 便携包只有一个入口:data2agent.exe
 on:
   push:
     tags: ["v*"]
@@ -20,15 +19,6 @@ on:
         type: boolean
         required: false
         default: false
-      roles:
-        description: "构建哪些便携包(仅手动触发生效;tag 发布总是全部)"
-        type: choice
-        required: false
-        default: both
-        options:
-          - both
-          - middle
-          - platform
 
 permissions:
   contents: write
@@ -53,7 +43,7 @@ jobs:
           python-version: ${{ env.PY_VERSION }}
           cache: pip
           cache-dependency-path: pyproject.toml
-      - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
+      - run: pip install -e ".[dev,middle_admin,connect]"
       - run: python scripts/verify.py module backend
       - name: ingest 协议兼容门禁 + 旧中间机契约
         run: |
@@ -81,26 +71,8 @@ jobs:
           docker compose -f tests/integration/mssql/docker-compose.yml up
           --build --abort-on-container-exit --exit-code-from runner
 
-  # 换包脚本(apply-update.ps1)的真实运行环境是 Windows:文件锁、部分换包与
-  # 回滚路径必须在 windows-latest 上验收,失败则阻断打包发布。
-  update-apply-e2e:
-    needs: [test, mssql-integration]
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.ref || github.ref }}
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PY_VERSION }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
-      - run: pip install -e ".[dev,mcp,console,ingest,excel,middle_admin,connect]"
-      - name: 换包/回滚脚本验收(pwsh 端到端)
-        run: python -m pytest tests/platform/test_update_apply_script.py -v
-
   package:
-    needs: [test, mssql-integration, update-apply-e2e]
+    needs: [test, mssql-integration]
     runs-on: windows-latest
     defaults:
       run:
@@ -113,19 +85,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PY_VERSION }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: console-ui/package-lock.json
-
-      - name: 构建 Vue Console
-        working-directory: console-ui
-        run: |
-          npm ci
-          npm run build
-          node scripts/check-dist.mjs
 
       - name: 解析版本号
         id: ver
@@ -155,7 +114,6 @@ jobs:
           .\deploy\build_ui_launchers.ps1 -OutDir dist/launchers
 
       - name: 下载依赖并组装中间机便携包
-        if: github.ref_type == 'tag' || inputs.roles != 'platform'
         run: |
           $v = "${{ steps.ver.outputs.version }}"
           $py = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
@@ -170,55 +128,18 @@ jobs:
             -LauncherExe dist/launchers/middle/data2agent.exe
           Copy-Item "dist/portable/d2a-portable-middle-$v.zip" .
 
-      - name: 下载依赖并组装平台机便携包
-        if: github.ref_type == 'tag' || inputs.roles != 'middle'
-        run: |
-          $v = "${{ steps.ver.outputs.version }}"
-          $py = python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')"
-          New-Item -ItemType Directory -Force -Path stage/wheels-platform | Out-Null
-          python -m pip download --dest stage/wheels-platform --only-binary=:all: `
-            "setuptools>=68" "wheel" `
-            "pydantic>=2.7" "pyyaml>=6.0" `
-            "pyodbc>=5.1" "apscheduler>=3.10" `
-            "mcp>=1.0,<2.0" "fastapi>=0.110" "uvicorn>=0.29"
-          .\deploy\build_portable.ps1 -Role platform -Version $v `
-            -OutDir dist/portable -WheelsDir stage/wheels-platform -PyFullVersion $py `
-            -LauncherExe dist/launchers/platform/data2agent.exe
-          Copy-Item "dist/portable/d2a-portable-platform-$v.zip" .
-
       - name: 上传构建产物(workflow_dispatch 且不发布)
         if: github.ref_type != 'tag' && !inputs.create_release
         uses: actions/upload-artifact@v4
         with:
           name: d2a-portable-${{ steps.ver.outputs.version }}
-          path: |
-            d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
-            d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
-
-      - name: 生成平台更新清单 latest.json
-        # latest.json 是平台包更新清单;仅构建中间机(roles=middle)时无平台 zip,跳过
-        if: github.ref_type == 'tag' || (inputs.create_release && inputs.roles != 'middle')
-        shell: pwsh
-        run: |
-          $v = "${{ steps.ver.outputs.version }}"
-          $zip = "d2a-portable-platform-$v.zip"
-          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          $bi = Get-Content "dist/portable/d2a-portable-platform-$v/BUILD-INFO.json" -Raw | ConvertFrom-Json
-          $repo = "${{ github.repository }}"
-          [ordered]@{
-            version = $v
-            package = $zip
-            url = "https://github.com/$repo/releases/download/$v/$zip"
-            sha256 = $sha
-            supported_ingest_protocol_versions = @($bi.supported_ingest_protocol_versions)
-            notes = ""
-          } | ConvertTo-Json | Set-Content latest.json -Encoding utf8
+          path: d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
 
       - name: 生成 Release 正文(含协议兼容性)
         if: github.ref_type == 'tag' || inputs.create_release
         shell: bash
         run: |
-          python -m pip install -e ".[ingest]"
+          python -m pip install -e .
           {
             echo "## data2agent ${{ steps.ver.outputs.version }} 便携包"
             echo ""
@@ -226,8 +147,7 @@ jobs:
             echo ""
             echo "| 附件 | 用途 |"
             echo "| --- | --- |"
-            echo "| \`d2a-portable-middle-*.zip\` | 中间服务器 |"
-            echo "| \`d2a-portable-platform-*.zip\` | 数据平台 |"
+            echo "| \`d2a-portable-middle-*.zip\` | 中间服务器(抽取 + 推送) |"
             echo ""
             echo "首次打开浏览器完成配置;之后同一次双击会拉起后台服务。"
             echo "中间机另需 **ODBC Driver 18** MSI。详见 \`docs/runbook/portable.md\`。"
@@ -242,13 +162,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('prerelease-{0}', steps.ver.outputs.version) }}
-          # 部分构建(roles=middle/platform)时不存在的附件跳过而非报错;
-          # 构建步骤自身失败会先中断任务,不会静默出残包
-          fail_on_unmatched_files: false
-          files: |
-            d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
-            d2a-portable-platform-${{ steps.ver.outputs.version }}.zip
-            latest.json
+          fail_on_unmatched_files: true
+          files: d2a-portable-middle-${{ steps.ver.outputs.version }}.zip
           generate_release_notes: true
           body_path: release-body.md
           prerelease: ${{ github.ref_type != 'tag' }}

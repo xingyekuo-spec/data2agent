@@ -1,4 +1,4 @@
-"""Check release version consistency across Python, frontend, and git tag.
+"""Check release version consistency across Python package and git tag.
 
 The Python package version in pyproject.toml is the source of truth.  Official
 release tags are expected to be the same version with a leading "v".
@@ -7,7 +7,6 @@ release tags are expected to be the same version with a leading "v".
 from __future__ import annotations
 
 import argparse
-import json
 import os
 from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
@@ -38,15 +37,6 @@ def _metadata_version() -> str | None:
         return None
 
 
-def _console_version() -> str | None:
-    package_json = ROOT / "console-ui" / "package.json"
-    if not package_json.is_file():
-        return None
-    data = json.loads(package_json.read_text(encoding="utf-8"))
-    value = data.get("version")
-    return str(value).strip() if value is not None else None
-
-
 def _tag_from_env() -> str | None:
     if os.environ.get("GITHUB_REF_TYPE") == "tag":
         return os.environ.get("GITHUB_REF_NAME")
@@ -65,11 +55,6 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Release tag to check, e.g. v0.5.3. Defaults to GitHub tag env.")
     parser.add_argument(
-        "--require-console",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Require console-ui/package.json version to match pyproject.")
-    parser.add_argument(
         "--check-installed-metadata",
         action="store_true",
         help="Also require installed package metadata to match pyproject.")
@@ -78,7 +63,6 @@ def main(argv: list[str] | None = None) -> int:
     expected = _project_version()
     checks: list[tuple[str, str | None, bool]] = [
         ("data2agent.__version__", _imported_version(), True),
-        ("console-ui/package.json", _console_version(), args.require_console),
     ]
     if args.check_installed_metadata:
         checks.append(("installed package metadata", _metadata_version(), True))

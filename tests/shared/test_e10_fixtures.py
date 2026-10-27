@@ -1,14 +1,13 @@
 """E10-like 参考库测试:数据自洽 + binding 与表形一致。"""
 
-import re
 import sqlite3
 from datetime import date
 from pathlib import Path
 
 import pytest
 
-from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.schema import TABLES, dict_markdown
+from tests.helpers import E10_TABLES, E10_WATERMARKS
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -107,36 +106,14 @@ def test_write_db_roundtrip(data, tmp_path):
         con.close()
 
 
-def test_e10_bindings_match_schema():
-    """元模型消费校验:digiwin_e10 binding 引用的表 / 字段必须存在于模拟表形。"""
+def test_e10_extract_plan_matches_schema():
+    """测试用抽取计划(表清单 + 水位列)必须存在于模拟表形。"""
     columns = {t: {c for c, _, _ in cols} for t, (_, cols) in TABLES.items()}
-    token = re.compile(r"([A-Z][A-Z_0-9]*)\.([A-Za-z_][A-Za-z_0-9]*)")
-    pack = load_pack(ROOT / "templates")
-    checked = 0
-    for obj in pack.objects:
-        for b in obj.bindings:
-            if b.source != "digiwin_e10":
-                continue
-            checked += 1
-            for t in b.source_tables:
-                assert t in TABLES, f"{obj.object}: binding 表 {t} 不在模拟表形中"
-            if b.materializer:
-                # 内部结果表由 materializer 生成，不属于 ERP 参考表形。
-                continue
-            refs = list(b.key_map.values()) + list(b.field_map.values()) + ([b.watermark] if b.watermark else [])
-            for ref in refs:
-                matches = token.findall(ref)
-                assert matches, f"{obj.object}: 映射值 '{ref}' 未包含 表.字段 引用"
-                for table, col in matches:
-                    assert table in columns, f"{obj.object}: '{ref}' 引用了未知表 {table}"
-                    assert col in columns[table], f"{obj.object}: '{ref}' 引用了 {table} 不存在的字段 {col}"
-            anchor = b.tables[0]
-            for prop, spec in b.derived.items():
-                for rule in spec.rules:
-                    for col in rule.when:
-                        assert col in columns[anchor], \
-                            f"{obj.object}.{prop}: 派生条件引用了锚表 {anchor} 不存在的列 {col}"
-    assert checked == 15, "十五个对象都应有 digiwin_e10 binding"
+    for table in E10_TABLES:
+        assert table in TABLES, f"抽取表 {table} 不在模拟表形中"
+    for table, col in E10_WATERMARKS.items():
+        assert table in E10_TABLES
+        assert col in columns[table], f"{table} 不存在水位列 {col}"
 
 
 def test_dict_markdown_covers_all_tables():

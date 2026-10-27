@@ -195,7 +195,7 @@
       }
       sources[block.dataset.source] = source;
     });
-    return { templates: byId('cfg-templates').value.trim(), state_db: byId('cfg-state-db').value.trim(), sources: sources };
+    return { state_db: byId('cfg-state-db').value.trim(), sources: sources };
   }
 
   function validatePatch(patch) {
@@ -218,7 +218,6 @@
       if (source.spool.policy === 'encrypted_temp_volume' && (!source.spool.directory || !source.spool.encrypted_at_rest)) errors.push(name + '：加密临时卷必须填写目录并确认静态加密');
       if (currentConfig.deployment_mode === 'production' && source.spool.policy === 'temporary_file') errors.push(name + '：生产环境不允许 temporary_file spool');
     });
-    if (!patch.templates) errors.push('模板目录不能为空');
     if (!patch.state_db) errors.push('中间机状态库路径不能为空');
     return errors;
   }
@@ -274,7 +273,6 @@
       byId('config-conflict').hidden = true;
       byId('deployment-mode').textContent = config.deployment_mode === 'production' ? '生产' : config.deployment_mode;
       byId('legacy-state-warning').hidden = !config.legacy_landing_key;
-      byId('cfg-templates').value = config.templates || '';
       byId('cfg-state-db').value = config.state_db || '';
       sourcesEl.innerHTML = Object.keys(config.sources || {}).map(function (name) { return renderSource(name, config.sources[name]); }).join('') || '<p class="state state-empty">当前配置没有数据源。</p>';
       bindSourceControls();

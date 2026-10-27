@@ -81,13 +81,6 @@ def test_demo_assets_deleted():
         assert not (ROOT / rel).exists(), rel
 
 
-def test_console_mode_is_always_real():
-    mode = (ROOT / "console-ui" / "src" / "config" / "mode.ts").read_text(encoding="utf-8")
-    assert "ConsoleMode = 'real'" in mode or 'ConsoleMode = "real"' in mode
-    assert "export const IS_MOCK = false" in mode
-    assert "VITE_CONSOLE_MODE" not in mode
-
-
 def test_e10_fixtures_importable():
     from tests.fixtures.e10.schema import TABLES
     from tests.fixtures.e10.seed import build, write_db

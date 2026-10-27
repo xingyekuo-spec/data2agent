@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import yaml
 
-from .home_layout import HomeLayout, resolve_templates
+from .home_layout import HomeLayout
 
 
 def build_middle_connect_yaml(
@@ -22,7 +22,6 @@ def build_middle_connect_yaml(
     batch_size: int = 5000,
     rows_per_second: int = 2000,
 ) -> dict:
-    templates = str(resolve_templates(home))
     state_db = str(home.data_dir / "middle-state.sqlite")
     source = {
         "adapter": "mssql_readonly",
@@ -57,17 +56,9 @@ def build_middle_connect_yaml(
     if start_date:
         source["start_date"] = start_date
     return {
-        "templates": templates,
         "deployment_mode": "production",
         "state_db": state_db,
         "sources": {"digiwin_e10": source},
-    }
-
-
-def build_platform_yaml(home: HomeLayout) -> dict:
-    return {
-        "templates": str(resolve_templates(home)),
-        "landing": str(home.data_dir / "factory.sqlite"),
     }
 
 

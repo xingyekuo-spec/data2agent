@@ -10,17 +10,11 @@ from data2agent.middle.extract.adapters.base import ReadOnlyViolation, TableInfo
 from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.middle.extract.increment import incremental_sync
 from data2agent.shared.store.landing import LandingStore, raw_table_name
-from tests.helpers import whitelist_from_pack
-from data2agent.shared.metamodel.loader import load_pack
+from tests.helpers import e10_whitelist
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = "digiwin_e10"
-
-
-@pytest.fixture(scope="module")
-def pack():
-    return load_pack(ROOT / "templates")
 
 
 @pytest.fixture()
@@ -40,7 +34,7 @@ def _adapter(source_db, whitelist=None, landing=None, **kw):
     if landing is not None:
         hook = lambda action, sql, rows, ms: landing.log_audit(SOURCE, action, sql, rows, ms)  # noqa: E731
     if whitelist is None:
-        whitelist = whitelist_from_pack(load_pack(ROOT / "templates"), SOURCE)
+        whitelist = e10_whitelist()
     return SqliteReadOnlyAdapter(str(source_db), whitelist, audit_hook=hook, **kw)
 
 
@@ -50,8 +44,8 @@ def _full_snapshot_sync(adapter, landing):
 
 
 # 单元测试:whitelist_from_pack() 工具函数(非生产路径,新配置用 tables 字段)
-def test_whitelist_derived_from_bindings(pack):
-    assert whitelist_from_pack(pack, SOURCE) == {
+def test_whitelist_derived_from_bindings():
+    assert e10_whitelist() == {
         "CUSTOMER", "CURRENCY", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D",
         "ITEM_WAREHOUSE",
     }

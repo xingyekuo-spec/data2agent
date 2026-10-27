@@ -7,13 +7,9 @@
 
 生成内容:
   data/source.sqlite   E10-like 参考源库(测试 fixture,与自动测试同源)
-  data/landing.sqlite  落地库(已跑一轮 sync + apply 并发布数据集,
-                       console 打开即有数据可看)
+  data/landing.sqlite  本地落地库(已跑一轮 sync,sink=local 仅供开发)
 
-随后可启动完整链路:
-
-    python -m data2agent.platform.console --landing local-test/data/landing.sqlite --templates templates
-    python -m data2agent.middle.extract sync --config local-test/config/connect.yaml
+webhook 推送联调见 local-test/README.md。
 """
 
 from __future__ import annotations
@@ -42,12 +38,10 @@ def main() -> int:
 
     run([sys.executable, "-m", "tests.fixtures.e10.seed", "--db", str(DATA / "source.sqlite")])
     run([sys.executable, "-m", "data2agent.middle.extract", "sync", "--config", CONFIG])
-    run([sys.executable, "-m", "data2agent.middle.extract", "apply",
-         "--landing", "local-test/data/landing.sqlite", "--templates", "templates"])
 
-    print("\n完成。启动管理界面:")
-    print("  python -m data2agent.platform.console "
-          "--landing local-test/data/landing.sqlite --templates templates")
+    print("\n完成。查看水位与运行:")
+    print("  python -m data2agent.middle.extract status "
+          "--landing local-test/data/landing.sqlite")
     return 0
 
 

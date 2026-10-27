@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from data2agent.middle.extract.adapters.base import TableInfo
 from data2agent.shared.store.landing import LandingStore
 from data2agent.middle.extract.sink import HttpPushSink, ProtocolVersionError
-from data2agent.platform.ingest.app import create_app
+from tests.support.reference_ingest import create_app
 from data2agent.protocol.ingest import (
     INGEST_PROTOCOL_VERSION,
     SUPPORTED_INGEST_PROTOCOL_VERSIONS,

@@ -1,7 +1,7 @@
-"""架构分层契约:middle / platform / shared / protocol 依赖方向必须保持。
+"""架构分层契约:middle / shared / protocol 依赖方向必须保持。
 
 实现见 scripts/check_architecture_layers.py;此处固化为测试,防止重构后
-两端重新互相渗透(例如中间端再 import 平台端模块)。
+分层被打穿(例如 shared 反向依赖 middle,或重新引入平台端模块)。
 """
 
 from __future__ import annotations

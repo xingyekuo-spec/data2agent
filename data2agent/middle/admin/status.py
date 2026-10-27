@@ -670,7 +670,7 @@ def build_status(
             "pass" if residency["compliant"] else "fail",
             "中间机无业务 Raw 持久化" if residency["compliant"]
             else ";".join(residency["violations"]),
-            "生产环境使用 HTTP sink，移除 Raw 表并完成 spool 策略验收",
+            "生产环境使用 webhook / http sink，移除 Raw 表并完成 spool 策略验收",
         ))
         checks.append(_check(
             "tables_configured",

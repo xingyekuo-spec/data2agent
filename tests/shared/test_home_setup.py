@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 import pytest
 
-from data2agent.shared.admin.home_layout import HomeLayout, resolve_templates
+from data2agent.shared.admin.home_layout import HomeLayout
 from data2agent.shared.admin.secrets_file import apply_secrets_to_environ, load_secrets, save_secrets
 from data2agent.shared.admin.setup_yaml import (
     build_middle_connect_yaml,
@@ -53,10 +52,7 @@ def test_odbc_dsn_braces_form_values_to_prevent_attribute_injection():
 def test_build_middle_yaml_validates(tmp_path):
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
-    root = Path(__file__).resolve().parents[2]
-    (tmp_path / "app").mkdir()
     data = build_middle_connect_yaml(home, platform_url="http://10.0.0.1:8850")
-    data["templates"] = str(root / "templates")
     path = home.connect_yaml
     write_yaml(path, data)
     cfg = load_config(path)
@@ -130,11 +126,6 @@ def test_middle_browser_setup(tmp_path):
 
     home = HomeLayout(tmp_path)
     home.ensure_dirs()
-    # point templates via app/ so resolve_templates finds them
-    root = Path(__file__).resolve().parents[2]
-    import shutil
-    shutil.copytree(root / "templates", home.app / "templates")
-
     secret_keys = (
         "D2A_INGEST_TOKEN", "D2A_MIDDLE_ADMIN_TOKEN", "D2A_E10_DSN", "D2A_MCP_TOKEN",
     )
@@ -171,41 +162,5 @@ def test_middle_browser_setup(tmp_path):
         # after setup, protected APIs need token
         assert client.get("/api/status").status_code == 401
         assert client.get("/api/status", headers={"Authorization": "Bearer admin-tok"}).status_code == 200
-    finally:
-        restore_environ(prior)
-
-
-def test_platform_browser_setup(tmp_path):
-    pytest.importorskip("fastapi")
-    from fastapi.testclient import TestClient
-
-    from data2agent.shared.admin.secrets_file import restore_environ
-    from data2agent.platform.console.app import create_app
-
-    home = HomeLayout(tmp_path)
-    home.ensure_dirs()
-    root = Path(__file__).resolve().parents[2]
-    import shutil
-    shutil.copytree(root / "templates", home.app / "templates")
-
-    secret_keys = ("D2A_INGEST_TOKEN", "D2A_CONSOLE_TOKEN", "D2A_MCP_TOKEN")
-    prior = {k: os.environ.get(k) for k in secret_keys}
-    try:
-        client = TestClient(create_app(home=home.root))
-        assert client.get("/api/setup/status").json()["needs_setup"] is True
-        r = client.post("/api/setup", json={
-            "ingest_token": "ingest-tok",
-            "console_token": "console-tok",
-        })
-        assert r.status_code == 200 and r.json()["ok"] is True
-        assert home.platform_yaml.is_file()
-        secrets = load_secrets(home.secrets_env)
-        assert secrets["D2A_INGEST_TOKEN"] == "ingest-tok"
-        assert secrets["D2A_CONSOLE_TOKEN"] == "console-tok"
-        assert secrets.get("D2A_MCP_TOKEN")  # auto-generated
-        assert client.get("/api/overview").status_code == 401
-        assert client.get(
-            "/api/overview", headers={"Authorization": "Bearer console-tok"}
-        ).status_code == 200
     finally:
         restore_environ(prior)

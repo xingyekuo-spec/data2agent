@@ -4,17 +4,17 @@
 
 > **部署形态说明**:本指南的 `sink: local`(不写 `sink` 即默认)是**内部开发/参考链/
 > 测试专用**,不是交付形态。生产部署是跨机推送:
-> 对接 **data2agent 平台** 用 `sink: { type: http, ... }`(本文 §6);
-> 对接 **AI Hub** 必须用 `sink: { type: ai_hub, ... }`(本文 §6.1),
-> 禁止把 http URL 改成 AI Hub。现场本仓平台安装走
-> [便携包](portable.md);AI Hub 路径见 [push-validation](push-validation.md)。
+> 对接任意平台用通用 `sink: { type: webhook, ... }`(本文 §6,[协议说明](webhook-push.md));
+> 需要远端对账的强一致场景用 ingest v3 `sink: { type: http, ... }`(本文 §6.1);
+> 对接 **AI Hub** 必须用 `sink: { type: ai_hub, ... }`(本文 §6.2)。
+> 三者不得靠改 URL 混用。现场安装走[便携包](portable.md),验收见 [push-validation](push-validation.md)。
 
 ## 1. 前置条件
 
 | # | 确认项 |
 | --- | --- |
 | 1 | Python 3.11+ 已安装 |
-| 2 | `pip install -e ".[dev,mcp,console,ingest,connect,middle_admin,excel]"` 已执行 |
+| 2 | `pip install -e ".[dev,connect,middle_admin]"` 已执行 |
 | 3 | 参考 seed 已生成:`python -m tests.fixtures.e10.seed --db /tmp/e10.sqlite`（测试资产；非产品运行模式） |
 | 4 | (可选) Docker 已安装,用于 SQL Server 集成测试 |
 
@@ -24,7 +24,6 @@
 本地参考链可显式列出基线表:
 
 ```yaml
-templates: templates
 landing: landing/factory.sqlite
 
 sources:
@@ -56,14 +55,13 @@ sources:
     rate: { batch_size: 5000, rows_per_second: 2000 }
     lookback: 3d
     sync_every: 30m
-    apply_after_sync: true
 ```
 
 ## 3. CLI 命令
 
 ```bash
 # 验证配置可加载
-python -c "from data2agent.middle.extract.config import load_config; load_config('connect.yaml'); print('OK')"
+python -c "from data2agent.shared.config import load_config; load_config('connect.yaml'); print('OK')"
 
 # 单次抽取(策略来自 tables;无 --full)
 python -m data2agent.middle.extract sync --config connect.yaml
@@ -100,30 +98,42 @@ docker compose -f tests/integration/mssql/docker-compose.yml up \
 ```
 
 门控环境变量未设置时，直接跑 pytest 会 skip 集成用例；compose 路径会注入 DSN 并实际执行。
-## 6. HTTP 推送模式
+## 6. 通用 Webhook 推送
 
 ```yaml
 sources:
   digiwin_e10:
-    # 本机参考链专用:回环地址仅在 deployment_mode 非 production 时合法。
-    # 现场两台机器部署必须填平台机地址,例如 http://192.168.1.20:8850;
-    # 生产模式下回环 sink 会被 readiness 判为违规并拒绝启动 connector。
-    sink: { type: http, url: "http://127.0.0.1:8850", token_env: D2A_INGEST_TOKEN }
-    apply_after_sync: false
+    # 本机联调:先运行 python scripts/dev_webhook_receiver.py --port 8860
+    # 回环地址仅在 deployment_mode 非 production 时合法,且可免鉴权。
+    sink: { type: webhook, url: "http://127.0.0.1:8860/events" }
 ```
 
-同步前中间机确认自身发送协议落在平台 `supported_ingest_protocol_versions` 中
-（当前发送 ingest v3,平台同时接受 v2/v3）；不在列表则立即失败。现场升级策略见 [portable.md](portable.md)。
+现场必须使用 HTTPS 端点,并配置 `token_env` 和 / 或 `hmac_secret_env`;
+webhook 不支持对账,不得配置 `reconcile_at` / `reconcile_deep_at`。
+事件格式、幂等与签名规则见 [webhook-push.md](webhook-push.md);
+参考接收端见 `tests/support/webhook_receiver.py`。
 
-## 6.1 AI Hub PUSH_AGENT(C1-B,本仓已落地)
+## 6.1 ingest v3 推送
 
-对接 AI Hub 不得使用 §6 的 `HttpPushSink`。C1-B 适配器、加密 spool 与 mock 契约已在本仓;
+```yaml
+sources:
+  digiwin_e10:
+    # 现场必须填接收端 HTTPS 地址;生产模式下回环 sink 会被判为违规并拒绝启动 connector。
+    sink: { type: http, url: "https://platform.example.com", token_env: D2A_INGEST_TOKEN }
+```
+
+同步前中间机确认自身发送协议落在接收端 `supported_ingest_protocol_versions` 中
+(当前发送 ingest v3);不在列表则立即失败。参考接收端实现见
+`tests/support/reference_ingest.py`(仅测试用,不随包发布)。
+
+## 6.2 AI Hub PUSH_AGENT(C1-B,本仓已落地)
+
+对接 AI Hub 不得使用 §6 / §6.1 的推送出口。C1-B 适配器、加密 spool 与 mock 契约已在本仓;
 跨仓联调与生产启用属 C1-C。最小配置形状:
 
 ```yaml
 sources:
   digiwin_e10:
-    apply_after_sync: false
     spool:
       policy: encrypted_temp_volume
       directory: /secure/aihub-spool   # 须为现场确认静态加密的专用目录

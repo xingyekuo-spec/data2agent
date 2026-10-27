@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""一键冒烟:中间机 middle_admin + 平台 console 管理界面(无需浏览器 / 真实 ERP)。
+"""一键冒烟:中间机 middle_admin 管理界面(无需浏览器 / 真实 ERP)。
 
 用法(仓库根或 worktree):
-  pip install -e ".[dev,connect,middle_admin,console]"
+  pip install -e ".[dev,connect,middle_admin]"
   python scripts/smoke_admin_ui.py
 
 退出码 0=全部通过,非 0=失败。CI 也可直接跑本脚本。
@@ -69,7 +69,6 @@ def _prepare(tmp: Path) -> Path:
     tables_block = _SMOKE_TABLES
     cfg = tmp / "connect.yaml"
     cfg.write_text(
-        f"templates: {ROOT / 'templates'}\n"
         f"landing: {landing}\n"
         "sources:\n"
         "  digiwin_e10:\n"
@@ -193,87 +192,19 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
     _ok("middle: controlled reconcile trigger returns trackable action result")
 
 
-def smoke_console(cfg: Path, log_dir: Path) -> None:
-    from fastapi.testclient import TestClient
-
-    from data2agent.shared.config import load_config, PlatformConfig
-    from data2agent.platform.console.app import create_app
-
-    token = "smoke-token"
-    loaded = load_config(cfg)
-    platform_cfg = PlatformConfig(templates=loaded.templates, landing=loaded.landing)
-    import yaml as _yaml
-    platform_yaml = cfg.parent / "platform.yaml"
-    platform_yaml.write_text(
-        _yaml.safe_dump({"templates": loaded.templates, "landing": loaded.landing}),
-        encoding="utf-8")
-    client = TestClient(
-        create_app(
-            loaded.landing,
-            loaded.templates,
-            platform_cfg,
-            token=token,
-            config_path=platform_yaml,
-            log_dir=log_dir,
-        )
-    )
-    h = {"Authorization": f"Bearer {token}"}
-
-    redirects = {
-        "/config": "/settings",
-        "/debug": "/mcp",
-        "/v0": "/",
-        "/v1/": "/",
-    }
-    for path, location in redirects.items():
-        r = client.get(path, headers=h, follow_redirects=False)
-        if r.status_code != 302 or r.headers.get("location") != location:
-            _fail(f"console: GET {path} redirect unexpected: {r.status_code} {r.headers.get('location')}")
-    _ok("console: legacy HTML routes redirect to Vue")
-
-    r = client.get("/api/config", headers=h)
-    if r.status_code != 200:
-        _fail(f"console: GET /api/config → {r.status_code}")
-    r = client.post(
-        "/api/config/validate",
-        headers=h,
-        json={"templates": str(ROOT / "templates"), "landing": loaded.landing},
-    )
-    if r.status_code != 200 or r.json().get("ok") is not True:
-        _fail(f"console: validate: {r.text[:200]}")
-    _ok("console: /api/config + validate")
-
-    r = client.get("/api/services", headers=h)
-    if r.status_code != 200 or "console" not in r.json():
-        _fail(f"console: /api/services: {r.text[:200]}")
-    _ok("console: /api/services")
-
-    r = client.post(
-        "/api/debug/mcp-call",
-        headers=h,
-        json={"tool": "propose_action", "arguments": {}},
-    )
-    if r.status_code not in (400, 403, 422):
-        # whitelist rejection — accept any client error
-        if r.status_code == 200 and r.json().get("ok") is True:
-            _fail("console: mcp-call must reject propose_action")
-    _ok("console: mcp-call whitelist rejects propose_action")
-
-
 def main() -> int:
     print(f"ROOT={ROOT}")
     try:
         import fastapi  # noqa: F401
         import jinja2  # noqa: F401
     except ImportError as e:
-        _fail(f"missing deps ({e}); run: pip install -e \".[dev,connect,middle_admin,console]\"")
+        _fail(f"missing deps ({e}); run: pip install -e \".[dev,connect,middle_admin]\"")
 
     with tempfile.TemporaryDirectory(prefix="d2a-smoke-") as td:
         tmp = Path(td)
         cfg = _prepare(tmp)
         print(f"config={cfg}")
         smoke_middle(cfg, tmp / "logs" / "d2a-connector.log")
-        smoke_console(cfg, tmp / "logs")
 
     print("\nSMOKE PASSED")
     return 0

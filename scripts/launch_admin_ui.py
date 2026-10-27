@@ -172,17 +172,6 @@ def detect_portable_root(start: Path | None = None) -> Path | None:
     return None
 
 
-def portable_vue_dist_env(home: Path, env: dict | None = None) -> dict:
-    """仅在未显式设置 D2A_VUE_DIST 时注入便携默认路径。"""
-    current = env or {}
-    if (current.get("D2A_VUE_DIST") or "").strip():
-        return {}
-    dist = Path(home) / "app" / "console-ui" / "dist"
-    if (dist / "index.html").is_file():
-        return {"D2A_VUE_DIST": str(dist.resolve())}
-    return {}
-
-
 def _role_config(role: str, home: Path) -> dict:
     if role == "middle":
         port = int(os.environ.get("D2A_MIDDLE_ADMIN_PORT", "8851"))
@@ -193,20 +182,6 @@ def _role_config(role: str, home: Path) -> dict:
             "port": port,
             "module": "data2agent.middle.admin",
             "config_file": home / "config" / "connect.yaml",
-            "extra_args": [
-                "--home", str(home),
-                "--host", "127.0.0.1",
-                "--port", str(port),
-            ],
-        }
-    if role == "platform":
-        port = int(os.environ.get("D2A_CONSOLE_PORT", "8849"))
-        return {
-            "title": "data2agent 平台",
-            "mutex": "Global\\data2agent-platform-launcher",
-            "port": port,
-            "module": "data2agent.platform.console",
-            "config_file": home / "config" / "platform.yaml",
             "extra_args": [
                 "--home", str(home),
                 "--host", "127.0.0.1",
@@ -706,9 +681,6 @@ def ensure_configured_workers(
     existing = {m["name"] for m in _MANAGED}
     started: list[str] = []
     env = _merge_secrets_env(home, dict(base_env))
-    landing = landing_db_path(role, home)
-    if landing is not None and worker_commands(role, home, python):
-        ensure_landing_db(python, landing, home=home, env=env)
     for name, listen, cmd in worker_commands(role, home, python):
         if name in existing:
             continue
@@ -851,63 +823,12 @@ def worker_commands(role: str, home: Path, python: Path) -> list[tuple[str, int 
             ]),
         ]
 
-    cfg = home / "config" / "platform.yaml"
-    if not cfg.is_file():
-        return []
-    landing = str(home / "data" / "factory.sqlite")
-    templates = str(home / "app" / "templates")
-    return [
-        ("ingest", 8850, [py, "-m", "data2agent.platform.ingest",
-                          "--landing", landing, "--host", "0.0.0.0", "--port", "8850"]),
-        # apply 是纯落地库操作:不接受 --config,须显式给 --templates(cwd 无 templates)
-        ("apply", None, [py, "-m", "data2agent.middle.extract", "apply",
-                         "--landing", landing, "--templates", templates,
-                         "--every", "30", "--committed-only", "--all-sources"]),
-        ("maintenance", None, [
-            py, "-m", "data2agent.platform.maintenance",
-            "--landing", landing,
-            "--backup-dir", str(home / "data" / "backups"),
-            "--every", "86400",
-        ]),
-        ("mcp", 8848, [py, "-m", "data2agent.platform.mcp_server",
-                       "--db", landing, "--templates", templates,
-                       "--transport", "http", "--host", "0.0.0.0", "--port", "8848"]),
-    ]
-
-
-def landing_db_path(role: str, home: Path) -> Path | None:
-    """平台侧落地库路径(mcp/apply 的前置依赖)。"""
-    if role != "platform":
-        return None
-    return home / "data" / "factory.sqlite"
-
-
-def ensure_landing_db(python: Path, landing: Path, *, home: Path,
-                      env: dict[str, str]) -> None:
-    """预建落地库:首次上线时尚无推送,ingest 惰性建库,但 mcp 启动即要求库存在。
-
-    先建好空库(基础表),mcp/apply 才能在首个批次到达前正常起来。
-    """
-    if landing.is_file():
-        return
-    landing.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [str(python), "-c",
-         "import sys; from data2agent.shared.store.landing import LandingStore; "
-         "LandingStore(sys.argv[1])", str(landing)],
-        cwd=str(home), env=env, capture_output=True, check=False,
-        creationflags=_creationflags(),
-    )
+    return []
 
 
 def admin_url(host: str, port: int, configured: bool, *, role: str) -> str:
-    """Return the canonical UI route for the installed role.
-
-    Platform is Vue-only.  The root path is the canonical console entry.
-    """
+    """Return the canonical UI route for the installed role."""
     base = f"http://{host}:{port}"
-    if role == "platform":
-        return base + ("/" if configured else "/setup")
     return base + "/" + ("" if configured else "config")
 
 
@@ -1036,13 +957,14 @@ def run_headless(
 def main(argv: list[str] | None = None) -> int:
     global _STARTUP_MODE
     ap = argparse.ArgumentParser(description="data2agent portable launcher")
-    ap.add_argument("--role", choices=("middle", "platform"), required=True)
+    # 平台端已移出本仓;保留 --role 以兼容既有便携包入口与开机任务。
+    ap.add_argument("--role", choices=("middle",), default="middle")
     ap.add_argument("--home", type=Path, default=None,
                     help=r"便携根目录(默认:exe 所在目录或 D2A_HOME)")
     ap.add_argument("--no-browser", action="store_true",
                     help="启动时不自动打开浏览器(托盘仍可打开)")
     ap.add_argument("--no-workers", action="store_true",
-                    help="只开管理界面,不拉起 connector/ingest 等")
+                    help="只开管理界面,不拉起 connector/maintenance 等")
     ap.add_argument("--no-tray", action="store_true",
                     help="不进入托盘(测试/无 GUI);启动后立即返回")
     ap.add_argument("--headless", action="store_true",
@@ -1106,9 +1028,8 @@ def main(argv: list[str] | None = None) -> int:
     env.setdefault("PYTHONUNBUFFERED", "1")
     env["D2A_HOME"] = str(home)
     env = _merge_secrets_env(home, env)
-    env.update(portable_vue_dist_env(home, env))
 
-    admin_log = "d2a-console" if args.role == "platform" else "d2a-middle-admin"
+    admin_log = "d2a-middle-admin"
     admin_cmd = [str(venv_py), "-m", cfg["module"], *cfg["extra_args"]]
     admin_already_up = _port_open(host, port)
     if not admin_already_up:
@@ -1170,7 +1091,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_workers:
         worker_context = (args.role, venv_py, env)
         # 已配置的安装立即启动；未配置的安装由 supervisor 在
-        # connect.yaml/platform.yaml 落盘后自动发现并启动。若 launcher
+        # connect.yaml 落盘后自动发现并启动。若 launcher
         # 异常退出后重启，上一段会先接管仍存活的 worker，避免重复拉起。
         started = ensure_configured_workers(args.role, home, venv_py, env)
         if configured and not started and not worker_commands(args.role, home, venv_py):

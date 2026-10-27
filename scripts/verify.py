@@ -24,42 +24,36 @@ from typing import Iterable, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
-FRONTEND = ROOT / "console-ui"
 
 MODULE_TESTS: dict[str, tuple[str, ...]] = {
     "erp": (
         "tests/middle/test_config_scheduler.py",
         "tests/middle/test_connect.py",
-        "tests/middle/test_excel_import.py",
         "tests/shared/test_home_setup.py",
         "tests/middle/test_increment.py",
         "tests/middle/test_middle_admin.py",
         "tests/middle/test_reconcile.py",
-        "tests/contract/test_sink_ingest.py",
         "tests/middle/test_table_config.py",
     ),
-    "console": (
+    "push": (
+        "tests/contract/test_sink_ingest.py",
+        "tests/contract/test_ingest_protocol_compat.py",
+        "tests/contract/test_ai_hub_object_push_sink.py",
+        "tests/middle/test_webhook_sink.py",
+    ),
+    "admin": (
         "tests/shared/test_admin_common.py",
-        "tests/platform/test_console*.py",
-        "tests/platform/test_datasets_api.py",
         "tests/middle/test_middle_admin.py",
         "tests/middle/test_middle_admin_production.py",
-        "tests/platform/test_ui_launcher.py",
+        "tests/middle/test_middle_extraction_tables.py",
+        "tests/middle/test_middle_metadata_api.py",
     ),
-    "mcp": (
-        "tests/platform/test_mcp*.py",
-    ),
-    "metamodel": (
-        "tests/contract/test_dataset_publish_contract.py",
-        "tests/*/test_lineage*.py",
-        "tests/*/test_mapping*.py",
-        "tests/shared/test_metamodel.py",
-        "tests/*/test_version*.py",
-    ),
-    "scenario": (
-        "tests/shared/test_dead_stock*.py",
-        "tests/platform/test_validation_m6.py",
-    ),
+}
+
+# 推送出口模块:改动后同时跑推送契约与抽取回归。
+PUSH_MODULES = {
+    "sink.py", "webhook_sink.py", "ai_hub_object_push_sink.py",
+    "ai_hub_object_map.py",
 }
 
 
@@ -85,10 +79,6 @@ def _python() -> str:
         if candidate.exists():
             return str(candidate)
     return sys.executable
-
-
-def _npm() -> str:
-    return "npm.cmd" if os.name == "nt" else "npm"
 
 
 def _cmd(
@@ -139,68 +129,11 @@ def _backend_checks(
     if include_smoke:
         commands.extend(
             (
-                _cmd(
-                    _python(),
-                    "scripts/export_console_openapi.py",
-                    "--check",
-                    "console-ui/openapi.json",
-                ),
+                _cmd(_python(), "scripts/check_architecture_layers.py"),
                 _cmd(_python(), "scripts/smoke_admin_ui.py"),
-                _cmd(
-                    _python(),
-                    "-m",
-                    "data2agent.shared.metamodel.validate",
-                    "templates",
-                ),
             )
         )
     return Task("Python", tuple(commands))
-
-
-def _frontend_quality(*, changed_base: str | None = None, build: bool) -> Task:
-    commands = [
-        _cmd(_npm(), "run", "api:check", cwd=FRONTEND),
-        _cmd(_npm(), "run", "lint", cwd=FRONTEND),
-        _cmd(_npm(), "run", "typecheck", cwd=FRONTEND),
-    ]
-    if changed_base:
-        commands.append(
-            _cmd(
-                _npm(),
-                "run",
-                "test",
-                "--",
-                "--changed",
-                changed_base,
-                "--passWithNoTests",
-                cwd=FRONTEND,
-            )
-        )
-    else:
-        commands.append(_cmd(_npm(), "run", "test", cwd=FRONTEND))
-    if build:
-        commands.extend(
-            (
-                _cmd(_npm(), "run", "build", cwd=FRONTEND),
-                _cmd("node", "scripts/check-dist.mjs", cwd=FRONTEND),
-            )
-        )
-    return Task("Vue Console", tuple(commands))
-
-
-def _e2e(kind: str) -> Task:
-    return Task(
-        f"E2E {kind}",
-        (
-            _cmd(
-                "node",
-                "scripts/e2e-acceptance.mjs",
-                f"--{kind.lower()}",
-                cwd=FRONTEND,
-                env={"D2A_PYTHON": _python()},
-            ),
-        ),
-    )
 
 
 def _expand_tests(patterns: Iterable[str]) -> tuple[str, ...]:
@@ -259,14 +192,10 @@ def changed_files(base: str) -> tuple[str, ...]:
 def _quick_plan(
     files: Sequence[str],
     *,
-    base: str,
     workers: str,
 ) -> list[list[Task]]:
     backend_scopes: set[str] = set()
     explicit_tests: set[str] = set()
-    frontend = False
-    frontend_build = False
-    template_validation = False
     backend_full = False
 
     for filename in files:
@@ -289,20 +218,6 @@ def _quick_plan(
             else:
                 backend_full = True
             continue
-        if parts[0] == "console-ui":
-            frontend = True
-            if len(parts) < 2 or parts[1] in {
-                "package.json",
-                "package-lock.json",
-                "vite.config.ts",
-                "vitest.config.ts",
-            }:
-                frontend_build = True
-            continue
-        if parts[0] == "templates":
-            backend_scopes.add("metamodel")
-            template_validation = True
-            continue
         if parts[0] == "data2agent":
             if len(parts) < 2 or parts[1] == "__init__.py":
                 backend_full = True
@@ -311,33 +226,17 @@ def _quick_plan(
                 backend_full = True
             elif parts[1] == "middle":
                 if len(parts) > 2 and parts[2] == "admin":
-                    backend_scopes.add("console")
-                    frontend = True
+                    backend_scopes.add("admin")
+                elif path.name in PUSH_MODULES:
+                    backend_scopes.update(("push", "erp"))
                 else:
                     backend_scopes.add("erp")
-            elif parts[1] == "platform":
-                sub = parts[2] if len(parts) > 2 else ""
-                if sub == "console":
-                    backend_scopes.add("console")
-                    frontend = True
-                elif sub == "mcp_server":
-                    backend_scopes.add("mcp")
-                elif sub == "ingest":
-                    backend_scopes.add("erp")
-                else:
-                    backend_full = True
             elif parts[1] == "shared":
                 sub = parts[2] if len(parts) > 2 else ""
-                if sub == "metamodel":
-                    backend_scopes.add("metamodel")
-                    template_validation = True
-                elif sub == "scenarios":
-                    backend_scopes.add("scenario")
-                elif sub in {"admin", "admin_templates"}:
-                    backend_scopes.add("console")
-                    frontend = True
+                if sub in {"admin", "admin_templates"}:
+                    backend_scopes.add("admin")
                 else:
-                    # store / mapping / config 被两端共用,全量回归
+                    # store / config 是抽取与推送的公共底座,全量回归
                     backend_full = True
             else:
                 backend_full = True
@@ -351,19 +250,11 @@ def _quick_plan(
             else:
                 backend_full = True
             continue
-        if parts[0] == "deploy" or filename in {
-            "tests/integration/mssql/docker-compose.yml",
-        }:
-            frontend = True
-            frontend_build = True
-            continue
-        if parts[0] == ".github":
+        if parts[0] in {"deploy", ".github"}:
             continue
 
         # Unknown application/configuration files must fail safe.
         backend_full = True
-        frontend = True
-        frontend_build = True
 
     tasks: list[Task] = []
     if backend_full:
@@ -379,21 +270,7 @@ def _quick_plan(
             commands = [
                 _pytest(*targets, workers=workers, durations=10)
             ]
-            if template_validation:
-                commands.append(
-                    _cmd(
-                        _python(),
-                        "-m",
-                        "data2agent.shared.metamodel.validate",
-                        "templates",
-                    )
-                )
             tasks.append(Task("Python affected", tuple(commands)))
-
-    if frontend:
-        tasks.append(
-            _frontend_quality(changed_base=base, build=frontend_build)
-        )
     return [tasks] if tasks else []
 
 
@@ -403,72 +280,42 @@ def build_plan(args: argparse.Namespace) -> list[list[Task]]:
         print(f"Changed files ({len(files)}):")
         for filename in files:
             print(f"  {filename}")
-        return _quick_plan(files, base=args.base, workers=args.workers)
+        return _quick_plan(files, workers=args.workers)
 
     if args.mode == "module":
         if args.module == "backend":
             return [[_backend_checks(workers=args.workers, include_smoke=True)]]
-        if args.module == "frontend":
-            return [
-                [_frontend_quality(build=True)],
-                [_e2e("Real")],
-            ]
         targets = _expand_tests(MODULE_TESTS[args.module])
-        tasks = [
+        return [[
             _backend_checks(
                 targets=targets,
                 workers=args.workers,
-                include_smoke=args.module in {"console", "metamodel"},
+                include_smoke=args.module == "admin",
             )
-        ]
-        if args.module == "console":
-            tasks.append(_frontend_quality(build=False))
-            return [tasks, [_e2e("Real")]]
-        return [tasks]
+        ]]
 
     phases: list[list[Task]] = [
-        [
-            _backend_checks(workers=args.workers, include_smoke=True),
-            _frontend_quality(build=True),
-        ],
-        [_e2e("Real")],
+        [_backend_checks(workers=args.workers, include_smoke=True)],
     ]
     if args.mode == "release":
-        phases.extend(
-            (
-                [
-                    Task(
-                        "Docker distribution",
-                        (
-                            _cmd(
-                                _python(),
-                                "scripts/check_docker_v1_distribution.py",
-                                "--image",
-                                "data2agent:release-check",
-                            ),
-                        ),
-                    )
-                ],
-                [
-                    Task(
-                        "MSSQL integration",
-                        (
-                            _cmd(
-                                "docker",
-                                "compose",
-                                "-f",
-                                "tests/integration/mssql/docker-compose.yml",
-                                "up",
-                                "--build",
-                                "--abort-on-container-exit",
-                                "--exit-code-from",
-                                "runner",
-                            ),
-                        ),
-                    )
-                ],
+        phases.append([
+            Task(
+                "MSSQL integration",
+                (
+                    _cmd(
+                        "docker",
+                        "compose",
+                        "-f",
+                        "tests/integration/mssql/docker-compose.yml",
+                        "up",
+                        "--build",
+                        "--abort-on-container-exit",
+                        "--exit-code-from",
+                        "runner",
+                    ),
+                ),
             )
-        )
+        ])
     return phases
 
 
@@ -524,7 +371,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "module",
         nargs="?",
-        choices=("backend", "erp", "console", "mcp", "metamodel", "scenario", "frontend"),
+        choices=("backend", "erp", "push", "admin"),
         help="module name when mode=module",
     )
     parser.add_argument(
@@ -540,7 +387,7 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--serial",
         action="store_true",
-        help="run independent Python/frontend tasks serially",
+        help="run independent tasks serially",
     )
     parser.add_argument(
         "--dry-run",
@@ -560,8 +407,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.dry_run:
         if shutil.which("git") is None:
             raise SystemExit("git is required")
-        if shutil.which(_npm()) is None and args.mode in {"full", "release"}:
-            raise SystemExit("npm is required for full/release verification")
     try:
         phases = build_plan(args)
         run_plan(phases, dry_run=args.dry_run, serial=args.serial)

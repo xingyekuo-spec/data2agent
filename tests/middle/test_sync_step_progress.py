@@ -8,9 +8,8 @@ import pytest
 from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.middle.extract.increment import incremental_sync, _safe_error
 from data2agent.shared.store.landing import LandingStore
-from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
-from tests.helpers import watermarks_from_pack, whitelist_from_pack
+from tests.helpers import e10_watermarks, e10_whitelist
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = "digiwin_e10"
@@ -25,23 +24,22 @@ def fresh_landing(tmp_path):
 def seeded_env(tmp_path):
     src = tmp_path / "source.sqlite"
     write_db(src, build(seed=1, asof=date(2026, 7, 10)))
-    pack = load_pack(ROOT / "templates")
     landing = LandingStore(tmp_path / "landing.sqlite")
-    return src, pack, landing
+    return src, landing
 
 
 # ---- 逐批进度 ----
 
 def test_batch_progress_updates_step_during_incremental_sync(seeded_env):
     """每成功一批应更新 step 的 rows_out、batches、progressed_at。"""
-    src, pack, landing = seeded_env
+    src, landing = seeded_env
     hook = lambda action, sql, rows, ms: landing.log_audit(SOURCE, action, sql, rows, ms)  # noqa: E731
-    adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE),
+    adapter = SqliteReadOnlyAdapter(str(src), e10_whitelist(),
                                     batch_size=10, audit_hook=hook)
 
     report = incremental_sync(
         adapter, landing, SOURCE,
-        watermarks_from_pack(pack, SOURCE))
+        e10_watermarks())
     assert report.run_id > 0
 
     steps = landing.steps_for_run(report.run_id)
@@ -58,14 +56,14 @@ def test_batch_progress_updates_step_during_incremental_sync(seeded_env):
 
 def test_batch_progress_atomic_within_single_commit(seeded_env):
     """progressed_at 的每批写入通过 record_sync_batch_progress 单事务完成。"""
-    src, pack, landing = seeded_env
+    src, landing = seeded_env
 
     # batch_size=1 强制多批,每批调用 record_sync_batch_progress
     hook = lambda action, sql, rows, ms: landing.log_audit(SOURCE, action, sql, rows, ms)  # noqa: E731
-    adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE),
+    adapter = SqliteReadOnlyAdapter(str(src), e10_whitelist(),
                                     batch_size=1, audit_hook=hook)
     report = incremental_sync(adapter, landing, SOURCE,
-                              watermarks_from_pack(pack, SOURCE))
+                              e10_watermarks())
 
     steps = landing.steps_for_run(report.run_id)
     for s in steps:
@@ -82,15 +80,15 @@ def test_batch_progress_atomic_within_single_commit(seeded_env):
 
 def test_progress_updates_visible_between_batches(seeded_env):
     """运行中的 step 的进度应可被另一个连接读到。"""
-    src, pack, landing = seeded_env
+    src, landing = seeded_env
     hook = lambda action, sql, rows, ms: landing.log_audit(SOURCE, action, sql, rows, ms)  # noqa: E731
     # batch_size=1 强制多批,每批一次 commit
-    adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE),
+    adapter = SqliteReadOnlyAdapter(str(src), e10_whitelist(),
                                     batch_size=1, audit_hook=hook)
 
     report = incremental_sync(
         adapter, landing, SOURCE,
-        watermarks_from_pack(pack, SOURCE))
+        e10_watermarks())
 
     # 同步完成后,从另一个连接读取 step 进度
     reader = LandingStore(landing.db_path)

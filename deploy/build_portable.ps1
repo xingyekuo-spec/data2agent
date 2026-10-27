@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Build a portable extract-and-run folder for Windows (middle or platform).
+  Build the portable extract-and-run folder for the Windows middle machine.
 
 .DESCRIPTION
   Layout (relocatable, no system Python / no C:\d2a required):
@@ -8,7 +8,6 @@
     d2a-portable-<role>-<ver>\
       data2agent.exe        # single entry (pass -LauncherExe)
       runtime\              # CPython embeddable + site-packages
-      app\templates\
       config\
       data\logs\
       README.txt
@@ -21,9 +20,9 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [ValidateSet('middle', 'platform')]
-    [string]$Role,
+    # 平台端已移出本仓;保留参数以兼容既有调用方式。
+    [ValidateSet('middle')]
+    [string]$Role = 'middle',
 
     [string]$Version = 'dev',
 
@@ -69,7 +68,6 @@ $portable = Join-Path $OutDir $pkgName
 if (Test-Path $portable) { Remove-Item -Recurse -Force $portable }
 New-Item -ItemType Directory -Force -Path $portable | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'runtime') | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $portable 'app\templates') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'config') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $portable 'data\logs') | Out-Null
 
@@ -102,44 +100,17 @@ $runtimePy = Join-Path $portable 'runtime\python.exe'
 if ($LASTEXITCODE -ne 0) { throw 'get-pip failed' }
 
 # --- 3. Offline install data2agent + extras --------------------------------
-$extra = if ($Role -eq 'middle') { 'connect,middle_admin' } else { 'ingest,connect,mcp,console' }
+$extra = 'connect,middle_admin'
 Write-Step "pip install data2agent[$extra] (offline from $WheelsDir)"
 & $runtimePy -m pip install --no-index --find-links=$WheelsDir "data2agent[$extra]"
 if ($LASTEXITCODE -ne 0) { throw 'pip install data2agent failed' }
 
-# --- 4. Templates (not inside wheel) ---------------------------------------
-Write-Step 'Copy templates -> app/templates'
-Copy-Item -Recurse -Force (Join-Path $root 'templates\*') (Join-Path $portable 'app\templates')
-
-# --- 4a. Vue Console dist (platform; required for /) ------------------------
-if ($Role -eq 'platform') {
-    $vueDist = Join-Path $root 'console-ui\dist'
-    $vueIndex = Join-Path $vueDist 'index.html'
-    if (-not (Test-Path $vueIndex)) {
-        throw "console-ui/dist/index.html missing; run: cd console-ui; npm ci; npm run build"
-    }
-    Write-Step 'Copy Vue dist -> app/console-ui/dist'
-    $destDist = Join-Path $portable 'app\console-ui\dist'
-    New-Item -ItemType Directory -Force -Path $destDist | Out-Null
-    Copy-Item -Recurse -Force (Join-Path $vueDist '*') $destDist
-    if (-not (Test-Path (Join-Path $destDist 'index.html'))) {
-        throw 'portable Vue dist copy failed: index.html missing'
-    }
-}
-
 # --- 5. README (entries added by release / -LauncherExe) ---
 Write-Step 'Write README.txt'
-$v1Note = if ($Role -eq 'platform') {
-    @"
-  5. Vue Console: open http://127.0.0.1:8849/ (requires app\console-ui\dist).
-"@
-} else { '' }
-$middleNote = if ($Role -eq 'middle') {
-    @"
+$middleNote = @"
   5. After setup, run 安装开机自启.ps1 in an Administrator PowerShell.
      It runs headless as SYSTEM at machine startup and restarts on failure.
 "@
-} else { '' }
 $readme = @"
 data2agent portable ($Role) $Version
 ====================================
@@ -150,7 +121,6 @@ Extract anywhere.
   2. First run opens the browser setup page.
   3. Tray icon (system tray): Open admin UI / Quit.
   4. If already running, double-click only reopens the admin UI.
-$v1Note
 $middleNote
 Middle also needs Microsoft ODBC Driver 18 for SQL Server (MSI).
 
@@ -158,25 +128,15 @@ Keep this folder intact (runtime\ must stay next to data2agent.exe).
 "@
 Set-Content -Path (Join-Path $portable 'README.txt') -Value $readme -Encoding utf8
 
-if ($Role -eq 'middle') {
-    Write-Step 'Copy middle autostart install/uninstall scripts'
-    Copy-Item -Force (Join-Path $root 'deploy\install_middle_autostart.ps1') `
-        (Join-Path $portable '安装开机自启.ps1')
-    Copy-Item -Force (Join-Path $root 'deploy\uninstall_middle_autostart.ps1') `
-        (Join-Path $portable '卸载开机自启.ps1')
-}
+Write-Step 'Copy middle autostart install/uninstall scripts'
+Copy-Item -Force (Join-Path $root 'deploy\install_middle_autostart.ps1') `
+    (Join-Path $portable '安装开机自启.ps1')
+Copy-Item -Force (Join-Path $root 'deploy\uninstall_middle_autostart.ps1') `
+    (Join-Path $portable '卸载开机自启.ps1')
 
-# --- 5a. 平台端在线升级入口(单一事实来源:data2agent.platform.updater.apply_script) ---
-if ($Role -eq 'platform') {
-    Write-Step 'Write 升级.bat (platform)'
-    $env:D2A_PORTABLE_OUT = $portable
-    & $runtimePy -c "import os; from pathlib import Path; from data2agent.platform.updater.apply_script import UPDATE_BAT; (Path(os.environ['D2A_PORTABLE_OUT']) / '升级.bat').write_text(UPDATE_BAT, encoding='utf-8')"
-    if ($LASTEXITCODE -ne 0) { throw 'write 升级.bat failed' }
-}
-
-# Keep a user-visible, immutable build label in every extracted package.  The
-# Vue settings page reads this through the platform API, making it possible to
-# distinguish a current package from an older folder with the same wheel version.
+# Keep a user-visible, immutable build label in every extracted package, making
+# it possible to distinguish a current package from an older folder with the
+# same wheel version.
 $packageVersion = & $runtimePy -c "from data2agent import __version__; print(__version__)"
 if ($LASTEXITCODE -ne 0) { throw 'cannot read installed data2agent version' }
 $commit = $env:GITHUB_SHA
@@ -190,30 +150,9 @@ $buildInfo = [ordered]@{
     role = $Role
     commit = "$commit".Trim()
 }
-if ($Role -eq 'platform') {
-    $protocolJson = & $runtimePy -c @"
-import json
-from data2agent.protocol.ingest import (
-    INGEST_PROTOCOL_VERSION,
-    LEGACY_HEALTH_INGEST_PROTOCOL_VERSION,
-    SUPPORTED_INGEST_PROTOCOL_VERSIONS,
-)
-print(json.dumps({
-    'active_ingest_protocol_version': INGEST_PROTOCOL_VERSION,
-    'legacy_health_ingest_protocol_version': LEGACY_HEALTH_INGEST_PROTOCOL_VERSION,
-    'supported_ingest_protocol_versions': list(SUPPORTED_INGEST_PROTOCOL_VERSIONS),
-}))
-"@
-    if ($LASTEXITCODE -ne 0) { throw 'cannot read platform ingest protocol declaration' }
-    $proto = ConvertFrom-Json $protocolJson
-    $buildInfo['active_ingest_protocol_version'] = $proto.active_ingest_protocol_version
-    $buildInfo['legacy_health_ingest_protocol_version'] = $proto.legacy_health_ingest_protocol_version
-    $buildInfo['supported_ingest_protocol_versions'] = $proto.supported_ingest_protocol_versions
-} else {
-    $sendVer = & $runtimePy -c "from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION; print(INGEST_PROTOCOL_VERSION)"
-    if ($LASTEXITCODE -ne 0) { throw 'cannot read middle send ingest protocol' }
-    $buildInfo['send_ingest_protocol_version'] = $sendVer.Trim()
-}
+$sendVer = & $runtimePy -c "from data2agent.protocol.ingest import INGEST_PROTOCOL_VERSION; print(INGEST_PROTOCOL_VERSION)"
+if ($LASTEXITCODE -ne 0) { throw 'cannot read middle send ingest protocol' }
+$buildInfo['send_ingest_protocol_version'] = $sendVer.Trim()
 $buildInfo | ConvertTo-Json | Set-Content -Path (Join-Path $portable 'BUILD-INFO.json') -Encoding utf8
 
 if ($LauncherExe -and (Test-Path $LauncherExe)) {
@@ -224,7 +163,7 @@ if ($LauncherExe -and (Test-Path $LauncherExe)) {
 # --- 6. Verify assembled package before zipping ----------------------------
 Write-Step 'Verify portable contents'
 & $runtimePy (Join-Path $root 'scripts\check_portable_package.py') `
-    --portable $portable --role $Role --expected-templates (Join-Path $root 'templates')
+    --portable $portable --role $Role
 if ($LASTEXITCODE -ne 0) { throw 'portable package verification failed' }
 
 # --- 7. Zip ----------------------------------------------------------------

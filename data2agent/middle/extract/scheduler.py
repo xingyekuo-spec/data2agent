@@ -1,4 +1,4 @@
-"""调度常驻(E5):按 connect.yaml 排程 sync(+apply)与每日 L1 对账,窗口硬约束。
+"""调度常驻(E5):按 connect.yaml 排程 sync 与每日 L1 对账,窗口硬约束。
 
 - 窗口外不发起;运行中越界 → incremental_sync 在批次边界优雅暂停(paused),
   水位机制保证下窗口自然续跑;
@@ -19,7 +19,6 @@ from ...shared.config import (
     assert_production_ready,
     in_window,
 )
-from ...shared.store.dataset_publish import build_dataset
 from .increment import cleanup_orphan_spools, incremental_sync
 from ...shared.store.landing import LandingStore
 from .reconcile import reconcile, reconcile_remote
@@ -65,19 +64,43 @@ def build_adapter(name: str, scfg: SourceConfig,
     return MssqlReadOnlyAdapter(dsn, whitelist, **kwargs)
 
 
-def unsupported_ai_hub_reconcile(scfg: SourceConfig) -> str | None:
-    """AI Hub has no remote reconcile protocol; local raw reconcile is forbidden."""
+def unsupported_reconcile(scfg: SourceConfig) -> str | None:
+    """webhook / ai_hub 没有远端对账协议,且禁止对中间机 state_db 做本地 raw 对账。"""
     if scfg.sink.type == "ai_hub":
         return (
             "AI Hub 对象推送不支持对账:没有远端对账协议,"
             "且禁止对中间机 state_db 做本地 raw 对账"
+        )
+    if scfg.sink.type == "webhook":
+        return (
+            "webhook 通用推送不支持对账:没有远端对账协议;"
+            "需要删除检测的表请改用 full_refresh 或 sink.type=http"
         )
     return None
 
 
 def build_sink(scfg: SourceConfig, landing: LandingStore, *,
                source: str = "", run_id: int | None = None):
-    """按 sink 配置构建落地出口:local=本地库;http=data2agent 平台;ai_hub=AI Hub。"""
+    """按 sink 配置构建推送出口:local=本地库;webhook=通用 HTTP 批量推送;
+    http=ingest v3;ai_hub=AI Hub。"""
+    if scfg.sink.type == "webhook":
+        import os
+
+        from .webhook_sink import WebhookSink
+        token = os.environ.get(scfg.sink.token_env or "", "") or None
+        secret = None
+        if scfg.sink.hmac_secret_env:
+            secret = os.environ.get(scfg.sink.hmac_secret_env, "")
+            if not secret:
+                raise RuntimeError(
+                    f"环境变量 {scfg.sink.hmac_secret_env} 为空")
+        return WebhookSink(
+            scfg.sink.url or "", token,
+            hmac_secret=secret,
+            timeout=scfg.sink.timeout_seconds,
+            retries=scfg.sink.retries,
+            ca_bundle=scfg.sink.ca_bundle,
+            landing=landing, source=source, run_id=run_id)
     if scfg.sink.type == "http":
         import os
 
@@ -197,11 +220,11 @@ def check_sync_preflight(name: str, scfg: SourceConfig) -> SyncCycleResult:
 
 
 def run_sync_cycle(name: str, scfg: SourceConfig,
-                   landing_path: str, templates: str = "templates",
+                   landing_path: str,
                    run_id: int | None = None,
                    acquired_lock=None,
                    tables: list[str] | None = None) -> SyncCycleResult:
-    """一轮 sync(+apply)。返回 SyncCycleResult。
+    """一轮 sync。返回 SyncCycleResult。
 
     - 自动调度路径(run_id=None):内部创建 run,自行获取锁
     - 手动触发路径(run_id != None):外部已获取锁 + 创建 run,传入复用
@@ -272,20 +295,6 @@ def run_sync_cycle(name: str, scfg: SourceConfig,
         log.info("sync source=%s run=%s rows=%s tables=%s paused=%s sink=%s",
                  name, report.run_id, report.total_rows, len(report.tables),
                  report.paused, scfg.sink.type)
-        # sink=http: raw 已推给平台,映射在平台侧跑,不在中间 apply
-        if scfg.apply_after_sync and not report.paused and scfg.sink.type == "local":
-            from ...shared.metamodel.loader import load_pack as _load_pack
-            pack = _load_pack(templates)
-            apply_report = build_dataset(landing, pack, name, auto_publish=True)
-            log.info(
-                "apply source=%s objects=%s quarantined=%s aborted=%s "
-                "dataset_version=%s published=%s",
-                name, len(apply_report.results),
-                sum(r.quarantined for r in apply_report.results),
-                [r.object for r in apply_report.results if r.status == "aborted"],
-                apply_report.dataset_version,
-                apply_report.published,
-            )
         status = "paused" if report.paused else "ok"
         return SyncCycleResult(
             executed=True, reason="executed", run_id=run_id, status=status,
@@ -338,9 +347,10 @@ def run_reconcile_cycle(name: str, scfg: SourceConfig,
         return False
     landing = LandingStore(landing_path)
     try:
-        blocked = unsupported_ai_hub_reconcile(scfg)
+        blocked = unsupported_reconcile(scfg)
         if blocked:
-            log.info("skip reconcile source=%s reason=ai_hub_unsupported", name)
+            log.info("skip reconcile source=%s reason=unsupported_sink_%s",
+                     name, scfg.sink.type)
             return False
         adapter = build_adapter(name, scfg, landing)
         if scfg.sink.type == "http":
@@ -394,7 +404,7 @@ def run_sync_cycle_from_config(config_path: str, source: str) -> SyncCycleResult
     if loaded is None:
         return SyncCycleResult(False, "source_removed")
     cfg, scfg = loaded
-    return run_sync_cycle(source, scfg, cfg.landing, cfg.templates)
+    return run_sync_cycle(source, scfg, cfg.landing)
 
 
 def run_reconcile_cycle_from_config(
@@ -458,7 +468,7 @@ def serve(
 
     if once:
         for name, scfg in cfg.sources.items():
-            result = run_sync_cycle(name, scfg, cfg.landing, cfg.templates)
+            result = run_sync_cycle(name, scfg, cfg.landing)
             log.info("once sync source=%s %s", name, result.reason)
             if scfg.reconcile_at is not None:
                 run_reconcile_cycle(name, scfg, cfg.landing)
@@ -478,7 +488,7 @@ def serve(
     for name, scfg in cfg.sources.items():
         next_run_time = scfg.sync_start_datetime_after(datetime.now())
         sync_func = run_sync_cycle
-        sync_args = (name, scfg, cfg.landing, cfg.templates)
+        sync_args = (name, scfg, cfg.landing)
         if config_path is not None:
             sync_func = run_sync_cycle_from_config
             sync_args = (config_path, name)
@@ -491,7 +501,7 @@ def serve(
             (False, scfg.reconcile_at),
             (True, scfg.reconcile_deep_at),
         ):
-            if not at or unsupported_ai_hub_reconcile(scfg):
+            if not at or unsupported_reconcile(scfg):
                 continue
             hh, mm = at.split(":")
             reconcile_func = run_reconcile_cycle

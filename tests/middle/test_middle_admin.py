@@ -15,13 +15,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
 from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
-from tests.helpers import watermarks_from_pack
+from tests.helpers import e10_watermarks
 from data2agent.shared.store.landing import LandingStore  # noqa: E402
-from data2agent.shared.store.mapping_apply import apply_objects  # noqa: E402
-from tests.helpers import whitelist_from_pack  # noqa: E402
+from tests.helpers import e10_whitelist  # noqa: E402
 import data2agent.middle.admin.app as middle_app  # noqa: E402
 from data2agent.middle.admin.app import create_app  # noqa: E402
-from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,16 +31,13 @@ def middle_env(tmp_path):
     """seed 源库 + 完整管道后的落地库 + connect.yaml(与 test_console 同构)。"""
     src = tmp_path / "source.sqlite"
     write_db(src, build(seed=42, asof=date(2026, 7, 10)))
-    pack = load_pack(ROOT / "templates")
     landing = LandingStore(tmp_path / "landing.sqlite")
     hook = lambda action, sql, rows, ms: landing.log_audit(SOURCE, action, sql, rows, ms)  # noqa: E731
     adapter = SqliteReadOnlyAdapter(
-        str(src), whitelist_from_pack(pack, SOURCE), audit_hook=hook)
-    incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
-    apply_objects(landing, pack, SOURCE)
+        str(src), e10_whitelist(), audit_hook=hook)
+    incremental_sync(adapter, landing, SOURCE, e10_watermarks())
     cfg = tmp_path / "connect.yaml"
     cfg.write_text(
-        f"templates: {ROOT / 'templates'}\n"
         f"landing: {landing.db_path}\n"
         "sources:\n"
         "  digiwin_e10:\n"
@@ -722,7 +717,6 @@ def _http_sink_client(tmp_path, cfg):
     scfg = old.sources[SOURCE]
     new = tmp_path / "connect-http.yaml"
     new.write_text(
-        f"templates: {old.templates}\n"
         f"landing: {old.landing}\n"
         "sources:\n"
         f"  {SOURCE}:\n"
@@ -788,3 +782,87 @@ def test_connection_check_401_hint(middle_env, tmp_path, monkeypatch):
     h = {"Authorization": "Bearer secret"}
     body = c.get("/api/config/connection-check", headers=h).json()
     assert body["ok"] is False and "401" in body["detail"]
+
+
+def _webhook_sink_client(tmp_path, cfg):
+    """把 fixture 配置改成 webhook sink 后另起 app。"""
+    from data2agent.shared.config import load_config
+    old = load_config(cfg)
+    scfg = old.sources[SOURCE]
+    new = tmp_path / "connect-webhook.yaml"
+    new.write_text(
+        f"landing: {old.landing}\n"
+        "sources:\n"
+        f"  {SOURCE}:\n"
+        "    adapter: sqlite_readonly\n"
+        f"    path: {scfg.path}\n"
+        "    sync_every: 30m\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: LAST_MODIFIED_DATE\n"
+        "    sink:\n"
+        "      type: webhook\n"
+        "      url: https://receiver.example/d2a/events\n"
+        "      hmac_secret_env: D2A_WEBHOOK_SECRET\n",
+        encoding="utf-8")
+    return TestClient(create_app(config_path=new, token="secret",
+                                 log_path=tmp_path / "c4.log"))
+
+
+def test_connection_check_webhook_ping(middle_env, tmp_path, monkeypatch):
+    import json as _json
+
+    import data2agent.middle.extract.webhook_sink as webhook_sink
+
+    monkeypatch.setenv("D2A_WEBHOOK_SECRET", "sec")
+    sent: list[tuple[dict, dict]] = []
+
+    def fake_send(url, body, headers, timeout, context=None):
+        sent.append((_json.loads(body), headers))
+        return 204, b""
+
+    monkeypatch.setattr(webhook_sink, "_urllib_send", fake_send)
+    _, cfg = middle_env
+    c = _webhook_sink_client(tmp_path, cfg)
+    h = {"Authorization": "Bearer secret"}
+    body = c.get("/api/config/connection-check", headers=h).json()
+    assert body["ok"] is True and body["compatible"] is True
+    assert body["sink_type"] == "webhook"
+    assert body["local_protocol"] == "d2a-push/1"
+    event, headers = sent[0]
+    assert event["type"] == "io.data2agent.push.v1.ping"
+    assert webhook_sink.verify_signature(
+        "sec", headers["X-D2A-Signature"],
+        _json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode())
+
+
+def test_connection_check_webhook_auth_failure(middle_env, tmp_path, monkeypatch):
+    import urllib.error
+
+    import data2agent.middle.extract.webhook_sink as webhook_sink
+
+    monkeypatch.setenv("D2A_WEBHOOK_SECRET", "sec")
+
+    def deny(url, body, headers, timeout, context=None):
+        raise urllib.error.HTTPError(url, 403, "forbidden", None, None)
+
+    monkeypatch.setattr(webhook_sink, "_urllib_send", deny)
+    _, cfg = middle_env
+    c = _webhook_sink_client(tmp_path, cfg)
+    h = {"Authorization": "Bearer secret"}
+    body = c.get("/api/config/connection-check", headers=h).json()
+    assert body["ok"] is False and body["error_code"] == "auth"
+    assert "403" in body["detail"]
+
+
+def test_connection_check_webhook_empty_secret_is_config_error(
+    middle_env, tmp_path, monkeypatch,
+):
+    monkeypatch.delenv("D2A_WEBHOOK_SECRET", raising=False)
+    _, cfg = middle_env
+    c = _webhook_sink_client(tmp_path, cfg)
+    h = {"Authorization": "Bearer secret"}
+    body = c.get("/api/config/connection-check", headers=h).json()
+    assert body["ok"] is False and body["error_code"] == "config"
+    assert "D2A_WEBHOOK_SECRET" in body["detail"]
