@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from datetime import time as dtime
 from pathlib import Path
 from typing import Literal
@@ -17,6 +17,8 @@ from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from ..protocol.ai_hub_push import AI_HUB_PUSH_AUDIENCE, AI_HUB_PUSH_SCOPE
 
 _DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
@@ -85,8 +87,8 @@ class SinkConfig(BaseModel):
     oidc_token_url: str | None = None
     oidc_client_id: str | None = None
     oidc_client_secret_env: str | None = None
-    oidc_audience: str = "ai-hub-platform"
-    oidc_scope: str = "ai_hub.identity ai_hub.ingest.push"
+    oidc_audience: str = AI_HUB_PUSH_AUDIENCE
+    oidc_scope: str = AI_HUB_PUSH_SCOPE
 
     @model_validator(mode="after")
     def oidc_only_for_ai_hub(self):

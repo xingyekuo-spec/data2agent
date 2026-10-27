@@ -381,20 +381,52 @@ def ddl() -> list[str]:
     return stmts
 
 
+_EXTRACT_CONFIG_SECTION = """\
+## 抽取配置(connect.yaml)
+
+物理表名和 watermark 字段应经现场元数据确认后写入中间机 `connect.yaml` 的 `tables`
+段落。以下为**参考库**的 6 张基线表及推荐策略（不是安装包内嵌清单）:
+
+| 表名 | 模式 | 水位字段 | 说明 |
+| --- | --- | --- | --- |
+| CURRENCY | `full_refresh` | (无) | 币别基础档,数据量极小,走全量刷新 |
+| CUSTOMER | `incremental` | `LAST_MODIFIED_DATE` | 客户主档,含敏感字段(联系人/电话/邮箱) |
+| ITEM | `incremental` | `LAST_MODIFIED_DATE` | 品号主档,含敏感字段(标准成本) |
+| QUOTATION | `incremental` | `LAST_MODIFIED_DATE` | 报价单(参考库简化为单头) |
+| SALES_ORDER | `incremental` | `LAST_MODIFIED_DATE` | 销售订单单头 |
+| SALES_ORDER_D | `incremental` | `LAST_MODIFIED_DATE` | 销售订单单身 |
+
+> **注意区分两个层次**:本字典描述的是**表形**(字段名、类型、含义),属于参考形状;
+> 中间机 `tables` 配置中的 `mode` / `watermark` 是**经现场核对的确定值**。
+> 真实客户环境的水位字段语义(是修改时间还是审核时间)以现场确认为准,
+> 参见[抽取框架设计](../design/02-extraction.md)附录现场核对清单。
+"""
+
+
 def dict_markdown() -> str:
     """生成 docs/dict 表字典 markdown。"""
     lines = [
         "# 鼎捷 E10-like 参考表字典",
         "",
         "> ⚠️ 本字典描述的是**E10-like 参考库**的表形,按 E10 命名惯例构造,",
-        "> 用于映射引擎、MCP 与回归测试开发。真实客户环境的表名 / 字段名 / 状态码",
-        "> **以现场数据字典核对为准**,核对后将对应 binding 置为 `verified`。",
+        "> 用于抽取框架与推送链路的回归测试。真实客户环境的表名 / 字段名 / 状态码",
+        "> **以现场数据字典与 `/metadata` 扫描为准**。",
+        ">",
+        "> **运行时抽取配置不以本文为准。** 中间机默认 `tables: {}`；现场通过",
+        "> `/metadata` 只读扫描当前连接库、在 `/tables` 确认业务键与水位后写入",
+        "> `connect.yaml`。本文仅作参考形状，不随包作为候选表清单加载。",
         ">",
         "> 生成方式:`python -m tests.fixtures.e10.seed --dict-md docs/dict/digiwin_e10.md`",
         "> (来源:`tests/fixtures/e10/schema.py`,请勿手改本文件)",
+        ">",
+        "> 呆滞库存场景的真实环境已核对表/字段见",
+        "> [digiwin_e10_dead_stock_verified.md](digiwin_e10_dead_stock_verified.md)。两份字典",
+        "> 不可混用：本文件仍只服务参考库和回归测试。",
         "",
         "通用惯例:`Id` 代理主键;`*_ID` 外键指向对应表的 `Id`;",
         "`LAST_MODIFIED_DATE` 为增量抽取水位字段;`Owner_Org_ROid` 为 E10 多组织字段。",
+        "",
+        *_EXTRACT_CONFIG_SECTION.splitlines(),
         "",
     ]
     for name, (title, cols) in TABLES.items():

@@ -1070,23 +1070,6 @@ class LandingStore:
             self.con.rollback()
             raise
 
-    def touch_current_open_generation(
-        self, source: str, table: str | None = None,
-    ) -> str | None:
-        """兼容未携带 generation_id 的 E6b 子请求，刷新唯一 open generation。"""
-        rows = self.con.execute(
-            "SELECT generation_id FROM d2a_ingest_generation "
-            "WHERE source = ? AND status = 'open' ORDER BY created_at DESC",
-            (source,),
-        ).fetchall()
-        if not rows:
-            return None
-        if len(rows) != 1:
-            raise ValueError(f"{source}: 存在多个 open generation，已拒绝写入")
-        generation_id = rows[0]["generation_id"]
-        self.touch_ingest_generation(source, generation_id, table)
-        return generation_id
-
     def begin_incremental_ingest_table(
         self, source: str, generation_id: str, info: TableInfo,
     ) -> None:
@@ -1766,14 +1749,6 @@ class LandingStore:
         )
         self.con.commit()
 
-    def active_pks(self, source: str, table: str, pk_col: str,
-                   wm_col: str | None = None, start=None, end=None) -> set:
-        """单列主键活跃集合(兼容旧调用)。"""
-        return {
-            t[0] for t in self.active_key_tuples(
-                source, table, [pk_col], wm_col, start, end)
-        }
-
     def active_key_tuples(
         self, source: str, table: str, pk_cols: list[str],
         wm_col: str | None = None, start=None, end=None,
@@ -1792,32 +1767,6 @@ class LandingStore:
             tuple(r[c] for c in pk_cols)
             for r in self.con.execute(sql, params)
         }
-
-    def mark_deleted(self, source: str, table: str, pk_col: str, pks: set) -> int:
-        """软删打标(单列主键兼容入口)。"""
-        return self.mark_deleted_keys(
-            source, table, [pk_col], { (p,) if not isinstance(p, tuple) else p for p in pks })
-
-    def mark_deleted_keys(
-        self, source: str, table: str, pk_cols: list[str], keys: set[tuple],
-    ) -> int:
-        """按完整运行键元组软删。"""
-        if not keys or not pk_cols:
-            return 0
-        now, table_sql = _now(), raw_table_name(source, table)
-        key_list = sorted(keys)
-        pred = " AND ".join(f'"{c}" = ?' for c in pk_cols)
-        for i in range(0, len(key_list), 200):
-            chunk = key_list[i:i + 200]
-            for key in chunk:
-                if len(key) != len(pk_cols):
-                    raise ValueError(
-                        f"软删键元组长度不匹配: got {len(key)}, want {len(pk_cols)}")
-                self.con.execute(
-                    f'UPDATE "{table_sql}" SET _d2a_deleted_at = ? WHERE {pred}',
-                    (now, *key))
-        self.con.commit()
-        return len(keys)
 
     def min_watermark(self, source: str, table: str, wm_col: str) -> str | None:
         (m,) = self.con.execute(
@@ -2108,10 +2057,6 @@ class LandingStore:
             })
         summaries.sort(key=lambda s: s["last_at"], reverse=True)
         return summaries
-
-    def push_log_detail(self, log_id: int) -> sqlite3.Row | None:
-        return self.con.execute(
-            "SELECT * FROM d2a_http_push_log WHERE id = ?", (log_id,)).fetchone()
 
     def push_log_batch_progress(
         self, source: str, table_name: str, batch_id: str,

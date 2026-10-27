@@ -162,7 +162,6 @@ class ScanRecord:
     status: str  # running | completed | partial | failed | timeout
     # 单调时钟:仅用于 TTL / 驱逐
     created_mono: float
-    finished_mono: float | None = None
     # UTC epoch 秒:仅用于 API 展示
     created_at_utc: float = 0.0
     finished_at_utc: float | None = None
@@ -530,7 +529,6 @@ class ScanStore:
                 self._active.discard(scan_id)
                 return
             rec.status = status
-            rec.finished_mono = time.monotonic()
             rec.finished_at_utc = _utc_now()
             rec.tables = tables
             rec.details = details
@@ -557,7 +555,6 @@ class ScanStore:
                 self._active.discard(scan_id)
                 return
             rec.status = status
-            rec.finished_mono = time.monotonic()
             rec.finished_at_utc = _utc_now()
             rec.error_code = code
             rec.error_detail = detail
