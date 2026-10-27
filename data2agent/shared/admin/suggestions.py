@@ -23,17 +23,6 @@ def field_error(field: str, message: str, suggestion: str) -> dict[str, str]:
     return {"field": field, "message": message, "suggestion": suggestion}
 
 
-def format_operator_message(detail: str, suggestion: str | None) -> str:
-    """日志或纯文本场景:把建议拼进同一行。"""
-    detail = (detail or "").strip()
-    suggestion = (suggestion or "").strip()
-    if not suggestion:
-        return detail
-    if not detail:
-        return f"建议：{suggestion}"
-    return f"{detail} 建议：{suggestion}"
-
-
 _CHECK_SUGGESTIONS: dict[str, str] = {
     "key_missing": "填写存在的业务键/主键列后重试",
     "key_not_unique": "更换唯一键组合，或先清洗源表重复/空值",

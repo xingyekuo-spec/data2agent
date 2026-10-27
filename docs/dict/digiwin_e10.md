@@ -1,8 +1,8 @@
 # 鼎捷 E10-like 参考表字典
 
 > ⚠️ 本字典描述的是**E10-like 参考库**的表形,按 E10 命名惯例构造,
-> 用于映射引擎、MCP 与回归测试开发。真实客户环境的表名 / 字段名 / 状态码
-> **以现场数据字典核对为准**,核对后将对应 binding 置为 `verified`。
+> 用于抽取框架与推送链路的回归测试。真实客户环境的表名 / 字段名 / 状态码
+> **以现场数据字典与 `/metadata` 扫描为准**。
 >
 > **运行时抽取配置不以本文为准。** 中间机默认 `tables: {}`；现场通过
 > `/metadata` 只读扫描当前连接库、在 `/tables` 确认业务键与水位后写入
@@ -35,7 +35,7 @@
 > **注意区分两个层次**:本字典描述的是**表形**(字段名、类型、含义),属于参考形状;
 > 中间机 `tables` 配置中的 `mode` / `watermark` 是**经现场核对的确定值**。
 > 真实客户环境的水位字段语义(是修改时间还是审核时间)以现场确认为准,
-> 参见[抽取框架设计](../design/02-extraction.md)第 11 节现场核对清单。
+> 参见[抽取框架设计](../design/02-extraction.md)附录现场核对清单。
 
 ## CURRENCY —— 币别基础档
 
@@ -97,6 +97,23 @@
 | WAREHOUSE_CODE | TEXT | 仓库编码 |
 | INVENTORY_QTY | NUMERIC | 即时库存数量 |
 | INVENTORY_STATUS | TEXT | 库存状态:usable / frozen / pending_inspection / scrapped |
+| CREATE_DATE | TEXT | 建立日期 |
+| CREATE_BY | TEXT | 建立人员 |
+| LAST_MODIFIED_DATE | TEXT | 最后修改日期(增量抽取水位字段) |
+| LAST_MODIFIED_BY | TEXT | 最后修改人员 |
+| Owner_Org_ROid | TEXT | 所属组织(E10 多组织字段,参考库固定单组织) |
+
+## ITEM_WAREHOUSE —— 品号仓库库存（E10-like 参考表）
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| Id | INTEGER PRIMARY KEY | 代理主键 |
+| ITEM_ID | INTEGER | 品号（参考库外键 → ITEM.Id） |
+| WAREHOUSE_ID | TEXT | 仓库标识 |
+| INVENTORY_QTY | NUMERIC | 库存数量 |
+| LAST_ISSUE_DATE | TEXT | 最后出库日期 |
+| LAST_RECEIPT_DATE | TEXT | 最后入库日期 |
+| SAFE_STOCK | NUMERIC | 安全库存 |
 | CREATE_DATE | TEXT | 建立日期 |
 | CREATE_BY | TEXT | 建立人员 |
 | LAST_MODIFIED_DATE | TEXT | 最后修改日期(增量抽取水位字段) |
