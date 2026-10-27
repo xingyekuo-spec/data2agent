@@ -31,7 +31,8 @@ def test_ingest_protocol_version_is_v3():
 
     assert SUPPORTED_INGEST_PROTOCOL_VERSIONS == ("2", "3")
     sink = (PROD / "middle" / "extract" / "sink.py").read_text(encoding="utf-8")
-    ingest_app = (PROD / "platform" / "ingest" / "app.py").read_text(encoding="utf-8")
+    ingest_app = (ROOT / "tests" / "support" / "reference_ingest.py").read_text(
+        encoding="utf-8")
     assert "ensure_protocol" in sink
     assert "supported_ingest_protocol_versions" in sink
     assert "health_protocol_fields" in ingest_app

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Build the single portable entry exe: data2agent.exe (per role).
+  Build the single portable entry exe: data2agent.exe (middle).
 
 .DESCRIPTION
   Thin PyInstaller one-file with system tray (pystray). Starts admin UI
@@ -22,7 +22,6 @@ Set-Location $root
 python -m pip install -q "pyinstaller>=6.0" "pystray>=0.19" "pillow>=10"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 New-Item -ItemType Directory -Force -Path "$OutDir/middle" | Out-Null
-New-Item -ItemType Directory -Force -Path "$OutDir/platform" | Out-Null
 
 $common = @(
     "--onefile",
@@ -41,9 +40,6 @@ $common = @(
 
 Write-Host "==> Building middle data2agent.exe"
 python -m PyInstaller @common --name data2agent --distpath "$OutDir/middle" scripts/entry_middle_ui.py
-
-Write-Host "==> Building platform data2agent.exe"
-python -m PyInstaller @common --name data2agent --distpath "$OutDir/platform" scripts/entry_platform_ui.py
 
 Write-Host "Done:"
 Get-ChildItem $OutDir -Recurse -Filter "data2agent.exe" | ForEach-Object {

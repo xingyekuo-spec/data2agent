@@ -361,7 +361,6 @@
 ## 11. 相关文档
 
 - [02 · 抽取框架](02-extraction.md)
-- [05 · 控制台与管理界面](05-console.md)
 - [06 · 中间机独立抽取表配置](06-middle-table-extraction-config.md)
 - [便携包部署](../runbook/portable.md)
 - [推送链路验收](../runbook/push-validation.md)

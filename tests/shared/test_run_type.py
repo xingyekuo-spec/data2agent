@@ -8,12 +8,9 @@ import pytest
 
 from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter
 from data2agent.middle.extract.increment import incremental_sync
-from tests.helpers import watermarks_from_pack
+from tests.helpers import e10_watermarks, e10_whitelist
 from data2agent.shared.store.landing import LandingStore
-from data2agent.shared.store.mapping_apply import apply_objects
 from data2agent.middle.extract.reconcile import reconcile
-from tests.helpers import whitelist_from_pack
-from data2agent.shared.metamodel.loader import load_pack
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -67,17 +64,15 @@ def test_start_run_writes_type_and_validates(tmp_path):
         store.start_run(SOURCE, "bogus")
 
 
-def test_three_flows_write_correct_run_type(tmp_path):
+def test_sync_and_reconcile_write_correct_run_type(tmp_path):
     src = tmp_path / "source.sqlite"
     write_db(src, build(seed=42, asof=date(2026, 7, 10)))
-    pack = load_pack(ROOT / "templates")
     landing = LandingStore(tmp_path / "landing.sqlite")
     hook = lambda action, sql, rows, ms: landing.log_audit(SOURCE, action, sql, rows, ms)  # noqa: E731
     adapter = SqliteReadOnlyAdapter(
-        str(src), whitelist_from_pack(pack, SOURCE), audit_hook=hook)
+        str(src), e10_whitelist(), audit_hook=hook)
 
-    incremental_sync(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
-    apply_objects(landing, pack, SOURCE)
-    reconcile(adapter, landing, SOURCE, watermarks_from_pack(pack, SOURCE))
+    incremental_sync(adapter, landing, SOURCE, e10_watermarks())
+    reconcile(adapter, landing, SOURCE, e10_watermarks())
 
-    assert _run_types(landing) == ["sync", "apply", "reconcile"]
+    assert _run_types(landing) == ["sync", "reconcile"]

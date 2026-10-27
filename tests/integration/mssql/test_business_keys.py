@@ -11,8 +11,7 @@ from data2agent.middle.extract.adapters.base import RuntimeKeyError, resolve_run
 from data2agent.middle.extract.adapters.mssql import MssqlReadOnlyAdapter
 from data2agent.shared.config import SourceConfig, TableExtractConfig
 from data2agent.middle.extract.metadata import build_discoverer
-from data2agent.shared.metamodel.loader import load_pack
-from tests.helpers import whitelist_from_pack
+from tests.helpers import e10_whitelist
 
 DSN = os.environ.get("D2A_IT_MSSQL_DSN")
 pytestmark = pytest.mark.skipif(
@@ -23,13 +22,8 @@ SOURCE = "digiwin_e10"
 SOURCE_ENV = "D2A_IT_MSSQL_DSN"
 
 
-@pytest.fixture(scope="module")
-def pack():
-    return load_pack(ROOT / "templates")
-
-
-def test_configured_key_overrides_database_pk(pack):
-    adapter = MssqlReadOnlyAdapter(DSN, whitelist_from_pack(pack, SOURCE), batch_size=64)
+def test_configured_key_overrides_database_pk():
+    adapter = MssqlReadOnlyAdapter(DSN, e10_whitelist(), batch_size=64)
     try:
         info = adapter.table_info("CUSTOMER")
         assert info.pk, "seed 库 CUSTOMER 应有数据库主键"
@@ -40,8 +34,8 @@ def test_configured_key_overrides_database_pk(pack):
         adapter.con.close()
 
 
-def test_configured_key_missing_column_fails(pack):
-    adapter = MssqlReadOnlyAdapter(DSN, whitelist_from_pack(pack, SOURCE), batch_size=64)
+def test_configured_key_missing_column_fails():
+    adapter = MssqlReadOnlyAdapter(DSN, e10_whitelist(), batch_size=64)
     try:
         info = adapter.table_info("CUSTOMER")
         with pytest.raises(RuntimeKeyError, match="不存在"):

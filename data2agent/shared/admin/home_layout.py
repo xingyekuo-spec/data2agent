@@ -40,10 +40,6 @@ class HomeLayout:
         return self.config_dir / "connect.yaml"
 
     @property
-    def platform_yaml(self) -> Path:
-        return self.config_dir / "platform.yaml"
-
-    @property
     def secrets_env(self) -> Path:
         return self.config_dir / "secrets.env"
 
@@ -51,13 +47,3 @@ class HomeLayout:
         for p in (self.config_dir, self.data_dir, self.logs_dir):
             p.mkdir(parents=True, exist_ok=True)
 
-
-def resolve_templates(home: HomeLayout) -> Path:
-    app_t = home.app / "templates"
-    if app_t.is_dir():
-        return app_t
-    # editable / source tree: repo templates/
-    pkg_templates = Path(__file__).resolve().parents[2] / "templates"
-    if pkg_templates.is_dir():
-        return pkg_templates
-    return app_t

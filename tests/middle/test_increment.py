@@ -14,18 +14,12 @@ from data2agent.middle.extract.increment import (
     subtract_lookback,
 )
 from data2agent.shared.store.landing import LandingStore, raw_table_name
-from tests.helpers import watermarks_from_pack, whitelist_from_pack
-from data2agent.shared.metamodel.loader import load_pack
+from tests.helpers import e10_watermarks, e10_whitelist
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = "digiwin_e10"
 WM = "LAST_MODIFIED_DATE"
-
-
-@pytest.fixture(scope="module")
-def pack():
-    return load_pack(ROOT / "templates")
 
 
 @pytest.fixture()
@@ -40,25 +34,25 @@ def landing(tmp_path) -> LandingStore:
     return LandingStore(tmp_path / "landing.sqlite")
 
 
-def _adapter(source_db, pack, **kw):
-    return SqliteReadOnlyAdapter(str(source_db), whitelist_from_pack(pack, SOURCE), **kw)
+def _adapter(source_db, **kw):
+    return SqliteReadOnlyAdapter(str(source_db), e10_whitelist(), **kw)
 
 
-def _sync(source_db, pack, landing, **kw):
-    return incremental_sync(_adapter(source_db, pack, **kw.pop("adapter_kw", {})),
-                            landing, SOURCE, watermarks_from_pack(pack, SOURCE), **kw)
+def _sync(source_db, landing, **kw):
+    return incremental_sync(_adapter(source_db, **kw.pop("adapter_kw", {})),
+                            landing, SOURCE, e10_watermarks(), **kw)
 
 
-def test_watermarks_from_pack(pack):
-    wms = watermarks_from_pack(pack, SOURCE)
+def test_watermarks_from_pack():
+    wms = e10_watermarks()
     assert wms == {t: WM for t in
                    ["CUSTOMER", "ITEM", "QUOTATION", "SALES_ORDER", "SALES_ORDER_D"]}
     assert "CURRENCY" not in wms, "未声明水位的维表应走 full_refresh"
 
 
-def test_sync_records_expected_rows_for_progress(pack, source_db, landing):
+def test_sync_records_expected_rows_for_progress(source_db, landing):
     """同步前预估行数写入步骤:增量表按水位口径,full_refresh 表为整表行数。"""
-    report = _sync(source_db, pack, landing, run_id=landing.start_run(SOURCE, "sync"))
+    report = _sync(source_db, landing, run_id=landing.start_run(SOURCE, "sync"))
     assert report.total_rows > 0
     steps = landing.steps_for_run(report.run_id)
     assert steps, "应记录表级步骤"
@@ -80,9 +74,9 @@ def test_sync_records_expected_rows_for_progress(pack, source_db, landing):
         src.close()
 
 
-def test_count_for_sync_increment_filter(pack, source_db):
+def test_count_for_sync_increment_filter(source_db):
     """增量预估带水位过滤:COUNT(WHERE wm >= since) 与读取同口径。"""
-    adapter = _adapter(source_db, pack)
+    adapter = _adapter(source_db)
     info = adapter.table_info("CUSTOMER")
     total = adapter.count_for_sync(info, WM)
     (all_rows,) = sqlite3.connect(source_db).execute(
@@ -96,9 +90,9 @@ def test_count_for_sync_increment_filter(pack, source_db):
     assert est == want
 
 
-def test_sync_only_tables_limits_scope(pack, source_db, landing):
+def test_sync_only_tables_limits_scope(source_db, landing):
     """only_tables:定向重试只同步指定表,其余表不动。"""
-    report = _sync(source_db, pack, landing,
+    report = _sync(source_db, landing,
                    run_id=landing.start_run(SOURCE, "sync"),
                    only_tables={"CUSTOMER"})
     assert [t.table for t in report.tables] == ["CUSTOMER"]
@@ -113,8 +107,8 @@ def test_subtract_lookback():
         subtract_lookback("下周三", 3)
 
 
-def test_initial_run_establishes_watermark(source_db, pack, landing):
-    report = _sync(source_db, pack, landing)
+def test_initial_run_establishes_watermark(source_db, landing):
+    report = _sync(source_db, landing)
     by_table = {t.table: t for t in report.tables}
     assert by_table["CURRENCY"].strategy == "full_refresh"
     assert by_table["SALES_ORDER"].strategy == "initial"
@@ -124,24 +118,24 @@ def test_initial_run_establishes_watermark(source_db, pack, landing):
     assert landing.get_high_water(SOURCE, "CURRENCY") is None
 
 
-def test_second_run_pulls_only_lookback_window(source_db, pack, landing):
-    _sync(source_db, pack, landing)
+def test_second_run_pulls_only_lookback_window(source_db, landing):
+    _sync(source_db, landing)
     total_orders = landing.count(SOURCE, "SALES_ORDER")
-    report = _sync(source_db, pack, landing, lookback_days=3)
+    report = _sync(source_db, landing, lookback_days=3)
     orders = next(t for t in report.tables if t.table == "SALES_ORDER")
     assert orders.strategy == "increment"
     assert 0 < orders.rows < total_orders, "第二轮只应重拉回看窗口内的行"
     assert landing.count(SOURCE, "SALES_ORDER") == total_orders, "幂等:落地行数不变"
 
 
-def test_incremental_picks_up_source_change(source_db, pack, landing):
-    _sync(source_db, pack, landing)
+def test_incremental_picks_up_source_change(source_db, landing):
+    _sync(source_db, landing)
     old_water = landing.get_high_water(SOURCE, "CUSTOMER")
     rw = sqlite3.connect(source_db)
     rw.execute(f"UPDATE CUSTOMER SET CUSTOMER_NAME = '增量改名', {WM} = '2026-07-11 09:00:00' "
                "WHERE Id = 5")
     rw.commit()
-    _sync(source_db, pack, landing)
+    _sync(source_db, landing)
     row = landing.con.execute(
         f'SELECT CUSTOMER_NAME FROM "{raw_table_name(SOURCE, "CUSTOMER")}" WHERE Id = 5'
     ).fetchone()
@@ -157,8 +151,8 @@ def test_watermark_never_retreats(landing):
     assert landing.get_high_water(SOURCE, "T") == "2026-07-10 00:00:00"
 
 
-def test_failure_does_not_advance_watermark(source_db, pack, landing, monkeypatch):
-    _sync(source_db, pack, landing)
+def test_failure_does_not_advance_watermark(source_db, landing, monkeypatch):
+    _sync(source_db, landing)
     before = landing.get_high_water(SOURCE, "SALES_ORDER")
     rw = sqlite3.connect(source_db)
     rw.execute(f"UPDATE SALES_ORDER SET {WM} = '2026-07-12 08:00:00' WHERE Id = 1")
@@ -173,22 +167,22 @@ def test_failure_does_not_advance_watermark(source_db, pack, landing, monkeypatc
 
     monkeypatch.setattr(LandingStore, "upsert_rows", boom)
     with pytest.raises(RuntimeError):
-        _sync(source_db, pack, landing)
+        _sync(source_db, landing)
     assert landing.get_high_water(SOURCE, "SALES_ORDER") == before, "失败批次不得推进水位"
     run = landing.con.execute("SELECT status FROM d2a_sync_run ORDER BY id DESC LIMIT 1").fetchone()
     assert run["status"] == "failed"
 
     monkeypatch.setattr(LandingStore, "upsert_rows", real)
-    _sync(source_db, pack, landing)  # 恢复后重跑,水位补上
+    _sync(source_db, landing)  # 恢复后重跑,水位补上
     assert landing.get_high_water(SOURCE, "SALES_ORDER") == "2026-07-12 08:00:00"
 
 
-def test_keyset_handles_watermark_ties(source_db, pack, landing):
+def test_keyset_handles_watermark_ties(source_db, landing):
     """多行同水位值时,(水位, 主键) keyset 不丢行不重行。"""
     rw = sqlite3.connect(source_db)
     rw.execute(f"UPDATE QUOTATION SET {WM} = '2026-06-01 12:00:00' WHERE Id <= 60")
     rw.commit()
-    _sync(source_db, pack, landing, adapter_kw={"batch_size": 25})  # 平局组(60)> 批大小(25)
+    _sync(source_db, landing, adapter_kw={"batch_size": 25})  # 平局组(60)> 批大小(25)
     src_ids = {r[0] for r in rw.execute("SELECT Id FROM QUOTATION")}
     landed = {r[0] for r in landing.con.execute(
         f'SELECT Id FROM "{raw_table_name(SOURCE, "QUOTATION")}"')}
@@ -198,7 +192,7 @@ def test_keyset_handles_watermark_ties(source_db, pack, landing):
     assert n == len(src_ids), "keyset 分页不得产生重复行"
 
 
-def test_initial_sync_respects_start_date(pack, source_db, landing):
+def test_initial_sync_respects_start_date(source_db, landing):
     """首轮同步带 start_date:只抽起始日期之后的行,不抽历史全量。"""
     src = sqlite3.connect(source_db)
     (total, _min_wm, _max_wm) = src.execute(
@@ -214,7 +208,7 @@ def test_initial_sync_respects_start_date(pack, source_db, landing):
     src.close()
     assert 0 < want_rows < total
 
-    report = _sync(source_db, pack, landing,
+    report = _sync(source_db, landing,
                    run_id=landing.start_run(SOURCE, "sync"),
                    only_tables={"CUSTOMER"},
                    start_dates={"CUSTOMER": start})
@@ -231,7 +225,7 @@ def test_initial_sync_respects_start_date(pack, source_db, landing):
     assert cur is not None and cur[0] is not None
 
 
-def test_cli_sync_one_shot_respects_start_date(pack, source_db, tmp_path, monkeypatch):
+def test_cli_sync_one_shot_respects_start_date(source_db, tmp_path, monkeypatch):
     """回归:一次性 sync 命令也须生效 start_date 下界(曾只有 serve 调度路径传)。"""
     import sys
 
@@ -252,7 +246,6 @@ def test_cli_sync_one_shot_respects_start_date(pack, source_db, tmp_path, monkey
     landing_db = tmp_path / "cli-landing.sqlite"
     cfg = tmp_path / "connect.yaml"
     cfg.write_text(
-        f"templates: {ROOT / 'templates'}\n"
         f"landing: {landing_db}\n"
         "sources:\n"
         f"  {SOURCE}:\n"

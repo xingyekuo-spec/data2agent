@@ -1,6 +1,5 @@
 # data2agent 抽取配置示例:复制为 connect.yaml 按需修改。
 # 凭据纪律:mssql 只允许 dsn_env(环境变量名),连接串绝不落文件。
-templates: templates
 landing: landing/factory.sqlite
 
 sources:
@@ -28,9 +27,15 @@ sources:
     # sync_start_at: "02:00"         # 可选:自动抽取首轮启动时间;不填=服务启动即跑
     # start_date: "2015-01-01"      # 可选:全局抽取起始日期;未单独配置 start_date 的增量表用它
     reconcile_at: "05:30"           # 每日 L1 对账;删除本行则不排
-    apply_after_sync: true          # 同步后自动物化对象层(sink=http 时忽略)
-    # 落地出口:默认 local=写本地库 —— 仅限内部开发/参考链/测试,非交付形态;
-    # 生产对接 data2agent 平台用 HttpPushSink:
+    # 推送出口:默认 local=写本地库 —— 仅限内部开发/参考链/测试,非交付形态。
+    # 通用推送(推荐,任意平台一个 HTTPS 端点即可接收;见 docs/runbook/webhook-push.md),
+    # 启用时必须删除 reconcile_at / reconcile_deep_at(无远端对账):
+    # sink:
+    #   type: webhook
+    #   url: "https://平台域名/d2a/events"
+    #   token_env: D2A_WEBHOOK_TOKEN          # 可选 Bearer
+    #   hmac_secret_env: D2A_WEBHOOK_SECRET   # 可选 HMAC-SHA256 签名(推荐)
+    # 强一致推送 ingest v3(接收方需完整实现协议与对账端点):
     # sink: { type: http, url: "https://平台域名", token_env: D2A_INGEST_TOKEN }
     # 对接 AI Hub PUSH_AGENT 必须使用独立适配器,禁止只改 http URL;
     # 启用 ai_hub 时必须删除 reconcile_at / reconcile_deep_at(无远端对账,禁止本地 raw 对账):

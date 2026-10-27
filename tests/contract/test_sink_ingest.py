@@ -1,4 +1,4 @@
-"""E6a 测试:落地出口 Sink + 平台接收端 ingest + 推送端到端。"""
+"""E6a 测试:落地出口 Sink + ingest v3 参考接收端 + 推送端到端。"""
 
 from datetime import date
 from pathlib import Path
@@ -12,14 +12,12 @@ from data2agent.middle.extract.adapters.base import TableInfo  # noqa: E402
 from data2agent.middle.extract.adapters.sqlite import SqliteReadOnlyAdapter  # noqa: E402
 from data2agent.middle.extract.increment import incremental_sync  # noqa: E402
 from data2agent.middle.extract.reconcile import reconcile_remote  # noqa: E402
-from tests.helpers import watermarks_from_pack
+from tests.helpers import e10_watermarks
 from data2agent.shared.store.landing import LandingStore, raw_table_name  # noqa: E402
 from data2agent.middle.extract.sink import HttpPushSink, LocalSink  # noqa: E402
-from tests.helpers import whitelist_from_pack  # noqa: E402
-from data2agent.platform.console.validation import build_validation_report  # noqa: E402
-from data2agent.platform.ingest.app import create_app  # noqa: E402
+from tests.helpers import e10_whitelist  # noqa: E402
+from tests.support.reference_ingest import create_app  # noqa: E402
 from data2agent.protocol.ingest import BINARY_ENCODING, INGEST_PROTOCOL_VERSION  # noqa: E402
-from data2agent.shared.metamodel.loader import load_pack  # noqa: E402
 from tests.fixtures.e10.seed import build, write_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -43,11 +41,6 @@ def _open_generation(
     return generation_id
 
 
-@pytest.fixture(scope="module")
-def pack():
-    return load_pack(ROOT / "templates")
-
-
 @pytest.fixture()
 def source_db(tmp_path) -> Path:
     db = tmp_path / "source.sqlite"
@@ -55,8 +48,8 @@ def source_db(tmp_path) -> Path:
     return db
 
 
-def _adapter(source_db, pack):
-    return SqliteReadOnlyAdapter(str(source_db), whitelist_from_pack(pack, SOURCE))
+def _adapter(source_db):
+    return SqliteReadOnlyAdapter(str(source_db), e10_whitelist())
 
 
 def _testclient_post(client: TestClient, token: str | None = None):
@@ -90,12 +83,12 @@ def _push_sink(client: TestClient) -> HttpPushSink:
 
 # ---- Sink 抽象 ----
 
-def test_local_sink_is_default_behavior(source_db, pack, tmp_path):
+def test_local_sink_is_default_behavior(source_db, tmp_path):
     """不传 sink 与显式传 LocalSink 结果一致(向后兼容)。"""
     a = LandingStore(tmp_path / "a.sqlite")
-    incremental_sync(_adapter(source_db, pack), a, SOURCE, watermarks_from_pack(pack, SOURCE))
+    incremental_sync(_adapter(source_db), a, SOURCE, e10_watermarks())
     b = LandingStore(tmp_path / "b.sqlite")
-    incremental_sync(_adapter(source_db, pack), b, SOURCE, watermarks_from_pack(pack, SOURCE),
+    incremental_sync(_adapter(source_db), b, SOURCE, e10_watermarks(),
                      sink=LocalSink(b))
     for t in TABLES:
         assert a.count(SOURCE, t) == b.count(SOURCE, t)
@@ -172,52 +165,6 @@ def test_blob_round_trips_over_http_without_string_corruption(tmp_path):
     assert stored == raw and isinstance(stored, bytes)
 
 
-def test_expired_generation_apply_lease_is_recoverable(tmp_path):
-    landing = LandingStore(tmp_path / "platform.sqlite")
-    landing.begin_ingest_generation(SOURCE, "g-expire", [])
-    landing.complete_ingest_generation(SOURCE, "g-expire")
-    assert landing.claim_committed_generation(
-        SOURCE, owner_id="dead-worker") == "g-expire"
-    stale_run = landing.start_run(SOURCE, "apply")
-    landing.con.execute(
-        "UPDATE d2a_ingest_generation SET apply_lease_until = ? "
-        "WHERE source = ? AND generation_id = ?",
-        ("2000-01-01T00:00:00", SOURCE, "g-expire"))
-    landing.con.commit()
-
-    assert landing.claim_committed_generation(
-        SOURCE, owner_id="replacement") == "g-expire"
-    assert landing.con.execute(
-        "SELECT status FROM d2a_sync_run WHERE id = ?", (stale_run,)
-    ).fetchone()["status"] == "failed"
-    landing.finish_generation_apply(
-        SOURCE, "g-expire", success=True, owner_id="replacement")
-
-
-def test_manual_generation_lease_serializes_retry_without_new_push(tmp_path):
-    landing = LandingStore(tmp_path / "platform.sqlite")
-    landing.begin_ingest_generation(SOURCE, "g-applied", [])
-    landing.complete_ingest_generation(SOURCE, "g-applied")
-    assert landing.claim_committed_generation(
-        SOURCE, owner_id="worker") == "g-applied"
-    landing.finish_generation_apply(
-        SOURCE, "g-applied", success=True, owner_id="worker")
-
-    manual = landing.claim_manual_generation_apply(
-        SOURCE, owner_id="console-retry")
-    assert manual and manual.startswith("manual-")
-    with pytest.raises(ValueError, match="仍处于 applying"):
-        landing.begin_ingest_generation(SOURCE, "g-overlap", [])
-    landing.finish_generation_apply(
-        SOURCE, manual, success=False, owner_id="console-retry")
-    assert landing.con.execute(
-        "SELECT status FROM d2a_ingest_generation "
-        "WHERE source = ? AND generation_id = ?", (SOURCE, manual),
-    ).fetchone()["status"] == "failed"
-    assert landing.claim_manual_generation_apply(
-        SOURCE, owner_id="console-retry-2") is not None
-
-
 def test_ingest_batch_lands_rows(tmp_path):
     landing = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(landing.db_path))
@@ -256,7 +203,7 @@ def test_ingest_rejects_same_batch_id_with_different_payload(tmp_path):
     assert landing.count(SOURCE, "T") == 1
 
 
-def test_generation_requires_all_tables_and_blocks_apply_overlap(tmp_path):
+def test_generation_requires_all_tables(tmp_path):
     landing = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(landing.db_path))
     begin = _v({
@@ -272,16 +219,6 @@ def test_generation_requires_all_tables_and_blocks_apply_overlap(tmp_path):
     assert client.post("/ingest/run-complete", json=_v({
         "source": SOURCE, "generation_id": "g1",
     })).status_code == 200
-    pending = client.post("/ingest/run-begin", json=_v({
-        "source": SOURCE, "generation_id": "g2", "tables": ["A"],
-    }))
-    assert pending.status_code == 409
-    assert landing.claim_committed_generation(SOURCE) == "g1"
-    blocked = client.post("/ingest/run-begin", json=_v({
-        "source": SOURCE, "generation_id": "g2", "tables": ["A"],
-    }))
-    assert blocked.status_code == 409
-    landing.finish_generation_apply(SOURCE, "g1", success=True)
     assert client.post("/ingest/run-begin", json=_v({
         "source": SOURCE, "generation_id": "g2", "tables": ["A"],
     })).status_code == 200
@@ -426,20 +363,20 @@ def test_ingest_token_auth(tmp_path):
 
 # ---- 推送端到端(E6a 核心)----
 
-def test_push_matches_direct_sync(source_db, pack, tmp_path):
+def test_push_matches_direct_sync(source_db, tmp_path):
     """中间(HttpPushSink)→ 平台 落地,应与直连本地 sync 逐表一致。"""
     # 直连基准
     direct = LandingStore(tmp_path / "direct.sqlite")
-    incremental_sync(_adapter(source_db, pack), direct, SOURCE,
-                     watermarks_from_pack(pack, SOURCE))
+    incremental_sync(_adapter(source_db), direct, SOURCE,
+                     e10_watermarks())
 
     # 推送:平台 ingest + 中间 HttpPushSink
     platform = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(platform.db_path))
     middle_state = LandingStore(tmp_path / "middle.sqlite")   # 中间只存水位/审计,不存 raw
     sink = _push_sink(client)
-    report = incremental_sync(_adapter(source_db, pack), middle_state, SOURCE,
-                              watermarks_from_pack(pack, SOURCE), sink=sink)
+    report = incremental_sync(_adapter(source_db), middle_state, SOURCE,
+                              e10_watermarks(), sink=sink)
 
     assert not report.paused
     for t in TABLES:
@@ -454,23 +391,16 @@ def test_push_matches_direct_sync(source_db, pack, tmp_path):
         "ORDER BY target"
     ).fetchall()
     assert [r["target"] for r in completed] == sorted(TABLES)
-    validation_run = platform.start_run(SOURCE, "validation", commit=False)
-    report = build_validation_report(
-        platform, run_id=validation_run, pack=pack, source=SOURCE,
-        config=None, include_mcp_probe=False,
-    )
-    checks = {c["check_id"]: c for c in report["checks"]}
-    assert checks["raw_presence"]["status"] == "pass"
 
 
-def test_middle_holds_no_raw_but_has_watermark(source_db, pack, tmp_path):
+def test_middle_holds_no_raw_but_has_watermark(source_db, tmp_path):
     """Pattern A:中间只留水位/审计/运行,不落 raw。"""
     platform = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(platform.db_path))
     middle_state = LandingStore(tmp_path / "middle.sqlite")
     sink = _push_sink(client)
-    incremental_sync(_adapter(source_db, pack), middle_state, SOURCE,
-                     watermarks_from_pack(pack, SOURCE), sink=sink)
+    incremental_sync(_adapter(source_db), middle_state, SOURCE,
+                     e10_watermarks(), sink=sink)
 
     raw_tables = [r[0] for r in middle_state.con.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'raw_%'")]
@@ -479,7 +409,7 @@ def test_middle_holds_no_raw_but_has_watermark(source_db, pack, tmp_path):
     assert platform.get_high_water(SOURCE, "SALES_ORDER") is None, "平台不管水位(中间驱动)"
 
 
-def test_incremental_over_push(source_db, pack, tmp_path):
+def test_incremental_over_push(source_db, tmp_path):
     """推送模式下第二轮只推回看窗口增量,平台幂等。"""
     platform = LandingStore(tmp_path / "platform.sqlite")
     client = TestClient(create_app(platform.db_path))
@@ -487,15 +417,11 @@ def test_incremental_over_push(source_db, pack, tmp_path):
 
     def run():
         return incremental_sync(
-            _adapter(source_db, pack), middle_state, SOURCE,
-            watermarks_from_pack(pack, SOURCE), sink=_push_sink(client))
+            _adapter(source_db), middle_state, SOURCE,
+            e10_watermarks(), sink=_push_sink(client))
 
     run()
     total = platform.count(SOURCE, "SALES_ORDER")
-    # 平台必须先消费完整 generation，下一轮才可修改 raw。
-    generation_id = platform.claim_committed_generation(SOURCE)
-    assert generation_id is not None
-    platform.finish_generation_apply(SOURCE, generation_id, success=True)
     r2 = run()
     orders = next(t for t in r2.tables if t.table == "SALES_ORDER")
     assert orders.strategy == "increment"
@@ -788,7 +714,7 @@ def test_http_sync_pause_aborts_remote_snapshot(tmp_path):
 
 
 def test_e6b_remote_reconcile_repairs_edit_and_delete(
-    source_db, pack, tmp_path,
+    source_db, tmp_path,
 ):
     """中间只留运行元数据；平台完成跨机重抽与运行键 diff 软删。"""
     import sqlite3
@@ -797,15 +723,10 @@ def test_e6b_remote_reconcile_repairs_edit_and_delete(
     client = TestClient(create_app(platform.db_path))
     middle = LandingStore(tmp_path / "middle.sqlite")
     sink = _push_sink(client)
-    watermarks = watermarks_from_pack(pack, SOURCE)
+    watermarks = e10_watermarks()
 
     incremental_sync(
-        _adapter(source_db, pack), middle, SOURCE, watermarks, sink=sink)
-    initial_generation = platform.claim_committed_generation(
-        SOURCE, owner_id="test-apply")
-    assert initial_generation is not None
-    platform.finish_generation_apply(
-        SOURCE, initial_generation, success=True, owner_id="test-apply")
+        _adapter(source_db), middle, SOURCE, watermarks, sink=sink)
     assert not any(
         row[0].startswith(f"raw_{SOURCE}__")
         for row in middle.con.execute(
@@ -819,7 +740,7 @@ def test_e6b_remote_reconcile_repairs_edit_and_delete(
     rw.close()
 
     report = reconcile_remote(
-        _adapter(source_db, pack), middle, sink, SOURCE,
+        _adapter(source_db), middle, sink, SOURCE,
         watermarks, deep=True)
     assert report.total_soft_deleted >= 1
     deleted = platform.con.execute(
@@ -830,6 +751,8 @@ def test_e6b_remote_reconcile_repairs_edit_and_delete(
         f'SELECT STANDARD_COST FROM "{raw_table_name(SOURCE, "ITEM")}" '
         "WHERE Id = 1").fetchone()
     assert repaired["STANDARD_COST"] == "123456789.1234"
-    pending = platform.claim_committed_generation(
-        SOURCE, owner_id="test-reconcile-apply")
-    assert pending is not None and pending.startswith("reconcile-")
+    committed = platform.con.execute(
+        "SELECT COUNT(*) FROM d2a_ingest_generation "
+        "WHERE source = ? AND status = 'committed' AND generation_id LIKE 'reconcile-%'",
+        (SOURCE,)).fetchone()[0]
+    assert committed == 1, "对账 generation 应在接收端完整提交"

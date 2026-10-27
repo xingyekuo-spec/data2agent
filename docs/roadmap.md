@@ -1,23 +1,23 @@
 # data2agent 路线图
 
-> 状态: **`v0.5.1`** — ERP 元数据 M0–M7 已完成（产品包无 showroom，Console 仅真实 API）;
-> v0.4 跨机可靠性随首个工厂生产试点通过现场验证;更新于 2026-08-31。
+> 状态:**平台端已移出本仓(2026-10-27)**,data2agent 聚焦中间机:只读抽取 + 推送到任意平台。
+> v0.4 跨机可靠性随首个工厂生产试点通过现场验证。
 
-data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及中间机元数据发现与抽取表管理
+本仓库此前包含的 Vue Console、映射 / 数据集发布、字段血缘、MCP 网关与平台便携包已移除;
+中间机元数据发现与抽取表管理保持不变
 （见 [ERP 元数据实施计划](superpowers/plans/2026-07-23-erp-metadata-extraction-management.md)，已收尾）。
 
 ## 当前版本基线
 
 已完成:
 
-- Vue Console `/` 与类型化管理 API（仅真实 API）。
-- 数据集原子发布、Mapping Preview、字段血缘、MCP evidence。
+- **通用 Webhook 推送**(`sink.type: webhook`,d2a-push v1):CloudEvents 信封、事件 id 幂等、
+  HMAC 签名、快照原子替换语义;见 [webhook-push](runbook/webhook-push.md)。
 - **抽取表显式配置**、**元数据发现**、**配置业务键 / 复合键增量**、**full_refresh 快照**、ingest 协议 v2。
 - M6 文档、便携包/smoke 与 Release MSSQL 门禁。
 - E10 测试资产位于 `tests/fixtures/e10/`（不进产品包）。
-- 产品包无展厅 / 无 Console Mock 运行模式。
 - **C1-B** — AI Hub 对象级推送适配器(`sink.type: ai_hub` / `AiHubObjectPushSink`),
-  与本仓平台表级 `HttpPushSink` 并存,不得改 URL 混用。加密 spool、pending 排空、
+  与表级 `HttpPushSink`、通用 `WebhookSink` 并存,不得改 URL 混用。加密 spool、pending 排空、
   崩溃恢复去重与 mock 契约已在本仓落地;见 [push-validation](runbook/push-validation.md) §2
   与 [source-dev](runbook/source-dev.md) §6.1。
 
@@ -52,21 +52,17 @@ data2agent 已完成 v0.2 可观察控制台和 v0.3 可验证数据链,以及�
 - 源系统使用只读账号；抽取表经现场元数据确认;
 - 不做 ERP 写回,不替代现有业务决策;
 - Agent 结论必须有人复核;
-- 每日备份落地库。
+- 每日备份中间机状态库(`/recovery` 有恢复指引)。
 
 ## 待办事项
 
-- **下线全局 ingest Token(签发制收尾)**。背景:数据源登记已改为按源签发
-  Token(平台生成、库中只存哈希、可独立吊销),全局 `D2A_INGEST_TOKEN` 降为
-  迁移期兼容与运维逃生口;当前它仍是最高优先旁路(可推含已登记源在内的任意源),
-  削弱了签发制。下线路径:
-  1. 收紧作用域:登记簿非空后,全局 Token 仅可推未登记源,已登记源必须
-     使用按源 Token;
-  2. 平台数据源管理页对「仍配置全局 Token」给安全提示,引导现场完成按源迁移;
-  3. 随 ingest 协议大版本(如 v4)正式删除:平台 setup 表单去掉 ingest Token
-     字段,中间机首配改为直接填按源 Token(中间机侧 `D2A_INGEST_TOKEN`
-     环境变量名不变、代码零改动,值换为按源 Token 即可)。
-  注意同步更新:平台/中间机首配表单、e2e 参考链、`docs/runbook` 部署指引。
+- **管理界面支持选择推送出口**:首配向导与 `/config` 当前只生成 / 编辑 `sink.type: http`;
+  webhook 需手工编辑 `connect.yaml`。后续在配置页提供 `webhook` / `http` 选择、
+  `token_env` / `hmac_secret_env` 填写与 ping 连通测试。
+- **接收侧存储代码瘦身**:`shared/store/landing.py` 仍保留 ingest v3 接收侧方法
+  (generation / 回执 / 对账 staging),当前只被 `tests/support/reference_ingest.py` 使用;
+  可迁入测试支持包,进一步缩小产品包。
+- **webhook 协议演进**:按接入方反馈评估批量多事件请求、gzip 压缩与 JSON Lines 变体。
 
 ## 当前非目标
 

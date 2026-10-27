@@ -1,38 +1,31 @@
-"""Moved from data2agent.middle.extract.sync / increment — test-only utilities.
+"""Test-only utilities for the E10-like reference source.
 
-Production code no longer derives whitelist or watermarks from template packs.
-Use `SourceConfig.table_whitelist()` and `SourceConfig.table_watermarks()` instead.
+模板包与映射层已从中间机移除;测试改用固定的 E10 抽取表清单与水位声明
+(与原 templates/ 中 digiwin_e10 绑定推导出的结果一致)。
+生产代码使用 `SourceConfig.table_whitelist()` 与 `SourceConfig.table_watermarks()`。
 """
 
 from __future__ import annotations
 
-from data2agent.shared.mapping import parse_field_expr
-from data2agent.shared.metamodel.schema import TemplatePack
+E10_TABLES: frozenset[str] = frozenset({
+    "CURRENCY", "CUSTOMER", "ITEM", "ITEM_WAREHOUSE",
+    "QUOTATION", "SALES_ORDER", "SALES_ORDER_D",
+})
+
+E10_WATERMARKS: dict[str, str] = {
+    "CUSTOMER": "LAST_MODIFIED_DATE",
+    "ITEM": "LAST_MODIFIED_DATE",
+    "QUOTATION": "LAST_MODIFIED_DATE",
+    "SALES_ORDER": "LAST_MODIFIED_DATE",
+    "SALES_ORDER_D": "LAST_MODIFIED_DATE",
+}
 
 
-def whitelist_from_pack(pack: TemplatePack, source: str) -> set[str]:
-    """Derive whitelist table names from template pack bindings (test utility)."""
-    return {
-        t
-        for o in pack.objects
-        for b in o.bindings
-        if b.source == source and b.enabled
-        for t in b.source_tables
-    }
+def e10_whitelist() -> set[str]:
+    """E10-like 参考源的抽取白名单(每次返回新集合,调用方可修改)。"""
+    return set(E10_TABLES)
 
 
-def watermarks_from_pack(pack: TemplatePack, source: str) -> dict[str, str]:
-    """Derive watermark column mapping from template pack (test utility)."""
-    out: dict[str, str] = {}
-    for o in pack.objects:
-        for b in o.bindings:
-            if b.source != source or not b.watermark or not b.enabled:
-                continue
-            if b.materializer:
-                continue
-            expr = parse_field_expr(b.watermark)
-            if expr.table in out and out[expr.table] != expr.column:
-                raise ValueError(
-                    f"表 {expr.table} 的水位列声明冲突:{out[expr.table]} vs {expr.column}")
-            out[expr.table] = expr.column
-    return out
+def e10_watermarks() -> dict[str, str]:
+    """E10-like 参考源的增量水位声明(每次返回新字典)。"""
+    return dict(E10_WATERMARKS)

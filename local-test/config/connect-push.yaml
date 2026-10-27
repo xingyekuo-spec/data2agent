@@ -1,4 +1,3 @@
-templates: templates
 landing: local-test/data/middle-meta.sqlite
 sources:
   digiwin_e10:
@@ -30,8 +29,7 @@ sources:
       rows_per_second: 2000
     lookback: 3d
     sync_every: 30m
-    apply_after_sync: false   # 推送模式:映射在平台侧跑
+    # 通用 webhook 推送:先运行 python scripts/dev_webhook_receiver.py
     sink:
-      type: http
-      url: "http://127.0.0.1:8850"
-      allow_insecure_http: true   # 本机参考链例外;生产必须 https
+      type: webhook
+      url: "http://127.0.0.1:8860/events"   # 本机回环允许明文与免鉴权;生产必须 https

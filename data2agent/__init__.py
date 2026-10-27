@@ -1,6 +1,6 @@
 """data2agent — Data to Agent, for factories.
 
-把工厂数据接给 AI Agent:抽取框架 + 国产 ERP 连接器 + 制造业本体模板 + MCP Server。
+工厂内网只读抽取中间机:ERP 连接器 + 水位增量 / 对账 + 推送到任意数据平台(webhook / ingest v3 / AI Hub)。
 """
 
 from __future__ import annotations

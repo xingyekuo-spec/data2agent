@@ -1,11 +1,4 @@
-# 多阶段:先构建 Vue Console dist,再装入 Python runner(参考链 compose / 集成测试共用)
-FROM node:22-bookworm AS vue-build
-WORKDIR /ui
-COPY console-ui/package.json console-ui/package-lock.json ./
-RUN npm ci
-COPY console-ui/ ./
-RUN npm run build && node scripts/check-dist.mjs
-
+# MSSQL 集成测试 runner:Python + msodbcsql18(tests/integration/mssql/docker-compose.yml 使用)
 FROM python:3.12-slim-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg2 \
@@ -19,7 +12,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl gnupg2 \
 
 WORKDIR /app
 COPY . .
-COPY --from=vue-build /ui/dist /app/console-ui/dist
-ENV D2A_VUE_DIST=/app/console-ui/dist
-RUN pip install --no-cache-dir -e ".[dev,connect,mcp,console,ingest,excel]" \
-    && test -f /app/console-ui/dist/index.html
+RUN pip install --no-cache-dir -e ".[dev,connect,middle_admin]"

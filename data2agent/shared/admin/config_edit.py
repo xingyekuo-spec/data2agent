@@ -15,7 +15,6 @@ import yaml
 from .suggestions import field_error
 
 MIDDLE_EDITABLE = {
-    "templates",
     "state_db",
     "sources.*.windows",
     "sources.*.rate.batch_size",
@@ -36,9 +35,6 @@ MIDDLE_EDITABLE = {
     "sources.*.spool.directory",
     "sources.*.spool.encrypted_at_rest",
 }
-
-PLATFORM_EDITABLE = {"templates", "landing"}
-
 
 def _path_matches(path: str, pattern: str) -> bool:
     path_parts = path.split(".")

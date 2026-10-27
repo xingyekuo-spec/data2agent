@@ -21,10 +21,9 @@ from data2agent.shared.config import (
     parse_duration_seconds,
 )
 from data2agent.middle.extract.increment import incremental_sync
-from tests.helpers import watermarks_from_pack
+from tests.helpers import e10_watermarks
 from data2agent.shared.store.landing import LandingStore
-from tests.helpers import whitelist_from_pack
-from data2agent.shared.metamodel.loader import load_pack
+from tests.helpers import e10_whitelist
 from tests.fixtures.e10.seed import build, write_db
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -295,25 +294,21 @@ def test_config_rejects_unsafe_schedule_and_rate_bounds(
 
 # ---- 批次边界暂停 ----
 
-@pytest.fixture(scope="module")
-def pack():
-    return load_pack(ROOT / "templates")
-
 
 @pytest.fixture()
-def env(tmp_path, pack):
+def env(tmp_path):
     src = tmp_path / "source.sqlite"
     write_db(src, build(seed=42, asof=date(2026, 7, 10)))
     return src, LandingStore(tmp_path / "landing.sqlite")
 
 
-def test_pause_at_batch_boundary_then_resume(env, pack):
+def test_pause_at_batch_boundary_then_resume(env):
     src, landing = env
-    adapter = SqliteReadOnlyAdapter(str(src), whitelist_from_pack(pack, SOURCE),
+    adapter = SqliteReadOnlyAdapter(str(src), e10_whitelist(),
                                     batch_size=50)
     budget = iter([True] * 3 + [False] * 100)  # 三次检查后"窗口关闭"
     report = incremental_sync(adapter, landing, SOURCE,
-                              watermarks_from_pack(pack, SOURCE),
+                              e10_watermarks(),
                               should_continue=lambda: next(budget))
     assert report.paused, "窗口越界应优雅暂停"
     run = landing.con.execute(
@@ -324,8 +319,8 @@ def test_pause_at_batch_boundary_then_resume(env, pack):
     assert landing.get_high_water(SOURCE, "SALES_ORDER_D") is None, "未完成表不得有水位"
 
     report2 = incremental_sync(SqliteReadOnlyAdapter(
-        str(src), whitelist_from_pack(pack, SOURCE)), landing, SOURCE,
-        watermarks_from_pack(pack, SOURCE))  # 下窗口续跑
+        str(src), e10_whitelist()), landing, SOURCE,
+        e10_watermarks())  # 下窗口续跑
     assert not report2.paused
     assert landing.count(SOURCE, "SALES_ORDER_D") == 239, "续跑后数据完整"
     assert landing.get_high_water(SOURCE, "SALES_ORDER_D") is not None
@@ -333,7 +328,7 @@ def test_pause_at_batch_boundary_then_resume(env, pack):
 
 # ---- 调度周期 ----
 
-def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
+def test_run_sync_cycle_respects_window(env, tmp_path, monkeypatch):
     from data2agent.middle.extract import scheduler as sched
     from data2agent.shared.config import SourceConfig
 
@@ -366,11 +361,9 @@ def test_run_sync_cycle_respects_window(env, pack, tmp_path, monkeypatch):
     result = sched.run_sync_cycle(SOURCE, scfg_open, landing.db_path)
     assert result.executed is True, f"应执行, got reason={result.reason}"
     assert landing.count(SOURCE, "SALES_ORDER") == 97
-    pub = landing.get_published_dataset(SOURCE)
-    assert pub is not None and pub.status == "published", "apply_after_sync 应自动发布数据集"
 
 
-def test_serve_once(env, pack, tmp_path):
+def test_serve_once(env, tmp_path):
     pytest.importorskip("apscheduler")
     from data2agent.shared.config import load_config
     from data2agent.middle.extract.scheduler import serve
@@ -378,7 +371,6 @@ def test_serve_once(env, pack, tmp_path):
     src, _ = env
     cfg_file = tmp_path / "connect.yaml"
     cfg_file.write_text(
-        f"templates: {ROOT / 'templates'}\n"
         f"landing: {tmp_path / 'serve_landing.sqlite'}\n"
         "sources:\n"
         "  digiwin_e10:\n"
@@ -411,7 +403,7 @@ def test_serve_once(env, pack, tmp_path):
     landing = LandingStore(tmp_path / "serve_landing.sqlite")
     assert landing.count(SOURCE, "QUOTATION") == 180
     runs = landing.con.execute("SELECT COUNT(*) FROM d2a_sync_run").fetchone()[0]
-    assert runs >= 3, "一轮 serve --once 应含 sync + apply + reconcile"
+    assert runs >= 2, "一轮 serve --once 应含 sync + reconcile"
 
 
 def test_serve_schedules_first_run_at_sync_start_at(tmp_path, monkeypatch):
