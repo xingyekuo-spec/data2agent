@@ -21,7 +21,7 @@
 </style>
 
 <div id="setup-banner" class="banner warn" {% if not needs_setup %}hidden{% endif %}>
-  本机仅从 ERP 只读抽取并推送至平台。首次配置会启用生产 HTTP 推送、严格无磁盘 spool，
+  本机仅从 ERP 只读抽取并推送至平台。首次配置会启用生产推送（ingest v3 或通用 Webhook）、严格无磁盘 spool，
   密码只写入本机 <code>config/secrets.env</code>。
 </div>
 <div id="daily-banner" class="banner" {% if needs_setup %}hidden{% endif %}>
@@ -39,9 +39,14 @@
     <button type="button" class="tab" id="setup-tab-local" role="tab" aria-selected="false" aria-controls="setup-local" tabindex="-1" data-tabs="setup" data-tab="setup-local">3. 管理与节奏</button>
   </div>
   <section id="setup-push" class="tab-panel active" role="tabpanel" aria-labelledby="setup-tab-push" data-tabs="setup">
-    <p class="panel-lead">填写平台数据接收服务地址（通常为平台 IP 的 8850 端口）和该数据源专属 Token。</p>
-    <label class="field"><span class="field-label">数据平台接收地址</span><input type="url" name="platform_url" placeholder="https://platform.example.com:8850" required><span class="field-hint">推荐 HTTPS；受控内网使用 HTTP 时会作为显式安全例外记录。</span></label>
-    <label class="field"><span class="field-label">推送口令</span><input type="password" name="ingest_token" autocomplete="new-password" required><span class="field-hint">须与平台为本数据源签发的接收 Token 一致。</span></label>
+    <p class="panel-lead">选择推送方式并填写接收地址与凭据。凭据只写入本机 <code>config/secrets.env</code>。</p>
+    <label class="field"><span class="field-label">推送方式</span><select name="sink_type" id="setup-sink-type">
+      <option value="http">ingest v3（平台完整实现协议，含对账）</option>
+      <option value="webhook">通用 Webhook（d2a-push v1，接收方只需一个 HTTPS 端点）</option>
+    </select><span class="field-hint" id="setup-sink-hint"></span></label>
+    <label class="field"><span class="field-label" id="setup-url-label">数据平台接收地址</span><input type="url" name="platform_url" placeholder="https://platform.example.com:8850" required><span class="field-hint">推荐 HTTPS；受控内网使用 HTTP 时会作为显式安全例外记录。</span></label>
+    <label class="field"><span class="field-label" id="setup-token-label">推送口令</span><input type="password" name="ingest_token" autocomplete="new-password" required><span class="field-hint" id="setup-token-hint">须与平台为本数据源签发的接收 Token 一致。</span></label>
+    <label class="field" id="setup-secret-field" hidden><span class="field-label">HMAC 签名密钥（推荐）</span><input type="password" name="hmac_secret" autocomplete="new-password"><span class="field-hint">由接收方提供；每个请求带 <code>X-D2A-Signature</code> 签名。Bearer Token 与签名密钥至少填一项。</span></label>
   </section>
   <section id="setup-erp" class="tab-panel" role="tabpanel" aria-labelledby="setup-tab-erp" data-tabs="setup" hidden>
     <p class="panel-lead">使用仅有 SELECT 权限的 ERP 账号；不要使用 sa 或可写业务数据的账号。</p>
@@ -77,17 +82,22 @@
   <section class="card">
     <h2>日常配置</h2>
     <div class="tabs" role="tablist" aria-label="日常配置分组">
-      <button type="button" class="tab active" id="daily-tab-link" role="tab" aria-selected="true" aria-controls="daily-link" tabindex="0" data-tabs="daily" data-tab="daily-link">平台对接</button>
+      <button type="button" class="tab active" id="daily-tab-link" role="tab" aria-selected="true" aria-controls="daily-link" tabindex="0" data-tabs="daily" data-tab="daily-link">推送目标</button>
       <button type="button" class="tab" id="daily-tab-paths" role="tab" aria-selected="false" aria-controls="daily-paths" tabindex="-1" data-tabs="daily" data-tab="daily-paths">控制状态库</button>
       <button type="button" class="tab" id="daily-tab-source" role="tab" aria-selected="false" aria-controls="daily-source" tabindex="-1" data-tabs="daily" data-tab="daily-source">数据源</button>
     </div>
 
     <section id="daily-link" class="tab-panel active" role="tabpanel" aria-labelledby="daily-tab-link" data-tabs="daily">
-      <p class="panel-lead">按数据源更新平台地址或 Token。Token 留空时不会修改，也不会回显。</p>
+      <p class="panel-lead">按数据源更新推送方式、接收地址或凭据。凭据留空时不会修改，也不会回显。</p>
       <label class="field"><span class="field-label">数据源</span><select id="link-source"></select></label>
-      <label class="field"><span class="field-label">平台接收地址</span><input type="url" id="link-url"></label>
-      <label class="field"><span class="field-label">新推送口令（可空）</span><input type="password" id="link-token" autocomplete="new-password"></label>
-      <div class="actions"><button type="button" id="btn-link-save">保存对接信息</button><button type="button" id="btn-link-check" class="btn-ghost">测试平台连通与协议</button></div>
+      <label class="field"><span class="field-label">推送方式</span><select id="link-sink-type">
+        <option value="http">ingest v3（平台完整实现协议，含对账）</option>
+        <option value="webhook">通用 Webhook（d2a-push v1）</option>
+      </select><span class="field-hint" id="link-sink-hint"></span></label>
+      <label class="field"><span class="field-label" id="link-url-label">平台接收地址</span><input type="url" id="link-url"></label>
+      <label class="field"><span class="field-label" id="link-token-label">新推送口令（可空）</span><input type="password" id="link-token" autocomplete="new-password"><span class="field-hint" id="link-token-hint"></span></label>
+      <label class="field" id="link-secret-field" hidden><span class="field-label">新 HMAC 签名密钥（可空）</span><input type="password" id="link-secret" autocomplete="new-password"><span class="field-hint" id="link-secret-hint"></span></label>
+      <div class="actions"><button type="button" id="btn-link-save">保存推送目标</button><button type="button" id="btn-link-check" class="btn-ghost">测试接收端连通</button></div>
       <p id="link-save-result" class="meta-line" aria-live="polite"></p><p id="link-check-result" class="meta-line" aria-live="polite"></p>
     </section>
 
@@ -99,7 +109,7 @@
         </div>
       </section>
       <section id="daily-source" class="tab-panel" role="tabpanel" aria-labelledby="daily-tab-source" data-tabs="daily" hidden>
-        <p class="panel-lead">每个操作始终绑定明确数据源；生产环境仅允许 HTTP sink。</p>
+        <p class="panel-lead">每个操作始终绑定明确数据源；生产环境仅允许 ingest v3 或通用 Webhook 推送。</p>
         <div id="sources-container"></div>
       </section>
       <div id="config-errors" class="errors" role="alert"></div>

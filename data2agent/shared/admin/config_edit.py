@@ -36,6 +36,14 @@ MIDDLE_EDITABLE = {
     "sources.*.spool.encrypted_at_rest",
 }
 
+# 「平台对接」接口额外可写:推送类型与凭据环境变量名(凭据值只写 secrets.env)。
+# 通用配置表单不开放这些字段,避免切换类型时漏掉凭据与对账联动。
+MIDDLE_CONNECTION_EDITABLE = MIDDLE_EDITABLE | {
+    "sources.*.sink.type",
+    "sources.*.sink.token_env",
+    "sources.*.sink.hmac_secret_env",
+}
+
 def _path_matches(path: str, pattern: str) -> bool:
     path_parts = path.split(".")
     pattern_parts = pattern.split(".")

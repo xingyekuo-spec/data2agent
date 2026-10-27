@@ -866,3 +866,156 @@ def test_connection_check_webhook_empty_secret_is_config_error(
     body = c.get("/api/config/connection-check", headers=h).json()
     assert body["ok"] is False and body["error_code"] == "config"
     assert "D2A_WEBHOOK_SECRET" in body["detail"]
+
+
+# ---- 推送目标切换(ingest v3 ↔ 通用 Webhook) ----
+
+
+def _switchable_client(tmp_path, cfg, sink_yaml: str, monkeypatch):
+    """带 --home 的 app(可写 secrets.env);sink 段由调用方给出。"""
+    from data2agent.shared.config import load_config
+    for env in ("D2A_INGEST_TOKEN", "D2A_WEBHOOK_TOKEN", "D2A_WEBHOOK_SECRET"):
+        monkeypatch.delenv(env, raising=False)
+    old = load_config(cfg)
+    new = tmp_path / "connect-switch.yaml"
+    new.write_text(
+        f"landing: {old.landing}\n"
+        "sources:\n"
+        f"  {SOURCE}:\n"
+        "    adapter: sqlite_readonly\n"
+        f"    path: {old.sources[SOURCE].path}\n"
+        "    sync_every: 30m\n"
+        "    reconcile_at: '05:30'\n"
+        "    reconcile_deep_at: '03:30'\n"
+        "    reconcile_deep_day_of_week: sun\n"
+        "    tables:\n"
+        "      CUSTOMER:\n"
+        "        mode: incremental\n"
+        "        watermark: LAST_MODIFIED_DATE\n"
+        + sink_yaml,
+        encoding="utf-8")
+    home = tmp_path / "home"
+    client = TestClient(create_app(config_path=new, token="secret",
+                                   log_path=tmp_path / "c5.log", home=home))
+    return client, new, home / "config" / "secrets.env"
+
+
+_HTTP_SINK = (
+    "    sink:\n"
+    "      type: http\n"
+    "      url: https://platform.example:8850\n"
+    "      token_env: D2A_INGEST_TOKEN\n")
+
+
+def _post_connection(client, payload):
+    h = {"Authorization": "Bearer secret"}
+    rev = client.get("/api/config", headers=h).json()["revision"]
+    return client.post("/api/config/connection", headers=h,
+                       json={**payload, "revision": rev}).json()
+
+
+def test_connection_switch_http_to_webhook(middle_env, tmp_path, monkeypatch):
+    """切到 webhook:类型/凭据变量名入 YAML,密钥只进 secrets.env,对账计划清除。"""
+    from data2agent.shared.config import load_config
+    _, cfg = middle_env
+    client, path, secrets = _switchable_client(tmp_path, cfg, _HTTP_SINK, monkeypatch)
+    body = _post_connection(client, {
+        "sink_type": "webhook",
+        "platform_url": "https://receiver.example/d2a/events",
+        "hmac_secret": "sig-secret-1",
+    })
+    assert body["ok"] is True and body["sink_type"] == "webhook"
+    assert "sig-secret-1" not in str(body)
+    scfg = load_config(path).sources[SOURCE]
+    assert scfg.sink.type == "webhook"
+    assert scfg.sink.url == "https://receiver.example/d2a/events"
+    assert scfg.sink.hmac_secret_env == "D2A_WEBHOOK_SECRET"
+    assert scfg.sink.token_env is None, "未填 Bearer Token 时不得引用空变量"
+    assert scfg.reconcile_at is None and scfg.reconcile_deep_at is None
+    assert scfg.reconcile_deep_day_of_week is None
+    assert "sig-secret-1" not in path.read_text(encoding="utf-8")
+    assert "sig-secret-1" in secrets.read_text(encoding="utf-8")
+
+    view = client.get("/api/config", headers={"Authorization": "Bearer secret"}).json()
+    sink = view["sources"][SOURCE]["sink"]
+    assert sink["hmac_secret_env"] == "D2A_WEBHOOK_SECRET"
+    assert sink["hmac_secret_env_set"] is True
+
+    # 已是 webhook:只补 Bearer Token,签名密钥保持不变
+    body = _post_connection(client, {
+        "platform_url": "https://receiver.example/d2a/events",
+        "ingest_token": "bearer-2",
+    })
+    assert body["ok"] is True
+    scfg = load_config(path).sources[SOURCE]
+    assert scfg.sink.token_env == "D2A_WEBHOOK_TOKEN"
+    assert scfg.sink.hmac_secret_env == "D2A_WEBHOOK_SECRET"
+    assert "bearer-2" in secrets.read_text(encoding="utf-8")
+
+
+def test_connection_switch_to_webhook_requires_credential(
+    middle_env, tmp_path, monkeypatch,
+):
+    _, cfg = middle_env
+    client, path, _ = _switchable_client(tmp_path, cfg, _HTTP_SINK, monkeypatch)
+    before = path.read_text(encoding="utf-8")
+    body = _post_connection(client, {
+        "sink_type": "webhook",
+        "platform_url": "https://receiver.example/d2a/events",
+    })
+    assert body["ok"] is False
+    assert body["errors"][0]["field"] == "ingest_token"
+    assert path.read_text(encoding="utf-8") == before
+    # 切换类型必须同时给出接收地址
+    body = _post_connection(client, {"sink_type": "webhook", "hmac_secret": "s"})
+    assert body["ok"] is False and body["errors"][0]["field"] == "platform_url"
+
+
+def test_connection_switch_webhook_to_http(middle_env, tmp_path, monkeypatch):
+    from data2agent.shared.config import load_config
+    _, cfg = middle_env
+    webhook_sink = (
+        "    sink:\n"
+        "      type: webhook\n"
+        "      url: https://receiver.example/d2a/events\n"
+        "      hmac_secret_env: D2A_WEBHOOK_SECRET\n")
+    # webhook 不允许对账:构造时去掉对账字段
+    client, path, secrets = _switchable_client(tmp_path, cfg, webhook_sink, monkeypatch)
+    text = path.read_text(encoding="utf-8")
+    path.write_text("\n".join(
+        line for line in text.splitlines() if "reconcile" not in line) + "\n",
+        encoding="utf-8")
+    body = _post_connection(client, {
+        "sink_type": "http", "platform_url": "https://platform.example:8850",
+    })
+    assert body["ok"] is False and body["errors"][0]["field"] == "ingest_token"
+    body = _post_connection(client, {
+        "sink_type": "http", "platform_url": "https://platform.example:8850",
+        "hmac_secret": "x",
+    })
+    assert body["ok"] is False and body["errors"][0]["field"] == "hmac_secret"
+    body = _post_connection(client, {
+        "sink_type": "http", "platform_url": "https://platform.example:8850",
+        "ingest_token": "ingest-3",
+    })
+    assert body["ok"] is True
+    scfg = load_config(path).sources[SOURCE]
+    assert scfg.sink.type == "http"
+    assert scfg.sink.token_env == "D2A_INGEST_TOKEN"
+    assert scfg.sink.hmac_secret_env is None
+    assert "ingest-3" in secrets.read_text(encoding="utf-8")
+
+
+def test_general_config_save_cannot_change_sink_type(middle_env):
+    """通用配置表单白名单不含 sink.type / 凭据变量名。"""
+    client, cfg = middle_env
+    h = {"Authorization": "Bearer secret"}
+    rev = client.get("/api/config", headers=h).json()["revision"]
+    r = client.post("/api/config", headers=h, json={
+        "revision": rev,
+        "sources": {SOURCE: {"sink": {"type": "webhook",
+                                      "hmac_secret_env": "X"}}},
+    })
+    assert r.json()["ok"] is True
+    text = cfg.read_text(encoding="utf-8")
+    assert "webhook" not in text and "hmac_secret_env" not in text

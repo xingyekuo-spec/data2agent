@@ -14,7 +14,7 @@ import json as _json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.request import Request as _UrlRequest, urlopen as _urlopen
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
@@ -26,11 +26,18 @@ from pydantic import BaseModel, Field, ValidationError
 import yaml
 
 from ... import __version__
-from ...shared.admin.config_edit import MIDDLE_EDITABLE, merge_whitelist_and_save
+from ...shared.admin.config_edit import (
+    MIDDLE_CONNECTION_EDITABLE,
+    MIDDLE_EDITABLE,
+    merge_whitelist_and_save,
+)
 from ...shared.admin.home_layout import HomeLayout
 from ...shared.admin.logs import tail_lines
 from ...shared.admin.secrets_file import apply_secrets_to_environ, load_secrets, save_secrets
 from ...shared.admin.setup_yaml import (
+    INGEST_TOKEN_ENV,
+    WEBHOOK_SECRET_ENV,
+    WEBHOOK_TOKEN_ENV,
     build_middle_connect_yaml,
     build_odbc_dsn,
     write_yaml,
@@ -201,14 +208,21 @@ class ExtractionTablesPutBody(BaseModel):
 
 
 class SetupBody(BaseModel):
-    """浏览器首次/完整配置(替代 setup-middle.ps1)。密码只写入 secrets.env。"""
+    """浏览器首次/完整配置(替代 setup-middle.ps1)。密码只写入 secrets.env。
+
+    sink_type=http:platform_url 为 ingest v3 根地址,ingest_token 必填;
+    sink_type=webhook:platform_url 为完整端点 URL,ingest_token(Bearer)与
+    hmac_secret(签名密钥)至少填一项。
+    """
     platform_url: str = Field(..., description="http://平台IP:8850")
+    sink_type: Literal["http", "webhook"] = "http"
     erp_server: str
     erp_database: str
     erp_user: str
     erp_password: str
     erp_port: int = 1433
-    ingest_token: str
+    ingest_token: str = ""
+    hmac_secret: str = ""
     admin_token: str
     sync_every: str = "30m"
     sync_start_at: str | None = None
@@ -219,10 +233,13 @@ class SetupBody(BaseModel):
 
 
 class ConnectionInfoBody(BaseModel):
-    """日常更新平台对接信息:平台地址入 YAML,Token 只写 secrets.env(不回显)。"""
+    """日常更新平台对接信息:平台地址/推送类型入 YAML,Token 与签名密钥只写
+    secrets.env(不回显)。sink_type 为空表示不切换推送类型。"""
     source: str | None = None
+    sink_type: Literal["http", "webhook"] | None = None
     platform_url: str | None = None
     ingest_token: str | None = None
+    hmac_secret: str | None = None
     revision: str | None = None
 
 
@@ -294,6 +311,11 @@ def _env_set(name: str | None) -> bool | None:
     return os.environ.get(name) is not None
 
 
+def _env_has(name: str | None) -> bool:
+    """环境变量已配置且非空(空值的签名密钥会让 connector 装配失败)。"""
+    return bool(name and os.environ.get(name))
+
+
 def _static_fingerprint() -> str:
     """静态资源指纹:包版本 + 静态文件最新 mtime(秒)。
 
@@ -353,6 +375,8 @@ def _config_subset(cfg: ConnectConfig) -> dict:
                 "url": scfg.sink.url,
                 "token_env": scfg.sink.token_env,
                 "token_env_set": _env_set(scfg.sink.token_env),
+                "hmac_secret_env": scfg.sink.hmac_secret_env,
+                "hmac_secret_env_set": _env_set(scfg.sink.hmac_secret_env),
                 "timeout_seconds": scfg.sink.timeout_seconds,
                 "retries": scfg.sink.retries,
                 "ca_bundle": scfg.sink.ca_bundle,
@@ -740,16 +764,31 @@ def create_app(
                 "中间机与平台是两台机器,请填写平台机的实际 IP 或域名;"
                 "单机调试请用源码方式(见 docs/runbook/source-dev.md)",
             )]}
-        if not body.admin_token.strip() or not body.ingest_token.strip():
+        push_token = body.ingest_token.strip()
+        hmac_secret = body.hmac_secret.strip()
+        if not body.admin_token.strip():
             return {"ok": False, "errors": [field_error(
-                "token", "Token 不能为空",
-                "分别填写管理界面登录密码与平台 ingest Token",
+                "admin_token", "管理界面登录密码不能为空",
+                "填写管理界面登录密码",
+            )]}
+        if body.sink_type == "http" and not push_token:
+            return {"ok": False, "errors": [field_error(
+                "ingest_token", "推送口令不能为空",
+                "填写平台为本数据源签发的 ingest Token",
+            )]}
+        if body.sink_type == "webhook" and not (push_token or hmac_secret):
+            return {"ok": False, "errors": [field_error(
+                "ingest_token", "Webhook 须至少配置 Bearer Token 或签名密钥",
+                "填写接收方提供的 Bearer Token 或 HMAC 签名密钥(推荐签名)",
             )]}
 
         home_layout.ensure_dirs()
         data = build_middle_connect_yaml(
             home_layout,
             platform_url=body.platform_url,
+            sink_type=body.sink_type,
+            webhook_token=bool(push_token),
+            webhook_secret=bool(hmac_secret),
             sync_every=body.sync_every,
             sync_start_at=body.sync_start_at,
             start_date=(body.start_date or "").strip() or None,
@@ -765,11 +804,18 @@ def create_app(
             password=body.erp_password,
             port=body.erp_port,
         )
-        save_secrets(home_layout.secrets_env, {
+        secrets = {
             "D2A_E10_DSN": dsn,
-            "D2A_INGEST_TOKEN": body.ingest_token.strip(),
             "D2A_MIDDLE_ADMIN_TOKEN": body.admin_token.strip(),
-        })
+        }
+        if body.sink_type == "webhook":
+            if push_token:
+                secrets[WEBHOOK_TOKEN_ENV] = push_token
+            if hmac_secret:
+                secrets[WEBHOOK_SECRET_ENV] = hmac_secret
+        else:
+            secrets[INGEST_TOKEN_ENV] = push_token
+        save_secrets(home_layout.secrets_env, secrets)
         apply_secrets_to_environ(home_layout.secrets_env)
         write_yaml(cfg_path, data)
         try:
@@ -890,44 +936,112 @@ def create_app(
                 )
             cfg = reload_config()
             name, scfg = _resolve_source(cfg, body.source)
+
+            def reject(field: str, message: str, suggestion: str) -> dict:
+                return {"ok": False, "errors": [field_error(
+                    field, message, suggestion,
+                )], "restart_required": False, "revision": current}
+
+            current_type = scfg.sink.type
+            target_type = body.sink_type or current_type
+            switching = target_type != current_type
+            push_token = (body.ingest_token or "").strip()
+            hmac_secret = (body.hmac_secret or "").strip()
+            if hmac_secret and target_type != "webhook":
+                return reject(
+                    "hmac_secret", "签名密钥仅用于通用 Webhook 推送",
+                    "推送类型选择通用 Webhook 后再填写签名密钥")
+            if (push_token or hmac_secret) and home_layout is None:
+                raise http_error(
+                    409, "未启用 --home,无法写 secrets.env",
+                    "以 --home <目录> 启动中间机管理进程后再更新推送口令",
+                )
+
+            sink_patch: dict[str, Any] = {}
             if body.platform_url is not None:
                 url = body.platform_url.strip()
                 if not url.startswith("http"):
-                    return {"ok": False, "errors": [field_error(
+                    return reject(
                         "platform_url", "须为 http(s) URL",
-                        "填写平台 ingest 根地址,例如 https://platform.example.com",
-                    )], "restart_required": False, "revision": current}
+                        "填写平台 ingest 根地址或 Webhook 端点,"
+                        "例如 https://platform.example.com")
                 if is_loopback_url(url):
-                    return {"ok": False, "errors": [field_error(
+                    return reject(
                         "platform_url",
                         "平台地址不得为本机回环(127.0.0.1/localhost)",
-                        "中间机与平台是两台机器,请填写平台机的实际 IP 或域名",
-                    )], "restart_required": False, "revision": current}
+                        "中间机与平台是两台机器,请填写平台机的实际 IP 或域名")
+                sink_patch["url"] = url
+            elif switching:
+                return reject(
+                    "platform_url", "切换推送类型时必须填写接收地址",
+                    "ingest v3 填平台根地址;Webhook 填完整端点 URL")
+
+            # 凭据变量名:沿用当前同类型配置,否则用默认名;只有值已存在
+            # (本次填写或环境中已有)时才写入 YAML,避免引用空变量。
+            if target_type == "webhook":
+                token_env = (scfg.sink.token_env if current_type == "webhook"
+                             else None) or WEBHOOK_TOKEN_ENV
+                secret_env = scfg.sink.hmac_secret_env or WEBHOOK_SECRET_ENV
+                has_token = bool(push_token) or (
+                    current_type == "webhook" and _env_has(scfg.sink.token_env))
+                has_secret = bool(hmac_secret) or _env_has(scfg.sink.hmac_secret_env)
+                if switching and not (has_token or has_secret):
+                    return reject(
+                        "ingest_token", "Webhook 须至少配置 Bearer Token 或签名密钥",
+                        "填写接收方提供的 Bearer Token 或 HMAC 签名密钥(推荐签名)")
+                if switching or push_token:
+                    sink_patch["token_env"] = token_env if has_token else None
+                if switching or hmac_secret:
+                    sink_patch["hmac_secret_env"] = secret_env if has_secret else None
+            else:
+                token_env = (scfg.sink.token_env if current_type == target_type
+                             else None) or INGEST_TOKEN_ENV
+                if switching:
+                    if target_type != "http":
+                        return reject(
+                            "sink_type", f"不支持在页面切换到 {target_type}",
+                            "该推送类型请直接编辑 connect.yaml")
+                    if not push_token and not _env_has(token_env):
+                        return reject(
+                            "ingest_token", "切换到 ingest v3 必须填写推送口令",
+                            "填写平台为本数据源签发的 ingest Token")
+                    sink_patch["token_env"] = token_env
+                    sink_patch["hmac_secret_env"] = None
+            source_patch: dict[str, Any] = {}
+            if switching:
+                sink_patch["type"] = target_type
+                if target_type == "webhook":
+                    # 通用推送无远端对账协议,切换时一并清除对账计划。
+                    source_patch.update({
+                        "reconcile_at": None,
+                        "reconcile_deep_at": None,
+                        "reconcile_deep_day_of_week": None,
+                    })
+            if sink_patch:
+                source_patch["sink"] = sink_patch
                 ok, errors = merge_whitelist_and_save(
-                    cfg_path, MIDDLE_EDITABLE,
-                    {"sources": {name: {"sink": {"url": url}}}},
+                    cfg_path, MIDDLE_CONNECTION_EDITABLE,
+                    {"sources": {name: source_patch}},
                     validate=load_config)
                 if not ok:
                     return {"ok": False, "errors": errors,
                             "restart_required": False, "revision": current}
-            token_updated = False
-            if body.ingest_token is not None and body.ingest_token.strip():
-                if home_layout is None:
-                    raise http_error(
-                        409, "未启用 --home,无法写 secrets.env",
-                        "以 --home <目录> 启动中间机管理进程后再更新推送口令",
-                    )
-                env_name = scfg.sink.token_env or "D2A_INGEST_TOKEN"
-                save_secrets(home_layout.secrets_env,
-                             {env_name: body.ingest_token.strip()})
+            new_secrets: dict[str, str] = {}
+            if push_token:
+                new_secrets[token_env] = push_token
+            if hmac_secret:
+                new_secrets[secret_env] = hmac_secret
+            token_updated = bool(new_secrets)
+            if new_secrets:
+                save_secrets(home_layout.secrets_env, new_secrets)
                 apply_secrets_to_environ(home_layout.secrets_env)
-                token_updated = True
-            if body.platform_url is not None or token_updated:
+            if sink_patch or token_updated:
                 _request_worker_restart(home_layout)
             revision = config_revision(cfg_path)
         return {"ok": True, "errors": [], "restart_required": True,
                 "restart_automatic": home_layout is not None,
-                "revision": revision, "token_updated": token_updated}
+                "revision": revision, "token_updated": token_updated,
+                "sink_type": target_type}
 
     @api.post("/config/erp-connection")
     def post_erp_connection(body: ErpConnectionBody) -> dict:

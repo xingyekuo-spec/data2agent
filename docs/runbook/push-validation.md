@@ -40,7 +40,7 @@ ERP → 中间服务器 → 接收方数据平台(webhook 端点或 ingest v3)
 2. 解压 `d2a-portable-middle-<版本>.zip`,双击 `data2agent.exe`。
 3. 浏览器打开 `/config`,填入接收端地址 / Token 与 ERP 连接,保存。
    webhook 路径按 [webhook-push.md §2](webhook-push.md#2-中间机配置) 改写 `sink`。
-4. 「测试平台连通」:webhook 发送 ping 事件,ingest v3 读取 `/ingest/health` 并比对协议。
+4. 「测试接收端连通」:webhook 发送 ping 事件,ingest v3 读取 `/ingest/health` 并比对协议。
 5. 「测试数据库连接」通过后,打开 `/metadata` 刷新扫描,选表加入计划。
 6. 在 `/tables` 确认模式 / 业务键 / 水位,校验并保存抽取计划。
 7. 确认托盘「运行状态」正常。
