@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlparse
 
+from dataclasses import dataclass
+
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -63,6 +65,43 @@ class RateConfig(BaseModel):
     rows_per_second: int = Field(default=2000, ge=1, le=1_000_000)
 
 
+@dataclass(frozen=True)
+class ReconcileUnsupported:
+    """某类 sink 不支持对账的统一说明:配置加载、调度、CLI 与管理页共用同一份文案。"""
+
+    reason: str        # 运行期拒绝原因(调度跳过 / CLI / 管理页)
+    config_error: str  # 配置了 reconcile_at / reconcile_deep_at 时的加载错误
+    hint: str          # 管理页触发对账时的处理建议
+    code: str          # 管理页错误码
+
+
+# 未列出的 sink 类型(local / http)支持对账:local 对本地库,http 走 E6b 远端对账。
+RECONCILE_UNSUPPORTED: dict[str, ReconcileUnsupported] = {
+    "webhook": ReconcileUnsupported(
+        reason=(
+            "webhook 通用推送不支持对账:没有远端对账协议;"
+            "需要删除检测的表请改用 full_refresh 或 sink.type=http"),
+        config_error=(
+            "sink.type=webhook 不支持对账:通用推送无远端对账协议;请删除 "
+            "reconcile_at / reconcile_deep_at(需要删除检测时改用 "
+            "full_refresh 或 sink.type=http)"),
+        hint="webhook 通用推送不对账;需要删除检测请改用 full_refresh 或 http sink",
+        code="webhook_reconcile_unsupported",
+    ),
+    "ai_hub": ReconcileUnsupported(
+        reason=(
+            "AI Hub 对象推送不支持对账:没有远端对账协议,"
+            "且禁止对中间机 state_db 做本地 raw 对账"),
+        config_error=(
+            "sink.type=ai_hub 不支持对账:无远端对账协议,且禁止对 "
+            "中间机 state_db 做本地 raw 对账;请删除 reconcile_at / "
+            "reconcile_deep_at"),
+        hint="AI Hub 路径只做对象 Push,不对账;请删除 reconcile_at 或改用 http sink",
+        code="ai_hub_reconcile_unsupported",
+    ),
+}
+
+
 class SinkConfig(BaseModel):
     """raw 推送出口(§12.3):
 
@@ -89,6 +128,14 @@ class SinkConfig(BaseModel):
     oidc_client_secret_env: str | None = None
     oidc_audience: str = AI_HUB_PUSH_AUDIENCE
     oidc_scope: str = AI_HUB_PUSH_SCOPE
+
+    @property
+    def reconcile_unsupported(self) -> ReconcileUnsupported | None:
+        return RECONCILE_UNSUPPORTED.get(self.type)
+
+    @property
+    def supports_reconcile(self) -> bool:
+        return self.reconcile_unsupported is None
 
     @model_validator(mode="after")
     def oidc_only_for_ai_hub(self):
@@ -358,19 +405,12 @@ class SourceConfig(BaseModel):
         if self.reconcile_deep_day_of_week and not self.reconcile_deep_at:
             raise ValueError(
                 "reconcile_deep_day_of_week 需要同时配置 reconcile_deep_at")
-        if self.sink.type == "webhook" and (
+        blocked = self.sink.reconcile_unsupported
+        if blocked and (
             self.reconcile_at is not None or self.reconcile_deep_at is not None
         ):
-            raise ValueError(
-                "sink.type=webhook 不支持对账:通用推送无远端对账协议;请删除 "
-                "reconcile_at / reconcile_deep_at(需要删除检测时改用 "
-                "full_refresh 或 sink.type=http)")
+            raise ValueError(blocked.config_error)
         if self.sink.type == "ai_hub":
-            if self.reconcile_at is not None or self.reconcile_deep_at is not None:
-                raise ValueError(
-                    "sink.type=ai_hub 不支持对账:无远端对账协议,且禁止对 "
-                    "中间机 state_db 做本地 raw 对账;请删除 reconcile_at / "
-                    "reconcile_deep_at")
             if not self.sink.source_application_id:
                 raise ValueError("sink.type=ai_hub 必须配置 source_application_id")
             if not self.sink.url:

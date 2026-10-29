@@ -48,7 +48,14 @@ from ...shared.admin.suggestions import (
     suggestion_for_check,
     suggestion_for_connection,
 )
-from ...shared.config import ConnectConfig, SourceConfig, config_revision, is_loopback_url, load_config
+from ...shared.config import (
+    RECONCILE_UNSUPPORTED,
+    ConnectConfig,
+    SourceConfig,
+    config_revision,
+    is_loopback_url,
+    load_config,
+)
 from ..extract import discoverers as _discoverers  # noqa: F401  — 注册 MetadataDiscoverer
 from ..extract.metadata import (
     DEFAULT_SCAN_TABLE_LIMIT,
@@ -377,6 +384,10 @@ def _config_subset(cfg: ConnectConfig) -> dict:
                 "token_env_set": _env_set(scfg.sink.token_env),
                 "hmac_secret_env": scfg.sink.hmac_secret_env,
                 "hmac_secret_env_set": _env_set(scfg.sink.hmac_secret_env),
+                "supports_reconcile": scfg.sink.supports_reconcile,
+                "reconcile_unsupported_reason": (
+                    scfg.sink.reconcile_unsupported.reason
+                    if scfg.sink.reconcile_unsupported else None),
                 "timeout_seconds": scfg.sink.timeout_seconds,
                 "retries": scfg.sink.retries,
                 "ca_bundle": scfg.sink.ca_bundle,
@@ -1010,8 +1021,8 @@ def create_app(
             source_patch: dict[str, Any] = {}
             if switching:
                 sink_patch["type"] = target_type
-                if target_type == "webhook":
-                    # 通用推送无远端对账协议,切换时一并清除对账计划。
+                if target_type in RECONCILE_UNSUPPORTED:
+                    # 目标类型不支持对账(如 webhook),切换时一并清除对账计划。
                     source_patch.update({
                         "reconcile_at": None,
                         "reconcile_deep_at": None,
@@ -1736,19 +1747,9 @@ def create_app(
         cfg = reload_config()
         name, scfg = _resolve_source(cfg, body.source)
         if body.action in ("reconcile", "reconcile_deep"):
-            blocked = unsupported_reconcile(scfg)
+            blocked = scfg.sink.reconcile_unsupported
             if blocked:
-                if scfg.sink.type == "ai_hub":
-                    raise http_error(
-                        422, blocked,
-                        "AI Hub 路径只做对象 Push,不对账;请删除 reconcile_at 或改用 http sink",
-                        code="ai_hub_reconcile_unsupported",
-                    )
-                raise http_error(
-                    422, blocked,
-                    "webhook 通用推送不对账;需要删除检测请改用 full_refresh 或 http sink",
-                    code="webhook_reconcile_unsupported",
-                )
+                raise http_error(422, blocked.reason, blocked.hint, code=blocked.code)
             if body.tables:
                 raise http_error(
                     422, "对账动作不支持限定 tables",

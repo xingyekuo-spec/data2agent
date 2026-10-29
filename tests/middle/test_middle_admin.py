@@ -1019,3 +1019,16 @@ def test_general_config_save_cannot_change_sink_type(middle_env):
     assert r.json()["ok"] is True
     text = cfg.read_text(encoding="utf-8")
     assert "webhook" not in text and "hmac_secret_env" not in text
+
+
+def test_config_exposes_reconcile_capability(middle_env, tmp_path, monkeypatch):
+    """页面按能力标志禁用对账字段,而非判断 sink 类型。"""
+    client, cfg = middle_env
+    h = {"Authorization": "Bearer secret"}
+    sink = client.get("/api/config", headers=h).json()["sources"][SOURCE]["sink"]
+    assert sink["supports_reconcile"] is True
+    assert sink["reconcile_unsupported_reason"] is None
+    c = _webhook_sink_client(tmp_path, cfg)
+    sink = c.get("/api/config", headers=h).json()["sources"][SOURCE]["sink"]
+    assert sink["supports_reconcile"] is False
+    assert "webhook" in sink["reconcile_unsupported_reason"]

@@ -98,7 +98,7 @@
     var windows = (source.windows || []).join(', ');
     var production = currentConfig && currentConfig.deployment_mode === 'production';
     var webhook = sink.type === 'webhook';
-    var noReconcile = webhook ? ' disabled' : '';
+    var noReconcile = sink.supports_reconcile === false ? ' disabled' : '';
     var sinkState = production && !isPushType(sink.type)
       ? '<p class="banner danger"><strong>生产阻断：</strong>该数据源不是 ingest v3 或 Webhook 推送，connector 将拒绝启动。AI Hub 适配器在 C1-C 前不得用于 production。</p>'
       : '<p class="oknote">' + (SINK_LABELS[sink.type] || esc(sink.type)) + '</p>';
@@ -133,7 +133,7 @@
           : '<p class="meta">该源使用 ' + esc(source.adapter || '?') + ' 适配器，连接参数在 connect.yaml 中管理。</p>') +
       '</section>' +
       '<section id="' + id + '-pace" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-pace" data-sub="' + id + '-pace" hidden>' +
-        (webhook ? '<p class="panel-lead">通用 Webhook 推送没有远端对账协议，对账计划已禁用。</p>' : '') +
+        (noReconcile ? '<p class="panel-lead">对账计划已禁用：' + esc(sink.reconcile_unsupported_reason || '该推送方式不支持对账') + '</p>' : '') +
         '<div class="group-grid">' +
         field('抽取间隔', '支持 30s / 30m / 1h / 1d，至少 1 秒。', '<input type="text" data-key="sync_every" value="' + esc(source.sync_every || '') + '" required>') +
         field('首轮启动时间（可空）', 'HH:MM；留空表示服务启动后立即进入调度判断。', '<input type="time" data-key="sync_start_at" value="' + esc(source.sync_start_at || '') + '">') +
@@ -213,8 +213,7 @@
         else if (['sync_start_at','start_date','reconcile_at','reconcile_deep_at','reconcile_deep_day_of_week','sink.ca_bundle','spool.directory'].indexOf(key) >= 0) value = valueOrNull(value);
         setPath(source, key, value);
       });
-      var sinkType = currentConfig.sources[block.dataset.source].sink.type;
-      if (sinkType === 'webhook') {
+      if (currentConfig.sources[block.dataset.source].sink.supports_reconcile === false) {
         source.reconcile_at = null;
         source.reconcile_deep_at = null;
       }

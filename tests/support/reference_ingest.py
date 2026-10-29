@@ -19,7 +19,8 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request
 
 from data2agent.shared.store.table import TableInfo
-from data2agent.shared.store.landing import LandingStore, raw_table_name
+from data2agent.shared.store.landing import raw_table_name
+from tests.support.ingest_store import IngestReceiverStore
 from data2agent.protocol.ingest import (
     BatchBody,
     RunBeginBody,
@@ -51,7 +52,7 @@ def _info_from_body(
 
 def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     # 进程启动时只迁移一次；请求连接不得反复跑 DDL。
-    initialized = LandingStore(landing_path)
+    initialized = IngestReceiverStore(landing_path)
     initialized.con.close()
 
     async def auth(request: Request) -> None:
@@ -65,7 +66,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     def open_landing():
         """每个请求独占连接，并在所有返回/异常路径统一释放。"""
-        db = LandingStore.open_existing(landing_path)
+        db = IngestReceiverStore.open_existing(landing_path)
         try:
             yield db
         finally:
@@ -83,7 +84,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     @app.post("/ingest/table-begin", dependencies=[Depends(auth)])
     def ingest_table_begin(
-        body: TableBeginBody, landing: LandingStore = Depends(open_landing),
+        body: TableBeginBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         info = _info_from_body(
             body.table, body.columns, body.pk, body.schema_name)
@@ -116,7 +117,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     @app.post("/ingest/run-begin", dependencies=[Depends(auth)])
     def ingest_run_begin(
-        body: RunBeginBody, landing: LandingStore = Depends(open_landing),
+        body: RunBeginBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         try:
             return landing.begin_ingest_generation(
@@ -126,7 +127,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     @app.post("/ingest/run-complete", dependencies=[Depends(auth)])
     def ingest_run_complete(
-        body: RunCompleteBody, landing: LandingStore = Depends(open_landing),
+        body: RunCompleteBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         try:
             result = landing.complete_ingest_generation(
@@ -137,14 +138,14 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     @app.post("/ingest/run-abort", dependencies=[Depends(auth)])
     def ingest_run_abort(
-        body: RunCompleteBody, landing: LandingStore = Depends(open_landing),
+        body: RunCompleteBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         landing.abort_ingest_generation(body.source, body.generation_id)
         return {"generation_id": body.generation_id, "aborted": True}
 
     @app.post("/ingest/run-heartbeat", dependencies=[Depends(auth)])
     def ingest_run_heartbeat(
-        body: RunCompleteBody, landing: LandingStore = Depends(open_landing),
+        body: RunCompleteBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         try:
             landing.touch_ingest_generation(body.source, body.generation_id)
@@ -156,7 +157,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     @app.post("/ingest/batch", dependencies=[Depends(auth)])
     def ingest_batch(
-        body: BatchBody, landing: LandingStore = Depends(open_landing),
+        body: BatchBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         info = _info_from_body(
             body.table, body.columns, body.pk, body.schema_name)
@@ -260,7 +261,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     @app.post("/ingest/table-complete", dependencies=[Depends(auth)])
     def ingest_table_complete(
-        body: TableCompleteBody, landing: LandingStore = Depends(open_landing),
+        body: TableCompleteBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         info = _info_from_body(
             body.table, body.columns, body.pk, body.schema_name)
@@ -349,7 +350,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     @app.post("/ingest/table-abort", dependencies=[Depends(auth)])
     def ingest_table_abort(
-        body: TableAbortBody, landing: LandingStore = Depends(open_landing),
+        body: TableAbortBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         """丢弃未发布 snapshot staging,保留当前 raw。幂等。"""
         assert body.snapshot_id is not None
@@ -369,7 +370,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     @app.post("/ingest/reconcile", dependencies=[Depends(auth)])
     def ingest_reconcile_stats(
-        body: ReconcileStatsBody, landing: LandingStore = Depends(open_landing),
+        body: ReconcileStatsBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         """E6b L1：仅返回平台 raw 的同口径统计。"""
         try:
@@ -386,7 +387,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
 
     @app.post("/ingest/reconcile-run-complete", dependencies=[Depends(auth)])
     def ingest_reconcile_run_complete(
-        body: RunBeginBody, landing: LandingStore = Depends(open_landing),
+        body: RunBeginBody, landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         """E6b 整轮完成屏障：所有 raw 修复完成后一次性提交 generation。"""
         try:
@@ -404,7 +405,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     @app.post("/ingest/reconcile-repair-begin", dependencies=[Depends(auth)])
     def ingest_reconcile_repair_begin(
         body: ReconcileRepairBeginBody,
-        landing: LandingStore = Depends(open_landing),
+        landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         info = _info_from_body(
             body.table, body.columns, body.pk, body.schema_name)
@@ -420,7 +421,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     @app.post("/ingest/reconcile-repair-batch", dependencies=[Depends(auth)])
     def ingest_reconcile_repair_batch(
         body: ReconcileRepairBatchBody,
-        landing: LandingStore = Depends(open_landing),
+        landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         canonical = json.dumps(
             body.model_dump(), ensure_ascii=False, sort_keys=True,
@@ -447,7 +448,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     @app.post("/ingest/reconcile-repair-complete", dependencies=[Depends(auth)])
     def ingest_reconcile_repair_complete(
         body: ReconcileRepairCompleteBody,
-        landing: LandingStore = Depends(open_landing),
+        landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         try:
             result = landing.complete_reconcile_repair(
@@ -465,7 +466,7 @@ def create_app(landing_path: str | Path, token: str | None = None) -> FastAPI:
     @app.post("/ingest/reconcile-repair-abort", dependencies=[Depends(auth)])
     def ingest_reconcile_repair_abort(
         body: ReconcileRepairCompleteBody,
-        landing: LandingStore = Depends(open_landing),
+        landing: IngestReceiverStore = Depends(open_landing),
     ) -> dict:
         try:
             landing.touch_ingest_generation(

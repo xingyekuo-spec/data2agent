@@ -8,6 +8,7 @@ import pytest
 from data2agent.middle.maintenance.__main__ import run_once
 from data2agent.shared.store.landing import LandingStore
 from data2agent.shared.store.table import TableInfo
+from tests.support.ingest_store import IngestReceiverStore
 
 
 def test_online_backup_and_retention_prune(tmp_path):
@@ -50,8 +51,23 @@ def test_recover_abandoned_runs_closes_steps(tmp_path):
     assert step["status"] == "aborted" and step["finished_at"]
 
 
+def test_middle_state_has_no_receiver_tables_and_rejects_generation(tmp_path):
+    """中间机状态库不建 ingest 接收侧表;传入 generation_id 时立即拒绝。"""
+    store = LandingStore(tmp_path / "middle.sqlite")
+    names = {r[0] for r in store.con.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert not {n for n in names if n.startswith("d2a_ingest_")}
+    info = TableInfo("T", [("ID", "int")], ["ID"])
+    with pytest.raises(ValueError, match="不跟踪 ingest generation"):
+        store.begin_snapshot("s", info, "snap", generation_id="g")
+    assert store.prune_operational_history(
+        retention_days=90, receipt_days=365).get("ingest_receipts") is None
+    assert store.cleanup_abandoned_staging(max_age_hours=1) == {
+        "snapshots": 0, "reconcile_repairs": 0}
+
+
 def test_cleanup_abandoned_staging_drops_only_old_open_state(tmp_path):
-    store = LandingStore(tmp_path / "platform.sqlite")
+    store = IngestReceiverStore(tmp_path / "platform.sqlite")
     info = TableInfo("T", [("ID", "int")], ["ID"])
     snapshot = store.begin_snapshot("s", info, "old-snapshot")
     store.begin_ingest_generation("s", "old-generation", ["T"])

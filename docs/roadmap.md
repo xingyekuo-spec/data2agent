@@ -13,6 +13,11 @@
 
 - **通用 Webhook 推送**(`sink.type: webhook`,d2a-push v1):CloudEvents 信封、事件 id 幂等、
   HMAC 签名、快照原子替换语义;见 [webhook-push](runbook/webhook-push.md)。
+- **接收侧存储迁出产品包**:ingest v3 generation / 批次回执 / 表完成证据迁入
+  `tests/support/ingest_store.py`,中间机状态库不再建这三张表;快照与对账 staging 仍在
+  `LandingStore`(`LocalSink` 与本地对账使用),通过钩子回调接收侧。
+- **对账能力表**:`shared.config.RECONCILE_UNSUPPORTED` 统一配置加载、调度、CLI 与管理页的
+  对账判定与文案,配置页按 `supports_reconcile` 禁用对账字段。
 - **管理界面选择推送出口**:首配向导与 `/config`「推送目标」可选 ingest v3 / 通用 Webhook,
   凭据只写 `secrets.env`,切到 Webhook 自动清除对账计划。
 - **抽取表显式配置**、**元数据发现**、**配置业务键 / 复合键增量**、**full_refresh 快照**、ingest 协议 v2。
@@ -58,9 +63,6 @@
 
 ## 待办事项
 
-- **接收侧存储代码瘦身**:`shared/store/landing.py` 仍保留 ingest v3 接收侧方法
-  (generation / 回执 / 对账 staging),当前只被 `tests/support/reference_ingest.py` 使用;
-  可迁入测试支持包,进一步缩小产品包。
 - **webhook 协议演进**:按接入方反馈评估批量多事件请求、gzip 压缩与 JSON Lines 变体。
 
 ## 当前非目标
