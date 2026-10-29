@@ -1,52 +1,11 @@
 {% extends "layout.html" %}
-{% block title %}状态 — 中间机管理{% endblock %}
+{% block title %}状态总览 — 中间机管理{% endblock %}
+{% block page_actions %}
+<button type="button" id="btn-diagnostic" class="btn-ghost">复制诊断摘要</button>
+{% endblock %}
 {% block content %}
-<style>
-  .actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-  .summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
-  .more-link{font-size:13px;display:inline-block;margin-top:8px}
-  .src-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .src-head h2{margin:0;flex:1}.status-list{display:grid;gap:8px}
-  .status-item{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;
-               padding:8px 0;border-bottom:1px solid #e8edf2}
-  .status-item:last-child{border-bottom:0}.critical-card{border-left:4px solid #b42318}
-  .warning-card{border-left:4px solid #d48b00}.healthy-card{border-left:4px solid #1e7e34}
-  details.wm{margin-top:8px}details.wm summary{cursor:pointer;font-size:13px;color:#0b6bcb}
-  details.card-details{margin-top:8px}
-  details.card-details>summary{cursor:pointer;font-size:13px;color:#0b6bcb}
-  .kv-list{display:grid;grid-template-columns:minmax(7em,auto) 1fr;gap:4px 14px;
-           font-size:13px;margin:8px 0 2px}
-  .kv-list dt{color:#51606f}
-  .kv-list dd{margin:0;color:#1c2733;overflow-wrap:anywhere}
-  .overview-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-  .overview-title{font-size:17px;margin:0}
-  .src-mini{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:13px;
-            padding:7px 0;border-top:1px dashed #e8edf2}
-  .src-mini:first-of-type{border-top:0}
-  .src-mini .name{font-weight:600;color:#12314f;min-width:9em}
-  .src-mini .cell{color:#51606f}.src-mini .cell b{color:#1c2733;font-weight:600}
-  .issue-list{margin:8px 0 0;padding-left:20px;font-size:13px;color:#8b1a13}
-  .issue-list li{margin:2px 0}
-  .issue-dismiss{background:none;border:none;color:#8b1a13;cursor:pointer;font-size:13px;
-                 padding:0 4px;opacity:.6;border-radius:4px}
-  .issue-dismiss:hover{opacity:1;background:rgba(180,35,24,.1)}
-  .issue-restore{color:#0b6bcb;font-size:12px}
-  .diagnostic{white-space:pre-wrap;overflow-wrap:anywhere}
-</style>
-
-<section class="card" aria-labelledby="status-actions-title">
-  <div class="src-head">
-    <h2 id="status-actions-title">手动操作</h2>
-    <a class="more-link" href="/actions">前往「操作」页 →</a>
-  </div>
-  <p class="meta" style="margin:0 0 10px">同步与对账等写操作在「操作」页执行；此页用于观测运行状态。</p>
-  <div class="actions">
-    <button type="button" id="btn-diagnostic" class="btn-ghost">复制诊断摘要</button>
-  </div>
-</section>
-
 <section aria-labelledby="overview-title">
-  <div id="overview-panel" class="card"><h2 id="overview-title" class="sr-only">运行总览</h2><p class="meta">加载中…</p></div>
+  <div id="overview-panel" class="hero good"><h2 id="overview-title" class="sr-only">运行总览</h2><p class="meta">加载中…</p></div>
 </section>
 
 <div class="tabs" role="tablist" aria-label="状态分区">
@@ -60,14 +19,12 @@
   </div>
   <div class="summary-grid">
     <section class="card" aria-labelledby="runs-title">
-      <p class="layer">运行</p><h2 id="runs-title">最近运行</h2>
+      <div class="card-head"><h2 id="runs-title">最近运行</h2><a class="more-link" href="/runs">全部 →</a></div>
       <div id="runs-summary"><p class="meta">加载中…</p></div>
-      <a class="more-link" href="/runs">全部运行记录 →</a>
     </section>
     <section class="card" aria-labelledby="push-title">
-      <p class="layer">推送</p><h2 id="push-title">推送健康</h2>
+      <div class="card-head"><h2 id="push-title">推送健康</h2><a class="more-link" href="/push-logs">全部 →</a></div>
       <div id="push-summary"><p class="meta">加载中…</p></div>
-      <a class="more-link" href="/push-logs">全部推送记录 →</a>
     </section>
   </div>
 </section>

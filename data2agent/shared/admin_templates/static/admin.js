@@ -50,8 +50,10 @@
     var panel = document.getElementById('login-panel');
     var content = document.getElementById('page-content');
     var error = document.getElementById('login-error');
+    var actions = document.getElementById('page-actions');
     if (panel) panel.hidden = false;
     if (content) content.hidden = true;
+    if (actions) actions.hidden = true;
     if (error) {
       error.textContent = message || '';
       error.hidden = !message;
@@ -63,8 +65,10 @@
   function hideLogin() {
     var panel = document.getElementById('login-panel');
     var content = document.getElementById('page-content');
+    var actions = document.getElementById('page-actions');
     if (panel) panel.hidden = true;
     if (content) content.hidden = false;
+    if (actions) actions.hidden = false;
   }
 
   function handleUnauthorized(message) {
@@ -297,14 +301,26 @@
     });
   }
 
+  /* 顶栏严重状态标记:计数 + 点击弹出前 5 条;侧栏告警入口同步显示计数。 */
+  function setAlertPill(kind, text) {
+    var pill = document.getElementById('global-alert-pill');
+    if (!pill) return;
+    pill.hidden = false;
+    pill.className = 'alert-pill' + (kind === 'ok' ? ' ok' : '');
+    pill.textContent = '● ' + text;
+  }
+  function setAlertCount(count) {
+    document.querySelectorAll('[data-alert-count]').forEach(function (node) {
+      node.textContent = count ? String(count) : '';
+      node.hidden = !count;
+    });
+  }
+
   async function refreshGlobalAlerts() {
     if (document.body.dataset.needsSetup === 'true') return true;
     if (document.body.dataset.needsToken === 'true' && !sessionStorage.getItem('d2a_token')) return true;
     var banner = document.getElementById('global-alert-banner');
     if (!banner) return true;
-    // 状态页的总览横幅已聚合相同内容(就绪度/进程/源健康),
-    // 全局横幅在此页抑制,避免同一异常两处重复展示。
-    if (document.body.dataset.page === 'status') { banner.hidden = true; return true; }
     try {
       var status = await apiJson('/api/alerts', { timeoutMs: 10000 });
       var alerts = (status.alerts || []).filter(function (alert) {
@@ -314,18 +330,23 @@
       var recovered = globalAlertFailures > 0;
       globalAlertFailures = 0;
       if (recovered) announce('success', '全局状态检查已恢复');
-      if (!alerts.length) { banner.hidden = true; banner.innerHTML = ''; return true; }
-      banner.hidden = false;
+      setAlertCount(alerts.length);
+      banner.dataset.lastSuccessAt = new Date().toISOString();
+      if (!alerts.length) {
+        setAlertPill('ok', '运行正常');
+        banner.innerHTML = '<strong>当前没有严重状态</strong><p class="meta">最近检查：' + esc(fmtTime(banner.dataset.lastSuccessAt)) + '</p>';
+        return true;
+      }
+      setAlertPill('bad', alerts.length + ' 项严重状态');
       banner.innerHTML = '<strong>需要处理的严重状态（' + alerts.length + '）</strong><ul>' +
         alerts.slice(0, 5).map(function (alert) {
           return '<li>' + esc(alert.title) + (alert.suggestion ? ' — ' + esc(alert.suggestion) : '') + '</li>';
-        }).join('') + '</ul><a href="/status">查看状态</a> · <a href="/logs">查看日志</a>';
-      banner.dataset.lastSuccessAt = new Date().toISOString();
+        }).join('') + '</ul><a href="/errors">打开告警中心</a> · <a href="/logs">查看日志</a>';
       return true;
     } catch (error) {
       globalAlertFailures += 1;
       if (error.status === 401) return false;
-      banner.hidden = false;
+      setAlertPill('bad', '状态刷新失败');
       banner.innerHTML = '<strong>管理状态刷新失败</strong> — ' + esc(error.message) +
         (banner.dataset.lastSuccessAt ? '；最近成功：' + esc(fmtTime(banner.dataset.lastSuccessAt)) : '');
       return false;
@@ -354,9 +375,33 @@
 
     var path = location.pathname;
     document.querySelectorAll('nav a[data-nav]').forEach(function (link) {
-      if (link.getAttribute('data-nav') === path) {
+      var also = (link.getAttribute('data-nav-also') || '').split(' ');
+      if (link.getAttribute('data-nav') === path || also.indexOf(path) >= 0) {
         link.classList.add('active'); link.setAttribute('aria-current', 'page');
       }
+    });
+
+    var shell = document.getElementById('app-shell');
+    var navToggle = document.getElementById('nav-toggle');
+    function setNavOpen(open) {
+      if (!shell) return;
+      shell.classList.toggle('nav-open', open);
+      if (navToggle) navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    if (navToggle) navToggle.addEventListener('click', function () { setNavOpen(!shell.classList.contains('nav-open')); });
+    var scrim = document.getElementById('nav-scrim');
+    if (scrim) scrim.addEventListener('click', function () { setNavOpen(false); });
+
+    var pill = document.getElementById('global-alert-pill');
+    var alertPop = document.getElementById('global-alert-banner');
+    function setAlertPopOpen(open) {
+      if (!pill || !alertPop) return;
+      alertPop.hidden = !open;
+      pill.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+    if (pill) pill.addEventListener('click', function () { setAlertPopOpen(alertPop.hidden); });
+    document.addEventListener('click', function (event) {
+      if (alertPop && !alertPop.hidden && !event.target.closest('.alert-wrap')) setAlertPopOpen(false);
     });
 
     var needsToken = document.body.dataset.needsToken === 'true';
@@ -392,6 +437,8 @@
 
     document.addEventListener('keydown', function (event) {
       if (event.key === 'Escape' && activeModal) closeModal(activeModal);
+      if (event.key === 'Escape' && alertPop && !alertPop.hidden) { setAlertPopOpen(false); if (pill) pill.focus(); }
+      if (event.key === 'Escape' && shell && shell.classList.contains('nav-open')) setNavOpen(false);
       if (event.key === 'Tab' && activeModal) {
         var nodes = activeModal.querySelectorAll('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])');
         if (!nodes.length) return;
@@ -406,18 +453,30 @@
   }
 
   /* 共享确认弹窗:替代原生 confirm(风格统一、可访问性内建)。
-     返回 Promise<boolean>;调用方: if (await confirmDialog('…')) { … } */
+     返回 Promise<boolean>;调用方: if (await confirmDialog('…')) { … }
+     options.danger 红色确认按钮;options.confirmText 要求输入该文本后才可确认。 */
   function confirmDialog(message, options) {
     options = options || {};
     return new Promise(function (resolve) {
       var overlay = document.createElement('div');
       overlay.className = 'modal-overlay';
+      var typed = options.confirmText
+        ? '<label class="field"><span class="field-label">输入 <code>' + esc(options.confirmText) + '</code> 以确认</span>' +
+          '<input type="text" data-confirm-input autocomplete="off"></label>'
+        : '';
       overlay.innerHTML =
-        '<div class="modal-card" role="dialog" aria-modal="true" aria-label="确认操作" style="max-width:26rem">' +
+        '<div class="modal-card confirm-card' + (options.danger ? ' danger' : '') + '" role="dialog" aria-modal="true" aria-label="' + esc(options.title || '确认操作') + '">' +
         '<div class="modal-header"><h2>' + esc(options.title || '确认操作') + '</h2></div>' +
-        '<p class="meta" style="margin:0 0 16px">' + esc(message) + '</p>' +
-        '<div class="actions"><button type="button" data-act="ok">' + esc(options.okLabel || '确认') + '</button>' +
-        '<button type="button" data-act="cancel" class="btn-ghost">取消</button></div></div>';
+        '<p>' + esc(message) + '</p>' + typed +
+        '<div class="actions"><button type="button" data-act="cancel" class="btn-ghost">取消</button>' +
+        '<button type="button" data-act="ok"' + (options.danger ? ' class="btn-danger"' : '') + '>' + esc(options.okLabel || '确认') + '</button></div></div>';
+      var okBtn = overlay.querySelector('[data-act="ok"]');
+      var input = overlay.querySelector('[data-confirm-input]');
+      function matches() { return !input || input.value.trim() === options.confirmText; }
+      if (input) {
+        okBtn.disabled = true;
+        input.addEventListener('input', function () { okBtn.disabled = !matches(); });
+      }
       function done(value) {
         document.removeEventListener('keydown', onKey);
         overlay.remove();
@@ -425,18 +484,17 @@
       }
       function onKey(event) {
         if (event.key === 'Escape') { event.preventDefault(); done(false); }
-        if (event.key === 'Enter') { event.preventDefault(); done(true); }
+        if (event.key === 'Enter' && matches()) { event.preventDefault(); done(true); }
       }
       overlay.addEventListener('click', function (event) {
         if (event.target === overlay) return done(false);
         var act = event.target.closest('[data-act]');
-        if (act) done(act.dataset.act === 'ok');
+        if (act && !act.disabled) done(act.dataset.act === 'ok');
       });
       document.addEventListener('keydown', onKey);
       document.body.appendChild(overlay);
       overlay.hidden = false;
-      var okBtn = overlay.querySelector('[data-act="ok"]');
-      if (okBtn) okBtn.focus();
+      (input || (options.danger ? overlay.querySelector('[data-act="cancel"]') : okBtn)).focus();
     });
   }
 

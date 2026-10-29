@@ -417,8 +417,11 @@ def test_html_metadata_and_tables_pages(env):
     for path in ("/metadata", "/tables", "/status", "/config", "/logs"):
         r = client.get(path, headers=_h())
         assert r.status_code == 200, path
+    # 侧栏只保留「配置」入口;三步(连接 → 选表 → 计划)由配置页步骤条串联
     nav = client.get("/status", headers=_h()).text
-    assert 'href="/metadata"' in nav and 'href="/tables"' in nav
+    assert 'href="/config"' in nav
+    stepper = client.get("/config", headers=_h()).text
+    assert 'href="/metadata"' in stepper and 'href="/tables"' in stepper
 
 
 def test_put_preserves_ai_hub_table_fields(env):

@@ -393,6 +393,7 @@ async function saveTablesPlan(nextTables, opts){
   var r=await apiFetch('/api/extraction-tables',{method:'PUT',headers:authHeaders(),
     body:JSON.stringify({tables:nextTables, revision:revision})});
   var saved=await r.json().catch(function(){return {};});
+  if(r.ok&&saved.ok) document.dispatchEvent(new CustomEvent('d2a:plan-saved'));  // 刷新配置步骤条
   if(r.status===409){
     setMsg(typeof formatApiError==='function'
       ? formatApiError(saved,'配置已被其他会话修改，正在重新加载…')

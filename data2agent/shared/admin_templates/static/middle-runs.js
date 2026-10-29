@@ -220,6 +220,11 @@
     byId('run-detail-overlay').addEventListener('click', function (event) { if (event.target === this) closeDetail(); });
     bindDetailInteractions();
     document.addEventListener('visibilitychange', function () { if (activeRunId) schedulePoll(); });
+    // 顶栏手动操作提交后:刷新列表并打开新运行的详情(智能轮询跟踪进度)
+    document.addEventListener('d2a:run-triggered', function (event) {
+      page = 1; loadRuns();
+      if (event.detail && event.detail.runId) openDetail(Number(event.detail.runId));
+    });
     var params = new URLSearchParams(location.search);
     var presetType = params.get('type');
     if (presetType && byId('run-type-filter').querySelector('option[value="' + presetType + '"]')) {

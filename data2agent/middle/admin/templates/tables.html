@@ -1,124 +1,75 @@
 {% extends "layout.html" %}
 {% block title %}抽取计划 — 中间机管理{% endblock %}
+{% block page_actions %}
+<span id="rev" class="meta mono"></span>
+<button type="button" id="btn-validate" class="btn-ghost" title="对已保存的抽取计划做现场校验（不改任何配置）">校验当前计划</button>
+<button type="button" id="btn-reload" class="btn-ghost">重新加载</button>
+{% endblock %}
 {% block content %}
-<style>
-  .card h2{font-size:15px;margin:0 0 10px;color:#12314f}
-  .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0}
-  .field{display:block;margin-bottom:12px}
-  .field span{display:block;font-size:12px;color:#51606f;margin-bottom:4px;font-weight:600}
-  .field input,.field select{width:100%;padding:7px 9px;border:1px solid #d0d7de;
-                             border-radius:6px;box-sizing:border-box;font-size:13px;background:#fff}
-  table{width:100%;border-collapse:collapse;font-size:13px}
-  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid #e8edf2;vertical-align:top}
-  th{color:#51606f;background:#f6f8fa}
-  th.check,td.check{width:36px;text-align:center;padding-left:6px;padding-right:6px}
-  .warn{font-size:12px;color:#8a4b00;background:#fff8e6;border:1px solid #f0d89a;border-radius:6px;padding:8px 10px}
-  .err{color:#b42318;font-size:13px;white-space:pre-wrap}
-  .ok{color:#1e7e34;font-size:13px}
-  button.danger{background:#b42318;color:#fff;border:none;border-radius:6px;padding:7px 12px;cursor:pointer}
-  button.danger:hover{background:#912018}
-  button.text{background:none;border:none;color:#0b6bcb;cursor:pointer;font-size:13px;padding:0;margin-right:10px}
-  button.text.danger-text{color:#b42318}
-  button.ghost{background:#fff;color:#12314f;border:1px solid #d0d7de;border-radius:6px;
-               padding:8px 14px;cursor:pointer;font-size:13px}
-  button.ghost:hover{background:#f6f8fa;color:#12314f}
-  button.primary{background:#12314f;color:#fff;border:none;border-radius:6px;
-                 padding:8px 14px;cursor:pointer;font-size:13px}
-  button.primary:disabled,button.ghost:disabled{opacity:.55;cursor:not-allowed}
-  .batch-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 12px;
-             padding:10px 12px;background:#f6f8fa;border-radius:8px}
-  .batch-bar[hidden]{display:none!important}
-  tr.selected td{background:#eef6fc}
-  tr.st-bad td{background:#fdecea}
-  tr.st-warnrow td{background:#fff8e6}
-  .st-cell{white-space:normal}
-  .filter-input{padding:7px 9px;border:1px solid #d0d7de;border-radius:6px;font-size:13px;
-                min-width:220px;background:#fff}
-  .actions{white-space:nowrap}
-  .modal{background:#fff;border-radius:12px;width:min(1100px,98vw);max-height:92vh;
-         display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(16,34,54,.22)}
-  .modal header{padding:16px 18px 10px;border-bottom:1px solid #e8edf2}
-  .modal header h2{margin:0;font-size:16px;color:#12314f}
-  .modal .body{padding:16px 18px;overflow:auto;flex:1}
-  .modal footer{padding:12px 18px;border-top:1px solid #e8edf2;display:flex;
-                gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
-  .modal footer .meta{margin-right:auto;max-width:55%}
-  .modal table{font-size:13px;table-layout:fixed}
-  .modal .field-in{width:100%;padding:6px 8px;border:1px solid #d0d7de;border-radius:5px;
-                   font-size:12px;box-sizing:border-box;background:#fff}
-  .modal .wm-wrap[hidden],.modal .sd-wrap[hidden]{display:none!important}
-</style>
-
-<div class="card">
-  <h2>抽取计划</h2>
-  <p class="meta">勾选后可批量编辑。单表或批量编辑均通过「保存并生效」校验并写入 connect.yaml；connector 从下一轮开始使用新计划。</p>
-  <div class="row">
-    <button type="button" id="btn-reload">重新加载</button>
-    <button type="button" id="btn-validate" title="对已保存的抽取计划做现场校验（不改任何配置）">校验当前计划</button>
-    <input type="search" id="filter" class="filter-input" placeholder="按表名过滤…" aria-label="按表名过滤">
-    <a href="/metadata">前往元数据选表</a>
-    <span id="rev" class="meta"></span>
-  </div>
-  <div id="msg" class="meta"></div>
-  <div id="empty-guide" class="warn" style="display:none;margin-top:10px">
-    当前抽取计划为空（新安装默认不访问任何 ERP 业务表）。请先到
-    <a href="/metadata">选表</a> 页扫描并「加入计划」。
-  </div>
-  <div id="diff" class="warn" style="display:none;margin-top:10px"></div>
+<div id="msg" class="meta"></div>
+<div id="empty-guide" class="banner warn" style="display:none">
+  当前抽取计划为空（新安装默认不访问任何 ERP 业务表）。请先到 <a href="/metadata">扫描选表</a> 扫描并「加入计划」。
 </div>
+<div id="diff" class="banner warn" style="display:none"></div>
 
-<div class="card">
+<section class="card">
+  <h2 class="sr-only">抽取计划</h2>
+  <div class="toolbar">
+    <input type="search" id="filter" class="filter-input" placeholder="按表名过滤…" aria-label="按表名过滤">
+    <span class="spacer"></span>
+    <a href="/metadata">＋ 前往元数据选表</a>
+  </div>
   <div id="batch-bar" class="batch-bar" hidden>
     <label><input type="checkbox" id="chk-page"> 全选</label>
-    <button type="button" id="btn-batch-edit" disabled>批量编辑</button>
-    <button type="button" class="danger" id="btn-batch-remove" disabled>批量移除</button>
+    <button type="button" id="btn-batch-edit" class="btn-sm" disabled>批量编辑…</button>
+    <button type="button" class="btn-danger btn-sm" id="btn-batch-remove" disabled>批量移除…</button>
     <button type="button" class="text" id="btn-clear-sel">清除选择</button>
     <span id="batch-meta" class="meta">已选 0 张表</span>
   </div>
   <div class="table-scroll">
-  <table>
+  <table class="data">
     <thead>
       <tr>
-        <th class="check"><span class="sr-only">选择</span><span class="meta" aria-hidden="true">选</span></th>
-        <th>表</th><th>模式</th><th>键</th><th>水位</th><th>开始日期</th><th>校验</th><th></th>
+        <th class="check"><span class="sr-only">选择</span></th>
+        <th>表</th><th>模式</th><th>键</th><th>水位</th><th>开始日期</th><th>校验</th><th><span class="sr-only">操作</span></th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
   </table>
   </div>
-</div>
+</section>
 
 <div id="edit-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="ed-title" hidden>
   <div class="modal" id="edit-modal-panel">
     <header>
       <div class="modal-header"><h2 id="ed-title">编辑</h2><button type="button" id="btn-edit-x" class="modal-close" aria-label="关闭">&times;</button></div>
-      <p class="meta" id="ed-sub" style="margin:8px 0 0">修改后点「保存并生效」写入磁盘</p>
+      <p class="meta" id="ed-sub">修改后点「保存并生效」写入磁盘</p>
     </header>
     <div class="body">
-      <div id="ed-err" class="err" style="margin-bottom:10px"></div>
+      <div id="ed-err" class="errors"></div>
       <div id="edit-table" class="table-scroll"></div>
     </div>
     <footer>
       <span id="ed-msg" class="meta"></span>
-      <button type="button" class="ghost" id="btn-edit-cancel">取消</button>
-      <button type="button" class="primary" id="btn-apply">保存并生效</button>
+      <button type="button" class="btn-ghost" id="btn-edit-cancel">取消</button>
+      <button type="button" id="btn-apply">保存并生效</button>
     </footer>
   </div>
 </div>
 
 <div id="diff-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="df-title" hidden>
-  <div class="modal" style="width:min(640px,96vw)">
+  <div class="modal modal-narrow">
     <header>
       <div class="modal-header"><h2 id="df-title">确认写入抽取计划</h2><button type="button" id="btn-diff-x" class="modal-close" aria-label="关闭">&times;</button></div>
-      <p class="meta" style="margin:8px 0 0">以下内容将写入 connect.yaml 并生效，connector 从下一轮开始使用。</p>
+      <p class="meta">以下内容将写入 connect.yaml 并生效，connector 从下一轮开始使用。</p>
     </header>
     <div class="body">
-      <div id="df-summary" class="meta" style="margin-bottom:12px"></div>
+      <div id="df-summary" class="meta"></div>
       <div id="df-body"></div>
     </div>
     <footer>
-      <button type="button" class="ghost" id="btn-diff-cancel">取消</button>
-      <button type="button" class="primary" id="btn-diff-ok">确认写入</button>
+      <button type="button" class="btn-ghost" id="btn-diff-cancel">取消</button>
+      <button type="button" id="btn-diff-ok">确认写入</button>
     </footer>
   </div>
 </div>

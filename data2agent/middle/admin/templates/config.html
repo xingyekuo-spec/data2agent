@@ -1,115 +1,89 @@
 {% extends "layout.html" %}
 {% block title %}配置 — 中间机管理{% endblock %}
+{% block page_actions %}{% if not needs_setup %}
+<span class="config-state" id="config-state"><span>部署模式 <b id="deployment-mode">—</b></span><span id="config-revision-state">正在检查…</span><span class="meta" id="config-revision-note"></span></span>
+{% endif %}{% endblock %}
 {% block content %}
-<style>
-  .card-lead,.panel-lead,.field-hint,.meta-line{color:#647180;font-size:13px;line-height:1.55}
-  .field{display:block;margin-bottom:14px}.field-label{display:block;color:#12314f;font-size:13px;font-weight:600;margin-bottom:5px}
-  .field input,.field select{box-sizing:border-box;width:100%;max-width:560px;padding:8px 10px;border:1px solid #c9d2dc;border-radius:6px;background:#fff;font-size:14px}
-  .field input[type=checkbox]{width:auto;margin-right:7px}.field-hint{display:block;font-size:12px;margin-top:4px;max-width:620px}
-  .banner{border:1px solid #b6d9f5;background:#e8f4fd;color:#0b4a6f;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:13px;line-height:1.55}
-  .banner.warn{border-color:#f0d78c;background:#fff8e6;color:#6b5200}.banner.danger{border-color:#e8a5a0;background:#fdecea;color:#8b1a13}
-  .group-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:0 20px}
-  .tab-panel,.subpanel{display:none}.tab-panel.active,.subpanel.active{display:block}
-  .actions,.subtabs{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin-top:14px}
-  .subtabs{margin:0 0 14px}.subtab{background:#fff;color:#51606f;border:1px solid #c9d2dc;border-radius:999px;padding:6px 12px}
-  .subtab.active{background:#12314f;color:#fff;border-color:#12314f}
-  .source-block{border:1px solid #e1e7ed;border-radius:9px;background:#fafbfc;padding:15px;margin-bottom:14px}
-  .source-title{font-size:14px;color:#12314f;margin:0 0 4px}.source-lead{font-size:12px;color:#647180;margin:0 0 13px}
-  .cred-box{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.cred-item{border:1px solid #e1e7ed;border-radius:6px;background:#fff;padding:10px;font-size:12px;color:#51606f}
-  .cred-item strong{display:block;color:#12314f;margin-bottom:4px}.errors{white-space:pre-wrap;color:#b42318;font-size:13px;margin-top:10px}
-  .conflict-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
-</style>
-
-<div id="setup-banner" class="banner warn" {% if not needs_setup %}hidden{% endif %}>
-  本机仅从 ERP 只读抽取并推送至平台。首次配置会启用生产推送（ingest v3 或通用 Webhook）、严格无磁盘 spool，
-  密码只写入本机 <code>config/secrets.env</code>。
-</div>
-<div id="daily-banner" class="banner" {% if needs_setup %}hidden{% endif %}>
-  中间机只持久化水位、运行和推送审计等控制状态，不在本机状态库保存业务 Raw 数据。
-  保存后页面会明确显示自动重启或人工重启状态。
-</div>
 <div id="restart-banner" class="banner" hidden role="status"></div>
 
 <form id="setup-form" class="card" novalidate {% if not needs_setup %}hidden{% endif %}>
-  <h2>首次配置</h2>
-  <p class="card-lead">完成三个步骤后，再到「选表」页扫描并把表加入抽取计划。</p>
-  <div class="tabs" role="tablist" aria-label="首次配置分组">
-    <button type="button" class="tab active" id="setup-tab-push" role="tab" aria-selected="true" aria-controls="setup-push" tabindex="0" data-tabs="setup" data-tab="setup-push">1. 推送目标</button>
-    <button type="button" class="tab" id="setup-tab-erp" role="tab" aria-selected="false" aria-controls="setup-erp" tabindex="-1" data-tabs="setup" data-tab="setup-erp">2. ERP 连接</button>
-    <button type="button" class="tab" id="setup-tab-local" role="tab" aria-selected="false" aria-controls="setup-local" tabindex="-1" data-tabs="setup" data-tab="setup-local">3. 管理与节奏</button>
+  <div class="card-head"><h2>首次配置</h2><span class="badge badge-warn">未完成</span></div>
+  <p class="card-lead">本机仅从 ERP 只读抽取并推送至平台；首次配置启用生产推送与严格无磁盘 spool，密码只写入本机 <code>config/secrets.env</code>。完成后进入「扫描选表」。</p>
+  <div class="stepper wizard-steps" role="tablist" aria-label="首次配置步骤">
+    <button type="button" class="tab step-item active" id="setup-tab-push" role="tab" aria-selected="true" aria-controls="setup-push" tabindex="0" data-tabs="setup" data-tab="setup-push"><span class="num">1</span><b>推送目标</b><span class="sub">方式、地址、凭据</span></button>
+    <button type="button" class="tab step-item" id="setup-tab-erp" role="tab" aria-selected="false" aria-controls="setup-erp" tabindex="-1" data-tabs="setup" data-tab="setup-erp"><span class="num">2</span><b>ERP 连接</b><span class="sub">只读账号</span></button>
+    <button type="button" class="tab step-item" id="setup-tab-local" role="tab" aria-selected="false" aria-controls="setup-local" tabindex="-1" data-tabs="setup" data-tab="setup-local"><span class="num">3</span><b>管理与节奏</b><span class="sub">登录密码、抽取间隔</span></button>
   </div>
   <section id="setup-push" class="tab-panel active" role="tabpanel" aria-labelledby="setup-tab-push" data-tabs="setup">
-    <p class="panel-lead">选择推送方式并填写接收地址与凭据。凭据只写入本机 <code>config/secrets.env</code>。</p>
-    <label class="field"><span class="field-label">推送方式</span><select name="sink_type" id="setup-sink-type">
-      <option value="http">ingest v3（平台完整实现协议，含对账）</option>
-      <option value="webhook">通用 Webhook（d2a-push v1，接收方只需一个 HTTPS 端点）</option>
-    </select><span class="field-hint" id="setup-sink-hint"></span></label>
-    <label class="field"><span class="field-label" id="setup-url-label">数据平台接收地址</span><input type="url" name="platform_url" placeholder="https://platform.example.com:8850" required><span class="field-hint">推荐 HTTPS；受控内网使用 HTTP 时会作为显式安全例外记录。</span></label>
-    <label class="field"><span class="field-label" id="setup-token-label">推送口令</span><input type="password" name="ingest_token" autocomplete="new-password" required><span class="field-hint" id="setup-token-hint">须与平台为本数据源签发的接收 Token 一致。</span></label>
-    <label class="field" id="setup-secret-field" hidden><span class="field-label">HMAC 签名密钥（推荐）</span><input type="password" name="hmac_secret" autocomplete="new-password"><span class="field-hint">由接收方提供；每个请求带 <code>X-D2A-Signature</code> 签名。Bearer Token 与签名密钥至少填一项。</span></label>
+    <span class="field-label" id="setup-sink-label">推送方式</span>
+    <div class="radio-cards" role="radiogroup" aria-labelledby="setup-sink-label">
+      <label class="radio-card"><input type="radio" name="sink_type" value="http" checked><b>ingest v3</b><span>平台完整实现协议，支持 L1 / 深度对账。</span></label>
+      <label class="radio-card"><input type="radio" name="sink_type" value="webhook"><b>通用 Webhook</b><span>d2a-push v1，接收方只需一个 HTTPS 端点；不支持对账。</span></label>
+    </div>
+    <p class="field-hint" id="setup-sink-hint"></p>
+    <div class="group-grid">
+      <label class="field"><span class="field-label"><span id="setup-url-label">数据平台接收地址</span><span class="req">*</span></span><input type="url" name="platform_url" placeholder="https://platform.example.com:8850" required><span class="field-hint">推荐 HTTPS；受控内网使用 HTTP 时会作为显式安全例外记录。</span></label>
+      <label class="field"><span class="field-label" id="setup-token-label">推送口令</span><input type="password" name="ingest_token" autocomplete="new-password" required><span class="field-hint" id="setup-token-hint">须与平台为本数据源签发的接收 Token 一致。</span></label>
+      <label class="field" id="setup-secret-field" hidden><span class="field-label">HMAC 签名密钥<span class="opt">推荐</span></span><input type="password" name="hmac_secret" autocomplete="new-password"><span class="field-hint">由接收方提供；每个请求带 <code>X-D2A-Signature</code> 签名。Bearer Token 与签名密钥至少填一项。</span></label>
+    </div>
   </section>
   <section id="setup-erp" class="tab-panel" role="tabpanel" aria-labelledby="setup-tab-erp" data-tabs="setup" hidden>
-    <p class="panel-lead">使用仅有 SELECT 权限的 ERP 账号；不要使用 sa 或可写业务数据的账号。</p>
+    <p class="banner">使用仅有 SELECT 权限的 ERP 账号；不要使用 sa 或可写业务数据的账号。</p>
     <div class="group-grid">
-      <label class="field"><span class="field-label">ERP 服务器</span><input type="text" name="erp_server" required><span class="field-hint">IP、主机名或命名实例，例如 <code>SERVER\SQLEXPRESS</code>。</span></label>
+      <label class="field"><span class="field-label">ERP 服务器<span class="req">*</span></span><input type="text" name="erp_server" required><span class="field-hint">IP、主机名或命名实例，例如 <code>SERVER\SQLEXPRESS</code>。</span></label>
       <label class="field"><span class="field-label">ERP 端口</span><input type="number" name="erp_port" value="1433" min="0" max="65535"><span class="field-hint">命名实例可填 0；其他端口须为 1–65535。</span></label>
-      <label class="field"><span class="field-label">ERP 数据库名</span><input type="text" name="erp_database" required></label>
-      <label class="field"><span class="field-label">ERP 只读账号</span><input type="text" name="erp_user" autocomplete="username" required></label>
-      <label class="field"><span class="field-label">ERP 密码</span><input type="password" name="erp_password" autocomplete="new-password" required></label>
+      <label class="field"><span class="field-label">ERP 数据库名<span class="req">*</span></span><input type="text" name="erp_database" required></label>
+      <label class="field"><span class="field-label">ERP 只读账号<span class="req">*</span></span><input type="text" name="erp_user" autocomplete="username" required></label>
+      <label class="field"><span class="field-label">ERP 密码<span class="req">*</span></span><input type="password" name="erp_password" autocomplete="new-password" required></label>
     </div>
   </section>
   <section id="setup-local" class="tab-panel" role="tabpanel" aria-labelledby="setup-tab-local" data-tabs="setup" hidden>
     <div class="group-grid">
-      <label class="field"><span class="field-label">管理界面登录密码</span><input type="password" name="admin_token" autocomplete="new-password" required></label>
-      <label class="field"><span class="field-label">抽取间隔</span><input type="text" name="sync_every" value="30m" required><span class="field-hint">支持 <code>30s</code>、<code>30m</code>、<code>1h</code>、<code>1d</code>。</span></label>
-      <label class="field"><span class="field-label">首轮启动时间（可空）</span><input type="time" name="sync_start_at"></label>
-      <label class="field"><span class="field-label">抽取开始日期（可空）</span><input type="date" name="start_date"></label>
+      <label class="field"><span class="field-label">管理界面登录密码<span class="req">*</span></span><input type="password" name="admin_token" autocomplete="new-password" required></label>
+      <label class="field"><span class="field-label">抽取间隔<span class="req">*</span></span><input type="text" name="sync_every" value="30m" pattern="\d+(\.\d+)?[smhd]" required><span class="field-hint">支持 <code>30s</code>、<code>30m</code>、<code>1h</code>、<code>1d</code>。</span></label>
+      <label class="field"><span class="field-label">首轮启动时间<span class="opt">可空</span></span><input type="time" name="sync_start_at"></label>
+      <label class="field"><span class="field-label">抽取开始日期<span class="opt">可空</span></span><input type="date" name="start_date"></label>
     </div>
   </section>
   <div id="setup-errors" class="errors" role="alert"></div>
-  <div class="actions"><button type="button" class="tab-nav btn-ghost" data-tabs="setup" data-dir="-1" hidden>上一步</button><button type="button" class="tab-nav btn-ghost" data-tabs="setup" data-dir="1">下一步</button><button type="submit">保存并启用</button></div>
+  <div class="form-actions"><button type="button" class="tab-nav btn-ghost" data-tabs="setup" data-dir="-1" hidden>上一步</button><button type="button" class="tab-nav" data-tabs="setup" data-dir="1">下一步</button><button type="submit" id="setup-submit" hidden>保存并启用</button></div>
 </form>
 
 <div id="daily-card" {% if needs_setup %}hidden{% endif %}>
-  <section class="card" aria-labelledby="revision-title">
-    <h2 id="revision-title">配置生效状态</h2>
-    <p class="meta-line">部署模式：<strong id="deployment-mode">—</strong> ·
-      <span id="config-revision-state">正在检查…</span>
-      <span class="meta" id="config-revision-note"></span></p>
-    <p id="legacy-state-warning" class="warn" hidden>检测到旧配置键 <code>landing</code>；下次保存会安全迁移为 <code>state_db</code>。</p>
-  </section>
-
+  <p id="legacy-state-warning" class="banner warn" hidden>检测到旧配置键 <code>landing</code>；下次保存会安全迁移为 <code>state_db</code>。</p>
   <section class="card">
-    <h2>日常配置</h2>
     <div class="tabs" role="tablist" aria-label="日常配置分组">
       <button type="button" class="tab active" id="daily-tab-link" role="tab" aria-selected="true" aria-controls="daily-link" tabindex="0" data-tabs="daily" data-tab="daily-link">推送目标</button>
-      <button type="button" class="tab" id="daily-tab-paths" role="tab" aria-selected="false" aria-controls="daily-paths" tabindex="-1" data-tabs="daily" data-tab="daily-paths">控制状态库</button>
-      <button type="button" class="tab" id="daily-tab-source" role="tab" aria-selected="false" aria-controls="daily-source" tabindex="-1" data-tabs="daily" data-tab="daily-source">数据源</button>
+      <button type="button" class="tab" id="daily-tab-source" role="tab" aria-selected="false" aria-controls="daily-source" tabindex="-1" data-tabs="daily" data-tab="daily-source">数据源设置</button>
+      <button type="button" class="tab" id="daily-tab-paths" role="tab" aria-selected="false" aria-controls="daily-paths" tabindex="-1" data-tabs="daily" data-tab="daily-paths">状态库</button>
     </div>
 
     <section id="daily-link" class="tab-panel active" role="tabpanel" aria-labelledby="daily-tab-link" data-tabs="daily">
-      <p class="panel-lead">按数据源更新推送方式、接收地址或凭据。凭据留空时不会修改，也不会回显。</p>
-      <label class="field"><span class="field-label">数据源</span><select id="link-source"></select></label>
-      <label class="field"><span class="field-label">推送方式</span><select id="link-sink-type">
-        <option value="http">ingest v3（平台完整实现协议，含对账）</option>
-        <option value="webhook">通用 Webhook（d2a-push v1）</option>
-      </select><span class="field-hint" id="link-sink-hint"></span></label>
-      <label class="field"><span class="field-label" id="link-url-label">平台接收地址</span><input type="url" id="link-url"></label>
-      <label class="field"><span class="field-label" id="link-token-label">新推送口令（可空）</span><input type="password" id="link-token" autocomplete="new-password"><span class="field-hint" id="link-token-hint"></span></label>
-      <label class="field" id="link-secret-field" hidden><span class="field-label">新 HMAC 签名密钥（可空）</span><input type="password" id="link-secret" autocomplete="new-password"><span class="field-hint" id="link-secret-hint"></span></label>
-      <div class="actions"><button type="button" id="btn-link-save">保存推送目标</button><button type="button" id="btn-link-check" class="btn-ghost">测试接收端连通</button></div>
-      <p id="link-save-result" class="meta-line" aria-live="polite"></p><p id="link-check-result" class="meta-line" aria-live="polite"></p>
+      <div class="group-grid">
+        <label class="field"><span class="field-label">数据源</span><select id="link-source"></select></label>
+        <label class="field"><span class="field-label">推送方式</span><select id="link-sink-type">
+          <option value="http">ingest v3（平台完整实现协议，含对账）</option>
+          <option value="webhook">通用 Webhook（d2a-push v1，不支持对账）</option>
+        </select><span class="field-hint" id="link-sink-hint"></span></label>
+      </div>
+      <div class="group-grid">
+        <label class="field"><span class="field-label" id="link-url-label">平台接收地址</span><input type="url" id="link-url"></label>
+        <label class="field"><span class="field-label" id="link-token-label">新推送口令（可空）</span><input type="password" id="link-token" autocomplete="new-password"><span class="field-hint" id="link-token-hint"></span></label>
+        <label class="field" id="link-secret-field" hidden><span class="field-label">新 HMAC 签名密钥（可空）</span><input type="password" id="link-secret" autocomplete="new-password"><span class="field-hint" id="link-secret-hint"></span></label>
+      </div>
+      <p class="field-hint">凭据只写入 <code>config/secrets.env</code>；留空不修改，页面不回显。</p>
+      <div class="form-actions"><button type="button" id="btn-link-save">保存推送目标</button><button type="button" id="btn-link-check" class="btn-ghost">测试接收端连通</button>
+        <span id="link-save-result" class="meta" aria-live="polite"></span><span id="link-check-result" class="meta" aria-live="polite"></span></div>
     </section>
 
     <form id="config-form" novalidate>
       <section id="daily-paths" class="tab-panel" role="tabpanel" aria-labelledby="daily-tab-paths" data-tabs="daily" hidden>
-        <p class="panel-lead"><strong>中间机状态库仅含控制状态，不含业务 Raw。</strong>备份它只能恢复水位、运行及推送审计，不能恢复配置、secrets、程序或平台 Raw 数据。</p>
+        <p class="panel-lead">状态库只含水位、运行与推送审计等控制状态，不含业务 Raw；它不能恢复配置、secrets、程序或平台数据（见<a href="/recovery">恢复指引</a>）。</p>
         <div class="group-grid">
           <label class="field"><span class="field-label">中间机状态库路径</span><input type="text" id="cfg-state-db"><span class="field-hint">新安装默认 <code>data/middle-state.sqlite</code>。</span></label>
         </div>
       </section>
       <section id="daily-source" class="tab-panel" role="tabpanel" aria-labelledby="daily-tab-source" data-tabs="daily" hidden>
-        <p class="panel-lead">每个操作始终绑定明确数据源；生产环境仅允许 ingest v3 或通用 Webhook 推送。</p>
         <div id="sources-container"></div>
       </section>
       <div id="config-errors" class="errors" role="alert"></div>
@@ -117,7 +91,7 @@
         <strong>配置 revision 冲突。</strong><div id="config-conflict-detail"></div>
         <div class="conflict-actions"><button type="button" id="btn-conflict-reload" class="btn-ghost">读取服务器新配置</button><button type="button" id="btn-conflict-reapply">在新 revision 上重新应用当前改动</button></div>
       </div>
-      <div class="actions" id="daily-save-actions" hidden><button type="submit" id="btn-config-save">校验并保存配置</button></div>
+      <div class="form-actions" id="daily-save-actions" hidden><button type="submit" id="btn-config-save">校验并保存配置</button></div>
     </form>
   </section>
 </div>

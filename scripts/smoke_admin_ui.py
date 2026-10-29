@@ -97,21 +97,22 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
         _fail("middle: missing token should 401")
     _ok("middle: unauthenticated API → 401")
 
-    for path in ("/status", "/actions", "/runs", "/errors", "/config", "/logs", "/metadata", "/tables", "/push-logs", "/recovery"):
+    for path in ("/status", "/runs", "/errors", "/config", "/logs", "/metadata", "/tables", "/push-logs", "/recovery"):
         r = client.get(path, headers=h)
         if r.status_code != 200:
             _fail(f"middle: GET {path} → {r.status_code}")
-    _ok("middle: HTML pages including status/recovery/config/operations → 200")
+    _ok("middle: HTML pages including status/runs/recovery/config → 200")
 
-    r = client.get("/reconcile", headers=h, follow_redirects=False)
-    if r.status_code != 302 or r.headers.get("location") != "/actions":
-        _fail(f"middle: /reconcile should 302 → /actions, got {r.status_code} {r.headers.get('location')}")
-    _ok("middle: legacy /reconcile redirects to /actions")
+    for legacy, target in (("/actions", "/runs"), ("/reconcile", "/runs?type=reconcile")):
+        r = client.get(legacy, headers=h, follow_redirects=False)
+        if r.status_code != 302 or r.headers.get("location") != target:
+            _fail(f"middle: {legacy} should 302 → {target}, got {r.status_code} {r.headers.get('location')}")
+    _ok("middle: legacy /actions and /reconcile redirect to /runs")
 
-    nav = client.get("/status", headers=h).text
+    nav = client.get("/config", headers=h).text
     if 'href="/metadata"' not in nav or 'href="/tables"' not in nav:
-        _fail("middle: nav missing /metadata or /tables")
-    _ok("middle: nav includes metadata + tables")
+        _fail("middle: config stepper missing /metadata or /tables")
+    _ok("middle: config stepper includes metadata + tables")
     csp = client.get("/status", headers=h).headers.get("content-security-policy", "")
     if "script-src 'self'" not in csp or "object-src 'none'" not in csp:
         _fail(f"middle: CSP missing required restrictions: {csp}")

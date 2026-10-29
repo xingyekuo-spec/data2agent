@@ -1,33 +1,27 @@
 {% extends "layout.html" %}
 {% block title %}日志 — 中间机管理{% endblock %}
+{% block page_actions %}
+<span id="log-refreshed" class="meta" aria-live="polite"></span>
+<button type="button" id="log-copy" class="btn-ghost">复制当前日志</button>
+<button type="button" id="log-refresh">刷新</button>
+{% endblock %}
 {% block content %}
-<style>
-  .toolbar input[type=number]{width:80px}
-  pre.log-view{background:#0f1720;color:#e2e8f0;padding:12px;border-radius:8px;overflow:auto;
-              font-size:12px;line-height:1.45;max-height:70vh;white-space:pre-wrap;margin:0}
-</style>
-
-<div class="card">
-  <h2>运行日志</h2>
-  <p class="hint">页面报错(如连接测试失败)时,先看「管理界面」日志里的报错栈;抽取/推送问题看「连接器」日志。</p>
+<section class="card">
+  <h2 class="sr-only">运行日志</h2>
   <div class="toolbar">
-    <label>日志
-      <select id="log-service">
-        <option value="connector" selected>连接器 connector(抽取/推送)</option>
-        <option value="maintenance">维护任务 maintenance(状态库备份/清理)</option>
-        <option value="admin">管理界面 admin(报错栈)</option>
-        <option value="launcher">启动器 launcher(重启记录)</option>
-      </select>
-    </label>
+    <label class="sr-only" for="log-service">日志</label>
+    <select id="log-service" title="抽取/推送问题看连接器;页面报错看管理界面的报错栈">
+      <option value="connector" selected>连接器 connector（抽取/推送）</option>
+      <option value="maintenance">维护任务 maintenance（状态库备份/清理）</option>
+      <option value="admin">管理界面 admin（报错栈）</option>
+      <option value="launcher">启动器 launcher（重启记录）</option>
+    </select>
     <label>行数 <input type="number" id="log-lines" value="200" min="1" max="1000"></label>
-    <label>级别过滤 <input type="text" id="log-level" placeholder="ERROR"></label>
-    <button type="button" id="log-refresh">刷新</button>
-    <label class="meta"><input type="checkbox" id="log-auto"> 自动刷新(5s)</label>
-    <button type="button" id="log-copy" class="btn-ghost">复制当前日志</button>
-    <span id="log-refreshed" class="meta" aria-live="polite"></span>
+    <label class="sr-only" for="log-level">级别过滤</label><input type="text" id="log-level" placeholder="级别过滤，如 ERROR">
+    <label><input type="checkbox" id="log-auto"> 每 5 秒自动刷新</label>
   </div>
   <pre id="log-output" class="log-view">加载中…</pre>
-</div>
+</section>
 
 <script src="{{ static_url }}/middle-logs.js?v={{ static_ver }}" defer></script>
 {% endblock %}

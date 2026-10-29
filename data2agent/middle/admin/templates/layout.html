@@ -1,20 +1,42 @@
 {% extends "admin/layout.html" %}
 {% block title %}中间机管理{% endblock %}
+{% block brand_sub %}中间机管理{% endblock %}
+{% macro nav_link(href, icon, label, locked=false, also='', count=false) -%}
+<a class="nav-link{{ ' disabled' if locked }}" href="{{ href }}" data-nav="{{ href }}"{% if also %} data-nav-also="{{ also }}"{% endif %}{% if locked %} aria-disabled="true" tabindex="-1"{% endif %}><span class="ico" aria-hidden="true">{{ icon }}</span>{{ label }}{% if count %}<span class="count" data-alert-count hidden></span>{% endif %}</a>
+{%- endmacro %}
 {% block nav %}
-<span class="nav-group">
-  <span class="nav-group-label">运维</span>
-  <a href="/status" data-nav="/status">状态</a>
-  <a href="/errors" data-nav="/errors">错误处理</a>
-  <a href="/runs" data-nav="/runs">运行</a>
-  <a href="/actions" data-nav="/actions">操作</a>
-  <a href="/push-logs" data-nav="/push-logs">推送记录</a>
-  <a href="/logs" data-nav="/logs">日志</a>
-</span>
-<span class="nav-divider"></span>
-<span class="nav-group">
-  <span class="nav-group-label">配置</span>
-  <a href="/config" data-nav="/config">连接</a>
-  <a href="/metadata" data-nav="/metadata">选表</a>
-  <a href="/tables" data-nav="/tables">抽取计划</a>
-</span>
+<nav class="nav-section" aria-label="总览">
+  <div class="nav-label">总览</div>
+  {{ nav_link('/status', '◉', '状态总览') }}
+</nav>
+<nav class="nav-section" aria-label="运维">
+  <div class="nav-label">运维</div>
+  {{ nav_link('/errors', '⚠', '告警', needs_setup, count=true) }}
+  {{ nav_link('/runs', '↻', '运行', needs_setup) }}
+  {{ nav_link('/push-logs', '⇪', '推送记录', needs_setup) }}
+  {{ nav_link('/logs', '☰', '日志') }}
+</nav>
+<nav class="nav-section" aria-label="配置">
+  <div class="nav-label">配置</div>
+  {{ nav_link('/config', '⚙', '配置', false, '/metadata /tables') }}
+</nav>
 {% endblock %}
+{% block sidebar_foot %}<nav aria-label="维护">{{ nav_link('/recovery', '⛑', '状态库恢复指引', needs_setup) }}</nav>{% endblock %}
+{% block crumb %}{% set c = {
+  'status': ('总览', '状态总览'), 'errors': ('运维', '告警'), 'runs': ('运维', '运行'),
+  'push-logs': ('运维', '推送记录'), 'logs': ('运维', '日志'), 'recovery': ('维护', '状态库恢复'),
+  'config': ('配置', '连接与推送'), 'metadata': ('配置', '扫描选表'), 'tables': ('配置', '抽取计划'),
+}.get(page_id, ('', '')) %}{{ c[0] }} / <b>{{ c[1] }}</b>{% endblock %}
+
+{# 配置三步步骤条 /config → /metadata → /tables;完成情况由 middle-shell.js 按现有 API 填充。 #}
+{% block stepper %}{% if page_id in ('metadata', 'tables') or (page_id == 'config' and not needs_setup) %}
+<nav class="stepper" id="config-stepper" aria-label="配置步骤">
+  <a href="/config" data-step="config" class="{{ 'current' if page_id == 'config' }}{{ ' done' if not needs_setup }}"{% if page_id == 'config' %} aria-current="step"{% endif %}>
+    <span class="num">{{ '✓' if not needs_setup else '1' }}</span><b>连接与推送</b><span class="sub">{{ '已完成' if not needs_setup else '待完成' }}</span></a>
+  <a href="/metadata" data-step="metadata" class="{{ 'current' if page_id == 'metadata' }}"{% if page_id == 'metadata' %} aria-current="step"{% endif %}{% if needs_setup %} aria-disabled="true" tabindex="-1"{% endif %}>
+    <span class="num">2</span><b>扫描选表</b><span class="sub">扫描 ERP 并加入计划</span></a>
+  <a href="/tables" data-step="tables" class="{{ 'current' if page_id == 'tables' }}"{% if page_id == 'tables' %} aria-current="step"{% endif %}{% if needs_setup %} aria-disabled="true" tabindex="-1"{% endif %}>
+    <span class="num">3</span><b>抽取计划</b><span class="sub" data-step-sub>核对并保存</span></a>
+</nav>
+<script src="{{ static_url }}/middle-shell.js?v={{ static_ver }}" defer></script>
+{% endif %}{% endblock %}

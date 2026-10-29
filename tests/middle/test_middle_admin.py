@@ -251,23 +251,25 @@ def test_trigger_accepts_controlled_reconcile(middle_env):
 def test_html_pages(middle_env):
     client, _ = middle_env
     h = {"Authorization": "Bearer secret"}
-    for path in ("/status", "/actions", "/runs", "/errors", "/config", "/logs", "/metadata", "/tables", "/push-logs", "/recovery"):
+    for path in ("/status", "/runs", "/errors", "/config", "/logs", "/metadata", "/tables", "/push-logs", "/recovery"):
         r = client.get(path, headers=h)
         assert r.status_code == 200
         body = r.content.lower()
         assert b"htmx" in body or b"hx-" in body or b"nav" in body
 
-    # 旧 /reconcile 路径 302 到 /actions
+    # 旧 /actions、/reconcile 路径 302 到「运行」页(手动操作已并入其顶栏)
+    r = client.get("/actions", headers=h, follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "/runs"
     r = client.get("/reconcile", headers=h, follow_redirects=False)
-    assert r.status_code == 302 and r.headers["location"] == "/actions"
+    assert r.status_code == 302 and r.headers["location"] == "/runs?type=reconcile"
 
     status_page = client.get("/status", headers=h).text
     status_script = client.get("/static/middle-status.js").text
-    actions_page = client.get("/actions", headers=h).text
+    actions_page = client.get("/runs", headers=h).text
     actions_script = client.get("/static/middle-actions.js").text
     errors_script = client.get("/static/middle-errors.js").text
     shared_script = client.get("/static/admin.js").text
-    # 手动操作集中在「操作」页(/actions):同步 + L1/深度对账;状态页只读观测
+    # 手动操作集中在「运行」页顶栏:同步 + L1/深度对账;状态页只读观测
     assert 'id="reconcile-source"' in actions_page
     assert 'id="btn-sync"' in actions_page
     assert 'id="btn-reconcile-deep"' in actions_page

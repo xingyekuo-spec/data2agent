@@ -365,6 +365,7 @@ async function confirmAndSave(){
   var r=await apiFetch('/api/extraction-tables',{method:'PUT',headers:authHeaders(),
     body:JSON.stringify({tables:merged, revision:p.revision})});
   var saved=await r.json().catch(function(){return {};});
+  if(r.ok&&saved.ok) document.dispatchEvent(new CustomEvent('d2a:plan-saved'));  // 刷新配置步骤条
   if(r.status===409){
     document.getElementById('confirm-status').textContent='保存冲突，正在重新加载计划…';
     document.getElementById('confirm-err').textContent=typeof formatApiError==='function'
@@ -605,7 +606,7 @@ async function loadTables(){
       esc(t.schema)+'" data-t="'+esc(t.name)+'"'+(checked?' checked':'')+(disabled?' disabled':'')+
       '></td><td>'+esc(t.schema)+'.'+esc(t.name)+'</td><td>'+esc(t.object_type)+'</td><td>'+
       esc(t.estimated_rows==null?'—':t.estimated_rows)+'</td><td>'+esc((t.primary_key||[]).join(', ')||'—')+
-      '</td><td><span class="badge '+(planned?'badge-ok':'badge-off')+'">'+
+      '</td><td><span class="badge '+(planned?'badge-ok':'badge-muted')+'">'+
       (planned?'已加入':'未加入')+'</span></td><td><button type="button" class="text" data-s="'+
       esc(t.schema)+'" data-t="'+esc(t.name)+'">详情</button></td></tr>';
   });
