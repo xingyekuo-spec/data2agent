@@ -55,20 +55,61 @@
     var index = active ? ids.indexOf(active.id) : 0;
     var previous = document.querySelector('.tab-nav[data-dir="-1"]');
     var next = document.querySelector('.tab-nav[data-dir="1"]');
+    var submit = byId('setup-submit');
     if (previous) previous.hidden = index <= 0;
     if (next) next.hidden = index >= ids.length - 1;
+    if (submit) submit.hidden = index < ids.length - 1;
+    // 步骤条:已经过的步骤标记完成
+    document.querySelectorAll('[role="tab"][data-tabs="setup"]').forEach(function (tab, i) {
+      tab.classList.toggle('done', i < index);
+      tab.classList.toggle('current', i === index);
+      var num = tab.querySelector('.num');
+      if (num) num.textContent = i < index ? '✓' : String(i + 1);
+    });
+  }
+
+  /* 即时校验:字段失焦时标红并在字段下给出原因;修正后即时清除。 */
+  function fieldMessage(input) {
+    if (input.validity.valueMissing) return '此项必填';
+    if (input.validity.typeMismatch && input.type === 'url') return '请输入以 http:// 或 https:// 开头的地址';
+    if (input.validity.patternMismatch && input.name === 'sync_every') return '格式如 30s、30m、1h、1d';
+    if (input.validity.rangeUnderflow || input.validity.rangeOverflow) return '取值须在 ' + input.min + '–' + input.max + ' 之间';
+    return input.validationMessage || '';
+  }
+  function checkField(input) {
+    var field = input.closest('.field');
+    if (!field || input.type === 'radio') return true;
+    var message = input.closest('[hidden]') ? '' : fieldMessage(input);
+    var error = field.querySelector('.field-error');
+    if (!error) {
+      error = document.createElement('span');
+      error.className = 'field-error';
+      field.appendChild(error);
+    }
+    error.textContent = message;
+    field.classList.toggle('invalid', !!message);
+    input.setAttribute('aria-invalid', message ? 'true' : 'false');
+    return !message;
+  }
+  function checkPanel(panel) {
+    var firstBad = null;
+    panel.querySelectorAll('input').forEach(function (input) {
+      if (!checkField(input) && !firstBad) firstBad = input;
+    });
+    if (firstBad) firstBad.focus();
+    return !firstBad;
   }
 
   function syncSaveActions(panelId) {
     var actions = byId('daily-save-actions');
     if (!actions) return;
     var hide = panelId !== 'daily-paths' && panelId !== 'daily-source';
-    // 数据源页签下:ERP 连接/敏感配置子页签的字段不进 YAML 表单,
+    // 数据源页签下:ERP 连接子页签的字段不进 YAML 表单,
     // 全局保存按钮此时无效(点了收不到这些字段),隐藏避免歧义。
     // 注意初始加载也要判定:ERP 连接是默认激活子页签。
     if (!hide && panelId === 'daily-source') {
       var activeSub = sourcesEl.querySelector('[role="tabpanel"].active');
-      if (activeSub && /-(erp|cred)$/.test(activeSub.id || '')) hide = true;
+      if (activeSub && /-erp$/.test(activeSub.id || '')) hide = true;
     }
     actions.hidden = hide;
   }
@@ -85,7 +126,7 @@
       panel.classList.toggle('active', active);
       panel.hidden = !active;
     });
-    // 子页签切换后重算全局保存按钮显隐(ERP/敏感配置子页签下隐藏)。
+    // 子页签切换后重算全局保存按钮显隐(ERP 子页签下隐藏)。
     var activeDaily = document.querySelector('[role="tabpanel"][data-tabs="daily"].active');
     syncSaveActions(activeDaily ? activeDaily.id : 'daily-link');
   }
@@ -99,19 +140,18 @@
     var production = currentConfig && currentConfig.deployment_mode === 'production';
     var webhook = sink.type === 'webhook';
     var noReconcile = sink.supports_reconcile === false ? ' disabled' : '';
-    var sinkState = production && !isPushType(sink.type)
+    var blocked = production && !isPushType(sink.type);
+    var sinkState = blocked
       ? '<p class="banner danger"><strong>生产阻断：</strong>该数据源不是 ingest v3 或 Webhook 推送，connector 将拒绝启动。AI Hub 适配器在 C1-C 前不得用于 production。</p>'
-      : '<p class="oknote">' + (SINK_LABELS[sink.type] || esc(sink.type)) + '</p>';
+      : '';
     return '<article class="source-block" data-source="' + esc(name) + '">' +
-      '<h3 class="source-title">数据源：' + esc(name) + '</h3>' + sinkState +
-      '<p class="source-lead">抽取、推送、对账和告警均绑定此 source，不会隐式操作其他数据源。</p>' +
+      '<div class="source-head"><h3 class="source-title">数据源 ' + esc(name) + '</h3>' +
+        badge(blocked ? 'failed' : isPushType(sink.type) ? 'ok' : 'unknown', SINK_LABELS[sink.type] || sink.type || '未配置推送') +
+        '<span class="badge badge-muted">' + esc(source.adapter || '?') + '</span></div>' + sinkState +
       '<div class="subtabs" role="tablist" aria-label="' + esc(name) + ' 配置分组">' +
         '<button type="button" class="subtab active" id="' + id + '-tab-erp" role="tab" aria-selected="true" aria-controls="' + id + '-erp" tabindex="0" data-sub="' + id + '-erp">ERP 连接</button>' +
         '<button type="button" class="subtab" id="' + id + '-tab-pace" role="tab" aria-selected="false" aria-controls="' + id + '-pace" tabindex="-1" data-sub="' + id + '-pace">抽取与对账</button>' +
-        '<button type="button" class="subtab" id="' + id + '-tab-rate" role="tab" aria-selected="false" aria-controls="' + id + '-rate" tabindex="-1" data-sub="' + id + '-rate">资源保护</button>' +
-        '<button type="button" class="subtab" id="' + id + '-tab-sink" role="tab" aria-selected="false" aria-controls="' + id + '-sink" tabindex="-1" data-sub="' + id + '-sink">推送/TLS</button>' +
-        '<button type="button" class="subtab" id="' + id + '-tab-spool" role="tab" aria-selected="false" aria-controls="' + id + '-spool" tabindex="-1" data-sub="' + id + '-spool">临时数据策略</button>' +
-        '<button type="button" class="subtab" id="' + id + '-tab-cred" role="tab" aria-selected="false" aria-controls="' + id + '-cred" tabindex="-1" data-sub="' + id + '-cred">敏感配置状态</button>' +
+        '<button type="button" class="subtab" id="' + id + '-tab-adv" role="tab" aria-selected="false" aria-controls="' + id + '-adv" tabindex="-1" data-sub="' + id + '-adv">高级</button>' +
       '</div>' +
       '<section id="' + id + '-erp" class="subpanel active" role="tabpanel" aria-labelledby="' + id + '-tab-erp" data-sub="' + id + '-erp">' +
         '<p class="panel-lead">ERP DSN 环境变量 <strong>' + esc(source.dsn_env || '未命名') + '</strong> · ' +
@@ -133,7 +173,7 @@
           : '<p class="meta">该源使用 ' + esc(source.adapter || '?') + ' 适配器，连接参数在 connect.yaml 中管理。</p>') +
       '</section>' +
       '<section id="' + id + '-pace" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-pace" data-sub="' + id + '-pace" hidden>' +
-        (noReconcile ? '<p class="panel-lead">对账计划已禁用：' + esc(sink.reconcile_unsupported_reason || '该推送方式不支持对账') + '</p>' : '') +
+        (noReconcile ? '<p class="banner warn"><strong>对账计划已禁用：</strong>' + esc(sink.reconcile_unsupported_reason || '该推送方式不支持对账') + '</p>' : '') +
         '<div class="group-grid">' +
         field('抽取间隔', '支持 30s / 30m / 1h / 1d，至少 1 秒。', '<input type="text" data-key="sync_every" value="' + esc(source.sync_every || '') + '" required>') +
         field('首轮启动时间（可空）', 'HH:MM；留空表示服务启动后立即进入调度判断。', '<input type="time" data-key="sync_start_at" value="' + esc(source.sync_start_at || '') + '">') +
@@ -144,32 +184,30 @@
         field('L2 深度对账', '低峰执行；深度对账可能重抽并识别物理删除。', '<input type="time" data-key="reconcile_deep_at" value="' + esc(source.reconcile_deep_at || '') + '"' + noReconcile + '>') +
         field('L2 执行星期', '未配置 L2 时间时会自动清空。', '<select data-key="reconcile_deep_day_of_week"' + noReconcile + '><option value="">每天/未设置</option>' +
           ['mon','tue','wed','thu','fri','sat','sun'].map(function (day) { return '<option value="' + day + '"' + selected(source.reconcile_deep_day_of_week, day) + '>' + day + '</option>'; }).join('') + '</select>') +
-      '</div></section>' +
-      '<section id="' + id + '-rate" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-rate" data-sub="' + id + '-rate" hidden><div class="group-grid">' +
+
         field('每批行数', '范围 1–50,000。', '<input type="number" min="1" max="50000" data-key="rate.batch_size" value="' + esc(rate.batch_size) + '" required>') +
         field('限速（行/秒）', '范围 1–1,000,000。', '<input type="number" min="1" max="1000000" data-key="rate.rows_per_second" value="' + esc(rate.rows_per_second) + '" required>') +
       '</div></section>' +
-      '<section id="' + id + '-sink" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-sink" data-sub="' + id + '-sink" hidden><div class="group-grid">' +
-        field(webhook ? 'Webhook 端点 URL' : '平台接收地址', '推送方式在「推送目标」页签切换；推荐 HTTPS。', '<input type="url" data-key="sink.url" value="' + esc(sink.url || '') + '" required>') +
+      '<section id="' + id + '-adv" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-adv" data-sub="' + id + '-adv" hidden>' +
+        '<h4 class="field-label">推送超时、重试与 TLS</h4><p class="field-hint">端点地址与凭据在「推送目标」页签修改。</p><div class="group-grid">' +
         field('请求超时（秒）', '范围 1–600，推荐 30。', '<input type="number" min="1" max="600" step="0.5" data-key="sink.timeout_seconds" value="' + esc(sink.timeout_seconds) + '" required>') +
         field('最多尝试次数', '包含首次请求，范围 1–10。', '<input type="number" min="1" max="10" data-key="sink.retries" value="' + esc(sink.retries) + '" required>') +
         field('私有 CA bundle（可空）', 'PEM 路径；主机名校验始终启用，不提供关闭证书校验选项。', '<input type="text" data-key="sink.ca_bundle" value="' + esc(sink.ca_bundle || '') + '">') +
         field('受控内网 HTTP 例外', '仅在隔离内网并完成风险评估时启用。', '<span><input type="checkbox" data-key="sink.allow_insecure_http"' + checked(sink.allow_insecure_http) + '>允许明文 HTTP</span>') +
-      '</div></section>' +
-      '<section id="' + id + '-spool" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-spool" data-sub="' + id + '-spool" hidden><div class="group-grid">' +
+        '</div>' +
+        '<h4 class="field-label">临时数据（spool）</h4><div class="group-grid">' +
         field('全量 spool 策略', '生产只允许严格流式或经确认的加密临时卷；temporary_file 仅开发/测试。', '<select data-key="spool.policy"><option value="strict_stream"' + selected(spool.policy, 'strict_stream') + '>strict_stream（磁盘 spool 禁用）</option><option value="encrypted_temp_volume"' + selected(spool.policy, 'encrypted_temp_volume') + '>encrypted_temp_volume</option><option value="temporary_file"' + selected(spool.policy, 'temporary_file') + '>temporary_file（仅开发/测试）</option></select>') +
         field('加密临时卷目录（可空）', '仅 encrypted_temp_volume 使用；目录须受最小权限保护。', '<input type="text" data-key="spool.directory" value="' + esc(spool.directory || '') + '">') +
         field('静态加密已现场确认', '选择加密临时卷时必须勾选。', '<span><input type="checkbox" data-key="spool.encrypted_at_rest"' + checked(spool.encrypted_at_rest) + '>已确认该卷静态加密</span>') +
-      '</div></section>' +
-      '<section id="' + id + '-cred" class="subpanel" role="tabpanel" aria-labelledby="' + id + '-tab-cred" data-sub="' + id + '-cred" hidden>' +
-        '<p class="panel-lead">仅展示是否配置；不返回 DSN、Token 或 CA 内容。</p><div class="cred-box">' +
+        '</div>' +
+        '<h4 class="field-label">敏感配置状态</h4><p class="field-hint">仅展示是否配置；不返回 DSN、Token 或 CA 内容。</p><div class="cred-box">' +
           '<div class="cred-item"><strong>ERP DSN 环境变量</strong>' + esc(source.dsn_env || '未命名') + ' · ' + (source.dsn_env_set ? '已配置' : '未配置') + '</div>' +
           '<div class="cred-item"><strong>推送 Token 环境变量</strong>' + esc(sink.token_env || '未命名') + ' · ' + (sink.token_env_set ? '已配置' : '未配置') + '</div>' +
           (webhook ? '<div class="cred-item"><strong>HMAC 签名密钥环境变量</strong>' + esc(sink.hmac_secret_env || '未命名') + ' · ' + (sink.hmac_secret_env_set ? '已配置' : '未配置') + '</div>' : '') +
           '<div class="cred-item"><strong>私有 CA</strong>' + (sink.ca_bundle_configured ? '已配置路径' : '未配置（使用系统信任库）') + '</div>' +
           '<div class="cred-item"><strong>secrets 最近修改</strong>' + fmtTime(currentConfig.sensitive_config && currentConfig.sensitive_config.updated_at) + '</div>' +
         '</div>' +
-        '</section>' +
+      '</section>' +
       '</article>';
   }
 
@@ -239,8 +277,9 @@
         var pair = windowValue.split('-');
         if (pair.length !== 2 || !time.test(pair[0]) || !time.test(pair[1]) || pair[0] === pair[1]) errors.push(name + '：错峰窗口无效 ' + windowValue);
       });
-      try {
-        var parsed = new URL(source.sink.url);
+      var currentSink = (currentConfig.sources[name] || {}).sink || {};
+      if (isPushType(currentSink.type)) try {
+        var parsed = new URL(currentSink.url);
         if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') errors.push(name + '：平台地址仅支持 HTTP(S)');
         if (parsed.protocol === 'http:' && !source.sink.allow_insecure_http) errors.push(name + '：HTTP 地址必须显式确认受控内网例外，或改用 HTTPS');
       } catch (_error) { errors.push(name + '：平台接收地址不是有效 URL'); }
@@ -472,6 +511,7 @@
   function setupValidation(form) {
     var invalid = form.querySelector(':invalid');
     if (invalid) {
+      form.querySelectorAll('input').forEach(checkField);
       var panel = invalid.closest('[role="tabpanel"]');
       if (panel) activateTab('setup', panel.id);
       invalid.focus();
@@ -521,13 +561,32 @@
       button.addEventListener('click', function () {
         var ids = setupPanels();
         var active = document.querySelector('[role="tabpanel"][data-tabs="setup"].active');
-        var next = ids[ids.indexOf(active.id) + Number(button.dataset.dir)];
+        var dir = Number(button.dataset.dir);
+        if (dir > 0 && !checkPanel(active)) { byId('setup-errors').textContent = '请先修正标红的字段。'; return; }
+        var form = byId('setup-form');
+        if (dir > 0 && active.id === 'setup-push' && form.elements.sink_type.value === 'webhook' &&
+            !form.elements.ingest_token.value.trim() && !form.elements.hmac_secret.value.trim()) {
+          byId('setup-errors').textContent = 'Webhook 须至少填写 Bearer Token 或 HMAC 签名密钥。';
+          form.elements.ingest_token.focus();
+          return;
+        }
+        byId('setup-errors').textContent = '';
+        var next = ids[ids.indexOf(active.id) + dir];
         if (next) activateTab('setup', next);
       });
     });
     var setupForm = byId('setup-form');
     if (setupForm) {
-      setupForm.elements.sink_type.addEventListener('change', function () { syncSetupSinkMode(setupForm); });
+      setupForm.addEventListener('change', function (event) {
+        if (event.target.name === 'sink_type') syncSetupSinkMode(setupForm);
+      });
+      setupForm.addEventListener('focusout', function (event) {
+        if (event.target.matches('input')) checkField(event.target);
+      });
+      setupForm.addEventListener('input', function (event) {
+        var field = event.target.closest('.field');
+        if (field && field.classList.contains('invalid')) checkField(event.target);
+      });
       syncSetupSinkMode(setupForm);
     }
     if (setupForm) setupForm.addEventListener('submit', function (event) { event.preventDefault(); submitSetup(setupForm, setupForm.querySelector('[type="submit"]')).catch(function (error) { byId('setup-errors').textContent = error.message; }); });

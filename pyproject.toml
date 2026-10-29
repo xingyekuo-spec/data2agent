@@ -30,6 +30,7 @@ data2agent = [
   "shared/admin_templates/*.html",
   "shared/admin_templates/*.md",
   "shared/admin_templates/static/*.js",
+  "shared/admin_templates/static/*.css",
   "middle/admin/templates/*.html",
   "middle/admin/static/*.js",
 ]

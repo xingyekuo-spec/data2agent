@@ -1,37 +1,40 @@
 {% extends "layout.html" %}
 {% block title %}推送记录 — 中间机管理{% endblock %}
 {% block content %}
-<style>
-  .push-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:8px;margin:12px 0}
-  .push-stat{border:1px solid #e1e7ed;border-radius:8px;padding:10px}.push-stat dt{font-size:11px;color:#647180}.push-stat dd{font-size:17px;font-weight:600;color:#12314f;margin:4px 0 0;overflow-wrap:anywhere}
-</style>
 <section class="card">
-  <p class="layer">平台推送</p><h2>推送、回执与重试</h2>
-  <p class="hint">仅 HTTP sink 产生记录。attempt、generation、平台回执、幂等命中和稳定错误分类都可追踪。</p>
+  <h2 class="sr-only">推送、回执与重试</h2>
   <div class="tabs" role="tablist" aria-label="推送记录视图">
     <button type="button" class="tab active" id="push-tab-summary" role="tab" aria-selected="true" aria-controls="push-summary" tabindex="0" data-tabs="push" data-tab="push-summary">按表概览</button>
     <button type="button" class="tab" id="push-tab-detail" role="tab" aria-selected="false" aria-controls="push-detail" tabindex="-1" data-tabs="push" data-tab="push-detail">推送明细</button>
   </div>
   <section id="push-summary" class="tab-panel active" role="tabpanel" aria-labelledby="push-tab-summary" data-tabs="push">
     <div class="toolbar">
-      <label for="summary-status">状态</label><select id="summary-status"><option value="">全部</option><option value="completed">已完成</option><option value="pushing">推送中</option><option value="failed">失败</option></select>
-      <label for="summary-source">数据源</label><select id="summary-source"><option value="">全部源</option></select>
-      <label for="summary-name">表名</label><input type="search" id="summary-name" placeholder="模糊搜索">
-      <label for="summary-limit">每页</label><select id="summary-limit"><option>10</option><option selected>20</option><option>50</option></select>
-      <button type="button" id="summary-refresh">刷新</button><span class="meta" id="summary-refreshed" aria-live="polite"></span><span class="meta" id="summary-page-info"></span>
-      <button type="button" id="summary-prev" class="btn-ghost">‹ 上一页</button><button type="button" id="summary-next" class="btn-ghost">下一页 ›</button>
+      <label class="sr-only" for="summary-source">数据源</label><select id="summary-source"><option value="">全部源</option></select>
+      <label class="sr-only" for="summary-status">状态</label><select id="summary-status"><option value="">全部状态</option><option value="completed">已完成</option><option value="pushing">推送中</option><option value="failed">失败</option></select>
+      <label class="sr-only" for="summary-name">表名</label><input type="search" id="summary-name" placeholder="搜索表名…">
+      <span class="spacer"></span><span class="meta" id="summary-refreshed" aria-live="polite"></span>
+      <button type="button" id="summary-refresh" class="btn-ghost btn-sm">刷新</button>
     </div>
     <div id="summary-list" aria-live="polite"></div>
+    <div class="pager">
+      <span class="meta" id="summary-page-info"></span>
+      <label for="summary-limit">每页</label><select id="summary-limit"><option>10</option><option selected>20</option><option>50</option></select>
+      <button type="button" id="summary-prev" class="btn-ghost btn-sm">‹ 上一页</button><button type="button" id="summary-next" class="btn-ghost btn-sm">下一页 ›</button>
+    </div>
   </section>
   <section id="push-detail" class="tab-panel" role="tabpanel" aria-labelledby="push-tab-detail" data-tabs="push" hidden>
     <div class="toolbar">
-      <label for="detail-source">数据源</label><select id="detail-source"><option value="">全部源</option></select>
-      <label for="detail-table">表</label><select id="detail-table"><option value="">全部表/事件</option></select>
-      <label for="detail-limit">每页</label><select id="detail-limit"><option>20</option><option selected>50</option><option>100</option></select>
-      <button type="button" id="detail-refresh">刷新</button><span class="meta" id="detail-refreshed" aria-live="polite"></span><span class="meta" id="detail-page-info"></span>
-      <button type="button" id="detail-prev" class="btn-ghost">‹ 上一页</button><button type="button" id="detail-next" class="btn-ghost">下一页 ›</button>
+      <label class="sr-only" for="detail-source">数据源</label><select id="detail-source"><option value="">全部源</option></select>
+      <label class="sr-only" for="detail-table">表</label><select id="detail-table"><option value="">全部表/事件</option></select>
+      <span class="spacer"></span><span class="meta" id="detail-refreshed" aria-live="polite"></span>
+      <button type="button" id="detail-refresh" class="btn-ghost btn-sm">刷新</button>
     </div>
     <div id="detail-list" aria-live="polite"></div>
+    <div class="pager">
+      <span class="meta" id="detail-page-info"></span>
+      <label for="detail-limit">每页</label><select id="detail-limit"><option>20</option><option selected>50</option><option>100</option></select>
+      <button type="button" id="detail-prev" class="btn-ghost btn-sm">‹ 上一页</button><button type="button" id="detail-next" class="btn-ghost btn-sm">下一页 ›</button>
+    </div>
   </section>
 </section>
 <div id="push-detail-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="push-detail-title" hidden>

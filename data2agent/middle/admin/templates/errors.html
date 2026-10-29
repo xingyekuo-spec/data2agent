@@ -1,32 +1,18 @@
 {% extends "layout.html" %}
-{% block title %}错误处理 — 中间机管理{% endblock %}
+{% block title %}告警 — 中间机管理{% endblock %}
+{% block page_actions %}
+<span id="alerts-refreshed" class="meta" aria-live="polite"></span>
+<button type="button" id="refresh-alerts" class="btn-ghost">刷新</button>
+{% endblock %}
 {% block content %}
-<style>
-  .banner{background:#e8f4fd;border:1px solid #b6d9f5;color:#0b4a6f;border-radius:8px;
-          padding:12px 14px;margin-bottom:16px;font-size:13px;line-height:1.5}
-  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
-  .chip{border:1px solid #d0d7de;border-radius:999px;padding:5px 12px;font-size:13px;
-        cursor:pointer;background:#fff;color:#51606f}.chip.active{background:#12314f;color:#fff}
-  .alert-card{background:#fff;border-radius:10px;padding:14px 18px;margin-bottom:12px;
-              box-shadow:0 1px 3px rgba(16,34,54,.08);border-left:4px solid #b42318}
-  .alert-card.recovered{border-left-color:#1e7e34;opacity:.85}
-  .alert-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.alert-head h3{margin:0;flex:1;font-size:14px}
-  .alert-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.alert-actions select{padding:6px}
-</style>
-
-<div class="banner">
-  <strong>统一告警中心</strong> — 分类和重试属性由服务端返回；进程停止、状态库备份、磁盘和
-  数据驻留阻断项不可静默。恢复后的告警保留首次、最近发生时间和次数，便于复盘。
-</div>
-
 <section class="card" aria-labelledby="alerts-title">
-  <div class="src-head"><h2 id="alerts-title">当前告警</h2><button type="button" id="refresh-alerts" class="btn-ghost">刷新</button><span id="alerts-refreshed" class="meta" aria-live="polite"></span></div>
+  <h2 id="alerts-title" class="sr-only">当前告警</h2>
   <div class="chips" id="category-filters" role="group" aria-label="告警分类"></div>
   <div id="alerts-list"><p class="meta">加载告警中…</p></div>
 </section>
 
 <section class="card" aria-labelledby="recovered-title">
-  <details><summary id="recovered-title">已恢复告警（<span id="recovered-count">0</span>）</summary>
+  <details><summary id="recovered-title"><b>已恢复告警（<span id="recovered-count">0</span>）</b></summary>
     <div id="recovered-list"></div>
   </details>
 </section>

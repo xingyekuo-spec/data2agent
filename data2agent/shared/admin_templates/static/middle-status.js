@@ -82,7 +82,12 @@
     return issues;
   }
 
-  /* ---- L1:总览横幅 —— 一眼结论 + 每源一行 ---- */
+  function overviewMeta(data, dismissedCount) {
+    return '状态时间 ' + esc(fmtTime(data.observed_at)) + ' · 每 10 秒自动刷新' +
+      (dismissedCount ? ' · <a href="#" class="issue-restore">恢复 ' + dismissedCount + ' 项已忽略关注</a>' : '');
+  }
+
+  /* ---- L1:总览横幅 —— 一眼结论;每源详情见下方源卡 ---- */
   function renderOverview(data) {
     var all = collectIssues(data);
     var dismissed = loadDismissed();
@@ -91,16 +96,14 @@
     var level = issues.length === 0 ? 'ok'
       : issues.some(function (i) { return /阻断|违规|失败|未全部/.test(i.text); }) ? 'critical' : 'warning';
     var panel = document.getElementById('overview-panel');
-    panel.className = 'card ' + (level === 'ok' ? 'healthy-card' : level === 'warning' ? 'warning-card' : 'critical-card');
+    panel.className = 'hero ' + (level === 'ok' ? 'good' : level === 'warning' ? 'warn' : 'bad');
     var headBadge = level === 'ok'
       ? badge('pass', dismissedCount ? '已忽略 ' + dismissedCount + ' 项' : '全部检查通过')
       : badge(level === 'warning' ? 'warning' : 'failed', issues.length + ' 项需处理');
     var html = '<div class="overview-head"><h2 class="overview-title">' +
-      (level === 'ok' ? '✅ 运行正常' : level === 'warning' ? '⚠️ 存在需关注项' : '❌ 存在异常') +
-      '</h2>' + headBadge + '</div>';
-    html += '<p class="meta">状态时间:' + esc(fmtTime(data.observed_at)) +
-      ' · 本页每 10 秒自动刷新,详情分区异常时会自动展开' +
-      (dismissedCount ? ' · <a href="#" class="issue-restore">恢复 ' + dismissedCount + ' 项已忽略关注</a>' : '') + '</p>';
+      (level === 'ok' ? '✓ 运行正常' : level === 'warning' ? '⚠ 存在需关注项' : '✕ 存在异常') +
+      '</h2>' + headBadge + (level === 'ok' ? '<span class="meta">' + overviewMeta(data, dismissedCount) + '</span></div>' : '</div>');
+    if (level !== 'ok') html += '<p class="meta">' + overviewMeta(data, dismissedCount) + '</p>';
     if (issues.length) {
       html += '<ul class="issue-list">' + issues.map(function (i) {
         return '<li>' + esc(i.text) +
@@ -108,17 +111,6 @@
           '" title="不再显示此项(可恢复)" aria-label="忽略此项">×</button></li>';
       }).join('') + '</ul>';
     }
-    (data.sources || []).forEach(function (source) {
-      var freshness = source.freshness || {};
-      var schedule = source.schedule || {};
-      html += '<div class="src-mini"><span class="name">' + esc(source.source) + '</span>' +
-        healthBadge(((source.health || {}).status) || 'unknown') +
-        '<span class="cell">上次成功 <b>' + esc(fmtTime(source.latest_success && source.latest_success.finished_at)) + '</b></span>' +
-        '<span class="cell">新鲜度 <b>' + esc(freshness.status || 'unknown') + ' / ' + esc(fmtDuration(freshness.age_seconds)) + '</b></span>' +
-        '<span class="cell">下次同步 <b>' + esc(fmtTime(schedule.next_sync_at)) + '</b></span>' +
-        (source.running_run ? '<span class="cell"><a href="/runs?watch=' + source.running_run.id + '">正在运行 #' + source.running_run.id + '</a></span>' : '') +
-        '</div>';
-    });
     panel.innerHTML = html;
   }
 
@@ -272,7 +264,12 @@
     var html = '<section class="card ' + statusCardClass(healthy, health.status === 'warning' || !configured) + '">';
     html += '<div class="src-head"><h2>源 ' + esc(source.source) + '</h2>' + healthBadge(health.status) +
       badge(source.in_window ? 'ok' : 'paused', source.in_window ? '窗口内' : '窗口外') +
-      badge(configured ? 'configured' : 'failed', configured ? '已选表' : '未选表') + '</div>';
+      badge(configured ? 'configured' : 'failed', configured ? '已选表' : '未选表') +
+      (source.running_run ? '<a class="more-link" href="/runs?watch=' + source.running_run.id + '">正在运行 #' + source.running_run.id + ' →</a>' : '') + '</div>';
+    var freshness = source.freshness || {};
+    html += '<div class="src-kv"><span>上次成功 <b>' + esc(fmtTime(source.latest_success && source.latest_success.finished_at)) +
+      '</b></span><span>新鲜度 <b>' + esc(freshness.status || 'unknown') + ' / ' + esc(fmtDuration(freshness.age_seconds)) +
+      '</b></span><span>下次同步 <b>' + esc(fmtTime(schedule.next_sync_at)) + '</b></span></div>';
     if (!configured) {
       html += '<p class="warn">尚未配置抽取表。请先完成<a href="/metadata">元数据扫描</a>与<a href="/tables">抽取计划</a>。</p>';
     }
@@ -399,7 +396,7 @@
     } catch (error) { renderState(panel, 'error', { message: error.message + (panel.dataset.lastSuccessAt ? ';最近成功:' + fmtTime(panel.dataset.lastSuccessAt) : ''), retry: loadPushSummary }); return false; }
   }
 
-  /* 手动触发动作已迁移至「操作」页(middle-actions.js),本页只读观测。 */
+  /* 手动触发动作在「运行」页(middle-actions.js),本页只读观测。 */
 
   /* 页签切换由共享 initTabs 接管(点击 + 键盘),见 admin.js。 */
 
