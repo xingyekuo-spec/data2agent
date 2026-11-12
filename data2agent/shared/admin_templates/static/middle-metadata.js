@@ -8,7 +8,7 @@ var LEGACY_DRAFT_KEY='d2a_extraction_draft';
   var q=new URLSearchParams(location.search);
   if(q.get('from')==='config'){
     var b=document.getElementById('from-config-banner');
-    if(b) b.style.display='block';
+    if(b) b.hidden=false;
   }
 })();
 
@@ -202,7 +202,7 @@ function updateConfirmDiff(existing, incoming){
   var added=[], changed=[];
   Object.keys(incoming).forEach(function(n){ (existing[n]?changed:added).push(n); });
   var diffEl=document.getElementById('confirm-diff');
-  diffEl.style.display='block';
+  diffEl.hidden=false;
   diffEl.textContent='新增 '+(added.join(', ')||'（无）')+'；覆盖已有 '+(changed.join(', ')||'（无）')+
     '。可修改模式/键/水位后点「重新校验」。确认保存后写入 connect.yaml，connector 从下一轮生效。';
 }
@@ -314,7 +314,7 @@ async function openBatchConfirm(tables){
   if(!names.length){ announce('warning','没有可加入的表'); return; }
 
   document.getElementById('confirm-err').textContent='';
-  document.getElementById('confirm-diff').style.display='none';
+  document.getElementById('confirm-diff').hidden=true;
   document.getElementById('confirm-status').textContent='读取当前计划…';
   document.getElementById('btn-confirm-save').disabled=true;
   document.getElementById('btn-confirm-revalidate').disabled=true;
@@ -504,6 +504,8 @@ document.getElementById('table-list').addEventListener('change', function(e){
   syncBatchBar();
 });
 ensurePlanContext().catch(function(){});
+// 已有扫描缓存(本次服务启动后扫描过)时直接展示列表
+loadTables({quiet:true}).catch(function(){});
 
 async function startScan(){
   document.getElementById('scan-err').textContent='';
@@ -544,7 +546,8 @@ async function pollScan(){
   }
   loadTables();
 }
-async function loadTables(){
+async function loadTables(opts){
+  opts=opts||{};
   var qs=new URLSearchParams();
   var schema=document.getElementById('f-schema').value.trim();
   var q=document.getElementById('f-q').value.trim();
@@ -561,6 +564,11 @@ async function loadTables(){
     if(r.status===409 && code==='metadata_stale'){
       // 从未扫描(或服务重启后内存缓存已清):自动发起扫描,而非红字报错;
       // 但本次会话刚扫描过且未成功(currentScan 仍在),不再自动重扫
+      if(opts.quiet){
+        // 打开页面时的静默加载:没有缓存就保留引导文案,不自动访问 ERP
+        syncBatchBar();
+        return;
+      }
       if(currentScan){
         document.getElementById('list-pager').hidden=true;
         document.getElementById('table-list').innerHTML=

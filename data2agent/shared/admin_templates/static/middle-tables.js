@@ -19,7 +19,7 @@ function setMsg(text, ok){
 function showDiff(diff){
   var d=document.getElementById('diff');
   diff=diff||{added:[], removed:[], changed:[]};
-  d.style.display='block';
+  d.hidden=false;
   d.textContent='差异 — 新增: '+(diff.added||[]).join(', ')+
     ' · 修改: '+(diff.changed||[]).join(', ')+
     ' · 删除: '+(diff.removed||[]).join(', ');
@@ -159,7 +159,7 @@ function render(){
   var allNames=Object.keys(tables);
   var names=filteredNames();
   var guide=document.getElementById('empty-guide');
-  if(guide) guide.style.display=!allNames.length?'block':'none';
+  if(guide) guide.hidden=!!allNames.length;
   if(!allNames.length){
     document.getElementById('tbody').innerHTML=
       '<tr><td colspan="7" class="meta">抽取计划为空 — 请先到「选表」页加入表</td></tr>';
@@ -331,18 +331,18 @@ function confirmDiffModal(diff, options){
     var bodyEl=document.getElementById('df-body');
     function group(label, items, css){
       if(!items||!items.length) return '';
-      return '<div style="margin-bottom:12px">'+
-        '<div class="meta" style="font-weight:600;margin-bottom:4px">'+label+'（'+items.length+'）</div>'+
-        '<div style="max-height:180px;overflow:auto;border:1px solid #e8edf2;border-radius:6px;padding:8px 10px">'+
-        items.map(function(t){ return '<div class="meta" style="color:'+css+'">'+esc(t)+'</div>'; }).join('')+
+      return '<div class="diff-group">'+
+        '<div class="diff-label">'+label+'（'+items.length+'）</div>'+
+        '<div class="diff-list">'+
+        items.map(function(t){ return '<div class="meta diff-'+css+'">'+esc(t)+'</div>'; }).join('')+
         '</div></div>';
     }
     var total=(diff.added||[]).length+(diff.changed||[]).length+(diff.removed||[]).length;
     summaryEl.textContent=options.summary||('共 '+total+' 项变更');
     bodyEl.innerHTML=
-      group('新增', diff.added, '#1e7e34')+
-      group('修改', diff.changed, '#8a4b00')+
-      group('删除', diff.removed, '#b42318')||
+      group('新增', diff.added, 'added')+
+      group('修改', diff.changed, 'changed')+
+      group('删除', diff.removed, 'removed')||
       '<p class="meta">（无差异）</p>';
     if(!bodyEl.innerHTML.trim()) bodyEl.innerHTML='<p class="meta">（无差异）</p>';
     function done(val){

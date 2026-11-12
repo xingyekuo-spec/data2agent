@@ -373,8 +373,18 @@
       byId('deployment-mode').textContent = config.deployment_mode === 'production' ? '生产' : config.deployment_mode;
       byId('legacy-state-warning').hidden = !config.legacy_landing_key;
       byId('cfg-state-db').value = config.state_db || '';
+      // 重新渲染(如保存后)保留各数据源当前子页签,避免跳回默认的「ERP 连接」
+      var activeSubs = {};
+      sourcesEl.querySelectorAll('.source-block').forEach(function (block) {
+        var tab = block.querySelector('[role="tab"].active');
+        if (tab) activeSubs[block.dataset.source] = tab.dataset.sub;
+      });
       sourcesEl.innerHTML = Object.keys(config.sources || {}).map(function (name) { return renderSource(name, config.sources[name]); }).join('') || '<p class="state state-empty">当前配置没有数据源。</p>';
       bindSourceControls();
+      sourcesEl.querySelectorAll('.source-block').forEach(function (block) {
+        var sub = activeSubs[block.dataset.source];
+        if (sub && block.querySelector('[role="tab"][data-sub="' + sub + '"]')) activateSubtab(block, sub);
+      });
       populateSourceSelectors();
       var activeDaily = document.querySelector('[role="tabpanel"][data-tabs="daily"].active');
       syncSaveActions(activeDaily ? activeDaily.id : 'daily-link');

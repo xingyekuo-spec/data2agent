@@ -131,6 +131,7 @@ def test_production_readiness_and_security_headers(tmp_path):
     assert "object-src 'none'" in csp
     assert "frame-ancestors 'none'" in csp
     assert "script-src 'self' 'unsafe-inline'" not in csp
+    assert "style-src 'self';" in csp and "'unsafe-inline'" not in csp
     assert response.headers["x-content-type-options"] == "nosniff"
 
     # 静态脚本必须带版本指纹且禁止启发式缓存:升级后不允许出现
@@ -440,3 +441,19 @@ def test_erp_connection_update_rejects_non_mssql_source(tmp_path):
     assert body["ok"] is False
     assert "mssql_readonly" in json.dumps(body, ensure_ascii=False)
 
+
+
+def test_admin_markup_has_no_inline_styles():
+    """style-src 不含 unsafe-inline:模板与页面脚本不得输出 style 属性或 <style>。"""
+    from pathlib import Path
+
+    import data2agent
+
+    root = Path(data2agent.__file__).parent
+    files = list((root / "middle" / "admin" / "templates").glob("*.html"))
+    files += list((root / "shared" / "admin_templates").glob("*.html"))
+    files += [p for p in (root / "shared" / "admin_templates" / "static").glob("*.js")
+              if p.name != "htmx.min.js"]
+    offenders = [p.name for p in files
+                 if "style=" in (text := p.read_text(encoding="utf-8")) or "<style" in text]
+    assert offenders == []

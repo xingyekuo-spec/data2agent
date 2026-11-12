@@ -5,7 +5,7 @@
 <button type="button" id="btn-scan">刷新元数据</button>
 {% endblock %}
 {% block content %}
-<div id="from-config-banner" class="banner" style="display:none">
+<div id="from-config-banner" class="banner" hidden>
   连接已配置。请先点右上角<strong>刷新元数据</strong>扫描 ERP 表，勾选后在确认框中加入计划。
   新安装默认 <code>tables: {}</code>，未选表时同步不会访问任何业务表。
 </div>
@@ -62,7 +62,7 @@
       <p class="meta" id="confirm-summary">—</p>
     </div>
     <div class="m-body">
-      <div id="confirm-diff" class="banner warn" style="display:none"></div>
+      <div id="confirm-diff" class="banner warn" hidden></div>
       <div id="confirm-err" class="errors"></div>
       <div id="confirm-table"></div>
     </div>

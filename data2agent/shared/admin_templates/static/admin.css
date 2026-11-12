@@ -381,3 +381,8 @@ details.filter-pop[open]>summary{border-color:var(--c-primary)}
 .modal.modal-narrow{width:min(640px,100%)}
 #msg:not(:empty),#action-result:not([hidden]){margin:0 0 var(--sp-3)}
 .topbar-actions button,.topbar-actions .btn,.alert-pill{white-space:nowrap;flex:none}
+/* 抽取计划写入确认:变更分组 */
+.diff-group{margin-bottom:var(--sp-3)}
+.diff-label{font-size:var(--fs-sm);font-weight:600;color:var(--c-text-2);margin-bottom:var(--sp-1)}
+.diff-list{max-height:180px;overflow:auto;border:1px solid var(--c-border);border-radius:var(--r-sm);padding:var(--sp-2) var(--sp-3)}
+.diff-added{color:var(--c-ok)}.diff-changed{color:var(--c-warn)}.diff-removed{color:var(--c-danger)}
