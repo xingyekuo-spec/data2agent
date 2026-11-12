@@ -363,7 +363,27 @@
     }, delay);
   }
 
+  /* 严格 CSP(style-src 'self')禁止标记里的 style 属性;进度条宽度用 data-pct
+     声明,插入页面后经 CSSOM 设置(CSSOM 不受该限制)。 */
+  function applyProgressWidths(root) {
+    (root.querySelectorAll ? root.querySelectorAll('[data-pct]') : []).forEach(function (node) {
+      var pct = Math.max(0, Math.min(100, Number(node.dataset.pct) || 0));
+      node.style.width = pct + '%';
+    });
+  }
+
   function initShell() {
+    applyProgressWidths(document);
+    new MutationObserver(function (mutations) {
+      mutations.forEach(function (mutation) {
+        mutation.addedNodes.forEach(function (node) {
+          if (node.nodeType !== 1) return;
+          if (node.dataset && node.dataset.pct != null) applyProgressWidths(node.parentNode || node);
+          else applyProgressWidths(node);
+        });
+      });
+    }).observe(document.body, { childList: true, subtree: true });
+
     document.body.addEventListener('htmx:configRequest', function (event) {
       var token = sessionStorage.getItem('d2a_token');
       if (token) event.detail.headers.Authorization = 'Bearer ' + token;

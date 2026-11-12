@@ -65,7 +65,7 @@
     var done = Number(step.rows_out || 0);
     var expected = Number(step.expected_rows || 0);
     var percent = expected ? Math.min(100, Math.round(done / expected * 100)) : (step.status === 'ok' ? 100 : 0);
-    return '<div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + percent + '"><div class="progress-bar-fill" style="width:' + percent + '%"></div></div><span>' + fmtNumber(done) + ' / ' + fmtNumber(expected) + '（' + percent + '%）</span>';
+    return '<div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + percent + '"><div class="progress-bar-fill" data-pct="' + percent + '"></div></div><span>' + fmtNumber(done) + ' / ' + fmtNumber(expected) + '（' + percent + '%）</span>';
   }
 
   /* generation 屏障:默认折叠;无 generation 不渲染占位(减少噪音)。 */
@@ -111,7 +111,7 @@
     var failed = steps.filter(function (s) { return s.status === 'failed' || s.status === 'error'; });
     var done = steps.filter(function (s) { return s.status === 'ok' || s.status === 'completed'; }).length;
     var pct = total ? Math.round(done / total * 100) : 0;
-    var overall = '<div class="rd-overall"><div class="progress-bar"><div class="progress-bar-fill" style="width:' + pct + '%"></div></div>' +
+    var overall = '<div class="rd-overall"><div class="progress-bar"><div class="progress-bar-fill" data-pct="' + pct + '"></div></div>' +
       '<div class="meta">完成 ' + done + ' / ' + total + ' 表（' + pct + '%）· 行数 ' + fmtNumber(run.rows || 0) + '</div></div>';
     var fail;
     if (failed.length) {

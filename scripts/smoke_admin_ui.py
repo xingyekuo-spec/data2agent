@@ -114,7 +114,8 @@ def smoke_middle(cfg: Path, log_path: Path) -> None:
         _fail("middle: config stepper missing /metadata or /tables")
     _ok("middle: config stepper includes metadata + tables")
     csp = client.get("/status", headers=h).headers.get("content-security-policy", "")
-    if "script-src 'self'" not in csp or "object-src 'none'" not in csp:
+    if ("script-src 'self'" not in csp or "object-src 'none'" not in csp
+            or "'unsafe-inline'" in csp):
         _fail(f"middle: CSP missing required restrictions: {csp}")
     _ok("middle: CSP restricts scripts/object/frame to local safe baseline")
 

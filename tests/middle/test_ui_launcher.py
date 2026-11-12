@@ -325,6 +325,8 @@ def test_admin_startup_timeout_reports_logs_and_manual_command(tmp_path, monkeyp
     monkeypatch.setattr(mod, "release_single_instance", lambda: None)
     monkeypatch.setattr(mod, "spawn_managed", lambda *a, **k: _FakeProc(alive=True))
     monkeypatch.setattr(mod, "stop_children", lambda: None)
+    # 开发机上若已有管理界面占用默认端口,启动器会走"已在运行"分支;此处隔离真实端口
+    monkeypatch.setattr(mod, "_port_open", lambda host, port: False)
 
     def fake_wait_admin_ready(host, port, proc, *, timeout, home):
         waits.append(timeout)

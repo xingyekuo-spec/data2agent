@@ -645,11 +645,11 @@ def create_app(
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
-        # 页面脚本均为本地固定版本静态资源；样式仍含模板内联 CSS，故仅
-        # style-src 暂时保留 unsafe-inline，script/object/frame/connect 从严。
+        # 页面脚本与样式均为本地固定版本静态资源(static/admin.css)，模板与
+        # 页面脚本不再输出 style 属性或 <style>，故 style-src 同样从严。
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; "
-            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+            "style-src 'self'; img-src 'self' data:; "
             "font-src 'self'; connect-src 'self'; object-src 'none'; "
             "frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; "
             "form-action 'self'"
